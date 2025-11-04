@@ -52,52 +52,6 @@ async fn should_enqueue_message_to_queue() {
 }
 
 #[tokio::test]
-async fn should_assign_unique_message_ids() {
-    // Arrange
-    let (handle, _store) = start_test_engine();
-
-    // Act
-    handle
-        .publish(
-            "queue://realm/area/jobs".to_string(),
-            "msg1".to_string(),
-            b"data1".to_vec(),
-            None,
-            None,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-    handle
-        .publish(
-            "queue://realm/area/jobs".to_string(),
-            "msg2".to_string(),
-            b"data2".to_vec(),
-            None,
-            None,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-    handle
-        .publish(
-            "queue://realm/area/jobs".to_string(),
-            "msg3".to_string(),
-            b"data3".to_vec(),
-            None,
-            None,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-
-    // Assert - no-op removed
-}
-
-#[tokio::test]
 async fn should_persist_enqueued_messages_durably() {
     // Arrange
     let (handle, _store) = start_test_engine();
@@ -375,7 +329,7 @@ async fn should_nack_message_and_return_to_queue() {
 }
 
 #[tokio::test]
-async fn should_not_increment_delivery_count_on_nack() {
+async fn should_not_increment_delivery_count_on_failed_consume() {
     // Arrange
     let (handle, _store) = start_test_engine();
     handle
@@ -390,19 +344,26 @@ async fn should_not_increment_delivery_count_on_nack() {
         )
         .await
         .unwrap();
-    let (_id, _body, _token) = handle
+    let (id, _body, _token) = handle
         .reserve("queue://realm/area/jobs".to_string(), 30)
         .await
         .unwrap();
 
     // Act
-    // NACK is achieved by failing to consume (invalid token or lease expiry)
-    // This test documents that a failed consume does not increment delivery_count
-    // For now, this behavior is implementation-dependent
+    let _consume_result = handle
+        .consume(
+            "queue://realm/area/jobs".to_string(),
+            id.clone(),
+            "invalid_token".to_string(),
+        )
+        .await;
+    
+    // TODO: Need API to get message metadata including delivery_count
+    // let metadata = handle.get_message_metadata("queue://realm/area/jobs", id).await.unwrap();
 
     // Assert
-    // When delivery_count tracking is implemented, verify it's not incremented on failed consume
-    // Currently this test serves as a placeholder for the feature
+    // assert_eq!(metadata.delivery_count, 1, "Failed consume should not increment delivery_count");
+    panic!("Test not yet implemented: Need API to query message delivery_count");
 }
 
 #[tokio::test]
@@ -953,17 +914,55 @@ async fn should_move_message_to_dlq_after_max_deliveries() {
             .await;
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
+    let normal_reserve = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
+    let dlq_reserve = handle
+        .reserve("queue://realm/area/jobs/dlq".to_string(), 30)
+        .await;
 
     // Assert
-    // After 3 failed deliveries, message should be moved to DLQ
-    // When DLQ functionality is implemented, this test will verify the move
-    // For now, this documents expected DLQ behavior
+    assert!(normal_reserve.is_err(), "Message should no longer be in main queue after exceeding DLQ threshold");
+    assert!(dlq_reserve.is_ok(), "Message should be available in DLQ");
 }
 
 #[tokio::test]
 async fn should_not_return_dlq_messages_in_normal_reserve() {
     // Arrange
     let (handle, _store) = start_test_engine();
+    let config = QueueConfig {
+        dlq_threshold: 1,
+        default_visibility_secs: 30,
+        ttl_secs: 0,
+    };
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    // Force message to DLQ by exceeding threshold
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     // Act
     let result = handle
@@ -971,13 +970,46 @@ async fn should_not_return_dlq_messages_in_normal_reserve() {
         .await;
 
     // Assert
-    assert!(result.is_err());
+    assert!(result.is_err(), "DLQ message should not be returned in normal queue reserve");
 }
 
 #[tokio::test]
 async fn should_allow_processing_dlq_messages_explicitly() {
     // Arrange
     let (handle, _store) = start_test_engine();
+    let config = QueueConfig {
+        dlq_threshold: 1,
+        default_visibility_secs: 30,
+        ttl_secs: 0,
+    };
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"dlq_task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    // Force message to DLQ
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     // Act
     let result = handle
@@ -985,7 +1017,7 @@ async fn should_allow_processing_dlq_messages_explicitly() {
         .await;
 
     // Assert
-    assert!(result.is_err());
+    assert!(result.is_ok(), "Should be able to reserve from DLQ using /dlq suffix");
 }
 
 #[tokio::test]
@@ -1010,13 +1042,124 @@ async fn should_support_explicit_move_to_dlq() {
         .unwrap();
 
     // Act
-    // Note: Explicit DLQ move not yet in API
     let result = handle
-        .consume("queue://realm/area/jobs".to_string(), id, token)
+        .move_to_dlq("queue://realm/area/jobs".to_string(), id.clone(), token)
         .await;
 
     // Assert
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "Should be able to explicitly move message to DLQ");
+    let normal_reserve = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
+    assert!(normal_reserve.is_err(), "Message should no longer be in main queue");
+    let dlq_reserve = handle
+        .reserve("queue://realm/area/jobs/dlq".to_string(), 30)
+        .await;
+    assert!(dlq_reserve.is_ok(), "Message should be available in DLQ");
+}
+
+#[tokio::test]
+async fn should_preserve_message_ttl_when_moving_to_dlq_if_less_than_dlq_ttl() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let config = QueueConfig {
+        dlq_threshold: 1,
+        default_visibility_secs: 30,
+        ttl_secs: 3600, // DLQ TTL is 1 hour
+    };
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    // Publish message with TTL of 5 seconds (less than DLQ TTL)
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            Some(5), // Message TTL
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    
+    // Act
+    // Force message to DLQ
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    
+    // Wait for original message TTL to expire
+    tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+    
+    let dlq_reserve = handle
+        .reserve("queue://realm/area/jobs/dlq".to_string(), 30)
+        .await;
+
+    // Assert
+    assert!(dlq_reserve.is_err(), "Message should have expired in DLQ using original TTL");
+}
+
+#[tokio::test]
+async fn should_apply_dlq_ttl_when_message_ttl_is_greater() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let config = QueueConfig {
+        dlq_threshold: 1,
+        default_visibility_secs: 30,
+        ttl_secs: 5, // DLQ TTL is 5 seconds
+    };
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    // Publish message with TTL of 3600 seconds (greater than DLQ TTL)
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            Some(3600), // Message TTL
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    
+    // Act
+    // Force message to DLQ
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    
+    // Wait for DLQ TTL to expire
+    tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+    
+    let dlq_reserve = handle
+        .reserve("queue://realm/area/jobs/dlq".to_string(), 30)
+        .await;
+
+    // Assert
+    assert!(dlq_reserve.is_err(), "Message should have expired in DLQ using DLQ TTL");
 }
 
 // ============================================================================
@@ -1056,10 +1199,12 @@ async fn should_track_in_flight_message_count() {
         .await
         .unwrap();
 
+    // TODO: Need API to get queue statistics
+    // let stats = handle.get_queue_stats("queue://realm/area/jobs").await.unwrap();
+
     // Assert
-    // 3 messages should be in-flight (reserved)
-    // When observability API is added, we can query in-flight count
-    // This test documents the expected behavior
+    // assert_eq!(stats.in_flight_count, 3);
+    panic!("Test not yet implemented: Need API to query in-flight message count");
 }
 
 #[tokio::test]
@@ -1105,14 +1250,16 @@ async fn should_decrease_in_flight_count_on_complete() {
         .await
         .unwrap();
 
+    // TODO: Need API to get queue statistics
+    // let stats = handle.get_queue_stats("queue://realm/area/jobs").await.unwrap();
+
     // Assert
-    // After consuming msg1, in-flight count should be 1 (only msg2)
-    // When observability API is added, we can query and verify in-flight count decreased
-    // This test documents the expected behavior
+    // assert_eq!(stats.in_flight_count, 1, "After consuming one message, only one should remain in-flight");
+    panic!("Test not yet implemented: Need API to query in-flight message count");
 }
 
 #[tokio::test]
-async fn should_return_to_available_when_lease_expires() {
+async fn should_return_message_to_available_when_lease_expires() {
     // Arrange
     let (handle, _store) = start_test_engine();
     handle
@@ -1134,11 +1281,12 @@ async fn should_return_to_available_when_lease_expires() {
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
-    // Message should return to available after lease expires
-    // When lease expiry is fully implemented, we can re-reserve the message
-    // This test documents the expected lease expiry behavior
+    assert!(result.is_ok(), "Message should be available again after lease expires");
 }
 
 // ============================================================================
@@ -1146,7 +1294,7 @@ async fn should_return_to_available_when_lease_expires() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_preserve_fifo_order_for_queue_messages() {
+async fn should_return_first_message_when_reserving_from_fifo_queue() {
     // Arrange
     let (handle, _store) = start_test_engine();
     handle
@@ -1187,24 +1335,129 @@ async fn should_preserve_fifo_order_for_queue_messages() {
         .unwrap();
 
     // Act
-    let (_id1, body1, _token1) = handle
-        .reserve("queue://realm/area/jobs".to_string(), 30)
-        .await
-        .unwrap();
-    let (_id2, body2, _token2) = handle
-        .reserve("queue://realm/area/jobs".to_string(), 30)
-        .await
-        .unwrap();
-    let (_id3, body3, _token3) = handle
+    let (_id, body, _token) = handle
         .reserve("queue://realm/area/jobs".to_string(), 30)
         .await
         .unwrap();
 
     // Assert
-    assert_eq!(body1, b"A");
-    assert_eq!(body2, b"B");
-    assert_eq!(body3, b"C");
+    assert_eq!(body, b"A");
 }
+
+#[tokio::test]
+async fn should_return_second_message_after_first_reserved() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgA".to_string(),
+            b"A".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgB".to_string(),
+            b"B".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgC".to_string(),
+            b"C".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+
+    // Act
+    let (_id, body, _token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(body, b"B");
+}
+
+#[tokio::test]
+async fn should_return_third_message_after_first_two_reserved() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgA".to_string(),
+            b"A".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgB".to_string(),
+            b"B".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgC".to_string(),
+            b"C".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+
+    // Act
+    let (_id, body, _token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(body, b"C");
+}
+
 
 // ============================================================================
 // EDGE CASES - Delivery Count and Max Retries
@@ -1385,7 +1638,7 @@ async fn should_move_to_dlq_when_max_deliveries_exceeded() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_allow_first_concurrent_consumer_to_reserve() {
+async fn should_allow_concurrent_consumers_to_reserve_different_messages() {
     // Arrange
     let (handle, _store) = start_test_engine();
     for i in 0..10 {
@@ -1408,82 +1661,16 @@ async fn should_allow_first_concurrent_consumer_to_reserve() {
     let h2 = handle.clone();
     let h3 = handle.clone();
 
-    let (r1, _r2, _r3) = tokio::join!(
+    let (r1, r2, r3) = tokio::join!(
         h1.reserve("queue://realm/area/jobs".to_string(), 30),
         h2.reserve("queue://realm/area/jobs".to_string(), 30),
         h3.reserve("queue://realm/area/jobs".to_string(), 30),
     );
 
     // Assert
-    assert!(r1.is_ok());
-}
-
-#[tokio::test]
-async fn should_allow_second_concurrent_consumer_to_reserve() {
-    // Arrange
-    let (handle, _store) = start_test_engine();
-    for i in 0..10 {
-        handle
-            .publish(
-                "queue://realm/area/jobs".to_string(),
-                format!("msg{}", i),
-                b"task".to_vec(),
-                None,
-                None,
-                false,
-                None,
-            )
-            .await
-            .unwrap();
-    }
-
-    // Act
-    let h1 = handle.clone();
-    let h2 = handle.clone();
-    let h3 = handle.clone();
-
-    let (_r1, r2, _r3) = tokio::join!(
-        h1.reserve("queue://realm/area/jobs".to_string(), 30),
-        h2.reserve("queue://realm/area/jobs".to_string(), 30),
-        h3.reserve("queue://realm/area/jobs".to_string(), 30),
-    );
-
-    // Assert
-    assert!(r2.is_ok());
-}
-
-#[tokio::test]
-async fn should_allow_third_concurrent_consumer_to_reserve() {
-    // Arrange
-    let (handle, _store) = start_test_engine();
-    for i in 0..10 {
-        handle
-            .publish(
-                "queue://realm/area/jobs".to_string(),
-                format!("msg{}", i),
-                b"task".to_vec(),
-                None,
-                None,
-                false,
-                None,
-            )
-            .await
-            .unwrap();
-    }
-
-    // Act
-    let h1 = handle.clone();
-    let h2 = handle.clone();
-    let h3 = handle.clone();
-
-    let (_r1, _r2, r3) = tokio::join!(
-        h1.reserve("queue://realm/area/jobs".to_string(), 30),
-        h2.reserve("queue://realm/area/jobs".to_string(), 30),
-        h3.reserve("queue://realm/area/jobs".to_string(), 30),
-    );
-
-    // Assert
-    assert!(r3.is_ok());
+    assert!(r1.is_ok(), "First concurrent consumer should successfully reserve");
+    assert!(r2.is_ok(), "Second concurrent consumer should successfully reserve");
+    assert!(r3.is_ok(), "Third concurrent consumer should successfully reserve");
 }
 
 #[tokio::test]
