@@ -1,0 +1,225 @@
+//! Frame parsing and TLV helper utilities used by transports and tests.
+//!
+//! This module provides small, allocation-light helpers for building and
+//! parsing the FTZ framing format used by the broker: a u32 BE length, a
+//! one-byte frame type, one-byte flags, a u32 BE channel id, followed by a
+//! concatenation of TLVs of the form [tag u8][len u16 BE][value bytes].
+//!
+pub use super::tags::*;
+use std::convert::TryInto;
+use std::str;
+
+/// Errors returned by frame/TLV parsing helpers.
+#[derive(Debug)]
+pub enum Error {
+    /// Buffer is too short to contain the requested header or TLV.
+    Truncated,
+    /// A TLV value expected to be UTF-8 was not valid UTF-8.
+    BadUtf8,
+    /// Generic invalid format or a verification failure (CRC mismatch).
+    Invalid,
+}
+
+/// Parsed FTZ frame header fields.
+#[derive(Clone, Debug)]
+pub struct Header {
+    /// Frame type (one of the `FRAME_*` constants in `protocol::tags`).
+    pub frame_type: u8,
+    /// Flags bitmask (see `protocol::tags::FLAG_*`).
+    pub flags: u8,
+    /// Logical channel id for multiplexed transports.
+    pub channel_id: u32,
+}
+
+/// A view over a parsed frame: header + payload slice referencing the
+/// original buffer.
+#[derive(Clone, Debug)]
+pub struct ParsedFrame<'a> {
+    /// Parsed header fields.
+    pub header: Header,
+    /// Slice of the TLV payload (does not include the 10-byte frame header).
+    pub payload: &'a [u8],
+}
+
+/// Append a TLV to `out` using the canonical [tag][len:u16 BE][value] format.
+pub fn build_tlv(tag: u8, value: &[u8], out: &mut Vec<u8>) {
+    out.push(tag);
+    out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    out.extend_from_slice(value);
+}
+
+/// Find the first TLV with `tag` in `buf` and return a slice pointing at the
+/// value bytes. Returns `None` if not found. If a TLV appears truncated
+/// (length exceeds buffer) this function returns `None` to indicate parse
+/// failure.
+pub fn find_tlv(buf: &[u8], tag: u8) -> Option<&[u8]> {
+    let mut i = 0;
+    while i + 3 <= buf.len() {
+        let t = buf[i];
+        let l = u16::from_be_bytes([buf[i + 1], buf[i + 2]]) as usize;
+        i += 3;
+        if i + l > buf.len() {
+            return None;
+        }
+        if t == tag {
+            return Some(&buf[i..i + l]);
+        }
+        i += l;
+    }
+    None
+}
+
+// Frame format: [Len u32 BE][Type u8][Flags u8][Channel u32 BE] + TLV payload
+/// Build a full FTZ frame with 4-byte BE length prefix, 1-byte frame type,
+/// 1-byte flags, 4-byte BE channel id, and the provided TLV payload.
+pub fn build_frame(frame_type: u8, flags: u8, channel_id: u32, payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 1 + 1 + 4 + payload.len());
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.push(frame_type);
+    out.push(flags);
+    out.extend_from_slice(&channel_id.to_be_bytes());
+    out.extend_from_slice(payload);
+    let total = out.len() as u32;
+    out[0..4].copy_from_slice(&total.to_be_bytes());
+    out
+}
+
+/// Parse a raw frame buffer into a `ParsedFrame` view. Returns `Error::Truncated`
+/// when the buffer is too short for the 10-byte header or the indicated
+/// length exceeds the supplied buffer. If a CRC32 TLV is present at the end
+/// of the payload it will be validated and `Error::Invalid` will be returned
+/// on mismatch.
+pub fn parse_frame<'a>(buf: &'a [u8]) -> Result<ParsedFrame<'a>, Error> {
+    if buf.len() < 10 {
+        return Err(Error::Truncated);
+    }
+    let total_len = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
+    if total_len > buf.len() {
+        return Err(Error::Truncated);
+    }
+    let frame_type = buf[4];
+    let flags = buf[5];
+    let channel_id = u32::from_be_bytes(buf[6..10].try_into().unwrap());
+    let payload = &buf[10..total_len];
+    // Optional CRC32 TLV at the end of payload; if present, verify over payload without this TLV
+    if let Some((crc_off, crc_len)) = locate_last_tlv(payload, TAG_CRC32) {
+        if crc_len == 4 {
+            let provided = u32::from_be_bytes([
+                payload[crc_off + 3],
+                payload[crc_off + 4],
+                payload[crc_off + 5],
+                payload[crc_off + 6],
+            ]);
+            let computed = crc32fast::hash(&payload[..crc_off]);
+            if computed != provided {
+                return Err(Error::Invalid);
+            }
+        }
+    }
+    Ok(ParsedFrame {
+        header: Header {
+            frame_type,
+            flags,
+            channel_id,
+        },
+        payload,
+    })
+}
+
+/// A lightweight borrow-based reference to fields parsed from a PUB frame.
+pub struct PubRef<'a> {
+    /// Route string (UTF-8) of the publish.
+    pub route: &'a str,
+    /// Message id string (UTF-8).
+    pub id: &'a str,
+    /// Opaque body bytes.
+    pub body: &'a [u8],
+}
+
+/// Parse a `ParsedFrame` that contains a PUB payload and return a `PubRef`.
+/// Returns `Error::Invalid` if required TLVs are missing or `Error::BadUtf8`
+/// if route/id are not valid UTF-8.
+pub fn parse_pub<'a>(frame: &ParsedFrame<'a>) -> Result<PubRef<'a>, Error> {
+    let route_b = find_tlv(frame.payload, TAG_ROUTE).ok_or(Error::Invalid)?;
+    let id_b = find_tlv(frame.payload, TAG_ID).ok_or(Error::Invalid)?;
+    let body_b = find_tlv(frame.payload, TAG_BODY).ok_or(Error::Invalid)?;
+    let route = str::from_utf8(route_b).map_err(|_| Error::BadUtf8)?;
+    let id = str::from_utf8(id_b).map_err(|_| Error::BadUtf8)?;
+    Ok(PubRef {
+        route,
+        id,
+        body: body_b,
+    })
+}
+
+/// Registration (REG) frame parsed contents. `is_subscribe` is true when this
+/// REG indicates a subscription; false for unsubscribe.
+pub struct RegRef<'a> {
+    /// Route string referenced by the REG frame.
+    pub route: &'a str,
+    /// True when this REG is a subscribe action.
+    pub is_subscribe: bool,
+}
+
+/// Parse a REG frame payload and return `RegRef` with membership intent.
+pub fn parse_reg<'a>(frame: &ParsedFrame<'a>) -> Result<RegRef<'a>, Error> {
+    let route_b = find_tlv(frame.payload, TAG_ROUTE).ok_or(Error::Invalid)?;
+    let is_sub = find_tlv(frame.payload, TAG_SUBSCRIBE).is_some();
+    let route = str::from_utf8(route_b).map_err(|_| Error::BadUtf8)?;
+    Ok(RegRef {
+        route,
+        is_subscribe: is_sub,
+    })
+}
+
+// Locate the last TLV with a specific tag; returns offset to the TLV start within buf and length of value
+/// Find the last occurrence of a TLV with `tag` in `buf` and return the
+/// offset pointing at the TLV start (the tag byte position) and the value
+/// length. Used to locate trailing TLVs such as `TAG_CRC32`.
+fn locate_last_tlv(buf: &[u8], tag: u8) -> Option<(usize, usize)> {
+    let mut i = 0usize;
+    let mut last: Option<(usize, usize)> = None;
+    while i + 3 <= buf.len() {
+        let t = buf[i];
+        let l = u16::from_be_bytes([buf[i + 1], buf[i + 2]]) as usize;
+        if i + 3 + l > buf.len() {
+            break;
+        }
+        if t == tag {
+            last = Some((i, l));
+        }
+        i += 3 + l;
+    }
+    last
+}
+
+/// Convenience helper to build a DAT notification frame carrying a
+/// subscription notification. All fields are encoded as TLVs; optional
+/// values are omitted when `None`.
+pub fn build_notification_frame_ex(
+    route: &str,
+    id: Option<&str>,
+    body: &[u8],
+    reply_route: Option<&str>,
+    seq: Option<u32>,
+    stream_end: bool,
+    channel_id: u32,
+) -> Vec<u8> {
+    let mut p = Vec::new();
+    build_tlv(TAG_NOTIFICATION, &[], &mut p);
+    build_tlv(TAG_ROUTE, route.as_bytes(), &mut p);
+    if let Some(i) = id {
+        build_tlv(TAG_ID, i.as_bytes(), &mut p);
+    }
+    build_tlv(TAG_BODY, body, &mut p);
+    if let Some(rr) = reply_route {
+        build_tlv(TAG_ROUTE_REPLY, rr.as_bytes(), &mut p);
+    }
+    if let Some(s) = seq {
+        build_tlv(TAG_SEQ, &s.to_be_bytes(), &mut p);
+    }
+    if stream_end {
+        build_tlv(TAG_STREAM_END, &[], &mut p);
+    }
+    build_frame(FRAME_DAT, 0, channel_id, &p)
+}

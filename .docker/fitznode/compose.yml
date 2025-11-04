@@ -1,0 +1,26 @@
+version: '3.8'
+
+# Note: this runtime image doesn't include a shell or network utilities (wget/curl),
+# so the container's in-image shell-based healthcheck was removed. Alternatives:
+#  - Add a tiny probe binary (Go/Rust) into the image and use a `CMD` healthcheck
+#    that runs the probe (preferable for scratch images).
+#  - Run an external probe/sidecar service that queries the container over the
+#    network from the host or another container.
+#  - Rely on your orchestrator's readiness/liveness checks instead of docker
+#    healthchecks.
+
+services:
+  fitz:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: fitz-node
+    ports:
+      - "8080:8080" # WebSocket / HTTP
+    environment:
+      FITZ_WS_PORT: "8080"
+      CONTROL_ROUTE: "self"
+      BROKER_ENFORCE_AUTHZ: "false"
+      RUST_LOG: "info,fitz=debug"
+    restart: unless-stopped
+

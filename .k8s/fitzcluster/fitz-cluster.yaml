@@ -1,0 +1,325 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fitz
+
+---
+# Control deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control
+  namespace: fitz
+  labels:
+    app: control
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control
+  template:
+    metadata:
+      labels:
+        app: control
+    spec:
+      containers:
+        - name: control
+          image: fitz:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FITZ_WS_PORT
+              value: "8080"
+            - name: FITZ_TCP_PORT
+              value: "7071"
+            - name: CONTROL_ROUTE
+              value: "/connect"
+            - name: BROKER_ENFORCE_AUTHZ
+              value: "false"
+            - name: RUST_LOG
+              value: "info,fitz=debug"
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control
+  namespace: fitz
+spec:
+  type: NodePort
+  selector:
+    app: control
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+
+---
+# Broker 1 (pod spec identical to broker-2 and broker-3)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker-1
+  namespace: fitz
+  labels:
+    app: broker-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: broker-1
+  template:
+    metadata:
+      labels:
+        app: broker-1
+    spec:
+      containers:
+        - name: broker
+          image: fitz:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          # Broker pod configuration is identical across peers; external
+          # exposure differs only at the Service (NodePort) level.
+          env:
+            - name: FITZ_WS_PORT
+              value: "8080"
+            - name: FITZ_TCP_PORT
+              value: "7072"
+            - name: CONTROL_ROUTE
+              value: "http://control:8080/connect"
+            - name: CONTROL_CLIENT_ID
+              value: "broker"
+            - name: BROKER_ENFORCE_AUTHZ
+              value: "false"
+            - name: RUST_LOG
+              value: "info,fitz=debug"
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-1
+  namespace: fitz
+spec:
+  type: NodePort
+  selector:
+    app: broker-1
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 30081
+
+---
+# Broker 2 (same pod spec as broker-1)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker-2
+  namespace: fitz
+  labels:
+    app: broker-2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: broker-2
+  template:
+    metadata:
+      labels:
+        app: broker-2
+    spec:
+      containers:
+        - name: broker
+          image: fitz:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          # Broker pod configuration is identical across peers; external
+          # exposure differs only at the Service (NodePort) level.
+          env:
+            - name: FITZ_WS_PORT
+              value: "8080"
+            - name: FITZ_TCP_PORT
+              value: "7072"
+            - name: CONTROL_ROUTE
+              value: "http://control:8080/connect"
+            - name: CONTROL_CLIENT_ID
+              value: "broker"
+            - name: BROKER_ENFORCE_AUTHZ
+              value: "false"
+            - name: RUST_LOG
+              value: "info,fitz=debug"
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-2
+  namespace: fitz
+spec:
+  type: NodePort
+  selector:
+    app: broker-2
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 30082
+
+---
+# Broker 3 (same pod spec as broker-1)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker-3
+  namespace: fitz
+  labels:
+    app: broker-3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: broker-3
+  template:
+    metadata:
+      labels:
+        app: broker-3
+    spec:
+      containers:
+        - name: broker
+          image: fitz:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          # Broker pod configuration is identical across peers; external
+          # exposure differs only at the Service (NodePort) level.
+          env:
+            - name: FITZ_WS_PORT
+              value: "8080"
+            - name: FITZ_TCP_PORT
+              value: "7072"
+            - name: CONTROL_ROUTE
+              value: "http://control:8080/connect"
+            - name: CONTROL_CLIENT_ID
+              value: "broker"
+            - name: BROKER_ENFORCE_AUTHZ
+              value: "false"
+            - name: RUST_LOG
+              value: "info,fitz=debug"
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-3
+  namespace: fitz
+spec:
+  type: NodePort
+  selector:
+    app: broker-3
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 30083
+
+# Notes:
+# - The manifests reference image `fitz:latest`. Build the image locally so the
+#   Docker Desktop Kubernetes cluster can use it, for example from the repo root:
+#     docker build -t fitz:latest -f Dockerfile .
+# - Apply the manifests:
+#     kubectl apply -f .k8s/fitzcluster/fitz-cluster.yaml
+# - Services are exposed as NodePorts 30080-30083 so they are reachable on the
+#   host. Alternatively use `kubectl port-forward` for individual services.

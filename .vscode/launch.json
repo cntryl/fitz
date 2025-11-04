@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug fitz",
+      "program": "${workspaceFolder}/target/debug/fitz.exe",
+      "preLaunchTask": "cargo build",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_BACKTRACE": "1",
+        "RUST_LOG": "debug"
+      },
+      "stopOnEntry": false,
+      "console": "integratedTerminal"
+    }
+  ]
+}
