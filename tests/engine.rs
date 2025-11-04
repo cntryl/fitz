@@ -31,7 +31,7 @@ async fn should_handle_complete_stream_to_notice_workflow() {
 
     // Act
     let _seq = handle
-        .stream_append(
+        .stream_append_old(
             "stream://realm/events".to_string(),
             Some("evt-1".to_string()),
             b"event data".to_vec(),
@@ -226,7 +226,7 @@ async fn should_allow_stream_append_when_permissions_not_enforced() {
 
     // Act
     let result = handle
-        .stream_append(
+        .stream_append_old(
             "stream://realm/events".to_string(),
             None,
             b"event".to_vec(),
@@ -557,7 +557,7 @@ async fn should_recover_persisted_state_after_restart() {
         )
         .await;
     let _seq = handle1
-        .stream_append(
+        .stream_append_old(
             "stream://realm/events".to_string(),
             None,
             b"event-1".to_vec(),
@@ -637,7 +637,7 @@ async fn should_handle_large_stream_with_efficient_memory_usage() {
     // Append 100 events (reduced from 100k for test speed)
     for i in 0..100 {
         let _ = handle
-            .stream_append(
+            .stream_append_old(
                 "stream://realm/large".to_string(),
                 Some(format!("evt-{}", i)),
                 format!("data-{}", i).into_bytes(),
@@ -650,7 +650,7 @@ async fn should_handle_large_stream_with_efficient_memory_usage() {
     // Act
     // Consume with pagination (limit 10 at a time)
     let events = handle
-        .stream_peek("stream://realm/large".to_string(), 0, 10)
+        .stream_peek_old("stream://realm/large".to_string(), 0, 10)
         .await
         .expect("peek failed");
 

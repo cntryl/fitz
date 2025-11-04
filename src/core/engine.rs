@@ -4,7 +4,8 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::core::router::Router;
 use crate::storage::mem::{
-    ExpectedRevision as StreamExpectedRevision, MemStore, QueueConfig, QueueScope,
+    AppendResult, AreaReadResponse, ExpectedRevision as StreamExpectedRevision, MemStore,
+    QueueConfig, QueueScope, StreamError, StreamEvent,
 };
 use tokio::task::JoinHandle;
 
@@ -27,6 +28,9 @@ type RespReserve = oneshot::Sender<Result<(String, Vec<u8>, String), String>>;
 type RespU32 = oneshot::Sender<Result<u32, String>>;
 type RespStreamPeek = oneshot::Sender<Result<Vec<(u64, Vec<u8>)>, String>>;
 type RespStreamConsume = oneshot::Sender<Result<Vec<(String, u64, Vec<u8>)>, String>>;
+type RespStreamAppend = oneshot::Sender<Result<AppendResult, String>>;
+type RespStreamRead = oneshot::Sender<Result<Vec<StreamEvent>, String>>;
+type RespStreamReadArea = oneshot::Sender<Result<AreaReadResponse, String>>;
 
 #[derive(Debug)]
 pub enum EngineCommand {
@@ -97,6 +101,28 @@ pub enum EngineCommand {
         metadata: Option<Vec<u8>>,
         expected: StreamExpectedRevision,
         resp: oneshot::Sender<Result<u64, String>>,
+    },
+    // New API: Client-controlled sequences
+    StreamAppendNew {
+        route: String,
+        resource_seq: u64,
+        body: Vec<u8>,
+        metadata: Option<Vec<u8>>,
+        is_end: bool,
+        resp: RespStreamAppend,
+    },
+    StreamRead {
+        route: String,
+        from_seq: u64,
+        limit: usize,
+        resp: RespStreamRead,
+    },
+    StreamReadArea {
+        realm: String,
+        area: String,
+        from_seq: u64,
+        limit: usize,
+        resp: RespStreamReadArea,
     },
     StreamPeek {
         route: String,
@@ -320,7 +346,7 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
-    pub async fn stream_append(
+    pub async fn stream_append_old(
         &self,
         route: String,
         id: Option<String>,
@@ -344,7 +370,74 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
-    pub async fn stream_peek(
+    // New API methods
+    pub async fn stream_append(
+        &self,
+        route: String,
+        resource_seq: u64,
+        body: Vec<u8>,
+        metadata: Option<Vec<u8>>,
+        is_end: bool,
+    ) -> Result<AppendResult, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::StreamAppendNew {
+            route,
+            resource_seq,
+            body,
+            metadata,
+            is_end,
+            resp: tx,
+        };
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
+    pub async fn stream_read(
+        &self,
+        route: String,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<StreamEvent>, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::StreamRead {
+            route,
+            from_seq,
+            limit,
+            resp: tx,
+        };
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
+    pub async fn stream_read_area(
+        &self,
+        realm: &str,
+        area: &str,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<AreaReadResponse, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::StreamReadArea {
+            realm: realm.to_string(),
+            area: area.to_string(),
+            from_seq,
+            limit,
+            resp: tx,
+        };
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
+    pub async fn stream_peek_old(
         &self,
         route: String,
         from_seq: u64,
@@ -678,6 +771,47 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                     }
                 }
 
+                EngineCommand::StreamAppendNew {
+                    route,
+                    resource_seq,
+                    body,
+                    metadata,
+                    is_end,
+                    resp,
+                } => {
+                    // TODO: Implement dual-index append with gap detection
+                    let result = AppendResult {
+                        resource_seq,
+                        area_seq_range: None, // Will be Some() when is_end=true
+                    };
+                    let _ = resp.send(Ok(result));
+                }
+
+                EngineCommand::StreamRead {
+                    route,
+                    from_seq,
+                    limit,
+                    resp,
+                } => {
+                    // TODO: Read from resource index
+                    let _ = resp.send(Ok(vec![]));
+                }
+
+                EngineCommand::StreamReadArea {
+                    realm,
+                    area,
+                    from_seq,
+                    limit,
+                    resp,
+                } => {
+                    // TODO: Read from area index with watermark
+                    let result = AreaReadResponse {
+                        events: vec![],
+                        watermark: 0,
+                    };
+                    let _ = resp.send(Ok(result));
+                }
+
                 EngineCommand::StreamPeek {
                     route,
                     from_seq,
@@ -686,7 +820,7 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 } => {
                     let s = store.lock().await;
                     let events = s.stream_peek(&route, from_seq, limit).await;
-                    let out = events.into_iter().map(|e| (e.seq, e.body)).collect();
+                    let out = events.into_iter().map(|e| (e.resource_seq, e.body)).collect();
                     let _ = resp.send(Ok(out));
                 }
 

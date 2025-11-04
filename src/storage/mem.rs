@@ -25,16 +25,32 @@ pub struct Record {
 // Stream support (in-memory)
 #[derive(Debug, Clone)]
 pub struct StreamEvent {
-    pub seq: u64,
-    pub id: Option<String>,
+    pub resource_seq: u64,      // Client-controlled, 0-indexed monotonic
+    pub area_seq: Option<u64>,  // Server-assigned at finalization
     pub body: Vec<u8>,
     pub metadata: Option<Vec<u8>>,
     pub created_at: u64,
+    pub is_end: bool,           // Stream finalization marker
+}
+
+#[derive(Debug, Clone)]
+pub struct AppendResult {
+    pub resource_seq: u64,
+    pub area_seq_range: Option<std::ops::Range<u64>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AreaReadResponse {
+    pub events: Vec<StreamEvent>,
+    pub watermark: u64,
 }
 
 #[derive(Debug, Clone)]
 pub enum StreamError {
-    WrongExpectedVersion(u64), // carries current head
+    SequenceGap { expected: u64, received: u64 },
+    SequenceConflict { seq: u64 },
+    StreamClosed,
+    WrongExpectedVersion(u64), // carries current head (legacy)
     Other(String),
 }
 
@@ -391,7 +407,7 @@ impl MemStore {
     /// Return current head revision (last seq) or None if stream empty
     pub async fn stream_head(&self, route: &str) -> Option<u64> {
         let g = self.streams.lock().await;
-        g.get(route).and_then(|v| v.last().map(|e| e.seq))
+        g.get(route).and_then(|v| v.last().map(|e| e.resource_seq))
     }
 
     pub async fn stream_append_with_expected(
@@ -405,7 +421,7 @@ impl MemStore {
         use std::time::{SystemTime, UNIX_EPOCH};
         let mut g = self.streams.lock().await;
         let v = g.entry(route.to_string()).or_insert_with(Vec::new);
-        let head = v.last().map(|e| e.seq);
+        let head = v.last().map(|e| e.resource_seq);
         let ok = match expected {
             ExpectedRevision::Any => true,
             ExpectedRevision::NoStream => head.is_none(),
@@ -421,11 +437,12 @@ impl MemStore {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         v.push(StreamEvent {
-            seq: next,
-            id,
+            resource_seq: next,
+            area_seq: None,
             body,
             metadata,
             created_at,
+            is_end: false,
         });
         Ok(next)
     }
@@ -435,7 +452,7 @@ impl MemStore {
         let v = g.get(route).cloned().unwrap_or_default();
         let mut out = Vec::new();
         for e in v.into_iter() {
-            if e.seq >= from_seq {
+            if e.resource_seq >= from_seq {
                 out.push(e);
             }
             if out.len() >= limit {
@@ -472,7 +489,7 @@ impl MemStore {
             .map(|(route, events)| {
                 let idx = events
                     .iter()
-                    .position(|e| e.seq >= from_seq)
+                    .position(|e| e.resource_seq >= from_seq)
                     .unwrap_or(events.len());
                 Cursor { route, idx, events }
             })
@@ -490,7 +507,7 @@ impl MemStore {
                 heap.push(std::cmp::Reverse((
                     e.created_at,
                     c.route.clone(),
-                    e.seq,
+                    e.resource_seq,
                     e.body.clone(),
                     i,
                 )));
@@ -510,7 +527,7 @@ impl MemStore {
                 heap.push(std::cmp::Reverse((
                     e.created_at,
                     c.route.clone(),
-                    e.seq,
+                    e.resource_seq,
                     e.body.clone(),
                     cursor_idx,
                 )));

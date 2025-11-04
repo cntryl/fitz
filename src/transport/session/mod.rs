@@ -425,7 +425,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     if route_str.starts_with("stream://") {
                                         let expected = StreamExpectedRevision::Any;
                                         match engine_task
-                                            .stream_append(
+                                            .stream_append_old(
                                                 route_str.clone(),
                                                 Some(pubref.id.to_string()),
                                                 pubref.body.to_vec(),

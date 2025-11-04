@@ -22,7 +22,7 @@ impl Stream {
         expected: ExpectedRevision,
     ) -> Result<u64, String> {
         self.engine
-            .stream_append(route, id, body, metadata, expected)
+            .stream_append_old(route, id, body, metadata, expected)
             .await
     }
 
@@ -33,7 +33,7 @@ impl Stream {
         from_seq: u64,
         limit: usize,
     ) -> Result<Vec<(u64, Vec<u8>)>, String> {
-        self.engine.stream_peek(route, from_seq, limit).await
+        self.engine.stream_peek_old(route, from_seq, limit).await
     }
 
     /// Consume hierarchically over a prefix route; returns (route, seq, body) records.
