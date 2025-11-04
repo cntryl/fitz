@@ -25,6 +25,8 @@ type RespStr = oneshot::Sender<Result<String, String>>;
 type RespVecStr = oneshot::Sender<Result<Vec<String>, String>>;
 type RespOptIdBody = oneshot::Sender<Result<Option<(String, Vec<u8>)>, String>>;
 type RespReserve = oneshot::Sender<Result<(String, Vec<u8>, String), String>>;
+type RespRecordMeta = oneshot::Sender<Result<Option<crate::storage::mem::Record>, String>>;
+type RespQueueStats = oneshot::Sender<Result<crate::storage::mem::QueueStats, String>>;
 type RespU32 = oneshot::Sender<Result<u32, String>>;
 type RespStreamPeek = oneshot::Sender<Result<Vec<(u64, Vec<u8>)>, String>>;
 type RespStreamConsume = oneshot::Sender<Result<Vec<(String, u64, Vec<u8>)>, String>>;
@@ -69,6 +71,21 @@ pub enum EngineCommand {
         id: String,
         token: String,
         resp: RespUnit,
+    },
+    MoveToDlq {
+        route: String,
+        id: String,
+        token: String,
+        resp: RespUnit,
+    },
+    GetMessageMetadata {
+        route: String,
+        id: String,
+        resp: RespRecordMeta,
+    },
+    GetQueueStats {
+        route: String,
+        resp: RespQueueStats,
     },
     ListResources {
         route: String,
@@ -522,6 +539,36 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
+    pub async fn move_to_dlq(&self, route: String, id: String, token: String) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::MoveToDlq { route, id, token, resp: tx };
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
+    pub async fn get_message_metadata(&self, route: String, id: String) -> Result<Option<crate::storage::mem::Record>, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::GetMessageMetadata { route, id, resp: tx };
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
+    pub async fn get_queue_stats(&self, route: String) -> Result<crate::storage::mem::QueueStats, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::GetQueueStats { route, resp: tx };
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
     // KV operations
     pub async fn kv_put(&self, route: String, key: String, value: Vec<u8>) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
@@ -667,14 +714,29 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                     reply_to,
                     seq,
                     end,
-                    ttl_secs: _ttl,
+                    ttl_secs,
                     resp,
                 } => {
                     let mut s = store.lock().await;
-                    let _ = s.append(route.clone(), id.clone(), body.clone()).await;
+                    let _ = s.append(route.clone(), id.clone(), body.clone(), ttl_secs).await;
                     let (_delivered, _removed) =
                         router.dispatch(&route, Some(&id), &body, reply_to.as_deref(), seq, end);
                     let _ = resp.send(Ok(()));
+                }
+
+                EngineCommand::MoveToDlq { route, id, token, resp } => {
+                    let mut s = store.lock().await;
+                    let _ = resp.send(s.move_to_dlq(&route, &id, &token).await.map(|_| ()));
+                }
+
+                EngineCommand::GetMessageMetadata { route, id, resp } => {
+                    let s = store.lock().await;
+                    let _ = resp.send(s.get_message_metadata(&route, &id).await);
+                }
+
+                EngineCommand::GetQueueStats { route, resp } => {
+                    let s = store.lock().await;
+                    let _ = resp.send(s.get_queue_stats(&route).await);
                 }
 
                 EngineCommand::Reserve {
@@ -981,7 +1043,7 @@ mod tests {
         // seed a message directly into the store
         {
             let mut s = store.lock().await;
-            s.append(route.clone(), "id-1".to_string(), b"hello".to_vec())
+            s.append(route.clone(), "id-1".to_string(), b"hello".to_vec(), None)
                 .await
                 .expect("append failed");
         }
@@ -1008,7 +1070,7 @@ mod tests {
         // seed a message directly into the store
         {
             let mut s = store.lock().await;
-            s.append(route.clone(), "id-2".to_string(), b"x".to_vec())
+            s.append(route.clone(), "id-2".to_string(), b"x".to_vec(), None)
                 .await
                 .expect("append failed");
         }
@@ -1039,7 +1101,7 @@ mod tests {
         // seed a message directly into the store
         {
             let mut s = store.lock().await;
-            s.append(route.clone(), "id-3".to_string(), b"bye".to_vec())
+            s.append(route.clone(), "id-3".to_string(), b"bye".to_vec(), None)
                 .await
                 .expect("append failed");
         }

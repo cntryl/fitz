@@ -363,7 +363,12 @@ async fn should_not_increment_delivery_count_on_failed_consume() {
 
     // Assert
     // assert_eq!(metadata.delivery_count, 1, "Failed consume should not increment delivery_count");
-    panic!("Test not yet implemented: Need API to query message delivery_count");
+    let metadata = handle
+        .get_message_metadata("queue://realm/area/jobs".to_string(), id.clone())
+        .await
+        .expect("get_message_metadata failed")
+        .expect("message metadata missing");
+    assert_eq!(metadata.delivery_count, 1, "Failed consume should not increment delivery_count");
 }
 
 #[tokio::test]
@@ -1084,10 +1089,10 @@ async fn should_preserve_message_ttl_when_moving_to_dlq_if_less_than_dlq_ttl() {
             "queue://realm/area/jobs".to_string(),
             "msg1".to_string(),
             b"task".to_vec(),
-            Some(5), // Message TTL
+            None,
             None,
             false,
-            None,
+            Some(5), // Message TTL
         )
         .await
         .unwrap();
@@ -1136,10 +1141,10 @@ async fn should_apply_dlq_ttl_when_message_ttl_is_greater() {
             "queue://realm/area/jobs".to_string(),
             "msg1".to_string(),
             b"task".to_vec(),
-            Some(3600), // Message TTL
+            None,
             None,
             false,
-            None,
+            Some(3600), // Message TTL
         )
         .await
         .unwrap();
@@ -1199,12 +1204,12 @@ async fn should_track_in_flight_message_count() {
         .await
         .unwrap();
 
-    // TODO: Need API to get queue statistics
-    // let stats = handle.get_queue_stats("queue://realm/area/jobs").await.unwrap();
-
-    // Assert
-    // assert_eq!(stats.in_flight_count, 3);
-    panic!("Test not yet implemented: Need API to query in-flight message count");
+    // Get queue stats and assert in-flight count
+    let stats = handle
+        .get_queue_stats("queue://realm/area/jobs".to_string())
+        .await
+        .expect("get_queue_stats failed");
+    assert_eq!(stats.in_flight_count, 3);
 }
 
 #[tokio::test]
@@ -1250,12 +1255,12 @@ async fn should_decrease_in_flight_count_on_complete() {
         .await
         .unwrap();
 
-    // TODO: Need API to get queue statistics
-    // let stats = handle.get_queue_stats("queue://realm/area/jobs").await.unwrap();
-
-    // Assert
-    // assert_eq!(stats.in_flight_count, 1, "After consuming one message, only one should remain in-flight");
-    panic!("Test not yet implemented: Need API to query in-flight message count");
+    // Get queue stats and assert in-flight count decreased
+    let stats = handle
+        .get_queue_stats("queue://realm/area/jobs".to_string())
+        .await
+        .expect("get_queue_stats failed");
+    assert_eq!(stats.in_flight_count, 1, "After consuming one message, only one should remain in-flight");
 }
 
 #[tokio::test]

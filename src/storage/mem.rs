@@ -20,6 +20,8 @@ pub struct Record {
     pub delivery_count: u32,
     /// creation time (epoch seconds) for TTL
     pub created_at: u64,
+    /// per-message TTL in seconds (0/None means no per-message TTL)
+    pub ttl_secs: Option<u64>,
 }
 
 // Stream support (in-memory)
@@ -114,6 +116,12 @@ pub struct MemStore {
     cfg_resource: Mutex<HashMap<(String, String, String), QueueConfig>>, // (realm, area, resource)
 }
 
+/// Simple queue statistics returned by store
+#[derive(Debug, Clone)]
+pub struct QueueStats {
+    pub in_flight_count: u32,
+}
+
 impl MemStore {
     pub fn new() -> Self {
         // generate random key using uuid v4
@@ -124,6 +132,7 @@ impl MemStore {
             token_key: key,
             streams: Mutex::new(HashMap::new()),
             area_seq_counter: Mutex::new(HashMap::new()),
+            kv_store: Mutex::new(HashMap::new()),
             cfg_realm: Mutex::new(HashMap::new()),
             cfg_area: Mutex::new(HashMap::new()),
             cfg_resource: Mutex::new(HashMap::new()),
@@ -133,7 +142,7 @@ impl MemStore {
     /// Append a record to a route (async to match call sites)
     /// Applies a simple backpressure guard for RPC routes ("rpc://" prefix):
     /// if total in-memory bytes for RPC records would exceed MAX_RPC_BYTES, returns Err("backpressure").
-    pub async fn append(&mut self, route: String, id: String, body: Vec<u8>) -> Result<(), String> {
+    pub async fn append(&mut self, route: String, id: String, body: Vec<u8>, ttl_secs: Option<u64>) -> Result<(), String> {
         const MAX_RPC_BYTES: usize = 32 * 1024 * 1024; // 32 MiB cap for all rpc:// routes combined
         let mut guard = self.inner.lock().await;
         if route.starts_with("rpc://") {
@@ -163,6 +172,7 @@ impl MemStore {
             lease_owner: None,
             delivery_count: 0,
             created_at: now,
+            ttl_secs,
         });
         Ok(())
     }
@@ -261,15 +271,20 @@ impl MemStore {
                 // position of next available item
                 // consider TTL
                 // remove expired by TTL and continue
-                if cfg.ttl_secs > 0 {
-                    let ttl = cfg.ttl_secs;
-                    let mut i = 0;
-                    while i < v.len() {
-                        if now.saturating_sub(v[i].created_at) >= ttl {
-                            v.remove(i);
-                        } else {
-                            i += 1;
-                        }
+                // Enforce per-record TTL first, then queue-level TTL
+                let mut i = 0;
+                while i < v.len() {
+                    let expired = if let Some(rec_ttl) = v[i].ttl_secs {
+                        now.saturating_sub(v[i].created_at) >= rec_ttl
+                    } else if cfg.ttl_secs > 0 {
+                        now.saturating_sub(v[i].created_at) >= cfg.ttl_secs
+                    } else {
+                        false
+                    };
+                    if expired {
+                        v.remove(i);
+                    } else {
+                        i += 1;
                     }
                 }
                 let pos_opt = v
@@ -401,6 +416,103 @@ impl MemStore {
                 Some(_) => Err("invalid delivery token".to_string()),
                 None => Err("no active lease".to_string()),
             }
+        } else {
+            Err("id not found".to_string())
+        }
+    }
+
+    /// Get message metadata (cloned Record) if present
+    pub async fn get_message_metadata(&self, route: &str, id: &str) -> Result<Option<Record>, String> {
+        let guard = self.inner.lock().await;
+        Ok(guard.get(route).and_then(|v| v.iter().find(|r| r.id == id).cloned()))
+    }
+
+    /// Get simple queue statistics (e.g., in-flight count)
+    pub async fn get_queue_stats(&self, route: &str) -> Result<QueueStats, String> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let guard = self.inner.lock().await;
+        let v = guard.get(route).cloned().unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut in_flight: u32 = 0;
+        for rec in v.into_iter() {
+            if let Some(expiry) = rec.lease_expiry {
+                if expiry > now {
+                    in_flight = in_flight.saturating_add(1);
+                }
+            }
+        }
+        Ok(QueueStats { in_flight_count: in_flight })
+    }
+
+    /// Explicitly move a message to the DLQ for the given route. The delivery_token must match
+    /// the current lease owner. When moving, choose TTL: preserve remaining message TTL if it's
+    /// less than DLQ retention, otherwise apply DLQ TTL.
+    pub async fn move_to_dlq(&mut self, route: &str, id: &str, delivery_token: &str) -> Result<(), String> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let mut guard = self.inner.lock().await;
+        let v = guard
+            .get_mut(route)
+            .ok_or_else(|| "route not found".to_string())?;
+        if let Some(pos) = v.iter().position(|r| r.id == id) {
+            // verify owner
+            if let Some(curr_token) = &v[pos].lease_owner {
+                if curr_token != delivery_token {
+                    return Err("invalid delivery token".to_string());
+                }
+            } else {
+                return Err("no active lease".to_string());
+            }
+
+            // remove record
+            let mut rec = v.remove(pos);
+            // prepare DLQ route and config
+            let dlq_route = format!("{}.dlq", route);
+            let dlq_cfg = self.resolve_queue_cfg_for_route(&dlq_route).await;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            // compute remaining per-message TTL if present
+            let remaining_opt = rec.ttl_secs.map(|orig| {
+                if now.saturating_sub(rec.created_at) >= orig {
+                    0u64
+                } else {
+                    orig.saturating_sub(now.saturating_sub(rec.created_at))
+                }
+            });
+
+            // decide effective TTL to apply in DLQ
+            let effective_ttl = if let Some(rem) = remaining_opt {
+                if rem == 0 {
+                    None
+                } else if dlq_cfg.ttl_secs > 0 && rem < dlq_cfg.ttl_secs {
+                    Some(rem)
+                } else if dlq_cfg.ttl_secs > 0 {
+                    Some(dlq_cfg.ttl_secs)
+                } else {
+                    None
+                }
+            } else {
+                if dlq_cfg.ttl_secs > 0 {
+                    Some(dlq_cfg.ttl_secs)
+                } else {
+                    None
+                }
+            };
+
+            // reset lease and set created_at to now for DLQ TTL semantics
+            rec.lease_owner = None;
+            rec.lease_expiry = None;
+            rec.created_at = now;
+            rec.ttl_secs = effective_ttl;
+
+            let dlq_vec = guard.entry(dlq_route).or_insert_with(Vec::new);
+            dlq_vec.push(rec);
+            Ok(())
         } else {
             Err("id not found".to_string())
         }
