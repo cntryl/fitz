@@ -70,10 +70,34 @@ async fn should_overwrite_existing_key() {
 
     // Assert
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_retrieve_new_value_after_overwrite() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value2".to_vec(),
+        )
+        .await;
+
+    // Act
     let value = handle
         .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
         .await
-        .expect("get failed");
+        .unwrap();
+
+    // Assert
     assert_eq!(value, Some(b"value2".to_vec()));
 }
 
@@ -144,10 +168,30 @@ async fn should_delete_existing_key() {
 
     // Assert
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_return_none_after_key_deleted() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_delete("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await;
+
+    // Act
     let value = handle
         .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
         .await
-        .expect("get failed");
+        .unwrap();
+
+    // Assert
     assert_eq!(value, None);
 }
 
@@ -342,6 +386,20 @@ async fn should_put_multiple_keys_in_batch() {
 
     // Assert
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_retrieve_all_keys_after_batch_put() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let items: Vec<(String, Vec<u8>)> = (0..10)
+        .map(|i| (format!("key{}", i), format!("value{}", i).into_bytes()))
+        .collect();
+    let _ = handle
+        .kv_put_batch("kv://realm/area/resource".to_string(), items.clone())
+        .await;
+
+    // Act & Assert
     for (key, expected_value) in items {
         let value = handle
             .kv_get("kv://realm/area/resource".to_string(), key)
@@ -368,6 +426,22 @@ async fn should_commit_batch_put_atomically() {
 
     // Assert
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_make_all_keys_available_after_batch_put() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let items = vec![
+        ("key1".to_string(), b"v1".to_vec()),
+        ("key2".to_string(), b"v2".to_vec()),
+        ("key3".to_string(), b"v3".to_vec()),
+    ];
+    let _ = handle
+        .kv_put_batch("kv://realm/area/resource".to_string(), items)
+        .await;
+
+    // Act
     let v1 = handle
         .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
         .await
@@ -380,6 +454,8 @@ async fn should_commit_batch_put_atomically() {
         .kv_get("kv://realm/area/resource".to_string(), "key3".to_string())
         .await
         .unwrap();
+
+    // Assert
     assert!(v1.is_some() && v2.is_some() && v3.is_some());
 }
 
