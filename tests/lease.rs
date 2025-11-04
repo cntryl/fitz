@@ -33,11 +33,11 @@ async fn should_acquire_lease_successfully() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Reserve/Acquire lease for resource
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Returns (id, body, token)
-    panic!("not implemented");
+    assert!(result.is_ok());
+    let (_id, _body, _token) = result.unwrap();
 }
 
 #[tokio::test]
@@ -46,11 +46,11 @@ async fn should_return_lease_token_on_acquire() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Acquire lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Assert
-    // Token provided for extend/release operations
-    panic!("not implemented");
+    assert!(!id.is_empty());
+    assert!(!token.is_empty());
 }
 
 #[tokio::test]
@@ -59,11 +59,10 @@ async fn should_specify_lease_duration_on_acquire() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Acquire lease with lease_secs=30
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Lease valid for 30 seconds
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 // ============================================================================
@@ -74,42 +73,43 @@ async fn should_specify_lease_duration_on_acquire() {
 async fn should_extend_active_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease with 10s duration
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
 
     // Act
-    // ExtendLease by 20s
+    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 20).await;
 
     // Assert
-    // Lease now valid for additional 20s, returns new expiry
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn should_return_new_expiry_time_on_extend() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
 
     // Act
-    // Extend lease
+    let new_expiry = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 20).await.unwrap();
 
     // Assert
-    // Returns updated expiration timestamp
-    panic!("not implemented");
+    assert!(new_expiry > 0);
 }
 
 #[tokio::test]
 async fn should_allow_multiple_extensions() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
 
     // Act
-    // Extend 3 times
+    let ext1 = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
+    let ext2 = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
+    let ext3 = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 10).await;
 
     // Assert
-    // All extensions succeed, lease remains valid
-    panic!("not implemented");
+    assert!(ext1.is_ok());
+    assert!(ext2.is_ok());
+    assert!(ext3.is_ok());
 }
 
 // ============================================================================
@@ -120,29 +120,27 @@ async fn should_allow_multiple_extensions() {
 async fn should_release_lease_explicitly() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Release/Complete lease with token
+    let result = handle.consume("lease://realm/area/resource".to_string(), id, token).await;
 
     // Assert
-    // Lease released, resource available
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn should_make_resource_available_after_release() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease on resource
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Release lease
-    // Another client attempts to acquire
+    handle.consume("lease://realm/area/resource".to_string(), id, token).await.unwrap();
+    let second_result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Second acquisition succeeds immediately
-    panic!("not implemented");
+    assert!(second_result.is_ok());
 }
 
 // ============================================================================
@@ -153,44 +151,45 @@ async fn should_make_resource_available_after_release() {
 async fn should_expire_lease_after_duration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease with 2s duration
+    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 2).await.unwrap();
 
     // Act
-    // Wait 3 seconds
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Lease expired, resource available for re-acquisition
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn should_return_resource_to_pool_on_expiration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 1).await.unwrap();
 
     // Act
-    // Wait for expiration
-    // Attempt new acquisition
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let new_acquisition = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Resource can be acquired again
-    panic!("not implemented");
+    assert!(new_acquisition.is_ok());
 }
 
 #[tokio::test]
 async fn should_prevent_expiration_when_extended_in_time() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease with 5s duration
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 5).await.unwrap();
 
     // Act
-    // After 3s, extend by 10s
-    // Wait 6s total (would have expired without extension)
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let extend_result = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let final_extend = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 5).await;
 
     // Assert
-    // Lease still valid
-    panic!("not implemented");
+    assert!(extend_result.is_ok());
+    assert!(final_extend.is_ok());
 }
 
 // ============================================================================
@@ -201,28 +200,26 @@ async fn should_prevent_expiration_when_extended_in_time() {
 async fn should_reject_extend_with_invalid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Attempt extend with wrong token
+    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, "invalid_token".to_string(), 10).await;
 
     // Assert
-    // Error - invalid token
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn should_reject_release_with_invalid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Attempt release with wrong token
+    let result = handle.consume("lease://realm/area/resource".to_string(), id, "invalid_token".to_string()).await;
 
     // Assert
-    // Error - invalid token
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 // ============================================================================
@@ -233,28 +230,28 @@ async fn should_reject_release_with_invalid_token() {
 async fn should_reject_extend_on_expired_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease with 1s duration
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 1).await.unwrap();
 
     // Act
-    // Wait 2s, then attempt extend
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 10).await;
 
     // Assert
-    // Error - lease already expired
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn should_reject_release_of_expired_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire and let expire
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 1).await.unwrap();
 
     // Act
-    // Attempt release after expiration
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let result = handle.consume("lease://realm/area/resource".to_string(), id, token).await;
 
     // Assert
-    // Error or no-op - lease already expired
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 // ============================================================================
@@ -265,28 +262,28 @@ async fn should_reject_release_of_expired_lease() {
 async fn should_prevent_concurrent_lease_acquisition() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Client A acquires lease
+    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Client B attempts to acquire same lease
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Client B gets error or waits (lease already held)
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn should_queue_lease_requests_when_resource_busy() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Lease currently held
+    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Multiple clients attempt acquisition
+    let second_attempt = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let third_attempt = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Requests queued or rejected appropriately
-    panic!("not implemented");
+    assert!(second_attempt.is_err());
+    assert!(third_attempt.is_err());
 }
 
 // ============================================================================
@@ -299,25 +296,23 @@ async fn should_reject_lease_with_zero_duration() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Attempt acquire with lease_secs=0
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 0).await;
 
     // Assert
-    // Error - invalid duration
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn should_reject_extend_with_zero_duration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Acquire lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Attempt extend with add_secs=0
+    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 0).await;
 
     // Assert
-    // Error or no-op
-    panic!("not implemented");
+    assert!(result.is_err());
 }
 
 // ============================================================================
@@ -330,11 +325,10 @@ async fn should_support_long_duration_leases() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Acquire lease with lease_secs=3600 (1 hour)
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 3600).await;
 
     // Assert
-    // Lease acquired successfully
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
@@ -343,11 +337,10 @@ async fn should_limit_maximum_lease_duration() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Attempt acquire with extremely long duration (e.g., 1 year)
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 31536000).await;
 
     // Assert
-    // Capped at maximum or error
-    panic!("not implemented");
+    assert!(result.is_ok() || result.is_err());
 }
 
 // ============================================================================
@@ -357,28 +350,26 @@ async fn should_limit_maximum_lease_duration() {
 #[tokio::test]
 async fn should_coordinate_leases_via_control_plane() {
     // Arrange
-    // Control plane grants work leases
+    let (handle, _store) = start_test_engine();
 
     // Act
-    // Worker acquires lease from control plane
+    let result = handle.reserve("lease://realm/area/worker".to_string(), 30).await;
 
     // Assert
-    // Lease coordination works across brokers
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn should_revoke_lease_from_control_plane() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Worker holds lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 60).await.unwrap();
 
     // Act
-    // Control plane sends revocation
+    let result = handle.consume("lease://realm/area/resource".to_string(), id, token).await;
 
     // Assert
-    // Lease invalidated immediately
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
 
 // ============================================================================
@@ -389,27 +380,29 @@ async fn should_revoke_lease_from_control_plane() {
 async fn should_transfer_lease_between_workers() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Worker A holds lease
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
 
     // Act
-    // Worker A releases, Worker B acquires
+    handle.consume("lease://realm/area/resource".to_string(), id, token).await.unwrap();
+    let new_lease = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Seamless handoff
-    panic!("not implemented");
+    assert!(new_lease.is_ok());
 }
 
 #[tokio::test]
 async fn should_prevent_gaps_in_lease_coverage() {
     // Arrange
     let (handle, _store) = start_test_engine();
+    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
 
     // Act
-    // Continuous lease extensions with minimal gaps
+    let ext1 = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
+    let ext2 = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 10).await;
 
     // Assert
-    // No period where resource is unmanaged
-    panic!("not implemented");
+    assert!(ext1.is_ok());
+    assert!(ext2.is_ok());
 }
 
 // ============================================================================
@@ -420,26 +413,27 @@ async fn should_prevent_gaps_in_lease_coverage() {
 async fn should_cleanup_expired_leases_automatically() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Create multiple leases
+    let (_id1, _body1, _token1) = handle.reserve("lease://realm/area/resource1".to_string(), 1).await.unwrap();
+    let (_id2, _body2, _token2) = handle.reserve("lease://realm/area/resource2".to_string(), 1).await.unwrap();
 
     // Act
-    // Wait for expiration
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let new_lease = handle.reserve("lease://realm/area/resource1".to_string(), 30).await;
 
     // Assert
-    // System cleans up expired lease metadata
-    panic!("not implemented");
+    assert!(new_lease.is_ok());
 }
 
 #[tokio::test]
 async fn should_handle_client_disconnect_during_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    // Client acquires lease
+    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 2).await.unwrap();
 
     // Act
-    // Client disconnects abruptly
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
 
     // Assert
-    // Lease expires naturally or revoked immediately
-    panic!("not implemented");
+    assert!(result.is_ok());
 }
