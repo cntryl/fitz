@@ -1089,12 +1089,10 @@ async fn should_retry_connection_when_control_plane_unavailable() {
 
     // Act
     // Simulate retry attempts with backoff information in payload
-    let attempts = vec![
-        (0, "immediate"),
+    let attempts = [(0, "immediate"),
         (1000, "1s delay"),
         (2000, "2s delay"),
-        (4000, "4s delay"),
-    ];
+        (4000, "4s delay")];
 
     for (i, (delay_ms, desc)) in attempts.iter().enumerate() {
         let payload = format!(

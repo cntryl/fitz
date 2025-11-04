@@ -25,12 +25,12 @@ pub struct Record {
 // Stream support (in-memory)
 #[derive(Debug, Clone)]
 pub struct StreamEvent {
-    pub resource_seq: u64,      // Client-controlled, 0-indexed monotonic
-    pub area_seq: Option<u64>,  // Server-assigned at finalization
+    pub resource_seq: u64,     // Client-controlled, 0-indexed monotonic
+    pub area_seq: Option<u64>, // Server-assigned at finalization
     pub body: Vec<u8>,
     pub metadata: Option<Vec<u8>>,
     pub created_at: u64,
-    pub is_end: bool,           // Stream finalization marker
+    pub is_end: bool, // Stream finalization marker
 }
 
 #[derive(Debug, Clone)]
@@ -413,7 +413,7 @@ impl MemStore {
     pub async fn stream_append_with_expected(
         &self,
         route: &str,
-        id: Option<String>,
+        _id: Option<String>,
         body: Vec<u8>,
         metadata: Option<Vec<u8>>,
         expected: ExpectedRevision,

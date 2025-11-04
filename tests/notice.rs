@@ -334,6 +334,5 @@ async fn should_handle_subscriber_channel_full_backpressure() {
             .await;
     }
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }

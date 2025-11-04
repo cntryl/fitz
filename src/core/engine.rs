@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use crate::core::router::Router;
 use crate::storage::mem::{
     AppendResult, AreaReadResponse, ExpectedRevision as StreamExpectedRevision, MemStore,
-    QueueConfig, QueueScope, StreamError, StreamEvent,
+    QueueConfig, QueueScope, StreamEvent,
 };
 use tokio::task::JoinHandle;
 
@@ -31,6 +31,10 @@ type RespStreamConsume = oneshot::Sender<Result<Vec<(String, u64, Vec<u8>)>, Str
 type RespStreamAppend = oneshot::Sender<Result<AppendResult, String>>;
 type RespStreamRead = oneshot::Sender<Result<Vec<StreamEvent>, String>>;
 type RespStreamReadArea = oneshot::Sender<Result<AreaReadResponse, String>>;
+// Aliases to reduce complex inline types (silences clippy::type_complexity)
+type RespOptBody = oneshot::Sender<Result<Option<Vec<u8>>, String>>;
+type RespKvScanGe = oneshot::Sender<Result<Vec<(String, Vec<u8>)>, String>>;
+type RespKvGetBatch = oneshot::Sender<Result<Vec<(String, Option<Vec<u8>>)>, String>>;
 
 #[derive(Debug)]
 pub enum EngineCommand {
@@ -150,7 +154,7 @@ pub enum EngineCommand {
     KvGet {
         route: String,
         key: String,
-        resp: oneshot::Sender<Result<Option<Vec<u8>>, String>>,
+        resp: RespOptBody,
     },
     KvDelete {
         route: String,
@@ -161,7 +165,7 @@ pub enum EngineCommand {
         route: String,
         start_key: String,
         limit: usize,
-        resp: oneshot::Sender<Result<Vec<(String, Vec<u8>)>, String>>,
+        resp: RespKvScanGe,
     },
     KvPutBatch {
         route: String,
@@ -171,7 +175,7 @@ pub enum EngineCommand {
     KvGetBatch {
         route: String,
         keys: Vec<String>,
-        resp: oneshot::Sender<Result<Vec<(String, Option<Vec<u8>>)>, String>>,
+        resp: RespKvGetBatch,
     },
     KvDeleteRange {
         route: String,
@@ -772,11 +776,11 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 }
 
                 EngineCommand::StreamAppendNew {
-                    route,
+                    route: _route,
                     resource_seq,
-                    body,
-                    metadata,
-                    is_end,
+                    body: _body,
+                    metadata: _metadata,
+                    is_end: _is_end,
                     resp,
                 } => {
                     // TODO: Implement dual-index append with gap detection
@@ -788,9 +792,9 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 }
 
                 EngineCommand::StreamRead {
-                    route,
-                    from_seq,
-                    limit,
+                    route: _route,
+                    from_seq: _from_seq,
+                    limit: _limit,
                     resp,
                 } => {
                     // TODO: Read from resource index
@@ -798,10 +802,10 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 }
 
                 EngineCommand::StreamReadArea {
-                    realm,
-                    area,
-                    from_seq,
-                    limit,
+                    realm: _realm,
+                    area: _area,
+                    from_seq: _from_seq,
+                    limit: _limit,
                     resp,
                 } => {
                     // TODO: Read from area index with watermark
@@ -820,7 +824,10 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 } => {
                     let s = store.lock().await;
                     let events = s.stream_peek(&route, from_seq, limit).await;
-                    let out = events.into_iter().map(|e| (e.resource_seq, e.body)).collect();
+                    let out = events
+                        .into_iter()
+                        .map(|e| (e.resource_seq, e.body))
+                        .collect();
                     let _ = resp.send(Ok(out));
                 }
 
@@ -930,7 +937,7 @@ mod tests {
             .expect("subscribe failed");
 
         // Act
-        let _ = handle
+        handle
             .publish(
                 "route/x".to_string(),
                 "mid-1".to_string(),
@@ -957,7 +964,7 @@ mod tests {
         assert!(!end);
 
         // cleanup: unsubscribe should succeed (cleanup belongs with Assert/teardown)
-        let _ = handle
+        handle
             .unsubscribe(sub_id)
             .await
             .expect("unsubscribe failed");

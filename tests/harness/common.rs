@@ -3,6 +3,8 @@
 //! Keep test utilities here so they can be imported by integration test files
 //! using `mod harness; use harness::common::...`.
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 

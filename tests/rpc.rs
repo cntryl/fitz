@@ -1788,7 +1788,7 @@ async fn should_support_idempotent_request_ids() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let (tx_handler, mut rx_handler) = mpsc::channel(10);
-    let (tx_reply, mut rx_reply) = mpsc::channel(10);
+    let (tx_reply, _rx_reply) = mpsc::channel(10);
 
     handle
         .subscribe("rpc://realm/service/idempotent".to_string(), tx_handler, 1)
@@ -1846,7 +1846,7 @@ async fn should_deduplicate_requests_by_id() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let (tx_handler, mut rx_handler) = mpsc::channel(10);
-    let (tx_reply, mut rx_reply) = mpsc::channel(10);
+    let (tx_reply, _rx_reply) = mpsc::channel(10);
 
     handle
         .subscribe("rpc://realm/service/dedup".to_string(), tx_handler, 1)

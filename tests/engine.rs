@@ -63,7 +63,7 @@ async fn should_reserve_items_for_multiple_concurrent_consumers() {
 
     // Enqueue 10 items
     for i in 0..10 {
-        let _ = handle
+        handle
             .publish(
                 "queue://realm/work".to_string(),
                 format!("item-{}", i),
@@ -97,7 +97,7 @@ async fn should_assign_unique_ids_to_prevent_duplicate_processing() {
     let (handle, _store) = start_test_engine();
 
     for i in 0..10 {
-        let _ = handle
+        handle
             .publish(
                 "queue://realm/work".to_string(),
                 format!("item-{}", i),
@@ -139,7 +139,7 @@ async fn should_deliver_rpc_request_with_reply_address() {
 
     // Act
     let reply_route = "rpc://realm/reply/123".to_string();
-    let _ = handle
+    handle
         .publish(
             "rpc://realm/kv/update".to_string(),
             "rpc-1".to_string(),
@@ -174,7 +174,7 @@ async fn should_include_request_body_in_rpc_delivery() {
 
     // Act
     let request_body = b"{\"key\":\"config\",\"value\":\"v1\"}".to_vec();
-    let _ = handle
+    handle
         .publish(
             "rpc://realm/service".to_string(),
             "rpc-1".to_string(),

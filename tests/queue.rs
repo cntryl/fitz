@@ -94,8 +94,7 @@ async fn should_assign_unique_message_ids() {
         .await
         .unwrap();
 
-    // Assert
-    assert!(true);
+    // Assert - no-op removed
 }
 
 #[tokio::test]
@@ -356,7 +355,7 @@ async fn should_nack_message_and_return_to_queue() {
         )
         .await
         .unwrap();
-    let (id, _body, token) = handle
+    let (id, _body, _token) = handle
         .reserve("queue://realm/area/jobs".to_string(), 30)
         .await
         .unwrap();
@@ -399,8 +398,7 @@ async fn should_not_increment_delivery_count_on_nack() {
     // Act
     // Note: NACK functionality not yet implemented
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }
 
 #[tokio::test]
@@ -427,8 +425,7 @@ async fn should_make_nacked_message_available_immediately() {
     // Act
     // Note: NACK functionality not yet implemented
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }
 
 // ============================================================================
@@ -943,8 +940,7 @@ async fn should_move_message_to_dlq_after_max_deliveries() {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }
 
 #[tokio::test]
@@ -1043,8 +1039,7 @@ async fn should_track_in_flight_message_count() {
         .await
         .unwrap();
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }
 
 #[tokio::test]
@@ -1090,8 +1085,7 @@ async fn should_decrease_in_flight_count_on_complete() {
         .await
         .unwrap();
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }
 
 #[tokio::test]
@@ -1118,8 +1112,7 @@ async fn should_return_to_available_when_lease_expires() {
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    // Assert
-    assert!(true);
+    // Assert - placeholder removed
 }
 
 // ============================================================================
@@ -1220,10 +1213,66 @@ async fn should_return_unique_token_on_each_delivery() {
         .unwrap();
 
     // Assert
-    // Each delivery must get a unique, non-forgeable token (HMAC-based receipt handle)
     assert_ne!(token1, token2);
-    assert!(!token1.is_empty());
-    assert!(!token2.is_empty());
+}
+
+#[tokio::test]
+async fn should_return_non_empty_token_on_first_delivery() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Act
+    let (_id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+
+    // Assert
+    assert!(!token.is_empty());
+}
+
+#[tokio::test]
+async fn should_return_non_empty_token_on_redelivery() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await
+        .unwrap();
+
+    // Act
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let (_id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+
+    // Assert
+    assert!(!token.is_empty());
 }
 
 #[tokio::test]
@@ -1310,7 +1359,7 @@ async fn should_move_to_dlq_when_max_deliveries_exceeded() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_distribute_messages_to_concurrent_consumers() {
+async fn should_allow_first_concurrent_consumer_to_reserve() {
     // Arrange
     let (handle, _store) = start_test_engine();
     for i in 0..10 {
@@ -1333,7 +1382,7 @@ async fn should_distribute_messages_to_concurrent_consumers() {
     let h2 = handle.clone();
     let h3 = handle.clone();
 
-    let (r1, r2, r3) = tokio::join!(
+    let (r1, _r2, _r3) = tokio::join!(
         h1.reserve("queue://realm/area/jobs".to_string(), 30),
         h2.reserve("queue://realm/area/jobs".to_string(), 30),
         h3.reserve("queue://realm/area/jobs".to_string(), 30),
@@ -1341,7 +1390,73 @@ async fn should_distribute_messages_to_concurrent_consumers() {
 
     // Assert
     assert!(r1.is_ok());
+}
+
+#[tokio::test]
+async fn should_allow_second_concurrent_consumer_to_reserve() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    for i in 0..10 {
+        handle
+            .publish(
+                "queue://realm/area/jobs".to_string(),
+                format!("msg{}", i),
+                b"task".to_vec(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    // Act
+    let h1 = handle.clone();
+    let h2 = handle.clone();
+    let h3 = handle.clone();
+
+    let (_r1, r2, _r3) = tokio::join!(
+        h1.reserve("queue://realm/area/jobs".to_string(), 30),
+        h2.reserve("queue://realm/area/jobs".to_string(), 30),
+        h3.reserve("queue://realm/area/jobs".to_string(), 30),
+    );
+
+    // Assert
     assert!(r2.is_ok());
+}
+
+#[tokio::test]
+async fn should_allow_third_concurrent_consumer_to_reserve() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    for i in 0..10 {
+        handle
+            .publish(
+                "queue://realm/area/jobs".to_string(),
+                format!("msg{}", i),
+                b"task".to_vec(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    // Act
+    let h1 = handle.clone();
+    let h2 = handle.clone();
+    let h3 = handle.clone();
+
+    let (_r1, _r2, r3) = tokio::join!(
+        h1.reserve("queue://realm/area/jobs".to_string(), 30),
+        h2.reserve("queue://realm/area/jobs".to_string(), 30),
+        h3.reserve("queue://realm/area/jobs".to_string(), 30),
+    );
+
+    // Assert
     assert!(r3.is_ok());
 }
 
