@@ -18,6 +18,8 @@ pub struct SubEntry {
 pub struct Router {
     next_id: u64,
     subs: HashMap<u64, SubEntry>,
+    /// Round-robin index per route pattern for RPC load balancing
+    rpc_round_robin: HashMap<String, usize>,
 }
 
 impl Router {
@@ -25,6 +27,7 @@ impl Router {
         Self {
             next_id: 1,
             subs: HashMap::new(),
+            rpc_round_robin: HashMap::new(),
         }
     }
 
@@ -56,8 +59,31 @@ impl Router {
     }
 
     /// Dispatch a notification to all matching subscribers. Uses try_send to avoid blocking.
+    /// For RPC routes (rpc://*), uses round-robin to deliver to only one subscriber.
+    /// For other routes, broadcasts to all matching subscribers.
     /// Returns (delivered_count, removed_dead_subs)
     pub fn dispatch(
+        &mut self,
+        route: &str,
+        msg_id: Option<&str>,
+        body: &[u8],
+        reply_to: Option<&str>,
+        seq: Option<u32>,
+        end: bool,
+    ) -> (usize, Vec<u64>) {
+        let is_rpc = route.starts_with("rpc://");
+
+        if is_rpc {
+            // RPC: Round-robin delivery to single subscriber
+            self.dispatch_rpc_round_robin(route, msg_id, body, reply_to, seq, end)
+        } else {
+            // Notice/Queue/Stream: Broadcast to all subscribers
+            self.dispatch_broadcast(route, msg_id, body, reply_to, seq, end)
+        }
+    }
+
+    /// Broadcast to all matching subscribers (notice, queue, stream, etc.)
+    fn dispatch_broadcast(
         &mut self,
         route: &str,
         msg_id: Option<&str>,
@@ -93,6 +119,69 @@ impl Router {
                 self.subs.remove(id);
             }
         }
+        (delivered, to_remove)
+    }
+
+    /// Round-robin delivery to single subscriber for RPC routes
+    fn dispatch_rpc_round_robin(
+        &mut self,
+        route: &str,
+        msg_id: Option<&str>,
+        body: &[u8],
+        reply_to: Option<&str>,
+        seq: Option<u32>,
+        end: bool,
+    ) -> (usize, Vec<u64>) {
+        // Collect matching subscribers
+        let mut matching_subs: Vec<(&u64, &SubEntry)> = self
+            .subs
+            .iter()
+            .filter(|(_, sub)| route_matches(&sub.route, route))
+            .collect();
+
+        if matching_subs.is_empty() {
+            return (0, vec![]);
+        }
+
+        // Sort for deterministic round-robin
+        matching_subs.sort_by_key(|(id, _)| *id);
+
+        // Get current round-robin index for this route pattern
+        let current_idx = self.rpc_round_robin.entry(route.to_string()).or_insert(0);
+        let selected_idx = *current_idx % matching_subs.len();
+
+        // Update round-robin index for next call
+        *current_idx = (*current_idx + 1) % matching_subs.len();
+
+        // Deliver to selected subscriber
+        let (sub_id, sub) = matching_subs[selected_idx];
+        let mut to_remove = Vec::new();
+        let delivered = if let Err(e) = sub.sender.try_send((
+            route.to_string(),
+            msg_id.map(|s| s.to_string()),
+            body.to_vec(),
+            reply_to.map(|s| s.to_string()),
+            seq,
+            end,
+        )) {
+            match e {
+                TrySendError::Closed(_) => {
+                    to_remove.push(*sub_id);
+                    0
+                }
+                TrySendError::Full(_) => 0, // Drop on backpressure
+            }
+        } else {
+            1
+        };
+
+        // Prune closed subscription
+        if !to_remove.is_empty() {
+            for id in &to_remove {
+                self.subs.remove(id);
+            }
+        }
+
         (delivered, to_remove)
     }
 
@@ -220,17 +309,10 @@ mod tests {
         // small capacity so we can force Full
         let (tx, mut rx) = mpsc::channel(1);
         // pre-fill the channel so next try_send will return Full
-        tx.try_send((
-            "prefill".to_string(),
-            None,
-            vec![0u8],
-            None,
-            None,
-            false,
-        ))
-        .expect("prefill send");
+        tx.try_send(("prefill".to_string(), None, vec![0u8], None, None, false))
+            .expect("prefill send");
 
-    let _id = r.subscribe("x".to_string(), 1, tx);
+        let _id = r.subscribe("x".to_string(), 1, tx);
         let (delivered, removed) = r.dispatch("x", None, b"v", None, None, false);
         // Full should not count as delivered and should not remove
         assert_eq!(delivered, 0);

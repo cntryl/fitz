@@ -39,7 +39,9 @@ pub fn start_test_engine_with_join() -> (EngineHandle, Arc<Mutex<MemStore>>, Joi
 /// Create a subscriber channel with the given capacity and return the sender
 /// that can be passed to `EngineHandle::subscribe` and the receiver the test
 /// can await on.
-pub fn create_sub_channel(cap: usize) -> (fitz::core::engine::SubSender, mpsc::Receiver<SubscriberMsg>) {
+pub fn create_sub_channel(
+    cap: usize,
+) -> (fitz::core::engine::SubSender, mpsc::Receiver<SubscriberMsg>) {
     let (tx, rx) = mpsc::channel::<SubscriberMsg>(cap);
     (tx, rx)
 }

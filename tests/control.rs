@@ -1,4 +1,4 @@
-﻿mod harness;
+mod harness;
 use harness::common::{create_sub_channel, start_test_engine};
 use tokio::time::{sleep, timeout, Duration};
 
@@ -15,7 +15,7 @@ use tokio::time::{sleep, timeout, Duration};
 // SIMPLIFIED CONTROL PLANE - 4 CORE ROUTES
 // ============================================================================
 // 1. control://heartbeat - Node keep-alive (frequent, lightweight)
-// 2. control://shutdown - Graceful shutdown notification  
+// 2. control://shutdown - Graceful shutdown notification
 // 3. control://metrics - Extensible metrics reporting
 // 4. control://config - JWT/feature/limit configuration
 //
@@ -92,7 +92,10 @@ async fn should_include_node_id_in_heartbeat() {
         .expect("timeout")
         .expect("channel closed");
     let payload_str = String::from_utf8_lossy(&msg.2);
-    assert!(payload_str.contains("test-node-123"), "Heartbeat should include nodeId");
+    assert!(
+        payload_str.contains("test-node-123"),
+        "Heartbeat should include nodeId"
+    );
 }
 
 #[tokio::test]
@@ -120,9 +123,9 @@ async fn should_send_heartbeats_at_configured_interval() {
         )
         .await
         .expect("publish 1 failed");
-    
+
     sleep(Duration::from_millis(100)).await;
-    
+
     handle
         .publish(
             "control://heartbeat".to_string(),
@@ -145,10 +148,12 @@ async fn should_send_heartbeats_at_configured_interval() {
         .await
         .expect("timeout on second heartbeat")
         .expect("channel closed");
-    
+
     let elapsed = start.elapsed();
-    assert!(elapsed >= Duration::from_millis(90) && elapsed <= Duration::from_millis(200),
-            "Heartbeats should arrive at configured interval");
+    assert!(
+        elapsed >= Duration::from_millis(90) && elapsed <= Duration::from_millis(200),
+        "Heartbeats should arrive at configured interval"
+    );
 }
 
 #[tokio::test]
@@ -252,7 +257,10 @@ async fn should_include_shutdown_reason_when_available() {
         .expect("timeout")
         .expect("channel closed");
     let payload_str = String::from_utf8_lossy(&msg.2);
-    assert!(payload_str.contains("maintenance"), "Shutdown should include reason");
+    assert!(
+        payload_str.contains("maintenance"),
+        "Shutdown should include reason"
+    );
 }
 
 #[tokio::test]
@@ -286,13 +294,15 @@ async fn should_send_shutdown_before_closing_connections() {
         .expect("timeout")
         .expect("channel closed");
     let received_time = tokio::time::Instant::now();
-    
+
     // Shutdown message received before we simulate connection close
-    assert!(received_time - shutdown_time < Duration::from_millis(100),
-            "Shutdown notification should arrive before connection close");
+    assert!(
+        received_time - shutdown_time < Duration::from_millis(100),
+        "Shutdown notification should arrive before connection close"
+    );
 }
 
-// Metrics Tests  
+// Metrics Tests
 #[tokio::test]
 async fn should_send_periodic_metrics_to_control_plane() {
     // Arrange
@@ -439,7 +449,8 @@ async fn should_support_extensible_metrics_schema() {
         .expect("subscribe failed");
 
     // Act
-    let payload = b"{\"nodeId\":\"test-node\",\"active_connections\":5,\"custom_gauge\":42}".to_vec();
+    let payload =
+        b"{\"nodeId\":\"test-node\",\"active_connections\":5,\"custom_gauge\":42}".to_vec();
     handle
         .publish(
             "control://metrics".to_string(),
@@ -460,7 +471,10 @@ async fn should_support_extensible_metrics_schema() {
         .expect("channel closed");
     let payload_str = String::from_utf8_lossy(&msg.2);
     assert!(payload_str.contains("active_connections"));
-    assert!(payload_str.contains("custom_gauge"), "Should support custom metrics");
+    assert!(
+        payload_str.contains("custom_gauge"),
+        "Should support custom metrics"
+    );
 }
 
 #[tokio::test]
@@ -487,9 +501,9 @@ async fn should_send_metrics_at_configured_interval() {
         )
         .await
         .expect("publish 1 failed");
-    
+
     sleep(Duration::from_millis(100)).await;
-    
+
     handle
         .publish(
             "control://metrics".to_string(),
@@ -512,10 +526,12 @@ async fn should_send_metrics_at_configured_interval() {
         .await
         .expect("timeout on second metric")
         .expect("channel closed");
-    
+
     let elapsed = start.elapsed();
-    assert!(elapsed >= Duration::from_millis(90),
-            "Metrics should arrive at configured interval");
+    assert!(
+        elapsed >= Duration::from_millis(90),
+        "Metrics should arrive at configured interval"
+    );
 }
 
 #[tokio::test]
@@ -549,7 +565,7 @@ async fn should_allow_different_intervals_for_heartbeat_and_metrics() {
             .await
             .expect("publish heartbeat failed");
     }
-    
+
     // Simulate 2 metrics (slower)
     for i in 1..=2 {
         handle
@@ -577,7 +593,7 @@ async fn should_allow_different_intervals_for_heartbeat_and_metrics() {
             hb_count += 1;
         }
     }
-    
+
     let mut m_count = 0;
     for _ in 1..=2 {
         let msg = timeout(Duration::from_secs(1), m_rx.recv())
@@ -588,7 +604,7 @@ async fn should_allow_different_intervals_for_heartbeat_and_metrics() {
             m_count += 1;
         }
     }
-    
+
     assert_eq!(hb_count, 5, "Should receive more heartbeats");
     assert_eq!(m_count, 2, "Should receive fewer metrics");
 }
@@ -605,7 +621,8 @@ async fn should_receive_config_from_control_plane() {
         .expect("subscribe failed");
 
     // Act
-    let config = b"{\"nodeId\":\"test-node\",\"jwks_url\":\"https://auth.example.com/jwks\"}".to_vec();
+    let config =
+        b"{\"nodeId\":\"test-node\",\"jwks_url\":\"https://auth.example.com/jwks\"}".to_vec();
     handle
         .publish(
             "control://config".to_string(),
@@ -688,7 +705,7 @@ async fn should_update_jwt_validator_when_config_changes() {
         )
         .await
         .expect("publish old config failed");
-    
+
     let new_config = b"{\"jwks_url\":\"https://auth.new.com/jwks\"}".to_vec();
     handle
         .publish(
@@ -709,7 +726,7 @@ async fn should_update_jwt_validator_when_config_changes() {
         .expect("timeout on old config")
         .expect("channel closed");
     assert!(String::from_utf8_lossy(&msg1.2).contains("auth.old.com"));
-    
+
     let msg2 = timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("timeout on new config")
@@ -764,7 +781,8 @@ async fn should_include_limits_in_config() {
         .expect("subscribe failed");
 
     // Act
-    let config = b"{\"max_message_size\":1048576,\"max_connections\":1000,\"ack_window_size\":100}".to_vec();
+    let config =
+        b"{\"max_message_size\":1048576,\"max_connections\":1000,\"ack_window_size\":100}".to_vec();
     handle
         .publish(
             "control://config".to_string(),
@@ -855,7 +873,10 @@ async fn should_support_extensible_config_schema() {
         .expect("timeout")
         .expect("channel closed");
     let config_str = String::from_utf8_lossy(&msg.2);
-    assert!(config_str.contains("future_feature_flag"), "Should accept unknown fields");
+    assert!(
+        config_str.contains("future_feature_flag"),
+        "Should accept unknown fields"
+    );
 }
 
 #[tokio::test]
@@ -882,7 +903,7 @@ async fn should_apply_config_updates_incrementally() {
         )
         .await
         .expect("publish full config failed");
-    
+
     let partial_update = b"{\"ack_window_size\":50}".to_vec();
     handle
         .publish(
@@ -902,12 +923,12 @@ async fn should_apply_config_updates_incrementally() {
         .await
         .expect("timeout on full config")
         .expect("channel closed");
-    
+
     let msg2 = timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("timeout on partial update")
         .expect("channel closed");
-    
+
     // Partial update received - in real implementation, only specified fields would change
     assert!(String::from_utf8_lossy(&msg2.2).contains("50"));
 }
@@ -966,7 +987,7 @@ async fn should_reject_malformed_control_route() {
 async fn should_handle_self_mode_as_standalone_node() {
     // Arrange & Act
     let (handle, _store) = start_test_engine();
-    
+
     // Assert
     // In self mode, node operates independently
     // Can publish to control routes locally
@@ -1001,7 +1022,8 @@ async fn should_connect_to_external_control_plane_in_url_mode() {
         .publish(
             "control://heartbeat".to_string(),
             "hb-1".to_string(),
-            b"{\"nodeId\":\"external-node\",\"control_url\":\"wss://control.example.com\"}".to_vec(),
+            b"{\"nodeId\":\"external-node\",\"control_url\":\"wss://control.example.com\"}"
+                .to_vec(),
             None,
             None,
             false,
@@ -1030,7 +1052,9 @@ async fn should_authenticate_with_client_credentials() {
 
     // Act
     // Simulate sending heartbeat with client credentials
-    let payload = b"{\"nodeId\":\"test-node\",\"client_id\":\"node-1\",\"client_secret\":\"secret123\"}".to_vec();
+    let payload =
+        b"{\"nodeId\":\"test-node\",\"client_id\":\"node-1\",\"client_secret\":\"secret123\"}"
+            .to_vec();
     handle
         .publish(
             "control://heartbeat".to_string(),
@@ -1071,10 +1095,14 @@ async fn should_retry_connection_when_control_plane_unavailable() {
         (2000, "2s delay"),
         (4000, "4s delay"),
     ];
-    
+
     for (i, (delay_ms, desc)) in attempts.iter().enumerate() {
-        let payload = format!("{{\"nodeId\":\"test\",\"attempt\":{},\"delay_ms\":{},\"desc\":\"{}\"}}", 
-                             i + 1, delay_ms, desc);
+        let payload = format!(
+            "{{\"nodeId\":\"test\",\"attempt\":{},\"delay_ms\":{},\"desc\":\"{}\"}}",
+            i + 1,
+            delay_ms,
+            desc
+        );
         handle
             .publish(
                 "control://heartbeat".to_string(),
@@ -1120,7 +1148,10 @@ async fn should_continue_operating_when_disconnected_from_control_plane() {
         .await;
 
     // Assert
-    assert!(result.is_ok(), "Node should operate independently of control plane");
+    assert!(
+        result.is_ok(),
+        "Node should operate independently of control plane"
+    );
 }
 
 #[tokio::test]
@@ -1147,7 +1178,7 @@ async fn should_reconnect_after_disconnect() {
         )
         .await
         .expect("publish before disconnect failed");
-    
+
     // Simulate reconnection
     handle
         .publish(
@@ -1168,7 +1199,7 @@ async fn should_reconnect_after_disconnect() {
         .expect("timeout on first heartbeat")
         .expect("channel closed");
     assert!(String::from_utf8_lossy(&msg1.2).contains("connected"));
-    
+
     let msg2 = timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("timeout on reconnect heartbeat")
@@ -1218,7 +1249,10 @@ async fn should_use_client_credentials_not_jwt() {
         .await;
 
     // Assert
-    assert!(result.is_ok(), "Control routes use client credentials, not JWT");
+    assert!(
+        result.is_ok(),
+        "Control routes use client credentials, not JWT"
+    );
 }
 
 #[tokio::test]
@@ -1232,7 +1266,8 @@ async fn should_reject_invalid_client_credentials() {
         .publish(
             "control://heartbeat".to_string(),
             "hb-1".to_string(),
-            b"{\"nodeId\":\"test\",\"client_id\":\"node-1\",\"client_secret\":\"invalid\"}".to_vec(),
+            b"{\"nodeId\":\"test\",\"client_id\":\"node-1\",\"client_secret\":\"invalid\"}"
+                .to_vec(),
             None,
             None,
             false,
@@ -1243,7 +1278,10 @@ async fn should_reject_invalid_client_credentials() {
     // Assert
     // Currently accepts all publishes - when auth is implemented, this should fail
     // For now, we verify the message can be sent (auth validation TBD)
-    assert!(result.is_ok(), "Currently no credential validation - will be implemented");
+    assert!(
+        result.is_ok(),
+        "Currently no credential validation - will be implemented"
+    );
 }
 
 #[tokio::test]
@@ -1265,7 +1303,10 @@ async fn should_isolate_control_from_tenant_permissions() {
         .await;
 
     // Assert
-    assert!(result.is_ok(), "Control routes operate on separate auth domain");
+    assert!(
+        result.is_ok(),
+        "Control routes operate on separate auth domain"
+    );
     // No realm checks, tenant permissions, or resource-level ACLs applied
 }
 
@@ -1385,7 +1426,10 @@ async fn should_use_default_config_when_unreachable() {
         .await;
 
     // Assert
-    assert!(result.is_ok(), "Node should use default config when control plane unavailable");
+    assert!(
+        result.is_ok(),
+        "Node should use default config when control plane unavailable"
+    );
 }
 
 #[tokio::test]

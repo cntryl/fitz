@@ -36,7 +36,11 @@ async fn should_put_key_value_pair() {
 
     // Act
     let result = handle
-        .kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value1".to_vec())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value1".to_vec(),
+        )
         .await;
 
     // Assert
@@ -48,12 +52,20 @@ async fn should_overwrite_existing_key() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let _ = handle
-        .kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value1".to_vec())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value1".to_vec(),
+        )
         .await;
 
     // Act
     let result = handle
-        .kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value2".to_vec())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value2".to_vec(),
+        )
         .await;
 
     // Assert
@@ -74,7 +86,11 @@ async fn should_get_value_for_existing_key() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let _ = handle
-        .kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value1".to_vec())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value1".to_vec(),
+        )
         .await;
 
     // Act
@@ -94,7 +110,10 @@ async fn should_return_none_for_nonexistent_key() {
 
     // Act
     let result = handle
-        .kv_get("kv://realm/area/resource".to_string(), "nonexistent".to_string())
+        .kv_get(
+            "kv://realm/area/resource".to_string(),
+            "nonexistent".to_string(),
+        )
         .await;
 
     // Assert
@@ -111,7 +130,11 @@ async fn should_delete_existing_key() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let _ = handle
-        .kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value1".to_vec())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value1".to_vec(),
+        )
         .await;
 
     // Act
@@ -135,7 +158,10 @@ async fn should_handle_delete_of_nonexistent_key() {
 
     // Act
     let result = handle
-        .kv_delete("kv://realm/area/resource".to_string(), "nonexistent".to_string())
+        .kv_delete(
+            "kv://realm/area/resource".to_string(),
+            "nonexistent".to_string(),
+        )
         .await;
 
     // Assert
@@ -150,14 +176,42 @@ async fn should_handle_delete_of_nonexistent_key() {
 async fn should_scan_keys_from_start_key() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"v1".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key2".to_string(), b"v2".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key3".to_string(), b"v3".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key4".to_string(), b"v4".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"v1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key2".to_string(),
+            b"v2".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key3".to_string(),
+            b"v3".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key4".to_string(),
+            b"v4".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
-        .kv_scan_ge("kv://realm/area/resource".to_string(), "key2".to_string(), 2)
+        .kv_scan_ge(
+            "kv://realm/area/resource".to_string(),
+            "key2".to_string(),
+            2,
+        )
         .await;
 
     // Assert
@@ -197,9 +251,27 @@ async fn should_respect_scan_limit() {
 async fn should_scan_in_lexicographic_order() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "zebra".to_string(), b"z".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "apple".to_string(), b"a".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "banana".to_string(), b"b".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "zebra".to_string(),
+            b"z".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "apple".to_string(),
+            b"a".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "banana".to_string(),
+            b"b".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
@@ -219,9 +291,27 @@ async fn should_scan_in_lexicographic_order() {
 async fn should_return_empty_when_start_key_beyond_all_keys() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "a".to_string(), b"1".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "b".to_string(), b"2".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "c".to_string(), b"3".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "a".to_string(),
+            b"1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "b".to_string(),
+            b"2".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "c".to_string(),
+            b"3".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
@@ -279,9 +369,18 @@ async fn should_commit_batch_put_atomically() {
 
     // Assert
     assert!(result.is_ok());
-    let v1 = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string()).await.unwrap();
-    let v2 = handle.kv_get("kv://realm/area/resource".to_string(), "key2".to_string()).await.unwrap();
-    let v3 = handle.kv_get("kv://realm/area/resource".to_string(), "key3".to_string()).await.unwrap();
+    let v1 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await
+        .unwrap();
+    let v2 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key2".to_string())
+        .await
+        .unwrap();
+    let v3 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key3".to_string())
+        .await
+        .unwrap();
     assert!(v1.is_some() && v2.is_some() && v3.is_some());
 }
 
@@ -293,9 +392,27 @@ async fn should_commit_batch_put_atomically() {
 async fn should_get_multiple_keys_in_batch() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"v1".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key2".to_string(), b"v2".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key3".to_string(), b"v3".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"v1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key2".to_string(),
+            b"v2".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key3".to_string(),
+            b"v3".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
@@ -318,7 +435,13 @@ async fn should_get_multiple_keys_in_batch() {
 async fn should_return_none_for_missing_keys_in_batch() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"v1".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"v1".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
@@ -344,24 +467,73 @@ async fn should_return_none_for_missing_keys_in_batch() {
 async fn should_delete_range_of_keys() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"v1".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key2".to_string(), b"v2".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key3".to_string(), b"v3".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key4".to_string(), b"v4".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key5".to_string(), b"v5".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"v1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key2".to_string(),
+            b"v2".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key3".to_string(),
+            b"v3".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key4".to_string(),
+            b"v4".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key5".to_string(),
+            b"v5".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
-        .kv_delete_range("kv://realm/area/resource".to_string(), "key2".to_string(), "key5".to_string())
+        .kv_delete_range(
+            "kv://realm/area/resource".to_string(),
+            "key2".to_string(),
+            "key5".to_string(),
+        )
         .await;
 
     // Assert
     assert!(result.is_ok());
-    let v1 = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string()).await.unwrap();
-    let v2 = handle.kv_get("kv://realm/area/resource".to_string(), "key2".to_string()).await.unwrap();
-    let v3 = handle.kv_get("kv://realm/area/resource".to_string(), "key3".to_string()).await.unwrap();
-    let v4 = handle.kv_get("kv://realm/area/resource".to_string(), "key4".to_string()).await.unwrap();
-    let v5 = handle.kv_get("kv://realm/area/resource".to_string(), "key5".to_string()).await.unwrap();
+    let v1 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await
+        .unwrap();
+    let v2 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key2".to_string())
+        .await
+        .unwrap();
+    let v3 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key3".to_string())
+        .await
+        .unwrap();
+    let v4 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key4".to_string())
+        .await
+        .unwrap();
+    let v5 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key5".to_string())
+        .await
+        .unwrap();
     assert!(v1.is_some());
     assert!(v2.is_none());
     assert!(v3.is_none());
@@ -373,12 +545,28 @@ async fn should_delete_range_of_keys() {
 async fn should_handle_delete_range_with_no_matching_keys() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "a".to_string(), b"1".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "z".to_string(), b"2".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "a".to_string(),
+            b"1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "z".to_string(),
+            b"2".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
-        .kv_delete_range("kv://realm/area/resource".to_string(), "m".to_string(), "n".to_string())
+        .kv_delete_range(
+            "kv://realm/area/resource".to_string(),
+            "m".to_string(),
+            "n".to_string(),
+        )
         .await;
 
     // Assert
@@ -395,12 +583,30 @@ async fn should_isolate_keys_by_route() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let _ = handle.kv_put("kv://realm/area/config".to_string(), "key1".to_string(), b"config-value".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"data-value".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/config".to_string(),
+            "key1".to_string(),
+            b"config-value".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"data-value".to_vec(),
+        )
+        .await;
 
     // Assert
-    let config_value = handle.kv_get("kv://realm/area/config".to_string(), "key1".to_string()).await.unwrap();
-    let data_value = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string()).await.unwrap();
+    let config_value = handle
+        .kv_get("kv://realm/area/config".to_string(), "key1".to_string())
+        .await
+        .unwrap();
+    let data_value = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await
+        .unwrap();
     assert_eq!(config_value, Some(b"config-value".to_vec()));
     assert_eq!(data_value, Some(b"data-value".to_vec()));
 }
@@ -409,7 +615,13 @@ async fn should_isolate_keys_by_route() {
 async fn should_not_find_key_in_different_route() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/config".to_string(), "key1".to_string(), b"value".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/config".to_string(),
+            "key1".to_string(),
+            b"value".to_vec(),
+        )
+        .await;
 
     // Act
     let result = handle
@@ -432,12 +644,19 @@ async fn should_store_empty_value() {
 
     // Act
     let result = handle
-        .kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), vec![])
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            vec![],
+        )
         .await;
 
     // Assert
     assert!(result.is_ok());
-    let value = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string()).await.unwrap();
+    let value = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await
+        .unwrap();
     assert_eq!(value, Some(vec![]));
 }
 
@@ -445,11 +664,23 @@ async fn should_store_empty_value() {
 async fn should_distinguish_empty_value_from_missing_key() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), vec![]).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            vec![],
+        )
+        .await;
 
     // Act
-    let value1 = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string()).await.unwrap();
-    let value2 = handle.kv_get("kv://realm/area/resource".to_string(), "key2".to_string()).await.unwrap();
+    let value1 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await
+        .unwrap();
+    let value2 = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key2".to_string())
+        .await
+        .unwrap();
 
     // Assert
     assert_eq!(value1, Some(vec![]));
@@ -468,12 +699,22 @@ async fn should_store_large_value() {
 
     // Act
     let result = handle
-        .kv_put("kv://realm/area/resource".to_string(), "large_key".to_string(), large_value.clone())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "large_key".to_string(),
+            large_value.clone(),
+        )
         .await;
 
     // Assert
     assert!(result.is_ok());
-    let retrieved = handle.kv_get("kv://realm/area/resource".to_string(), "large_key".to_string()).await.unwrap();
+    let retrieved = handle
+        .kv_get(
+            "kv://realm/area/resource".to_string(),
+            "large_key".to_string(),
+        )
+        .await
+        .unwrap();
     assert_eq!(retrieved, Some(large_value));
 }
 
@@ -485,7 +726,11 @@ async fn should_reject_value_exceeding_max_size() {
 
     // Act
     let result = handle
-        .kv_put("kv://realm/area/resource".to_string(), "huge_key".to_string(), huge_value)
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "huge_key".to_string(),
+            huge_value,
+        )
         .await;
 
     // Assert
@@ -504,14 +749,50 @@ async fn should_handle_keys_with_special_characters() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key/with/slash".to_string(), b"v1".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key:with:colon".to_string(), b"v2".to_vec()).await;
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key@with@at".to_string(), b"v3".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key/with/slash".to_string(),
+            b"v1".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key:with:colon".to_string(),
+            b"v2".to_vec(),
+        )
+        .await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key@with@at".to_string(),
+            b"v3".to_vec(),
+        )
+        .await;
 
     // Assert
-    let v1 = handle.kv_get("kv://realm/area/resource".to_string(), "key/with/slash".to_string()).await.unwrap();
-    let v2 = handle.kv_get("kv://realm/area/resource".to_string(), "key:with:colon".to_string()).await.unwrap();
-    let v3 = handle.kv_get("kv://realm/area/resource".to_string(), "key@with@at".to_string()).await.unwrap();
+    let v1 = handle
+        .kv_get(
+            "kv://realm/area/resource".to_string(),
+            "key/with/slash".to_string(),
+        )
+        .await
+        .unwrap();
+    let v2 = handle
+        .kv_get(
+            "kv://realm/area/resource".to_string(),
+            "key:with:colon".to_string(),
+        )
+        .await
+        .unwrap();
+    let v3 = handle
+        .kv_get(
+            "kv://realm/area/resource".to_string(),
+            "key@with@at".to_string(),
+        )
+        .await
+        .unwrap();
     assert_eq!(v1, Some(b"v1".to_vec()));
     assert_eq!(v2, Some(b"v2".to_vec()));
     assert_eq!(v3, Some(b"v3".to_vec()));
@@ -524,12 +805,19 @@ async fn should_handle_unicode_keys() {
 
     // Act
     let result = handle
-        .kv_put("kv://realm/area/resource".to_string(), "日本語".to_string(), b"japanese".to_vec())
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "日本語".to_string(),
+            b"japanese".to_vec(),
+        )
         .await;
 
     // Assert
     assert!(result.is_ok());
-    let value = handle.kv_get("kv://realm/area/resource".to_string(), "日本語".to_string()).await.unwrap();
+    let value = handle
+        .kv_get("kv://realm/area/resource".to_string(), "日本語".to_string())
+        .await
+        .unwrap();
     assert_eq!(value, Some(b"japanese".to_vec()));
 }
 
@@ -543,18 +831,33 @@ async fn should_handle_concurrent_puts_to_same_key() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let fut1 = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value1".to_vec());
-    let fut2 = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value2".to_vec());
-    let fut3 = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value3".to_vec());
-    
+    let fut1 = handle.kv_put(
+        "kv://realm/area/resource".to_string(),
+        "key1".to_string(),
+        b"value1".to_vec(),
+    );
+    let fut2 = handle.kv_put(
+        "kv://realm/area/resource".to_string(),
+        "key1".to_string(),
+        b"value2".to_vec(),
+    );
+    let fut3 = handle.kv_put(
+        "kv://realm/area/resource".to_string(),
+        "key1".to_string(),
+        b"value3".to_vec(),
+    );
+
     let (r1, r2, r3) = tokio::join!(fut1, fut2, fut3);
 
     // Assert
     assert!(r1.is_ok());
     assert!(r2.is_ok());
     assert!(r3.is_ok());
-    
-    let value = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string()).await.unwrap();
+
+    let value = handle
+        .kv_get("kv://realm/area/resource".to_string(), "key1".to_string())
+        .await
+        .unwrap();
     assert!(value.is_some());
 }
 
@@ -562,12 +865,18 @@ async fn should_handle_concurrent_puts_to_same_key() {
 async fn should_handle_concurrent_get_and_delete() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let _ = handle.kv_put("kv://realm/area/resource".to_string(), "key1".to_string(), b"value".to_vec()).await;
+    let _ = handle
+        .kv_put(
+            "kv://realm/area/resource".to_string(),
+            "key1".to_string(),
+            b"value".to_vec(),
+        )
+        .await;
 
     // Act
     let fut_get = handle.kv_get("kv://realm/area/resource".to_string(), "key1".to_string());
     let fut_delete = handle.kv_delete("kv://realm/area/resource".to_string(), "key1".to_string());
-    
+
     let (get_result, delete_result) = tokio::join!(fut_get, fut_delete);
 
     // Assert

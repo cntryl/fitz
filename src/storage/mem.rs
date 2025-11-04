@@ -542,26 +542,44 @@ impl MemStore {
     }
 
     /// Scan keys >= start_key up to limit (stubbed).
-    pub async fn kv_scan_ge(&self, _route: &str, _start_key: &str, _limit: usize) -> Result<Vec<(String, Vec<u8>)>, String> {
+    pub async fn kv_scan_ge(
+        &self,
+        _route: &str,
+        _start_key: &str,
+        _limit: usize,
+    ) -> Result<Vec<(String, Vec<u8>)>, String> {
         // TODO: implement actual KV storage
         Ok(vec![])
     }
 
     /// Put multiple key-value pairs in a batch (stubbed).
-    pub async fn kv_put_batch(&self, _route: &str, _items: Vec<(String, Vec<u8>)>) -> Result<(), String> {
+    pub async fn kv_put_batch(
+        &self,
+        _route: &str,
+        _items: Vec<(String, Vec<u8>)>,
+    ) -> Result<(), String> {
         // TODO: implement actual KV storage
         Ok(())
     }
 
     /// Get multiple values by keys in a batch (stubbed).
-    pub async fn kv_get_batch(&self, _route: &str, keys: Vec<String>) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
+    pub async fn kv_get_batch(
+        &self,
+        _route: &str,
+        keys: Vec<String>,
+    ) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
         // TODO: implement actual KV storage
         Ok(keys.into_iter().map(|k| (k, None)).collect())
     }
 
     /// Delete all keys in range [start_key, end_key) (stubbed).
     /// Returns the number of keys deleted.
-    pub async fn kv_delete_range(&self, _route: &str, _start_key: &str, _end_key: &str) -> Result<u64, String> {
+    pub async fn kv_delete_range(
+        &self,
+        _route: &str,
+        _start_key: &str,
+        _end_key: &str,
+    ) -> Result<u64, String> {
         // TODO: implement actual KV storage
         Ok(0)
     }

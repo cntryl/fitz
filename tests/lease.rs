@@ -33,7 +33,9 @@ async fn should_acquire_lease_successfully() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -46,7 +48,10 @@ async fn should_return_lease_token_on_acquire() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Assert
     assert!(!id.is_empty());
@@ -59,7 +64,9 @@ async fn should_specify_lease_duration_on_acquire() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -73,10 +80,15 @@ async fn should_specify_lease_duration_on_acquire() {
 async fn should_extend_active_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 10)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 20).await;
+    let result = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 20)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -86,10 +98,16 @@ async fn should_extend_active_lease() {
 async fn should_return_new_expiry_time_on_extend() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 10)
+        .await
+        .unwrap();
 
     // Act
-    let new_expiry = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 20).await.unwrap();
+    let new_expiry = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 20)
+        .await
+        .unwrap();
 
     // Assert
     assert!(new_expiry > 0);
@@ -99,12 +117,31 @@ async fn should_return_new_expiry_time_on_extend() {
 async fn should_allow_multiple_extensions() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 10)
+        .await
+        .unwrap();
 
     // Act
-    let ext1 = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
-    let ext2 = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
-    let ext3 = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 10).await;
+    let ext1 = handle
+        .extend_lease(
+            "lease://realm/area/resource".to_string(),
+            id.clone(),
+            token.clone(),
+            10,
+        )
+        .await;
+    let ext2 = handle
+        .extend_lease(
+            "lease://realm/area/resource".to_string(),
+            id.clone(),
+            token.clone(),
+            10,
+        )
+        .await;
+    let ext3 = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 10)
+        .await;
 
     // Assert
     assert!(ext1.is_ok());
@@ -120,10 +157,15 @@ async fn should_allow_multiple_extensions() {
 async fn should_release_lease_explicitly() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.consume("lease://realm/area/resource".to_string(), id, token).await;
+    let result = handle
+        .consume("lease://realm/area/resource".to_string(), id, token)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -133,11 +175,19 @@ async fn should_release_lease_explicitly() {
 async fn should_make_resource_available_after_release() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    handle.consume("lease://realm/area/resource".to_string(), id, token).await.unwrap();
-    let second_result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    handle
+        .consume("lease://realm/area/resource".to_string(), id, token)
+        .await
+        .unwrap();
+    let second_result = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(second_result.is_ok());
@@ -151,11 +201,16 @@ async fn should_make_resource_available_after_release() {
 async fn should_expire_lease_after_duration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 2).await.unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 2)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -165,11 +220,16 @@ async fn should_expire_lease_after_duration() {
 async fn should_return_resource_to_pool_on_expiration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 1).await.unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 1)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let new_acquisition = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let new_acquisition = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(new_acquisition.is_ok());
@@ -179,13 +239,25 @@ async fn should_return_resource_to_pool_on_expiration() {
 async fn should_prevent_expiration_when_extended_in_time() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 5).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 5)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    let extend_result = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
+    let extend_result = handle
+        .extend_lease(
+            "lease://realm/area/resource".to_string(),
+            id.clone(),
+            token.clone(),
+            10,
+        )
+        .await;
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    let final_extend = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 5).await;
+    let final_extend = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 5)
+        .await;
 
     // Assert
     assert!(extend_result.is_ok());
@@ -200,10 +272,20 @@ async fn should_prevent_expiration_when_extended_in_time() {
 async fn should_reject_extend_with_invalid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, "invalid_token".to_string(), 10).await;
+    let result = handle
+        .extend_lease(
+            "lease://realm/area/resource".to_string(),
+            id,
+            "invalid_token".to_string(),
+            10,
+        )
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -213,10 +295,19 @@ async fn should_reject_extend_with_invalid_token() {
 async fn should_reject_release_with_invalid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.consume("lease://realm/area/resource".to_string(), id, "invalid_token".to_string()).await;
+    let result = handle
+        .consume(
+            "lease://realm/area/resource".to_string(),
+            id,
+            "invalid_token".to_string(),
+        )
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -230,11 +321,16 @@ async fn should_reject_release_with_invalid_token() {
 async fn should_reject_extend_on_expired_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 1).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 1)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 10).await;
+    let result = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 10)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -244,11 +340,16 @@ async fn should_reject_extend_on_expired_lease() {
 async fn should_reject_release_of_expired_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 1).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 1)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let result = handle.consume("lease://realm/area/resource".to_string(), id, token).await;
+    let result = handle
+        .consume("lease://realm/area/resource".to_string(), id, token)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -262,10 +363,15 @@ async fn should_reject_release_of_expired_lease() {
 async fn should_prevent_concurrent_lease_acquisition() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -275,11 +381,18 @@ async fn should_prevent_concurrent_lease_acquisition() {
 async fn should_queue_lease_requests_when_resource_busy() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let second_attempt = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
-    let third_attempt = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let second_attempt = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
+    let third_attempt = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(second_attempt.is_err());
@@ -296,7 +409,9 @@ async fn should_reject_lease_with_zero_duration() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 0).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 0)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -306,10 +421,15 @@ async fn should_reject_lease_with_zero_duration() {
 async fn should_reject_extend_with_zero_duration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 0).await;
+    let result = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 0)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -325,7 +445,9 @@ async fn should_support_long_duration_leases() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 3600).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 3600)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -337,7 +459,9 @@ async fn should_limit_maximum_lease_duration() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 31536000).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 31536000)
+        .await;
 
     // Assert
     assert!(result.is_ok() || result.is_err());
@@ -353,7 +477,9 @@ async fn should_coordinate_leases_via_control_plane() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("lease://realm/area/worker".to_string(), 30).await;
+    let result = handle
+        .reserve("lease://realm/area/worker".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -363,10 +489,15 @@ async fn should_coordinate_leases_via_control_plane() {
 async fn should_revoke_lease_from_control_plane() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 60).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 60)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.consume("lease://realm/area/resource".to_string(), id, token).await;
+    let result = handle
+        .consume("lease://realm/area/resource".to_string(), id, token)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -380,11 +511,19 @@ async fn should_revoke_lease_from_control_plane() {
 async fn should_transfer_lease_between_workers() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 30).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    handle.consume("lease://realm/area/resource".to_string(), id, token).await.unwrap();
-    let new_lease = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    handle
+        .consume("lease://realm/area/resource".to_string(), id, token)
+        .await
+        .unwrap();
+    let new_lease = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(new_lease.is_ok());
@@ -394,11 +533,23 @@ async fn should_transfer_lease_between_workers() {
 async fn should_prevent_gaps_in_lease_coverage() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (id, _body, token) = handle.reserve("lease://realm/area/resource".to_string(), 10).await.unwrap();
+    let (id, _body, token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 10)
+        .await
+        .unwrap();
 
     // Act
-    let ext1 = handle.extend_lease("lease://realm/area/resource".to_string(), id.clone(), token.clone(), 10).await;
-    let ext2 = handle.extend_lease("lease://realm/area/resource".to_string(), id, token, 10).await;
+    let ext1 = handle
+        .extend_lease(
+            "lease://realm/area/resource".to_string(),
+            id.clone(),
+            token.clone(),
+            10,
+        )
+        .await;
+    let ext2 = handle
+        .extend_lease("lease://realm/area/resource".to_string(), id, token, 10)
+        .await;
 
     // Assert
     assert!(ext1.is_ok());
@@ -413,12 +564,20 @@ async fn should_prevent_gaps_in_lease_coverage() {
 async fn should_cleanup_expired_leases_automatically() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (_id1, _body1, _token1) = handle.reserve("lease://realm/area/resource1".to_string(), 1).await.unwrap();
-    let (_id2, _body2, _token2) = handle.reserve("lease://realm/area/resource2".to_string(), 1).await.unwrap();
+    let (_id1, _body1, _token1) = handle
+        .reserve("lease://realm/area/resource1".to_string(), 1)
+        .await
+        .unwrap();
+    let (_id2, _body2, _token2) = handle
+        .reserve("lease://realm/area/resource2".to_string(), 1)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let new_lease = handle.reserve("lease://realm/area/resource1".to_string(), 30).await;
+    let new_lease = handle
+        .reserve("lease://realm/area/resource1".to_string(), 30)
+        .await;
 
     // Assert
     assert!(new_lease.is_ok());
@@ -428,11 +587,16 @@ async fn should_cleanup_expired_leases_automatically() {
 async fn should_handle_client_disconnect_during_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (_id, _body, _token) = handle.reserve("lease://realm/area/resource".to_string(), 2).await.unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("lease://realm/area/resource".to_string(), 2)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    let result = handle.reserve("lease://realm/area/resource".to_string(), 30).await;
+    let result = handle
+        .reserve("lease://realm/area/resource".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());

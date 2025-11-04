@@ -469,7 +469,12 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
-    pub async fn kv_scan_ge(&self, route: String, start_key: String, limit: usize) -> Result<Vec<(String, Vec<u8>)>, String> {
+    pub async fn kv_scan_ge(
+        &self,
+        route: String,
+        start_key: String,
+        limit: usize,
+    ) -> Result<Vec<(String, Vec<u8>)>, String> {
         let (tx, rx) = oneshot::channel();
         let cmd = EngineCommand::KvScanGe {
             route,
@@ -484,7 +489,11 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
-    pub async fn kv_put_batch(&self, route: String, items: Vec<(String, Vec<u8>)>) -> Result<(), String> {
+    pub async fn kv_put_batch(
+        &self,
+        route: String,
+        items: Vec<(String, Vec<u8>)>,
+    ) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         let cmd = EngineCommand::KvPutBatch {
             route,
@@ -498,7 +507,11 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
-    pub async fn kv_get_batch(&self, route: String, keys: Vec<String>) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
+    pub async fn kv_get_batch(
+        &self,
+        route: String,
+        keys: Vec<String>,
+    ) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
         let (tx, rx) = oneshot::channel();
         let cmd = EngineCommand::KvGetBatch {
             route,
@@ -512,7 +525,12 @@ impl EngineHandle {
         rx.await.map_err(|_| "no response".to_string())?
     }
 
-    pub async fn kv_delete_range(&self, route: String, start_key: String, end_key: String) -> Result<u64, String> {
+    pub async fn kv_delete_range(
+        &self,
+        route: String,
+        start_key: String,
+        end_key: String,
+    ) -> Result<u64, String> {
         let (tx, rx) = oneshot::channel();
         let cmd = EngineCommand::KvDeleteRange {
             route,
@@ -805,7 +823,10 @@ mod tests {
         assert!(!end);
 
         // cleanup: unsubscribe should succeed (cleanup belongs with Assert/teardown)
-        let _ = handle.unsubscribe(sub_id).await.expect("unsubscribe failed");
+        let _ = handle
+            .unsubscribe(sub_id)
+            .await
+            .expect("unsubscribe failed");
     }
 
     #[tokio::test]
@@ -894,7 +915,10 @@ mod tests {
             .expect("consume failed");
 
         // Assert
-        let remaining = { let s = store.lock().await; s.read_all(&route).await };
+        let remaining = {
+            let s = store.lock().await;
+            s.read_all(&route).await
+        };
         assert!(remaining.is_empty());
     }
 }

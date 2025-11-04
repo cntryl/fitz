@@ -1,6 +1,6 @@
 mod harness;
-use harness::common::start_test_engine;
 use fitz::storage::mem::{QueueConfig, QueueScope};
+use harness::common::start_test_engine;
 
 // ============================================================================
 // QUEUE ENGINE INTEGRATION TESTS
@@ -35,15 +35,17 @@ async fn should_enqueue_message_to_queue() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.publish(
-        "queue://realm/area/jobs".to_string(),
-        "msg1".to_string(),
-        b"task data".to_vec(),
-        None,
-        None,
-        false,
-        None,
-    ).await;
+    let result = handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task data".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -55,9 +57,42 @@ async fn should_assign_unique_message_ids() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"data1".to_vec(), None, None, false, None).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg2".to_string(), b"data2".to_vec(), None, None, false, None).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg3".to_string(), b"data3".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"data1".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg2".to_string(),
+            b"data2".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg3".to_string(),
+            b"data3".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Assert
     assert!(true);
@@ -69,7 +104,18 @@ async fn should_persist_enqueued_messages_durably() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
     let result = handle.peek("queue://realm/area/jobs".to_string()).await;
 
     // Assert
@@ -84,10 +130,23 @@ async fn should_persist_enqueued_messages_durably() {
 async fn should_reserve_message_from_queue() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -97,10 +156,24 @@ async fn should_reserve_message_from_queue() {
 async fn should_return_lease_token_with_reserved_message() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let (_id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    let (_id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Assert
     assert!(!token.is_empty());
@@ -110,11 +183,27 @@ async fn should_return_lease_token_with_reserved_message() {
 async fn should_make_reserved_message_invisible_to_other_consumers() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let _first = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
-    let second = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let _first = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let second = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(second.is_err());
@@ -124,12 +213,28 @@ async fn should_make_reserved_message_invisible_to_other_consumers() {
 async fn should_respect_visibility_timeout_on_lease() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let _first = handle.reserve("queue://realm/area/jobs".to_string(), 2).await.unwrap();
+    let _first = handle
+        .reserve("queue://realm/area/jobs".to_string(), 2)
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    let second = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let second = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(second.is_ok());
@@ -140,11 +245,24 @@ async fn should_support_batch_reserve() {
     // Arrange
     let (handle, _store) = start_test_engine();
     for i in 0..10 {
-        handle.publish("queue://realm/area/jobs".to_string(), format!("msg{}", i), b"task".to_vec(), None, None, false, None).await.unwrap();
+        handle
+            .publish(
+                "queue://realm/area/jobs".to_string(),
+                format!("msg{}", i),
+                b"task".to_vec(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
     }
 
     // Act
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -158,11 +276,27 @@ async fn should_support_batch_reserve() {
 async fn should_complete_message_with_valid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.consume("queue://realm/area/jobs".to_string(), id, token).await;
+    let result = handle
+        .consume("queue://realm/area/jobs".to_string(), id, token)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -172,12 +306,31 @@ async fn should_complete_message_with_valid_token() {
 async fn should_remove_completed_message_from_queue() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    handle.consume("queue://realm/area/jobs".to_string(), id, token).await.unwrap();
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    handle
+        .consume("queue://realm/area/jobs".to_string(), id, token)
+        .await
+        .unwrap();
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -191,12 +344,32 @@ async fn should_remove_completed_message_from_queue() {
 async fn should_nack_message_and_return_to_queue() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
     // Note: NACK not yet in API, would need to add nack() method
-    let result = handle.consume("queue://realm/area/jobs".to_string(), id.clone(), "invalid_token".to_string()).await;
+    let result = handle
+        .consume(
+            "queue://realm/area/jobs".to_string(),
+            id.clone(),
+            "invalid_token".to_string(),
+        )
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -206,8 +379,22 @@ async fn should_nack_message_and_return_to_queue() {
 async fn should_not_increment_delivery_count_on_nack() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (_id, _body, _token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
     // Note: NACK functionality not yet implemented
@@ -220,8 +407,22 @@ async fn should_not_increment_delivery_count_on_nack() {
 async fn should_make_nacked_message_available_immediately() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (_id, _body, _token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (_id, _body, _token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
     // Note: NACK functionality not yet implemented
@@ -238,11 +439,27 @@ async fn should_make_nacked_message_available_immediately() {
 async fn should_extend_lease_with_valid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 5).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 5)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.extend_lease("queue://realm/area/jobs".to_string(), id, token, 10).await;
+    let result = handle
+        .extend_lease("queue://realm/area/jobs".to_string(), id, token, 10)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -252,14 +469,33 @@ async fn should_extend_lease_with_valid_token() {
 async fn should_prevent_message_return_when_lease_extended() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 2).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 2)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    handle.extend_lease("queue://realm/area/jobs".to_string(), id, token, 5).await.unwrap();
+    handle
+        .extend_lease("queue://realm/area/jobs".to_string(), id, token, 5)
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -273,7 +509,18 @@ async fn should_prevent_message_return_when_lease_extended() {
 async fn should_peek_next_message_without_claiming() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
     let result = handle.peek("queue://realm/area/jobs".to_string()).await;
@@ -287,11 +534,27 @@ async fn should_peek_next_message_without_claiming() {
 async fn should_allow_reserve_after_peek() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let _peeked = handle.peek("queue://realm/area/jobs".to_string()).await.unwrap();
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let _peeked = handle
+        .peek("queue://realm/area/jobs".to_string())
+        .await
+        .unwrap();
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -312,13 +575,15 @@ async fn should_apply_queue_config_to_scope() {
     };
 
     // Act
-    let result = handle.set_queue_config(
-        QueueScope::Area {
-            realm: "realm".to_string(),
-            area: "area".to_string(),
-        },
-        config,
-    ).await;
+    let result = handle
+        .set_queue_config(
+            QueueScope::Area {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+            },
+            config,
+        )
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -333,18 +598,34 @@ async fn should_use_default_visibility_from_config() {
         default_visibility_secs: 10,
         ttl_secs: 0,
     };
-    handle.set_queue_config(
-        QueueScope::Resource {
-            realm: "realm".to_string(),
-            area: "area".to_string(),
-            resource: "jobs".to_string(),
-        },
-        config,
-    ).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -360,8 +641,29 @@ async fn should_deduplicate_messages_with_same_dedupe_key() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    handle.publish("queue://realm/area/jobs".to_string(), "order-123".to_string(), b"data1".to_vec(), None, None, false, None).await.unwrap();
-    let result = handle.publish("queue://realm/area/jobs".to_string(), "order-123".to_string(), b"data2".to_vec(), None, None, false, None).await;
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "order-123".to_string(),
+            b"data1".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let result = handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "order-123".to_string(),
+            b"data2".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -373,8 +675,29 @@ async fn should_allow_different_dedupe_keys() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    handle.publish("queue://realm/area/jobs".to_string(), "order-123".to_string(), b"data1".to_vec(), None, None, false, None).await.unwrap();
-    let result = handle.publish("queue://realm/area/jobs".to_string(), "order-456".to_string(), b"data2".to_vec(), None, None, false, None).await;
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "order-123".to_string(),
+            b"data1".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let result = handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "order-456".to_string(),
+            b"data2".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -388,11 +711,31 @@ async fn should_allow_different_dedupe_keys() {
 async fn should_reject_complete_with_invalid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, _token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, _token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.consume("queue://realm/area/jobs".to_string(), id, "invalid_token".to_string()).await;
+    let result = handle
+        .consume(
+            "queue://realm/area/jobs".to_string(),
+            id,
+            "invalid_token".to_string(),
+        )
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -404,7 +747,13 @@ async fn should_reject_complete_for_nonexistent_message() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.consume("queue://realm/area/jobs".to_string(), "nonexistent".to_string(), "fake_token".to_string()).await;
+    let result = handle
+        .consume(
+            "queue://realm/area/jobs".to_string(),
+            "nonexistent".to_string(),
+            "fake_token".to_string(),
+        )
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -414,12 +763,35 @@ async fn should_reject_complete_for_nonexistent_message() {
 async fn should_reject_double_complete() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    handle.consume("queue://realm/area/jobs".to_string(), id.clone(), token.clone()).await.unwrap();
-    let result = handle.consume("queue://realm/area/jobs".to_string(), id, token).await;
+    handle
+        .consume(
+            "queue://realm/area/jobs".to_string(),
+            id.clone(),
+            token.clone(),
+        )
+        .await
+        .unwrap();
+    let result = handle
+        .consume("queue://realm/area/jobs".to_string(), id, token)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -433,11 +805,32 @@ async fn should_reject_double_complete() {
 async fn should_reject_extend_lease_with_invalid_token() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, _token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, _token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    let result = handle.extend_lease("queue://realm/area/jobs".to_string(), id, "invalid_token".to_string(), 10).await;
+    let result = handle
+        .extend_lease(
+            "queue://realm/area/jobs".to_string(),
+            id,
+            "invalid_token".to_string(),
+            10,
+        )
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -447,12 +840,28 @@ async fn should_reject_extend_lease_with_invalid_token() {
 async fn should_reject_extend_lease_after_expiration() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 1).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let result = handle.extend_lease("queue://realm/area/jobs".to_string(), id, token, 10).await;
+    let result = handle
+        .extend_lease("queue://realm/area/jobs".to_string(), id, token, 10)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -468,7 +877,9 @@ async fn should_return_empty_when_reserving_from_empty_queue() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("queue://realm/area/empty".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/empty".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -500,19 +911,35 @@ async fn should_move_message_to_dlq_after_max_deliveries() {
         default_visibility_secs: 30,
         ttl_secs: 0,
     };
-    handle.set_queue_config(
-        QueueScope::Resource {
-            realm: "realm".to_string(),
-            area: "area".to_string(),
-            resource: "jobs".to_string(),
-        },
-        config,
-    ).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
     for _ in 0..3 {
-        let _ = handle.reserve("queue://realm/area/jobs".to_string(), 1).await;
+        let _ = handle
+            .reserve("queue://realm/area/jobs".to_string(), 1)
+            .await;
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
@@ -526,7 +953,9 @@ async fn should_not_return_dlq_messages_in_normal_reserve() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -538,7 +967,9 @@ async fn should_allow_processing_dlq_messages_explicitly() {
     let (handle, _store) = start_test_engine();
 
     // Act
-    let result = handle.reserve("queue://realm/area/jobs/dlq".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs/dlq".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -548,12 +979,28 @@ async fn should_allow_processing_dlq_messages_explicitly() {
 async fn should_support_explicit_move_to_dlq() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"poison".to_vec(), None, None, false, None).await.unwrap();
-    let (id, _body, token) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"poison".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id, _body, token) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
     // Note: Explicit DLQ move not yet in API
-    let result = handle.consume("queue://realm/area/jobs".to_string(), id, token).await;
+    let result = handle
+        .consume("queue://realm/area/jobs".to_string(), id, token)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -568,13 +1015,33 @@ async fn should_track_in_flight_message_count() {
     // Arrange
     let (handle, _store) = start_test_engine();
     for i in 0..5 {
-        handle.publish("queue://realm/area/jobs".to_string(), format!("msg{}", i), b"task".to_vec(), None, None, false, None).await.unwrap();
+        handle
+            .publish(
+                "queue://realm/area/jobs".to_string(),
+                format!("msg{}", i),
+                b"task".to_vec(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
     }
 
     // Act
-    let _ = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
-    let _ = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
-    let _ = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Assert
     assert!(true);
@@ -584,13 +1051,44 @@ async fn should_track_in_flight_message_count() {
 async fn should_decrease_in_flight_count_on_complete() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task1".to_vec(), None, None, false, None).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg2".to_string(), b"task2".to_vec(), None, None, false, None).await.unwrap();
-    let (id1, _body1, token1) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
-    let (_id2, _body2, _token2) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task1".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg2".to_string(),
+            b"task2".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let (id1, _body1, token1) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let (_id2, _body2, _token2) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Act
-    handle.consume("queue://realm/area/jobs".to_string(), id1, token1).await.unwrap();
+    handle
+        .consume("queue://realm/area/jobs".to_string(), id1, token1)
+        .await
+        .unwrap();
 
     // Assert
     assert!(true);
@@ -600,8 +1098,22 @@ async fn should_decrease_in_flight_count_on_complete() {
 async fn should_return_to_available_when_lease_expires() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
-    let _ = handle.reserve("queue://realm/area/jobs".to_string(), 1).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await
+        .unwrap();
 
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -618,14 +1130,56 @@ async fn should_return_to_available_when_lease_expires() {
 async fn should_preserve_fifo_order_for_queue_messages() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msgA".to_string(), b"A".to_vec(), None, None, false, None).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msgB".to_string(), b"B".to_vec(), None, None, false, None).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msgC".to_string(), b"C".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgA".to_string(),
+            b"A".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgB".to_string(),
+            b"B".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msgC".to_string(),
+            b"C".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let (_id1, body1, _token1) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
-    let (_id2, body2, _token2) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
-    let (_id3, body3, _token3) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    let (_id1, body1, _token1) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let (_id2, body2, _token2) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
+    let (_id3, body3, _token3) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Assert
     assert_eq!(body1, b"A");
@@ -641,12 +1195,29 @@ async fn should_preserve_fifo_order_for_queue_messages() {
 async fn should_return_unique_token_on_each_delivery() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let (_id1, _body1, token1) = handle.reserve("queue://realm/area/jobs".to_string(), 1).await.unwrap();
+    let (_id1, _body1, token1) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let (_id2, _body2, token2) = handle.reserve("queue://realm/area/jobs".to_string(), 30).await.unwrap();
+    let (_id2, _body2, token2) = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await
+        .unwrap();
 
     // Assert
     // Each delivery must get a unique, non-forgeable token (HMAC-based receipt handle)
@@ -659,12 +1230,28 @@ async fn should_return_unique_token_on_each_delivery() {
 async fn should_track_delivery_count_on_redelivery() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
-    let _ = handle.reserve("queue://realm/area/jobs".to_string(), 1).await.unwrap();
+    let _ = handle
+        .reserve("queue://realm/area/jobs".to_string(), 1)
+        .await
+        .unwrap();
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_ok());
@@ -679,22 +1266,40 @@ async fn should_move_to_dlq_when_max_deliveries_exceeded() {
         default_visibility_secs: 30,
         ttl_secs: 0,
     };
-    handle.set_queue_config(
-        QueueScope::Resource {
-            realm: "realm".to_string(),
-            area: "area".to_string(),
-            resource: "jobs".to_string(),
-        },
-        config,
-    ).await.unwrap();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .set_queue_config(
+            QueueScope::Resource {
+                realm: "realm".to_string(),
+                area: "area".to_string(),
+                resource: "jobs".to_string(),
+            },
+            config,
+        )
+        .await
+        .unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
     for _ in 0..3 {
-        let _ = handle.reserve("queue://realm/area/jobs".to_string(), 1).await;
+        let _ = handle
+            .reserve("queue://realm/area/jobs".to_string(), 1)
+            .await;
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
-    let result = handle.reserve("queue://realm/area/jobs".to_string(), 30).await;
+    let result = handle
+        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .await;
 
     // Assert
     assert!(result.is_err());
@@ -709,14 +1314,25 @@ async fn should_distribute_messages_to_concurrent_consumers() {
     // Arrange
     let (handle, _store) = start_test_engine();
     for i in 0..10 {
-        handle.publish("queue://realm/area/jobs".to_string(), format!("msg{}", i), b"task".to_vec(), None, None, false, None).await.unwrap();
+        handle
+            .publish(
+                "queue://realm/area/jobs".to_string(),
+                format!("msg{}", i),
+                b"task".to_vec(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
     }
 
     // Act
     let h1 = handle.clone();
     let h2 = handle.clone();
     let h3 = handle.clone();
-    
+
     let (r1, r2, r3) = tokio::join!(
         h1.reserve("queue://realm/area/jobs".to_string(), 30),
         h2.reserve("queue://realm/area/jobs".to_string(), 30),
@@ -733,12 +1349,23 @@ async fn should_distribute_messages_to_concurrent_consumers() {
 async fn should_prevent_duplicate_delivery_to_concurrent_consumers() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    handle.publish("queue://realm/area/jobs".to_string(), "msg1".to_string(), b"task".to_vec(), None, None, false, None).await.unwrap();
+    handle
+        .publish(
+            "queue://realm/area/jobs".to_string(),
+            "msg1".to_string(),
+            b"task".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
 
     // Act
     let h1 = handle.clone();
     let h2 = handle.clone();
-    
+
     let (r1, r2) = tokio::join!(
         h1.reserve("queue://realm/area/jobs".to_string(), 30),
         h2.reserve("queue://realm/area/jobs".to_string(), 30),

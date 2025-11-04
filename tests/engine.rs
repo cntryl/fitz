@@ -11,8 +11,8 @@
 
 use std::time::Duration;
 mod harness;
-use harness::common::{create_sub_channel, default_sub_capacity, start_test_engine};
 use fitz::core::stream::StreamExpectedRevision;
+use harness::common::{create_sub_channel, default_sub_capacity, start_test_engine};
 
 // ============================================================================
 // CROSS-COMPONENT INTEGRATION TESTS
@@ -44,11 +44,14 @@ async fn should_handle_complete_stream_to_notice_workflow() {
     // Assert
     // When stream-to-notice integration is implemented, this should receive notification
     let received = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
-    
+
     // Test documents expected behavior: stream append should trigger notice
     // For now, timeout is acceptable if feature not yet implemented
     if let Ok(Some((route, _id, _body, _reply, _seq, _end))) = received {
-        assert_eq!(route, "notice://realm/stream/updates", "Notice should be sent on stream append");
+        assert_eq!(
+            route, "notice://realm/stream/updates",
+            "Notice should be sent on stream append"
+        );
     }
     // Test passes whether implemented or not
 }
@@ -57,7 +60,7 @@ async fn should_handle_complete_stream_to_notice_workflow() {
 async fn should_reserve_items_for_multiple_concurrent_consumers() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    
+
     // Enqueue 10 items
     for i in 0..10 {
         let _ = handle
@@ -92,7 +95,7 @@ async fn should_reserve_items_for_multiple_concurrent_consumers() {
 async fn should_assign_unique_ids_to_prevent_duplicate_processing() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    
+
     for i in 0..10 {
         let _ = handle
             .publish(
@@ -119,7 +122,8 @@ async fn should_assign_unique_ids_to_prevent_duplicate_processing() {
     }
 
     // Assert
-    let ids: std::collections::HashSet<_> = reserved_items.iter().map(|(id, _, _)| id.clone()).collect();
+    let ids: std::collections::HashSet<_> =
+        reserved_items.iter().map(|(id, _, _)| id.clone()).collect();
     assert_eq!(ids.len(), 3, "All reserved items should have unique IDs");
 }
 
@@ -264,7 +268,11 @@ async fn should_allow_kv_put_when_permissions_not_enforced() {
 
     // Act
     let result = handle
-        .kv_put("kv://realm/data".to_string(), "key1".to_string(), b"value".to_vec())
+        .kv_put(
+            "kv://realm/data".to_string(),
+            "key1".to_string(),
+            b"value".to_vec(),
+        )
         .await;
 
     // Assert
@@ -276,10 +284,18 @@ async fn should_isolate_kv_data_between_different_realms() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let _ = handle
-        .kv_put("kv://acme/data".to_string(), "secret".to_string(), b"acme-data".to_vec())
+        .kv_put(
+            "kv://acme/data".to_string(),
+            "secret".to_string(),
+            b"acme-data".to_vec(),
+        )
         .await;
     let _ = handle
-        .kv_put("kv://contoso/data".to_string(), "secret".to_string(), b"contoso-data".to_vec())
+        .kv_put(
+            "kv://contoso/data".to_string(),
+            "secret".to_string(),
+            b"contoso-data".to_vec(),
+        )
         .await;
 
     // Act
@@ -308,7 +324,7 @@ async fn should_preserve_message_ordering_on_subscribed_channel() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let (tx, mut rx) = create_sub_channel(default_sub_capacity());
-    
+
     let _sub = handle
         .subscribe("route/ordered".to_string(), tx, 1)
         .await
@@ -333,7 +349,7 @@ async fn should_preserve_message_ordering_on_subscribed_channel() {
     // Assert
     for i in 0..5 {
         let msg = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
-        
+
         if let Ok(Some((_route, _id, _body, _reply, seq, _end))) = msg {
             assert_eq!(seq, Some(i), "Messages should arrive in sequence order");
         }
@@ -346,7 +362,7 @@ async fn should_route_messages_to_correct_subscription() {
     let (handle, _store) = start_test_engine();
     let (tx1, mut rx1) = create_sub_channel(default_sub_capacity());
     let (tx2, mut rx2) = create_sub_channel(default_sub_capacity());
-    
+
     let _sub1 = handle
         .subscribe("stream/a".to_string(), tx1, 1)
         .await
@@ -358,11 +374,27 @@ async fn should_route_messages_to_correct_subscription() {
 
     // Act
     handle
-        .publish("stream/a".to_string(), "msg-a".to_string(), b"data-a".to_vec(), None, None, false, None)
+        .publish(
+            "stream/a".to_string(),
+            "msg-a".to_string(),
+            b"data-a".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
         .await
         .expect("publish a failed");
     handle
-        .publish("stream/b".to_string(), "msg-b".to_string(), b"data-b".to_vec(), None, None, false, None)
+        .publish(
+            "stream/b".to_string(),
+            "msg-b".to_string(),
+            b"data-b".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
         .await
         .expect("publish b failed");
 
@@ -393,7 +425,15 @@ async fn should_handle_graceful_shutdown_with_inflight_operations() {
     // Act
     // Start an operation
     let _ = handle
-        .publish("route/test".to_string(), "msg-1".to_string(), b"data".to_vec(), None, None, false, None)
+        .publish(
+            "route/test".to_string(),
+            "msg-1".to_string(),
+            b"data".to_vec(),
+            None,
+            None,
+            false,
+            None,
+        )
         .await;
 
     // Initiate shutdown by dropping handle
@@ -482,7 +522,7 @@ async fn should_cleanup_subscriptions_when_channel_disconnects() {
     let (handle, _store) = start_test_engine();
     let (tx, _rx) = create_sub_channel(default_sub_capacity());
     let channel_id = 99;
-    
+
     let _sub = handle
         .subscribe("route/cleanup".to_string(), tx, channel_id)
         .await
@@ -498,19 +538,35 @@ async fn should_cleanup_subscriptions_when_channel_disconnects() {
 #[tokio::test]
 async fn should_recover_persisted_state_after_restart() {
     // Arrange
-    let temp_dir = std::env::temp_dir().join(format!("fitz-test-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "fitz-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    ));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir failed");
 
     // Create engine and persist some data
     let (handle1, _store1) = start_test_engine();
     let _ = handle1
-        .kv_put("kv://realm/data".to_string(), "persistent-key".to_string(), b"persistent-value".to_vec())
+        .kv_put(
+            "kv://realm/data".to_string(),
+            "persistent-key".to_string(),
+            b"persistent-value".to_vec(),
+        )
         .await;
     let _seq = handle1
-        .stream_append("stream://realm/events".to_string(), None, b"event-1".to_vec(), None, StreamExpectedRevision::Any)
+        .stream_append(
+            "stream://realm/events".to_string(),
+            None,
+            b"event-1".to_vec(),
+            None,
+            StreamExpectedRevision::Any,
+        )
         .await
         .expect("append failed");
-    
+
     drop(handle1);
 
     // Act
@@ -520,10 +576,12 @@ async fn should_recover_persisted_state_after_restart() {
     // Assert
     // In current impl without real persistence, data won't be there
     // This test documents the expected behavior
-    let kv_result = handle2.kv_get("kv://realm/data".to_string(), "persistent-key".to_string()).await;
+    let kv_result = handle2
+        .kv_get("kv://realm/data".to_string(), "persistent-key".to_string())
+        .await;
     // When persistence is implemented, this should succeed
     assert!(kv_result.is_ok() || kv_result.is_err());
-    
+
     std::fs::remove_dir_all(&temp_dir).ok();
 }
 
@@ -536,7 +594,7 @@ async fn should_handle_high_throughput_notice_fanout() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let mut subscribers = Vec::new();
-    
+
     // Create 100 subscribers on same route
     for i in 0..100 {
         let (tx, rx) = create_sub_channel(default_sub_capacity());
@@ -575,7 +633,7 @@ async fn should_handle_high_throughput_notice_fanout() {
 async fn should_handle_large_stream_with_efficient_memory_usage() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    
+
     // Append 100 events (reduced from 100k for test speed)
     for i in 0..100 {
         let _ = handle
@@ -606,12 +664,12 @@ async fn should_maintain_zero_copy_semantics_for_frame_parsing() {
     // Arrange
     use bytes::BytesMut;
     use fitz::protocol::frame as fr;
-    
+
     let mut buf = BytesMut::new();
     let mut payload = Vec::new();
     fr::build_tlv(fr::TAG_ROUTE, b"test/route", &mut payload);
     fr::build_tlv(fr::TAG_BODY, b"test body data", &mut payload);
-    
+
     let frame_bytes = fr::build_frame(fr::FRAME_PUB, 0, 1, &payload);
     buf.extend_from_slice(&frame_bytes);
 
@@ -622,7 +680,7 @@ async fn should_maintain_zero_copy_semantics_for_frame_parsing() {
     // TLV slices should reference the original buffer (zero-copy)
     let route_tlv = fr::find_tlv(parsed.payload, fr::TAG_ROUTE);
     let body_tlv = fr::find_tlv(parsed.payload, fr::TAG_BODY);
-    
+
     assert!(route_tlv.is_some());
     assert!(body_tlv.is_some());
     assert_eq!(route_tlv.unwrap(), b"test/route");
