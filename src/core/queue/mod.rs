@@ -5,4 +5,4 @@ mod service;
 
 // Re-export public API
 pub use types::{QueueConfig, QueueMessage, QueueScope, QueueStats};
-// pub use service::QueueService;
+pub use service::QueueService;
