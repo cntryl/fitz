@@ -776,43 +776,44 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 }
 
                 EngineCommand::StreamAppendNew {
-                    route: _route,
+                    route,
                     resource_seq,
-                    body: _body,
-                    metadata: _metadata,
-                    is_end: _is_end,
+                    body,
+                    metadata,
+                    is_end,
                     resp,
                 } => {
-                    // TODO: Implement dual-index append with gap detection
-                    let result = AppendResult {
-                        resource_seq,
-                        area_seq_range: None, // Will be Some() when is_end=true
-                    };
-                    let _ = resp.send(Ok(result));
+                    let s = store.lock().await;
+                    match s.stream_append_new(&route, resource_seq, body, metadata, is_end).await {
+                        Ok(result) => {
+                            let _ = resp.send(Ok(result));
+                        }
+                        Err(e) => {
+                            let _ = resp.send(Err(format!("stream error: {:?}", e)));
+                        }
+                    }
                 }
 
                 EngineCommand::StreamRead {
-                    route: _route,
-                    from_seq: _from_seq,
-                    limit: _limit,
+                    route,
+                    from_seq,
+                    limit,
                     resp,
                 } => {
-                    // TODO: Read from resource index
-                    let _ = resp.send(Ok(vec![]));
+                    let s = store.lock().await;
+                    let events = s.stream_read(&route, from_seq, limit).await;
+                    let _ = resp.send(Ok(events));
                 }
 
                 EngineCommand::StreamReadArea {
-                    realm: _realm,
-                    area: _area,
-                    from_seq: _from_seq,
-                    limit: _limit,
+                    realm,
+                    area,
+                    from_seq,
+                    limit,
                     resp,
                 } => {
-                    // TODO: Read from area index with watermark
-                    let result = AreaReadResponse {
-                        events: vec![],
-                        watermark: 0,
-                    };
+                    let s = store.lock().await;
+                    let result = s.stream_read_area(&realm, &area, from_seq, limit).await;
                     let _ = resp.send(Ok(result));
                 }
 

@@ -104,6 +104,10 @@ pub struct MemStore {
     token_key: Vec<u8>,
     // streams map
     streams: Mutex<HashMap<String, Vec<StreamEvent>>>,
+    /// area sequence counter: (realm, area) -> next_area_seq
+    area_seq_counter: Mutex<HashMap<(String, String), u64>>,
+    /// KV store: route -> (key -> value)
+    kv_store: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
     // queue configs
     cfg_realm: Mutex<HashMap<String, QueueConfig>>,
     cfg_area: Mutex<HashMap<(String, String), QueueConfig>>, // (realm, area)
@@ -119,6 +123,7 @@ impl MemStore {
             inner: Mutex::new(HashMap::new()),
             token_key: key,
             streams: Mutex::new(HashMap::new()),
+            area_seq_counter: Mutex::new(HashMap::new()),
             cfg_realm: Mutex::new(HashMap::new()),
             cfg_area: Mutex::new(HashMap::new()),
             cfg_resource: Mutex::new(HashMap::new()),
@@ -445,6 +450,163 @@ impl MemStore {
             is_end: false,
         });
         Ok(next)
+    }
+
+    /// New stream append API with client-controlled sequences and gap detection.
+    /// Returns AppendResult with resource_seq and optional area_seq_range.
+    pub async fn stream_append_new(
+        &self,
+        route: &str,
+        resource_seq: u64,
+        body: Vec<u8>,
+        metadata: Option<Vec<u8>>,
+        is_end: bool,
+    ) -> Result<AppendResult, StreamError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        
+        // Parse route: stream://realm/area/resource
+        let parts: Vec<&str> = route.split('/').collect();
+        if parts.len() < 5 || parts[0] != "stream:" {
+            return Err(StreamError::Other("invalid stream route".to_string()));
+        }
+        let realm = parts[2];
+        let area = parts[3];
+        
+        let mut g = self.streams.lock().await;
+        let v = g.entry(route.to_string()).or_insert_with(Vec::new);
+        
+        // Check if stream is already closed (has an event with is_end=true)
+        if v.iter().any(|e| e.is_end) {
+            return Err(StreamError::StreamClosed);
+        }
+        
+        // Gap detection: if resource_seq > 0, ensure prev exists
+        if resource_seq > 0 {
+            let has_prev = v.iter().any(|e| e.resource_seq == resource_seq - 1);
+            if !has_prev {
+                return Err(StreamError::SequenceGap {
+                    expected: resource_seq - 1,
+                    received: resource_seq,
+                });
+            }
+        }
+        
+        // Check for duplicate/conflict
+        if let Some(existing) = v.iter().find(|e| e.resource_seq == resource_seq) {
+            // Idempotent retry: same body is OK
+            if existing.body == body {
+                // Return existing result (no area_seq assigned yet unless it was finalized)
+                return Ok(AppendResult {
+                    resource_seq,
+                    area_seq_range: existing.area_seq.map(|s| s..s+1),
+                });
+            } else {
+                // Conflict: different body for same seq
+                return Err(StreamError::SequenceConflict { seq: resource_seq });
+            }
+        }
+        
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        
+        // Assign area_seq if finalizing
+        let (area_seq, area_seq_range) = if is_end {
+            let mut counter_g = self.area_seq_counter.lock().await;
+            let next_area_seq = counter_g.entry((realm.to_string(), area.to_string()))
+                .or_insert(0);
+            let start_area_seq = *next_area_seq;
+            
+            // Count all uncommitted events (those without area_seq) + this one
+            let uncommitted_count = v.iter().filter(|e| e.area_seq.is_none()).count() + 1;
+            
+            // Assign area_seq to ALL uncommitted events in this stream
+            for event in v.iter_mut() {
+                if event.area_seq.is_none() {
+                    event.area_seq = Some(*next_area_seq);
+                    *next_area_seq += 1;
+                }
+            }
+            
+            // Assign to the new event we're about to push
+            let assigned = *next_area_seq;
+            *next_area_seq += 1;
+            drop(counter_g); // release counter lock
+            
+            (Some(assigned), Some(start_area_seq..start_area_seq + uncommitted_count as u64))
+        } else {
+            (None, None)
+        };
+        
+        v.push(StreamEvent {
+            resource_seq,
+            area_seq,
+            body,
+            metadata,
+            created_at,
+            is_end,
+        });
+        
+        Ok(AppendResult {
+            resource_seq,
+            area_seq_range,
+        })
+    }
+
+    /// Read events from a specific resource stream (no watermark filtering)
+    pub async fn stream_read(&self, route: &str, from_seq: u64, limit: usize) -> Vec<StreamEvent> {
+        let g = self.streams.lock().await;
+        let v = g.get(route).cloned().unwrap_or_default();
+        v.into_iter()
+            .filter(|e| e.resource_seq >= from_seq)
+            .take(limit)
+            .collect()
+    }
+
+    /// Read interleaved events from all resources in an area (watermark-controlled)
+    pub async fn stream_read_area(
+        &self,
+        realm: &str,
+        area: &str,
+        from_seq: u64,
+        limit: usize,
+    ) -> AreaReadResponse {
+        let g = self.streams.lock().await;
+        let prefix = format!("stream://{}/{}/", realm, area);
+        
+        // Collect all finalized events (those with area_seq assigned)
+        let mut events: Vec<StreamEvent> = g.iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .flat_map(|(_, v)| v.iter().filter(|e| e.area_seq.is_some()).cloned())
+            .collect();
+        
+        // Sort by area_seq
+        events.sort_by_key(|e| e.area_seq.unwrap());
+        
+        // Calculate watermark: highest contiguous area_seq starting from 0
+        let mut watermark = 0u64;
+        for e in events.iter() {
+            if let Some(seq) = e.area_seq {
+                if seq == watermark {
+                    watermark += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        
+        // Filter by from_seq and limit
+        let filtered: Vec<StreamEvent> = events.into_iter()
+            .filter(|e| e.area_seq.unwrap_or(0) >= from_seq)
+            .filter(|e| e.area_seq.unwrap_or(0) < watermark) // Only return up to watermark
+            .take(limit)
+            .collect();
+        
+        AreaReadResponse {
+            events: filtered,
+            watermark,
+        }
     }
 
     pub async fn stream_peek(&self, route: &str, from_seq: u64, limit: usize) -> Vec<StreamEvent> {

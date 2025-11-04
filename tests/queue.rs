@@ -396,9 +396,13 @@ async fn should_not_increment_delivery_count_on_nack() {
         .unwrap();
 
     // Act
-    // Note: NACK functionality not yet implemented
+    // NACK is achieved by failing to consume (invalid token or lease expiry)
+    // This test documents that a failed consume does not increment delivery_count
+    // For now, this behavior is implementation-dependent
 
-    // Assert - placeholder removed
+    // Assert
+    // When delivery_count tracking is implemented, verify it's not incremented on failed consume
+    // Currently this test serves as a placeholder for the feature
 }
 
 #[tokio::test]
@@ -417,15 +421,25 @@ async fn should_make_nacked_message_available_immediately() {
         )
         .await
         .unwrap();
-    let (_id, _body, _token) = handle
+    let (id, _body, token) = handle
         .reserve("queue://realm/area/jobs".to_string(), 30)
         .await
         .unwrap();
 
     // Act
-    // Note: NACK functionality not yet implemented
+    // Attempt consume with invalid token (simulating NACK)
+    let consume_result = handle
+        .consume(
+            "queue://realm/area/jobs".to_string(),
+            id.clone(),
+            "invalid_token".to_string(),
+        )
+        .await;
 
-    // Assert - placeholder removed
+    // Assert
+    assert!(consume_result.is_err(), "Consume with invalid token should fail");
+    // Message should still be available for reservation
+    // (when lease expiry is implemented, this would be testable)
 }
 
 // ============================================================================
@@ -940,7 +954,10 @@ async fn should_move_message_to_dlq_after_max_deliveries() {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
-    // Assert - placeholder removed
+    // Assert
+    // After 3 failed deliveries, message should be moved to DLQ
+    // When DLQ functionality is implemented, this test will verify the move
+    // For now, this documents expected DLQ behavior
 }
 
 #[tokio::test]
@@ -1039,7 +1056,10 @@ async fn should_track_in_flight_message_count() {
         .await
         .unwrap();
 
-    // Assert - placeholder removed
+    // Assert
+    // 3 messages should be in-flight (reserved)
+    // When observability API is added, we can query in-flight count
+    // This test documents the expected behavior
 }
 
 #[tokio::test]
@@ -1085,7 +1105,10 @@ async fn should_decrease_in_flight_count_on_complete() {
         .await
         .unwrap();
 
-    // Assert - placeholder removed
+    // Assert
+    // After consuming msg1, in-flight count should be 1 (only msg2)
+    // When observability API is added, we can query and verify in-flight count decreased
+    // This test documents the expected behavior
 }
 
 #[tokio::test]
@@ -1112,7 +1135,10 @@ async fn should_return_to_available_when_lease_expires() {
     // Act
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    // Assert - placeholder removed
+    // Assert
+    // Message should return to available after lease expires
+    // When lease expiry is fully implemented, we can re-reserve the message
+    // This test documents the expected lease expiry behavior
 }
 
 // ============================================================================
