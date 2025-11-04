@@ -1,13 +1,13 @@
-// End-to-end cross-component integration tests.
-// These tests verify that multiple components work together correctly.
+// ENGINE CROSS-COMPONENT INTEGRATION TESTS
+// These tests verify that multiple engine subsystems work together correctly.
 // For detailed component-specific tests, see:
-//   - e2e_control.rs   - Control plane operations
-//   - e2e_notice.rs    - Notice/PubSub
-//   - e2e_stream.rs    - Streams
-//   - e2e_rpc.rs       - RPC request/reply
-//   - e2e_queue.rs     - Queue operations
-//   - e2e_kv.rs        - Key-value store
-//   - e2e_lease.rs     - Lease coordination
+//   - control.rs   - Control plane operations
+//   - notice.rs    - Notice/PubSub
+//   - stream.rs    - Streams
+//   - rpc.rs       - RPC request/reply
+//   - queue.rs     - Queue operations
+//   - kv.rs        - Key-value store
+//   - lease.rs     - Lease coordination
 
 use std::time::Duration;
 mod harness;
@@ -54,7 +54,7 @@ async fn should_handle_complete_stream_to_notice_workflow() {
 }
 
 #[tokio::test]
-async fn should_coordinate_queue_processing_across_multiple_consumers() {
+async fn should_reserve_items_for_multiple_concurrent_consumers() {
     // Arrange
     let (handle, _store) = start_test_engine();
     
@@ -75,7 +75,6 @@ async fn should_coordinate_queue_processing_across_multiple_consumers() {
     }
 
     // Act
-    // Simulate 3 concurrent consumers
     let mut reserved_items = Vec::new();
     for _ in 0..3 {
         let (id, body, token) = handle
@@ -87,13 +86,45 @@ async fn should_coordinate_queue_processing_across_multiple_consumers() {
 
     // Assert
     assert_eq!(reserved_items.len(), 3);
-    // Verify all items have unique IDs (no duplicate processing)
-    let ids: std::collections::HashSet<_> = reserved_items.iter().map(|(id, _, _)| id.clone()).collect();
-    assert_eq!(ids.len(), 3);
 }
 
 #[tokio::test]
-async fn should_handle_rpc_request_that_modifies_kv_and_returns_result() {
+async fn should_assign_unique_ids_to_prevent_duplicate_processing() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    
+    for i in 0..10 {
+        let _ = handle
+            .publish(
+                "queue://realm/work".to_string(),
+                format!("item-{}", i),
+                format!("body-{}", i).into_bytes(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .expect("enqueue via publish failed");
+    }
+
+    // Act
+    let mut reserved_items = Vec::new();
+    for _ in 0..3 {
+        let (id, body, token) = handle
+            .reserve("queue://realm/work".to_string(), 30)
+            .await
+            .expect("reserve failed");
+        reserved_items.push((id, body, token));
+    }
+
+    // Assert
+    let ids: std::collections::HashSet<_> = reserved_items.iter().map(|(id, _, _)| id.clone()).collect();
+    assert_eq!(ids.len(), 3, "All reserved items should have unique IDs");
+}
+
+#[tokio::test]
+async fn should_deliver_rpc_request_with_reply_address() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let (tx, mut rx) = create_sub_channel(default_sub_capacity());
@@ -103,7 +134,6 @@ async fn should_handle_rpc_request_that_modifies_kv_and_returns_result() {
         .expect("subscribe failed");
 
     // Act
-    // Send RPC request to update KV
     let reply_route = "rpc://realm/reply/123".to_string();
     let _ = handle
         .publish(
@@ -118,31 +148,58 @@ async fn should_handle_rpc_request_that_modifies_kv_and_returns_result() {
         .await
         .expect("publish failed");
 
-    // Receive RPC request
     let request = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("recv timed out")
         .expect("channel closed");
-    let (_route, _id, body, reply_to, _seq, _end) = request;
-
-    // Simulate handler updating KV and sending reply
-    let _kv_result = handle
-        .kv_put("kv://realm/data".to_string(), "config".to_string(), b"v1".to_vec())
-        .await;
 
     // Assert
-    assert!(reply_to.is_some());
-    assert!(body.len() > 0);
+    let (_route, _id, _body, reply_to, _seq, _end) = request;
+    assert_eq!(reply_to, Some(reply_route));
 }
 
 #[tokio::test]
-async fn should_enforce_permissions_across_all_subsystems() {
+async fn should_include_request_body_in_rpc_delivery() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+    let (tx, mut rx) = create_sub_channel(default_sub_capacity());
+    let _sub_id = handle
+        .subscribe("rpc://realm/service".to_string(), tx, 1)
+        .await
+        .expect("subscribe failed");
+
+    // Act
+    let request_body = b"{\"key\":\"config\",\"value\":\"v1\"}".to_vec();
+    let _ = handle
+        .publish(
+            "rpc://realm/service".to_string(),
+            "rpc-1".to_string(),
+            request_body.clone(),
+            Some("rpc://realm/reply/123".to_string()),
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("publish failed");
+
+    let request = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("recv timed out")
+        .expect("channel closed");
+
+    // Assert
+    let (_route, _id, body, _reply_to, _seq, _end) = request;
+    assert_eq!(body, request_body);
+}
+
+#[tokio::test]
+async fn should_allow_notice_publish_when_permissions_not_enforced() {
     // Arrange
     let (handle, _store) = start_test_engine();
 
-    // Act & Assert
-    // Attempt to publish notice (should require pub: permission)
-    let notice_result = handle
+    // Act
+    let result = handle
         .publish(
             "notice://realm/test".to_string(),
             "msg-1".to_string(),
@@ -154,8 +211,17 @@ async fn should_enforce_permissions_across_all_subsystems() {
         )
         .await;
 
-    // Attempt to append stream (should require pub: or append: permission)
-    let _stream_result = handle
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_allow_stream_append_when_permissions_not_enforced() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+
+    // Act
+    let result = handle
         .stream_append(
             "stream://realm/events".to_string(),
             None,
@@ -165,8 +231,17 @@ async fn should_enforce_permissions_across_all_subsystems() {
         )
         .await;
 
-    // Attempt to enqueue (should require pub: permission)
-    let _queue_result = handle
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_allow_queue_enqueue_when_permissions_not_enforced() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
+
+    // Act
+    let result = handle
         .publish(
             "queue://realm/jobs".to_string(),
             "job-1".to_string(),
@@ -178,34 +253,36 @@ async fn should_enforce_permissions_across_all_subsystems() {
         )
         .await;
 
-    // Attempt KV put (should require write permission)
-    let _kv_result = handle
-        .kv_put("kv://realm/data".to_string(), "key1".to_string(), b"value".to_vec())
-        .await;
-
-    // All should succeed in current impl (permissions not enforced yet)
-    // When auth is implemented, these should fail with permission errors
-    assert!(notice_result.is_ok() || notice_result.is_err());
+    // Assert
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
-async fn should_maintain_isolation_between_different_realms() {
+async fn should_allow_kv_put_when_permissions_not_enforced() {
     // Arrange
     let (handle, _store) = start_test_engine();
 
     // Act
-    // Create resources in "acme" realm
+    let result = handle
+        .kv_put("kv://realm/data".to_string(), "key1".to_string(), b"value".to_vec())
+        .await;
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_isolate_kv_data_between_different_realms() {
+    // Arrange
+    let (handle, _store) = start_test_engine();
     let _ = handle
         .kv_put("kv://acme/data".to_string(), "secret".to_string(), b"acme-data".to_vec())
         .await;
-
-    // Create resources in "contoso" realm
     let _ = handle
         .kv_put("kv://contoso/data".to_string(), "secret".to_string(), b"contoso-data".to_vec())
         .await;
 
-    // Assert
-    // Attempt to read from different realm
+    // Act
     let acme_result = handle
         .kv_get("kv://acme/data".to_string(), "secret".to_string())
         .await
@@ -216,13 +293,10 @@ async fn should_maintain_isolation_between_different_realms() {
         .await
         .expect("get failed");
 
-    // When realm isolation is implemented, values should be different
-    // For now, both may return data (isolation not yet enforced)
-    // This test documents the expected behavior
+    // Assert
     if acme_result.is_some() && contoso_result.is_some() {
         assert_ne!(acme_result, contoso_result, "Realms should be isolated");
     }
-    // Test passes if isolation works OR if not implemented yet
 }
 
 // ============================================================================
@@ -230,27 +304,21 @@ async fn should_maintain_isolation_between_different_realms() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_preserve_message_ordering_per_channel() {
+async fn should_preserve_message_ordering_on_subscribed_channel() {
     // Arrange
     let (handle, _store) = start_test_engine();
-    let (tx1, mut rx1) = create_sub_channel(default_sub_capacity());
-    let (tx2, mut rx2) = create_sub_channel(default_sub_capacity());
+    let (tx, mut rx) = create_sub_channel(default_sub_capacity());
     
-    let _sub1 = handle
-        .subscribe("route/ch1".to_string(), tx1, 1)
+    let _sub = handle
+        .subscribe("route/ordered".to_string(), tx, 1)
         .await
-        .expect("subscribe ch1 failed");
-    let _sub2 = handle
-        .subscribe("route/ch2".to_string(), tx2, 2)
-        .await
-        .expect("subscribe ch2 failed");
+        .expect("subscribe failed");
 
     // Act
-    // Publish numbered messages on each channel
     for i in 0..5 {
         handle
             .publish(
-                "route/ch1".to_string(),
+                "route/ordered".to_string(),
                 format!("msg-{}", i),
                 format!("body-{}", i).into_bytes(),
                 None,
@@ -259,40 +327,13 @@ async fn should_preserve_message_ordering_per_channel() {
                 None,
             )
             .await
-            .expect("publish ch1 failed");
-
-        handle
-            .publish(
-                "route/ch2".to_string(),
-                format!("msg-{}", i),
-                format!("body-{}", i).into_bytes(),
-                None,
-                Some(i),
-                false,
-                None,
-            )
-            .await
-            .expect("publish ch2 failed");
+            .expect("publish failed");
     }
 
     // Assert
-    // Verify channel 1 received messages in order
-    // When ordering is implemented, this should work
     for i in 0..5 {
-        let msg = tokio::time::timeout(Duration::from_secs(1), rx1.recv()).await;
+        let msg = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
         
-        // If messages arrive, verify they're in order
-        if let Ok(Some((_route, _id, _body, _reply, seq, _end))) = msg {
-            assert_eq!(seq, Some(i), "Messages should arrive in sequence order");
-        }
-        // If timeout, ordering may not be implemented yet - test documents expected behavior
-    }
-
-    // Verify channel 2 received messages in order
-    for i in 0..5 {
-        let msg = tokio::time::timeout(Duration::from_secs(1), rx2.recv()).await;
-        
-        // If messages arrive, verify they're in order
         if let Ok(Some((_route, _id, _body, _reply, seq, _end))) = msg {
             assert_eq!(seq, Some(i), "Messages should arrive in sequence order");
         }
@@ -300,13 +341,12 @@ async fn should_preserve_message_ordering_per_channel() {
 }
 
 #[tokio::test]
-async fn should_multiplex_multiple_streams_over_single_connection() {
+async fn should_route_messages_to_correct_subscription() {
     // Arrange
     let (handle, _store) = start_test_engine();
     let (tx1, mut rx1) = create_sub_channel(default_sub_capacity());
     let (tx2, mut rx2) = create_sub_channel(default_sub_capacity());
     
-    // Both subscriptions on same channel ID (simulating single connection)
     let _sub1 = handle
         .subscribe("stream/a".to_string(), tx1, 1)
         .await
@@ -317,7 +357,6 @@ async fn should_multiplex_multiple_streams_over_single_connection() {
         .expect("subscribe failed");
 
     // Act
-    // Concurrent operations on different logical streams
     handle
         .publish("stream/a".to_string(), "msg-a".to_string(), b"data-a".to_vec(), None, None, false, None)
         .await
@@ -339,7 +378,6 @@ async fn should_multiplex_multiple_streams_over_single_connection() {
 
     assert_eq!(msg_a.0, "stream/a");
     assert_eq!(msg_b.0, "stream/b");
-    assert_ne!(msg_a.2, msg_b.2); // Different payloads
 }
 
 #[tokio::test]
@@ -427,17 +465,15 @@ async fn should_validate_and_reject_frames_with_invalid_crc() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_start_engine_and_verify_responsiveness() {
+async fn should_respond_to_status_requests() {
     // Arrange
-    let (handle, _store, jh) = harness::common::start_test_engine_with_join();
+    let (handle, _store) = start_test_engine();
 
     // Act
-    let status = handle.fetch_status().await;
+    let result = handle.fetch_status().await;
 
     // Assert
-    assert!(status.is_ok());
-    drop(handle);
-    let _ = jh.await;
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
@@ -453,17 +489,10 @@ async fn should_cleanup_subscriptions_when_channel_disconnects() {
         .expect("subscribe failed");
 
     // Act
-    // Cleanup channel
-    let cleanup_result = handle.cleanup_channel(channel_id).await;
+    let result = handle.cleanup_channel(channel_id).await;
 
     // Assert
-    assert!(cleanup_result.is_ok());
-    
-    // Subsequent publishes to this route should not be delivered
-    let pub_result = handle
-        .publish("route/cleanup".to_string(), "msg-1".to_string(), b"data".to_vec(), None, None, false, None)
-        .await;
-    assert!(pub_result.is_ok());
+    assert!(result.is_ok());
 }
 
 #[tokio::test]

@@ -2,6 +2,15 @@ mod harness;
 use harness::common::{create_sub_channel, default_sub_capacity, start_test_engine};
 
 // ============================================================================
+// NOTICE ENGINE INTEGRATION TESTS
+// ============================================================================
+// These tests exercise the engine-level notice/pub-sub functionality via
+// in-process EngineHandle, not over WebSocket transport.
+//
+// For full end-to-end WebSocket tests, see e2e_notice_ws.rs (to be added).
+// ============================================================================
+
+// ============================================================================
 // HAPPY PATH TESTS
 // ============================================================================
 

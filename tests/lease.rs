@@ -2,6 +2,15 @@ mod harness;
 use harness::common::start_test_engine;
 
 // ============================================================================
+// LEASE ENGINE INTEGRATION TESTS
+// ============================================================================
+// These tests exercise the engine-level lease/coordination functionality via
+// in-process EngineHandle, not over WebSocket transport.
+//
+// For full end-to-end WebSocket tests, see e2e_lease_ws.rs (to be added).
+// ============================================================================
+
+// ============================================================================
 // LEASE OPERATIONS
 // ============================================================================
 // Leases provide distributed coordination via the control plane with:

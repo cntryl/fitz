@@ -2,6 +2,15 @@ mod harness;
 use harness::common::start_test_engine;
 
 // ============================================================================
+// RPC ENGINE INTEGRATION TESTS
+// ============================================================================
+// These tests exercise the engine-level RPC functionality via in-process
+// EngineHandle, not over WebSocket transport.
+//
+// For full end-to-end WebSocket tests, see e2e_rpc_ws.rs (to be added).
+// ============================================================================
+
+// ============================================================================
 // RPC OPERATIONS
 // ============================================================================
 // RPC provides request/reply messaging with:

@@ -2,6 +2,15 @@ mod harness;
 use harness::common::start_test_engine;
 
 // ============================================================================
+// STREAM ENGINE INTEGRATION TESTS
+// ============================================================================
+// These tests exercise the engine-level stream functionality via in-process
+// EngineHandle, not over WebSocket transport.
+//
+// For full end-to-end WebSocket tests, see e2e_stream_ws.rs (to be added).
+// ============================================================================
+
+// ============================================================================
 // STREAM OPERATIONS
 // ============================================================================
 // Streams are append-only ordered logs with:
