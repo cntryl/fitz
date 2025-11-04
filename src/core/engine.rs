@@ -3,10 +3,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::core::router::Router;
-use crate::storage::mem::{
-    AppendResult, AreaReadResponse, ExpectedRevision as StreamExpectedRevision, MemStore,
-    QueueConfig, QueueScope, StreamEvent,
-};
+use crate::core::queue::{QueueConfig, QueueScope};
+use crate::core::stream::{AppendResult, AreaReadResponse, ExpectedRevision as StreamExpectedRevision, StreamEvent};
+use crate::storage::mem::MemStore;
 use tokio::task::JoinHandle;
 
 /// Notification sender type used by transports to receive (route, id, body, reply_to, seq, end)

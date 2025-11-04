@@ -7,96 +7,12 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
-pub struct Record {
-    pub id: String,
-    pub route: String,
-    pub body: Vec<u8>,
-    /// optional lease expiry as epoch seconds (approximate). None means not reserved.
-    pub lease_expiry: Option<u64>,
-    /// which consumer currently holds the lease (optional token or client id)
-    pub lease_owner: Option<String>,
-    /// number of times this record has been delivered (reserved)
-    pub delivery_count: u32,
-    /// creation time (epoch seconds) for TTL
-    pub created_at: u64,
-    /// per-message TTL in seconds (0/None means no per-message TTL)
-    pub ttl_secs: Option<u64>,
-}
-
-// Stream support (in-memory)
-#[derive(Debug, Clone)]
-pub struct StreamEvent {
-    pub resource_seq: u64,     // Client-controlled, 0-indexed monotonic
-    pub area_seq: Option<u64>, // Server-assigned at finalization
-    pub body: Vec<u8>,
-    pub metadata: Option<Vec<u8>>,
-    pub created_at: u64,
-    pub is_end: bool, // Stream finalization marker
-}
-
-#[derive(Debug, Clone)]
-pub struct AppendResult {
-    pub resource_seq: u64,
-    pub area_seq_range: Option<std::ops::Range<u64>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AreaReadResponse {
-    pub events: Vec<StreamEvent>,
-    pub watermark: u64,
-}
-
-#[derive(Debug, Clone)]
-pub enum StreamError {
-    SequenceGap { expected: u64, received: u64 },
-    SequenceConflict { seq: u64 },
-    StreamClosed,
-    WrongExpectedVersion(u64), // carries current head (legacy)
-    Other(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExpectedRevision {
-    Any,
-    NoStream,
-    StreamExists,
-    Exact(u64),
-}
-
-// Queue configuration (hierarchical)
-#[derive(Debug, Clone, Copy)]
-pub struct QueueConfig {
-    pub dlq_threshold: u32,
-    pub default_visibility_secs: u32, // default lease duration when not specified
-    pub ttl_secs: u64,                // 0 means no TTL expiry
-}
-
-impl Default for QueueConfig {
-    fn default() -> Self {
-        Self {
-            dlq_threshold: 5,
-            default_visibility_secs: 30,
-            ttl_secs: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum QueueScope {
-    Realm {
-        realm: String,
-    },
-    Area {
-        realm: String,
-        area: String,
-    },
-    Resource {
-        realm: String,
-        area: String,
-        resource: String,
-    },
-}
+// Re-export core domain types for backward compatibility during migration
+// TODO: Remove these re-exports once all code uses core:: imports directly
+pub use crate::core::queue::{QueueConfig, QueueMessage as Record, QueueScope, QueueStats};
+pub use crate::core::stream::{
+    AppendResult, AreaReadResponse, ExpectedRevision, StreamError, StreamEvent,
+};
 
 /// A tiny in-memory store: map of route -> vector of records
 #[derive(Debug, Default)]
@@ -114,12 +30,6 @@ pub struct MemStore {
     cfg_realm: Mutex<HashMap<String, QueueConfig>>,
     cfg_area: Mutex<HashMap<(String, String), QueueConfig>>, // (realm, area)
     cfg_resource: Mutex<HashMap<(String, String, String), QueueConfig>>, // (realm, area, resource)
-}
-
-/// Simple queue statistics returned by store
-#[derive(Debug, Clone)]
-pub struct QueueStats {
-    pub in_flight_count: u32,
 }
 
 impl MemStore {
@@ -873,5 +783,258 @@ impl MemStore {
     ) -> Result<u64, String> {
         // TODO: implement actual KV storage
         Ok(0)
+    }
+}
+
+// ============================================================================
+// MOCK STORAGE BACKEND IMPLEMENTATION
+// ============================================================================
+// This is a temporary mock KvStore implementation for testing.
+// The real implementation will come from the Shale project.
+// For now, this is an in-memory HashMap-based KvStore.
+
+use crate::storage::traits::{KvStore, KvTransaction};
+use bytes::Bytes;
+
+/// MockKvStore: in-memory HashMap-based KvStore for testing.
+pub struct MockKvStore {
+    data: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+}
+
+impl MockKvStore {
+    pub fn new() -> Self {
+        Self {
+            data: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl KvStore for MockKvStore {
+    fn put(&self, key: &[u8], value: &[u8]) -> Result<(), String> {
+        let mut guard = futures::executor::block_on(self.data.lock());
+        guard.insert(key.to_vec(), value.to_vec());
+        Ok(())
+    }
+    
+    fn get(&self, key: &[u8]) -> Result<Option<Bytes>, String> {
+        let guard = futures::executor::block_on(self.data.lock());
+        Ok(guard.get(key).map(|v| Bytes::copy_from_slice(v)))
+    }
+    
+    fn delete(&self, key: &[u8]) -> Result<(), String> {
+        let mut guard = futures::executor::block_on(self.data.lock());
+        guard.remove(key);
+        Ok(())
+    }
+    
+    fn put_batch(&self, writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+        let mut guard = futures::executor::block_on(self.data.lock());
+        for (k, v) in writes {
+            guard.insert(k, v);
+        }
+        Ok(())
+    }
+    
+    fn delete_batch(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
+        let mut guard = futures::executor::block_on(self.data.lock());
+        for k in keys {
+            guard.remove(&k);
+        }
+        Ok(())
+    }
+    
+    fn scan(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+        let guard = futures::executor::block_on(self.data.lock());
+        let mut results = Vec::new();
+        
+        for (k, v) in guard.iter() {
+            if k.as_slice() >= start && k.as_slice() < end {
+                results.push((Bytes::copy_from_slice(k), Bytes::copy_from_slice(v)));
+            }
+        }
+        
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(results)
+    }
+    
+    fn flush(&self) -> Result<(), String> {
+        Ok(())
+    }
+    
+    fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
+        // Mock transactions not implemented for now
+        Err("transactions not implemented in mock".to_string())
+    }
+}
+
+/// MockStorage: StorageBackend implementation built on top of MockKvStore.
+/// 
+/// Key encoding scheme:
+/// - Records: `record:{route}:{id}` -> StorageRecord (JSON or bincode)
+/// - Route index: `route-idx:{route}` -> Vec<String> (list of ids)
+pub struct MockStorage {
+    kv: std::sync::Arc<MockKvStore>,
+}
+
+impl MockStorage {
+    pub fn new() -> Self {
+        Self {
+            kv: std::sync::Arc::new(MockKvStore::new()),
+        }
+    }
+    
+    fn make_record_key(route: &str, id: &str) -> Vec<u8> {
+        format!("record:{}:{}", route, id).into_bytes()
+    }
+    
+    fn make_route_index_key(route: &str) -> Vec<u8> {
+        format!("route-idx:{}", route).into_bytes()
+    }
+    
+    fn encode_record(rec: &StorageRecord) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(rec).map_err(|e| format!("encode error: {}", e))
+    }
+    
+    fn decode_record(data: &[u8]) -> Result<StorageRecord, String> {
+        serde_json::from_slice(data).map_err(|e| format!("decode error: {}", e))
+    }
+}
+
+impl StorageBackend for MockStorage {
+    fn append(&mut self, route: &str, id: &str, body: Vec<u8>) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        async move {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            
+            let rec = StorageRecord {
+                id: id.to_string(),
+                route: route.to_string(),
+                body,
+                created_at: now,
+                metadata: HashMap::new(),
+            };
+            
+            let key = Self::make_record_key(route, id);
+            let value = Self::encode_record(&rec)?;
+            
+            self.kv.put(&key, &value)?;
+            
+            // Update route index
+            let idx_key = Self::make_route_index_key(route);
+            let mut ids: Vec<String> = match self.kv.get(&idx_key)? {
+                Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+                None => Vec::new(),
+            };
+            
+            if !ids.contains(&id.to_string()) {
+                ids.push(id.to_string());
+                let idx_value = serde_json::to_vec(&ids).map_err(|e| format!("encode error: {}", e))?;
+                self.kv.put(&idx_key, &idx_value)?;
+            }
+            
+            Ok(())
+        }
+    }
+    
+    fn get(&self, route: &str, id: &str) -> impl std::future::Future<Output = Result<Option<StorageRecord>, String>> + Send {
+        async move {
+            let key = Self::make_record_key(route, id);
+            match self.kv.get(&key)? {
+                Some(bytes) => Ok(Some(Self::decode_record(&bytes)?)),
+                None => Ok(None),
+            }
+        }
+    }
+    
+    fn delete(&mut self, route: &str, id: &str) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        async move {
+            let key = Self::make_record_key(route, id);
+            self.kv.delete(&key)?;
+            
+            // Update route index
+            let idx_key = Self::make_route_index_key(route);
+            if let Some(bytes) = self.kv.get(&idx_key)? {
+                let mut ids: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
+                ids.retain(|i| i != id);
+                let idx_value = serde_json::to_vec(&ids).map_err(|e| format!("encode error: {}", e))?;
+                self.kv.put(&idx_key, &idx_value)?;
+            }
+            
+            Ok(())
+        }
+    }
+    
+    fn list(&self, route: &str) -> impl std::future::Future<Output = Result<Vec<StorageRecord>, String>> + Send {
+        async move {
+            let idx_key = Self::make_route_index_key(route);
+            let ids: Vec<String> = match self.kv.get(&idx_key)? {
+                Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+                None => return Ok(Vec::new()),
+            };
+            
+            let mut records = Vec::new();
+            for id in ids {
+                let key = Self::make_record_key(route, &id);
+                if let Some(bytes) = self.kv.get(&key)? {
+                    records.push(Self::decode_record(&bytes)?);
+                }
+            }
+            
+            Ok(records)
+        }
+    }
+    
+    fn update_metadata(
+        &mut self,
+        route: &str,
+        id: &str,
+        metadata: HashMap<String, Vec<u8>>,
+    ) -> impl std::future::Future<Output = Result<StorageRecord, String>> + Send {
+        async move {
+            let key = Self::make_record_key(route, id);
+            let bytes = self.kv.get(&key)?
+                .ok_or_else(|| "record not found".to_string())?;
+            
+            let mut rec = Self::decode_record(&bytes)?;
+            rec.metadata = metadata;
+            
+            let value = Self::encode_record(&rec)?;
+            self.kv.put(&key, &value)?;
+            
+            Ok(rec)
+        }
+    }
+    
+    fn scan(&self, route_prefix: &str) -> impl std::future::Future<Output = Result<Vec<StorageRecord>, String>> + Send {
+        async move {
+            // Scan route-idx keys matching prefix
+            let start = format!("route-idx:{}", route_prefix).into_bytes();
+            let mut end = format!("route-idx:{}", route_prefix).into_bytes();
+            end.push(0xFF); // Append byte instead of using escape sequence
+            
+            let idx_pairs = self.kv.scan(&start, &end)?;
+            
+            let mut all_records = Vec::new();
+            for (idx_key, idx_bytes) in idx_pairs {
+                let ids: Vec<String> = serde_json::from_slice(&idx_bytes).unwrap_or_default();
+                
+                // Extract route from idx key: "route-idx:{route}"
+                let key_str = String::from_utf8_lossy(&idx_key);
+                if let Some(route) = key_str.strip_prefix("route-idx:") {
+                    for id in ids {
+                        let rec_key = Self::make_record_key(route, &id);
+                        if let Some(bytes) = self.kv.get(&rec_key)? {
+                            all_records.push(Self::decode_record(&bytes)?);
+                        }
+                    }
+                }
+            }
+            
+            Ok(all_records)
+        }
     }
 }

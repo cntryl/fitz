@@ -1,50 +1,44 @@
-//! Storage Provider Traits (SPEC 5.1)
+//! Storage backend trait: domain-level storage built on KvStore
+//!
+//! The storage layer provides domain-friendly abstractions (routes, records, metadata)
+//! built on top of a low-level KvStore trait. This allows domain services to work with
+//! logical concepts while the actual persistence is delegated to the KvStore implementation.
 
-/// StreamStore provides append-only streams with ordered sequence ids and read/peek/consume APIs.
-pub trait StreamStore {
-    /// Append to a stream; returns assigned sequence id.
-    fn append(&self, stream_id: &str, payload: Vec<u8>) -> Result<u64, String>;
+use std::collections::HashMap;
 
-    /// Read forward from `from_seq` inclusive up to `limit` records.
-    fn read(
-        &self,
-        stream_id: &str,
-        from_seq: u64,
-        limit: usize,
-    ) -> Result<Vec<(u64, Vec<u8>)>, String>;
+// ============================================================================
+// KV STORE TRAIT (Foundation Layer)
+// ============================================================================
+// This is the low-level key-value store interface that the real storage
+// implementation will provide. Our StorageBackend is built on top of this.
 
-    /// Peek the last record in a fully-qualified stream; returns (seq, payload) if present.
-    fn peek(&self, stream_id: &str) -> Result<Option<(u64, Vec<u8>)>, String>;
+use bytes::Bytes;
 
-    /// Consume hierarchically over a prefix id by deterministic order (ts, route, seq).
-    /// Returns tuples of (route, seq, payload).
-    fn consume_prefix(
-        &self,
-        prefix_id: &str,
-        from_seq: u64,
-        limit: usize,
-    ) -> Result<Vec<(String, u64, Vec<u8>)>, String>;
+/// Simple key-value store interface.
+/// The real implementation comes from another project (Shale).
+pub trait KvStore: Send + Sync {
+    fn put(&self, key: &[u8], value: &[u8]) -> Result<(), String>;
+    fn get(&self, key: &[u8]) -> Result<Option<Bytes>, String>;
+    fn delete(&self, key: &[u8]) -> Result<(), String>;
+    fn put_batch(&self, writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String>;
+    fn delete_batch(&self, keys: Vec<Vec<u8>>) -> Result<(), String>;
+    fn scan(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String>;
+    fn flush(&self) -> Result<(), String>;
+
+    /// Begin a new transaction with snapshot isolation.
+    fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String>;
 }
 
-/// QueueStore supports at-least-once delivery via leases.
-pub trait QueueStore {
-    /// Enqueue a message; if `dedupe_key` is provided, the backend SHOULD enforce idempotency.
-    /// Returns msg id.
-    fn enqueue(
-        &self,
-        queue_id: &str,
-        message: Vec<u8>,
-        dedupe_key: Option<&str>,
-    ) -> Result<String, String>;
+/// Transaction with snapshot isolation and ACID guarantees.
+pub trait KvTransaction: Send {
+    fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), String>;
+    fn get(&self, key: &[u8]) -> Result<Option<Bytes>, String>;
+    fn delete(&mut self, key: &[u8]) -> Result<(), String>;
+    fn scan(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String>;
 
-    /// Acquire a lease for up to `max_batch` messages (backend may return fewer). Returns tuples (id, payload, lease_token).
-    fn lease(
-        &self,
-        queue_id: &str,
-        visibility_secs: u32,
-        max_batch: usize,
-    ) -> Result<Vec<(String, Vec<u8>, String)>, String>;
+    /// Commit the transaction. Returns error if conflicts detected.
+    fn commit(self: Box<Self>) -> Result<(), String>;
 
-    /// Complete (ack) a message lease using its id and token.
-    fn complete(&self, queue_id: &str, id: &str, lease_token: &str) -> Result<(), String>;
+    /// Rollback the transaction.
+    fn rollback(self: Box<Self>) -> Result<(), String>;
 }
