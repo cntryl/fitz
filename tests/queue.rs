@@ -80,7 +80,7 @@ async fn should_persist_enqueued_messages_durably() {
 // ============================================================================
 
 #[tokio::test]
-async fn should_reserve_message_from_queue() {
+async fn should_receive_batch_from_queue() {
     // Arrange
     let (handle, _store) = start_test_engine();
     handle
@@ -97,8 +97,9 @@ async fn should_reserve_message_from_queue() {
         .unwrap();
 
     // Act
+    // Request up to 10 items in a single receive operation
     let result = handle
-        .reserve("queue://realm/area/jobs".to_string(), 30)
+        .receive("queue://realm/area/jobs".to_string(), 10)
         .await;
 
     // Assert

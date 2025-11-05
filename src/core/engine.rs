@@ -1,14 +1,15 @@
-// Engine: single task that serializes store access and manages subscriptions
+// Refactored Engine: simple dispatcher that routes to domain handlers
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
-
-use crate::core::router::Router;
-use crate::core::queue::{QueueConfig, QueueScope};
-use crate::core::stream::{AppendResult, AreaReadResponse, ExpectedRevision as StreamExpectedRevision, StreamEvent};
-use crate::storage::mem::MemStore;
 use tokio::task::JoinHandle;
 
-/// Notification sender type used by transports to receive (route, id, body, reply_to, seq, end)
+use crate::core::domain::{Domain, DomainRequest, DomainResponse};
+use crate::core::router::Router;
+use crate::protocol::route::parse_route;
+use crate::storage::mem::MemStore;
+
+// Keep the subscription sender type for compatibility
 pub type SubSender = mpsc::Sender<(
     String,
     Option<String>,
@@ -18,186 +19,35 @@ pub type SubSender = mpsc::Sender<(
     bool,
 )>;
 
-// Response channel type aliases
-type RespUnit = oneshot::Sender<Result<(), String>>;
-type RespStr = oneshot::Sender<Result<String, String>>;
-type RespVecStr = oneshot::Sender<Result<Vec<String>, String>>;
-type RespOptIdBody = oneshot::Sender<Result<Option<(String, Vec<u8>)>, String>>;
-type RespReserve = oneshot::Sender<Result<(String, Vec<u8>, String), String>>;
-type RespRecordMeta = oneshot::Sender<Result<Option<crate::storage::mem::Record>, String>>;
-type RespQueueStats = oneshot::Sender<Result<crate::storage::mem::QueueStats, String>>;
-type RespU32 = oneshot::Sender<Result<u32, String>>;
-type RespStreamPeek = oneshot::Sender<Result<Vec<(u64, Vec<u8>)>, String>>;
-type RespStreamConsume = oneshot::Sender<Result<Vec<(String, u64, Vec<u8>)>, String>>;
-type RespStreamAppend = oneshot::Sender<Result<AppendResult, String>>;
-type RespStreamRead = oneshot::Sender<Result<Vec<StreamEvent>, String>>;
-type RespStreamReadArea = oneshot::Sender<Result<AreaReadResponse, String>>;
-// Aliases to reduce complex inline types (silences clippy::type_complexity)
-type RespOptBody = oneshot::Sender<Result<Option<Vec<u8>>, String>>;
-type RespKvScanGe = oneshot::Sender<Result<Vec<(String, Vec<u8>)>, String>>;
-type RespKvGetBatch = oneshot::Sender<Result<Vec<(String, Option<Vec<u8>>)>, String>>;
-
+/// Simplified engine command - just dispatch to domain
 #[derive(Debug)]
 pub enum EngineCommand {
-    Publish {
+    /// Dispatch a request to the appropriate domain handler
+    Dispatch {
         route: String,
-        id: String,
-        body: Vec<u8>,
-        reply_to: Option<String>,
-        seq: Option<u32>,
-        end: bool,
-        ttl_secs: Option<u64>,
-        resp: RespUnit,
+        payload: Vec<u8>,
+        channel_id: u32,
+        resp: oneshot::Sender<Result<Vec<u8>, String>>,
     },
-    Reserve {
-        route: String,
-        lease_secs: u32,
-        resp: RespReserve,
-    },
-    ExtendLease {
-        route: String,
-        id: String,
-        token: String,
-        add_secs: u32,
-        resp: RespU32,
-    },
-    Peek {
-        route: String,
-        resp: RespOptIdBody,
-    },
-    Consume {
-        route: String,
-        id: String,
-        token: String,
-        resp: RespUnit,
-    },
-    MoveToDlq {
-        route: String,
-        id: String,
-        token: String,
-        resp: RespUnit,
-    },
-    GetMessageMetadata {
-        route: String,
-        id: String,
-        resp: RespRecordMeta,
-    },
-    GetQueueStats {
-        route: String,
-        resp: RespQueueStats,
-    },
-    ListResources {
-        route: String,
-        resp: RespVecStr,
-    },
-    ListAreas {
-        resp: RespVecStr,
-    },
-    FetchStatus {
-        resp: RespStr,
-    },
-    FetchResourceStatus {
-        resource: String,
-        resp: RespStr,
-    },
+    
+    /// Subscribe to a route (for pub/sub)
     Subscribe {
         route: String,
         sender: SubSender,
         channel_id: u32,
         resp: oneshot::Sender<Result<u64, String>>,
     },
+    
+    /// Unsubscribe from a route
     Unsubscribe {
         id: u64,
         resp: oneshot::Sender<Result<(), String>>,
     },
+    
+    /// Cleanup channel subscriptions
     CleanupChannel {
         channel_id: u32,
         resp: oneshot::Sender<Result<(), String>>,
-    },
-    StreamAppend {
-        route: String,
-        id: Option<String>,
-        body: Vec<u8>,
-        metadata: Option<Vec<u8>>,
-        expected: StreamExpectedRevision,
-        resp: oneshot::Sender<Result<u64, String>>,
-    },
-    // New API: Client-controlled sequences
-    StreamAppendNew {
-        route: String,
-        resource_seq: u64,
-        body: Vec<u8>,
-        metadata: Option<Vec<u8>>,
-        is_end: bool,
-        resp: RespStreamAppend,
-    },
-    StreamRead {
-        route: String,
-        from_seq: u64,
-        limit: usize,
-        resp: RespStreamRead,
-    },
-    StreamReadArea {
-        realm: String,
-        area: String,
-        from_seq: u64,
-        limit: usize,
-        resp: RespStreamReadArea,
-    },
-    StreamPeek {
-        route: String,
-        from_seq: u64,
-        limit: usize,
-        resp: RespStreamPeek,
-    },
-    StreamConsume {
-        prefix: String,
-        from_seq: u64,
-        limit: usize,
-        resp: RespStreamConsume,
-    },
-    SetQueueConfig {
-        scope: QueueScope,
-        cfg: QueueConfig,
-        resp: RespUnit,
-    },
-    KvPut {
-        route: String,
-        key: String,
-        value: Vec<u8>,
-        resp: RespUnit,
-    },
-    KvGet {
-        route: String,
-        key: String,
-        resp: RespOptBody,
-    },
-    KvDelete {
-        route: String,
-        key: String,
-        resp: RespUnit,
-    },
-    KvScanGe {
-        route: String,
-        start_key: String,
-        limit: usize,
-        resp: RespKvScanGe,
-    },
-    KvPutBatch {
-        route: String,
-        items: Vec<(String, Vec<u8>)>,
-        resp: RespUnit,
-    },
-    KvGetBatch {
-        route: String,
-        keys: Vec<String>,
-        resp: RespKvGetBatch,
-    },
-    KvDeleteRange {
-        route: String,
-        start_key: String,
-        end_key: String,
-        resp: oneshot::Sender<Result<u64, String>>,
     },
 }
 
@@ -210,27 +60,19 @@ impl EngineHandle {
     pub fn new(tx: mpsc::Sender<EngineCommand>) -> Self {
         Self { tx }
     }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn publish(
+    
+    /// Dispatch a request to the appropriate domain
+    pub async fn dispatch(
         &self,
         route: String,
-        id: String,
-        body: Vec<u8>,
-        reply_to: Option<String>,
-        seq: Option<u32>,
-        end: bool,
-        ttl_secs: Option<u64>,
-    ) -> Result<(), String> {
+        payload: Vec<u8>,
+        channel_id: u32,
+    ) -> Result<Vec<u8>, String> {
         let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::Publish {
+        let cmd = EngineCommand::Dispatch {
             route,
-            id,
-            body,
-            reply_to,
-            seq,
-            end,
-            ttl_secs,
+            payload,
+            channel_id,
             resp: tx,
         };
         self.tx
@@ -239,72 +81,7 @@ impl EngineHandle {
             .map_err(|_| "engine stopped".to_string())?;
         rx.await.map_err(|_| "no response".to_string())?
     }
-
-    pub async fn reserve(
-        &self,
-        route: String,
-        lease_secs: u32,
-    ) -> Result<(String, Vec<u8>, String), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::Reserve {
-            route,
-            lease_secs,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn extend_lease(
-        &self,
-        route: String,
-        id: String,
-        token: String,
-        add_secs: u32,
-    ) -> Result<u32, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::ExtendLease {
-            route,
-            id,
-            token,
-            add_secs,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn peek(&self, route: String) -> Result<Option<(String, Vec<u8>)>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::Peek { route, resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn consume(&self, route: String, id: String, token: String) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::Consume {
-            route,
-            id,
-            token,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
+    
     pub async fn subscribe(
         &self,
         route: String,
@@ -324,7 +101,7 @@ impl EngineHandle {
             .map_err(|_| "engine stopped".to_string())?;
         rx.await.map_err(|_| "no response".to_string())?
     }
-
+    
     pub async fn unsubscribe(&self, id: u64) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         let cmd = EngineCommand::Unsubscribe { id, resp: tx };
@@ -334,463 +111,281 @@ impl EngineHandle {
             .map_err(|_| "engine stopped".to_string())?;
         rx.await.map_err(|_| "no response".to_string())?
     }
-
+    
     pub async fn cleanup_channel(&self, channel_id: u32) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::CleanupChannel {
-            channel_id,
-            resp: tx,
-        };
+        let cmd = EngineCommand::CleanupChannel { channel_id, resp: tx };
         self.tx
             .send(cmd)
             .await
             .map_err(|_| "engine stopped".to_string())?;
         rx.await.map_err(|_| "no response".to_string())?
     }
-
-    pub async fn set_queue_config(
+    
+    // ========================================================================
+    // BACKWARD COMPATIBILITY METHODS
+    // These methods build TLV payloads and call dispatch()
+    // Eventually these will be removed when all callers use dispatch directly
+    // ========================================================================
+    
+    #[allow(clippy::too_many_arguments)]
+    pub async fn publish(
         &self,
-        scope: QueueScope,
-        cfg: QueueConfig,
+        route: String,
+        id: String,
+        body: Vec<u8>,
+        reply_to: Option<String>,
+        seq: Option<u32>,
+        end: bool,
+        ttl_secs: Option<u64>,
     ) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::SetQueueConfig {
-            scope,
-            cfg,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
+        use crate::protocol::frame::build_tlv;
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_ID, id.as_bytes(), &mut payload);
+        build_tlv(TAG_BODY, &body, &mut payload);
+        
+        if let Some(reply) = reply_to {
+            build_tlv(TAG_ROUTE_REPLY, reply.as_bytes(), &mut payload);
+        }
+        if let Some(s) = seq {
+            build_tlv(TAG_SEQ, &s.to_be_bytes(), &mut payload);
+        }
+        if end {
+            build_tlv(TAG_STREAM_END, &[], &mut payload);
+        }
+        if let Some(ttl) = ttl_secs {
+            build_tlv(TAG_TTL_SECS, &ttl.to_be_bytes(), &mut payload);
+        }
+        
+        self.dispatch(route, payload, 0).await?;
+        Ok(())
     }
-
+    
+    pub async fn reserve(
+        &self,
+        route: String,
+        lease_secs: u32,
+    ) -> Result<(String, Vec<u8>, String), String> {
+        use crate::protocol::frame::{build_tlv, find_tlv};
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_LEASE, &lease_secs.to_be_bytes(), &mut payload);
+        
+        let response = self.dispatch(route, payload, 0).await?;
+        
+        // Parse response TLVs
+        let id = find_tlv(&response, TAG_ID)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .ok_or("missing TAG_ID in response")?
+            .to_string();
+        let body = find_tlv(&response, TAG_BODY)
+            .ok_or("missing TAG_BODY in response")?
+            .to_vec();
+        let token = find_tlv(&response, TAG_DELIVERY_TOKEN)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .ok_or("missing TAG_DELIVERY_TOKEN in response")?
+            .to_string();
+        
+        Ok((id, body, token))
+    }
+    
+    pub async fn extend_lease(
+        &self,
+        route: String,
+        id: String,
+        token: String,
+        add_secs: u32,
+    ) -> Result<u32, String> {
+        use crate::protocol::frame::{build_tlv, find_tlv};
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_ID, id.as_bytes(), &mut payload);
+        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut payload);
+        build_tlv(TAG_LEASE, &add_secs.to_be_bytes(), &mut payload);
+        
+        let response = self.dispatch(route, payload, 0).await?;
+        
+        // Parse remaining seconds from response
+        let remaining = find_tlv(&response, TAG_LEASE)
+            .and_then(|b| {
+                if b.len() == 4 {
+                    Some(u32::from_be_bytes(b.try_into().ok()?))
+                } else {
+                    None
+                }
+            })
+            .ok_or("missing TAG_LEASE in response")?;
+        
+        Ok(remaining)
+    }
+    
+    pub async fn peek(&self, route: String) -> Result<Option<(String, Vec<u8>)>, String> {
+        use crate::protocol::frame::find_tlv;
+        use crate::protocol::tags::*;
+        
+        let payload = Vec::new(); // Empty payload for peek
+        let response = self.dispatch(route, payload, 0).await?;
+        
+        if response.is_empty() {
+            return Ok(None);
+        }
+        
+        let id = find_tlv(&response, TAG_ID)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .map(|s| s.to_string());
+        let body = find_tlv(&response, TAG_BODY).map(|b| b.to_vec());
+        
+        match (id, body) {
+            (Some(id), Some(body)) => Ok(Some((id, body))),
+            _ => Ok(None),
+        }
+    }
+    
+    pub async fn consume(&self, route: String, id: String, token: String) -> Result<(), String> {
+        use crate::protocol::frame::build_tlv;
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_ID, id.as_bytes(), &mut payload);
+        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut payload);
+        
+        self.dispatch(route, payload, 0).await?;
+        Ok(())
+    }
+    
     pub async fn stream_append_old(
         &self,
         route: String,
         id: Option<String>,
         body: Vec<u8>,
-        metadata: Option<Vec<u8>>,
-        expected: StreamExpectedRevision,
+        _metadata: Option<Vec<u8>>,
+        _expected: crate::core::stream::ExpectedRevision,
     ) -> Result<u64, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::StreamAppend {
-            route,
-            id,
-            body,
-            metadata,
-            expected,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    // New API methods
-    pub async fn stream_append(
-        &self,
-        route: String,
-        resource_seq: u64,
-        body: Vec<u8>,
-        metadata: Option<Vec<u8>>,
-        is_end: bool,
-    ) -> Result<AppendResult, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::StreamAppendNew {
-            route,
-            resource_seq,
-            body,
-            metadata,
-            is_end,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn stream_read(
-        &self,
-        route: String,
-        from_seq: u64,
-        limit: usize,
-    ) -> Result<Vec<StreamEvent>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::StreamRead {
-            route,
-            from_seq,
-            limit,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn stream_read_area(
-        &self,
-        realm: &str,
-        area: &str,
-        from_seq: u64,
-        limit: usize,
-    ) -> Result<AreaReadResponse, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::StreamReadArea {
-            realm: realm.to_string(),
-            area: area.to_string(),
-            from_seq,
-            limit,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn stream_peek_old(
-        &self,
-        route: String,
-        from_seq: u64,
-        limit: usize,
-    ) -> Result<Vec<(u64, Vec<u8>)>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::StreamPeek {
-            route,
-            from_seq,
-            limit,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn stream_consume_prefix(
-        &self,
-        prefix: String,
-        from_seq: u64,
-        limit: usize,
-    ) -> Result<Vec<(String, u64, Vec<u8>)>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::StreamConsume {
-            prefix,
-            from_seq,
-            limit,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    // Admin / introspection helpers
-    pub async fn list_resources(&self, route: String) -> Result<Vec<String>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::ListResources { route, resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn list_areas(&self) -> Result<Vec<String>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::ListAreas { resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn fetch_status(&self) -> Result<String, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::FetchStatus { resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn fetch_resource_status(&self, resource: String) -> Result<String, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::FetchResourceStatus { resource, resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn move_to_dlq(&self, route: String, id: String, token: String) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::MoveToDlq { route, id, token, resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn get_message_metadata(&self, route: String, id: String) -> Result<Option<crate::storage::mem::Record>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::GetMessageMetadata { route, id, resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn get_queue_stats(&self, route: String) -> Result<crate::storage::mem::QueueStats, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::GetQueueStats { route, resp: tx };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    // KV operations
-    pub async fn kv_put(&self, route: String, key: String, value: Vec<u8>) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvPut {
-            route,
-            key,
-            value,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn kv_get(&self, route: String, key: String) -> Result<Option<Vec<u8>>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvGet {
-            route,
-            key,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn kv_delete(&self, route: String, key: String) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvDelete {
-            route,
-            key,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn kv_scan_ge(
-        &self,
-        route: String,
-        start_key: String,
-        limit: usize,
-    ) -> Result<Vec<(String, Vec<u8>)>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvScanGe {
-            route,
-            start_key,
-            limit,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn kv_put_batch(
-        &self,
-        route: String,
-        items: Vec<(String, Vec<u8>)>,
-    ) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvPutBatch {
-            route,
-            items,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn kv_get_batch(
-        &self,
-        route: String,
-        keys: Vec<String>,
-    ) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvGetBatch {
-            route,
-            keys,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
-    }
-
-    pub async fn kv_delete_range(
-        &self,
-        route: String,
-        start_key: String,
-        end_key: String,
-    ) -> Result<u64, String> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = EngineCommand::KvDeleteRange {
-            route,
-            start_key,
-            end_key,
-            resp: tx,
-        };
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
+        use crate::protocol::frame::{build_tlv, find_tlv};
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        if let Some(id) = id {
+            build_tlv(TAG_ID, id.as_bytes(), &mut payload);
+        }
+        build_tlv(TAG_BODY, &body, &mut payload);
+        // TODO: Add metadata and expected revision support
+        
+        let response = self.dispatch(route, payload, 0).await?;
+        
+        // Parse sequence number from response
+        let seq = find_tlv(&response, TAG_SEQ)
+            .and_then(|b| {
+                if b.len() == 8 {
+                    Some(u64::from_be_bytes(b.try_into().ok()?))
+                } else {
+                    None
+                }
+            })
+            .ok_or("missing TAG_SEQ in response")?;
+        
+        Ok(seq)
     }
 }
 
+/// Start the engine task with domain handlers
 pub fn start_engine(store: Arc<Mutex<MemStore>>) -> EngineHandle {
-    // Delegate to the joinable variant and drop the JoinHandle
     let (handle, _jh) = start_engine_with_join(store);
     handle
 }
 
-/// Variant of `start_engine` that returns both an `EngineHandle` and the `JoinHandle` of the
-/// spawned engine task so tests can await shutdown.
 pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, JoinHandle<()>) {
     let (tx, mut rx) = mpsc::channel::<EngineCommand>(1024);
     let handle = EngineHandle::new(tx.clone());
+
+    // Create domain handlers
+    let mut domains: HashMap<&'static str, Box<dyn Domain>> = HashMap::new();
+    
+    // Register all domains
+    use crate::core::{control::ControlDomain, kv::KvDomain, lease::LeaseDomain, 
+                      notice::NoticeDomain, queue::QueueDomain, rpc::RpcDomain, 
+                      stream::StreamDomain};
+    
+    // Queue domain
+    domains.insert("queue", Box::new(QueueDomain::new()));
+    
+    // KV domain
+    domains.insert("kv", Box::new(KvDomain::new()));
+    
+    // Stream domain
+    domains.insert("stream", Box::new(StreamDomain::new()));
+    
+    // Lease domain
+    domains.insert("lease", Box::new(LeaseDomain::new()));
+    
+    // Notice domain
+    domains.insert("notice", Box::new(NoticeDomain::new()));
+    
+    // Control domain
+    domains.insert("control", Box::new(ControlDomain::new()));
+    
+    // RPC domain
+    domains.insert("rpc", Box::new(RpcDomain::new()));
 
     let jh = tokio::spawn(async move {
         let mut router = Router::new();
 
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                EngineCommand::Publish {
+                EngineCommand::Dispatch {
                     route,
-                    id,
-                    body,
-                    reply_to,
-                    seq,
-                    end,
-                    ttl_secs,
+                    payload,
+                    channel_id,
                     resp,
                 } => {
-                    let mut s = store.lock().await;
-                    let _ = s.append(route.clone(), id.clone(), body.clone(), ttl_secs).await;
-                    let (_delivered, _removed) =
-                        router.dispatch(&route, Some(&id), &body, reply_to.as_deref(), seq, end);
-                    let _ = resp.send(Ok(()));
-                }
-
-                EngineCommand::MoveToDlq { route, id, token, resp } => {
-                    let mut s = store.lock().await;
-                    let _ = resp.send(s.move_to_dlq(&route, &id, &token).await.map(|_| ()));
-                }
-
-                EngineCommand::GetMessageMetadata { route, id, resp } => {
-                    let s = store.lock().await;
-                    let _ = resp.send(s.get_message_metadata(&route, &id).await);
-                }
-
-                EngineCommand::GetQueueStats { route, resp } => {
-                    let s = store.lock().await;
-                    let _ = resp.send(s.get_queue_stats(&route).await);
-                }
-
-                EngineCommand::Reserve {
-                    route,
-                    lease_secs,
-                    resp,
-                } => {
-                    let mut s = store.lock().await;
-                    let _ = resp.send(s.reserve_next(&route, lease_secs).await);
-                }
-
-                EngineCommand::ExtendLease {
-                    route,
-                    id,
-                    token,
-                    add_secs,
-                    resp,
-                } => {
-                    let mut s = store.lock().await;
-                    let _ = resp.send(s.extend_lease(&route, &id, &token, add_secs).await);
-                }
-
-                EngineCommand::Peek { route, resp } => {
-                    let s = store.lock().await;
-                    let res = s.peek_next(&route).await;
-                    let _ = resp.send(Ok(res));
-                }
-
-                EngineCommand::Consume {
-                    route,
-                    id,
-                    token,
-                    resp,
-                } => {
-                    let mut s = store.lock().await;
-                    let _ = resp.send(s.consume(&route, &id, &token).await.map(|_| ()));
-                }
-
-                EngineCommand::ListResources {
-                    route: _route,
-                    resp,
-                } => {
-                    let _ = resp.send(Err("not implemented".to_string()));
-                }
-
-                EngineCommand::ListAreas { resp } => {
-                    let _ = resp.send(Err("not implemented".to_string()));
-                }
-
-                EngineCommand::FetchStatus { resp } => {
-                    let _ = resp.send(Ok("ok".to_string()));
-                }
-
-                EngineCommand::FetchResourceStatus { resource: _, resp } => {
-                    let _ = resp.send(Err("not implemented".to_string()));
+                    // Parse route to determine domain
+                    let parsed = match parse_route(&route) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ = resp.send(Err(format!("invalid route: {}", e)));
+                            continue;
+                        }
+                    };
+                    
+                    // Get scheme string
+                    let scheme_str = parsed.scheme.as_str();
+                    
+                    // Find domain handler
+                    let domain = match domains.get(scheme_str) {
+                        Some(d) => d,
+                        None => {
+                            let _ = resp.send(Err(format!("unsupported scheme: {}", scheme_str)));
+                            continue;
+                        }
+                    };
+                    
+                    // Create domain request
+                    let request = DomainRequest {
+                        route: parsed,
+                        route_str: route,
+                        payload,
+                        channel_id,
+                    };
+                    
+                    // Dispatch to domain
+                    let response = domain.handle(request, store.clone()).await;
+                    
+                    // Convert domain response to bytes
+                    match response {
+                        DomainResponse::Ok => {
+                            let _ = resp.send(Ok(Vec::new()));
+                        }
+                        DomainResponse::Frame(data) => {
+                            let _ = resp.send(Ok(data));
+                        }
+                        DomainResponse::Error(e) => {
+                            let _ = resp.send(Err(e));
+                        }
+                    }
                 }
 
                 EngineCommand::Subscribe {
@@ -804,7 +399,6 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                 }
 
                 EngineCommand::Unsubscribe { id, resp } => {
-                    // reply unit regardless; router.unsubscribe performs best-effort cleanup
                     let _ = router.unsubscribe(id);
                     let _ = resp.send(Ok(()));
                 }
@@ -813,315 +407,9 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                     router.cleanup_channel(channel_id);
                     let _ = resp.send(Ok(()));
                 }
-
-                EngineCommand::StreamAppend {
-                    route,
-                    id,
-                    body,
-                    metadata,
-                    expected,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    match s
-                        .stream_append_with_expected(&route, id, body, metadata, expected)
-                        .await
-                    {
-                        Ok(seq) => {
-                            let _ = resp.send(Ok(seq));
-                        }
-                        Err(e) => {
-                            let _ = resp.send(Err(format!("stream error: {:?}", e)));
-                        }
-                    }
-                }
-
-                EngineCommand::StreamAppendNew {
-                    route,
-                    resource_seq,
-                    body,
-                    metadata,
-                    is_end,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    match s.stream_append_new(&route, resource_seq, body, metadata, is_end).await {
-                        Ok(result) => {
-                            let _ = resp.send(Ok(result));
-                        }
-                        Err(e) => {
-                            let _ = resp.send(Err(format!("stream error: {:?}", e)));
-                        }
-                    }
-                }
-
-                EngineCommand::StreamRead {
-                    route,
-                    from_seq,
-                    limit,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let events = s.stream_read(&route, from_seq, limit).await;
-                    let _ = resp.send(Ok(events));
-                }
-
-                EngineCommand::StreamReadArea {
-                    realm,
-                    area,
-                    from_seq,
-                    limit,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let result = s.stream_read_area(&realm, &area, from_seq, limit).await;
-                    let _ = resp.send(Ok(result));
-                }
-
-                EngineCommand::StreamPeek {
-                    route,
-                    from_seq,
-                    limit,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let events = s.stream_peek(&route, from_seq, limit).await;
-                    let out = events
-                        .into_iter()
-                        .map(|e| (e.resource_seq, e.body))
-                        .collect();
-                    let _ = resp.send(Ok(out));
-                }
-
-                EngineCommand::StreamConsume {
-                    prefix,
-                    from_seq,
-                    limit,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let out = s.stream_consume_prefix(&prefix, from_seq, limit).await;
-                    let _ = resp.send(Ok(out));
-                }
-
-                EngineCommand::SetQueueConfig { scope, cfg, resp } => {
-                    store.lock().await.set_queue_config(scope, cfg).await;
-                    let _ = resp.send(Ok(()));
-                }
-
-                EngineCommand::KvPut {
-                    route,
-                    key,
-                    value,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let res = s.kv_put(&route, &key, value).await;
-                    let _ = resp.send(res);
-                }
-
-                EngineCommand::KvGet { route, key, resp } => {
-                    let s = store.lock().await;
-                    let res = s.kv_get(&route, &key).await;
-                    let _ = resp.send(res);
-                }
-
-                EngineCommand::KvDelete { route, key, resp } => {
-                    let s = store.lock().await;
-                    let res = s.kv_delete(&route, &key).await;
-                    let _ = resp.send(res);
-                }
-
-                EngineCommand::KvScanGe {
-                    route,
-                    start_key,
-                    limit,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let res = s.kv_scan_ge(&route, &start_key, limit).await;
-                    let _ = resp.send(res);
-                }
-
-                EngineCommand::KvPutBatch { route, items, resp } => {
-                    let s = store.lock().await;
-                    let res = s.kv_put_batch(&route, items).await;
-                    let _ = resp.send(res);
-                }
-
-                EngineCommand::KvGetBatch { route, keys, resp } => {
-                    let s = store.lock().await;
-                    let res = s.kv_get_batch(&route, keys).await;
-                    let _ = resp.send(res);
-                }
-
-                EngineCommand::KvDeleteRange {
-                    route,
-                    start_key,
-                    end_key,
-                    resp,
-                } => {
-                    let s = store.lock().await;
-                    let res = s.kv_delete_range(&route, &start_key, &end_key).await;
-                    let _ = resp.send(res);
-                }
             }
         }
     });
 
     (handle, jh)
-}
-
-// Inline unit tests for EngineHandle and the engine task
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::sync::mpsc;
-    use tokio::time::{timeout, Duration};
-
-    #[tokio::test]
-    async fn should_publish_and_notify_subscriber() {
-        // Arrange
-        let store = Arc::new(Mutex::new(MemStore::new()));
-        let handle = start_engine(store.clone());
-        let (tx, mut rx) = mpsc::channel::<(
-            String,
-            Option<String>,
-            Vec<u8>,
-            Option<String>,
-            Option<u32>,
-            bool,
-        )>(4);
-        // subscribe is setup for the publish behaviour
-        let sub_id = handle
-            .subscribe("route/x".to_string(), tx, 1)
-            .await
-            .expect("subscribe failed");
-
-        // Act
-        handle
-            .publish(
-                "route/x".to_string(),
-                "mid-1".to_string(),
-                b"payload".to_vec(),
-                None,
-                Some(1),
-                false,
-                None,
-            )
-            .await
-            .expect("publish failed");
-
-        // Assert
-        // receive with timeout to avoid hanging the test
-        let got = timeout(Duration::from_secs(1), rx.recv())
-            .await
-            .expect("recv timed out")
-            .expect("channel closed");
-        let (route, mid, body, _reply, seq, end) = got;
-        assert_eq!(route, "route/x");
-        assert_eq!(mid.unwrap(), "mid-1");
-        assert_eq!(body, b"payload".to_vec());
-        assert_eq!(seq, Some(1));
-        assert!(!end);
-
-        // cleanup: unsubscribe should succeed (cleanup belongs with Assert/teardown)
-        handle
-            .unsubscribe(sub_id)
-            .await
-            .expect("unsubscribe failed");
-    }
-
-    #[tokio::test]
-    async fn should_reserve_returns_message() {
-        // Arrange
-        let store = Arc::new(Mutex::new(MemStore::new()));
-        let handle = start_engine(store.clone());
-        let route = "queue://r/a/res".to_string();
-
-        // seed a message directly into the store
-        {
-            let mut s = store.lock().await;
-            s.append(route.clone(), "id-1".to_string(), b"hello".to_vec(), None)
-                .await
-                .expect("append failed");
-        }
-
-        // Act
-        let (id, body, token) = handle
-            .reserve(route.clone(), 30)
-            .await
-            .expect("reserve failed");
-
-        // Assert
-        assert_eq!(id, "id-1");
-        assert_eq!(body, b"hello".to_vec());
-        assert!(!token.is_empty());
-    }
-
-    #[tokio::test]
-    async fn should_extend_lease_updates_remaining() {
-        // Arrange
-        let store = Arc::new(Mutex::new(MemStore::new()));
-        let handle = start_engine(store.clone());
-        let route = "queue://r/a/res".to_string();
-
-        // seed a message directly into the store
-        {
-            let mut s = store.lock().await;
-            s.append(route.clone(), "id-2".to_string(), b"x".to_vec(), None)
-                .await
-                .expect("append failed");
-        }
-
-        // Arrange (reserve is part of setup for extend)
-        let (id, _body, token) = handle
-            .reserve(route.clone(), 30)
-            .await
-            .expect("reserve failed");
-
-        // Act
-        let remaining = handle
-            .extend_lease(route.clone(), id.clone(), token.clone(), 10)
-            .await
-            .expect("extend lease failed");
-
-        // Assert
-        assert!(remaining > 0);
-    }
-
-    #[tokio::test]
-    async fn should_consume_removes_message() {
-        // Arrange
-        let store = Arc::new(Mutex::new(MemStore::new()));
-        let handle = start_engine(store.clone());
-        let route = "queue://r/a/res".to_string();
-
-        // seed a message directly into the store
-        {
-            let mut s = store.lock().await;
-            s.append(route.clone(), "id-3".to_string(), b"bye".to_vec(), None)
-                .await
-                .expect("append failed");
-        }
-
-        // Arrange (reserve the message so we can exercise consume)
-        let (id, _body, token) = handle
-            .reserve(route.clone(), 30)
-            .await
-            .expect("reserve failed");
-
-        // Act
-        handle
-            .consume(route.clone(), id.clone(), token.clone())
-            .await
-            .expect("consume failed");
-
-        // Assert
-        let remaining = {
-            let s = store.lock().await;
-            s.read_all(&route).await
-        };
-        assert!(remaining.is_empty());
-    }
 }

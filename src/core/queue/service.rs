@@ -109,76 +109,86 @@ impl<K: KvStore> QueueService<K> {
             .scan(prefix.as_bytes(), end_prefix.as_bytes())
             .map_err(|e| format!("scan error: {:?}", e))?;
         
-        // Acquire lease lock ONCE for entire batch operation
-        let mut leases = self.leases.lock().await;
-        let route_leases = leases.entry(route.to_string()).or_insert_with(HashMap::new);
-        
         let mut reserved = Vec::with_capacity(batch_size);
+        let mut dlq_msgs = Vec::new(); // Messages to move to DLQ
         
-        // Process messages until we have batch_size or run out
-        for (key_bytes, val_bytes) in results {
-            if reserved.len() >= batch_size {
-                break; // Got enough
-            }
+        // First pass: collect messages and check leases (single lock acquire)
+        {
+            let mut leases = self.leases.lock().await;
+            let route_leases = leases.entry(route.to_string()).or_insert_with(HashMap::new);
             
-            let msg: QueueMessage = serde_json::from_slice(&val_bytes)
-                .map_err(|e| format!("deserialize error: {}", e))?;
-            
-            // Check TTL expiration (per-message or queue-level)
-            let expired = if let Some(rec_ttl) = msg.ttl_secs {
-                now.saturating_sub(msg.created_at) >= rec_ttl
-            } else if cfg.ttl_secs > 0 {
-                now.saturating_sub(msg.created_at) >= cfg.ttl_secs
-            } else {
-                false
-            };
-            
-            if expired {
-                // Delete expired message (defer to avoid holding lock)
-                self.kv.delete(&key_bytes).ok();
-                continue;
-            }
-            
-            // Check if leased (this prevents conflicts between consumers)
-            if let Some((expiry, _, _)) = route_leases.get(&msg.id) {
-                if *expiry > now {
-                    continue; // Still leased by another consumer
+            // Process messages until we have batch_size or run out
+            for (key_bytes, val_bytes) in results {
+                if reserved.len() >= batch_size {
+                    break; // Got enough
                 }
+                
+                let msg: QueueMessage = serde_json::from_slice(&val_bytes)
+                    .map_err(|e| format!("deserialize error: {}", e))?;
+                
+                // Check TTL expiration (per-message or queue-level)
+                let expired = if let Some(rec_ttl) = msg.ttl_secs {
+                    now.saturating_sub(msg.created_at) >= rec_ttl
+                } else if cfg.ttl_secs > 0 {
+                    now.saturating_sub(msg.created_at) >= cfg.ttl_secs
+                } else {
+                    false
+                };
+                
+                if expired {
+                    // Delete expired message (defer to avoid holding lock)
+                    self.kv.delete(&key_bytes).ok();
+                    continue;
+                }
+                
+                // Check if leased (this prevents conflicts between consumers)
+                if let Some((expiry, _, _)) = route_leases.get(&msg.id) {
+                    if *expiry > now {
+                        continue; // Still leased by another consumer
+                    }
+                }
+                
+                // Check DLQ threshold
+                let current_delivery_count = route_leases
+                    .get(&msg.id)
+                    .map(|(_, _, count)| *count)
+                    .unwrap_or(0);
+                
+                if current_delivery_count >= dlq_threshold {
+                    // Mark for DLQ (will be moved after lock is released)
+                    dlq_msgs.push((msg.id.clone(), msg.clone()));
+                    continue;
+                }
+                
+                // Reserve this message
+                let expiry = now.saturating_add(lease_secs as u64);
+                
+                // Generate HMAC-SHA256 delivery token
+                type HmacSha256 = Hmac<Sha256>;
+                let mut mac = HmacSha256::new_from_slice(&self.token_key)
+                    .map_err(|_| "hmac error".to_string())?;
+                mac.update(format!("{}:{}:{}", route, msg.id, now).as_bytes());
+                let result_mac = mac.finalize();
+                let token = general_purpose::STANDARD.encode(result_mac.into_bytes());
+                
+                // Update in-memory lease (prevents other consumers from taking it)
+                let new_count = current_delivery_count.saturating_add(1);
+                route_leases.insert(msg.id.clone(), (expiry, token.clone(), new_count));
+                
+                // Add to batch result
+                reserved.push((msg.id, msg.body, token));
             }
+        } // Lock released here
+        
+        // Second pass: move DLQ messages (without holding lock)
+        for (msg_id, msg) in dlq_msgs {
+            self.move_to_dlq_internal(route, &msg_id, &msg).await?;
             
-            // Check DLQ threshold
-            let current_delivery_count = route_leases
-                .get(&msg.id)
-                .map(|(_, _, count)| *count)
-                .unwrap_or(0);
-            
-            if current_delivery_count >= dlq_threshold {
-                // Move to DLQ (release lock temporarily for async call)
-                drop(leases);
-                self.move_to_dlq_internal(route, &msg.id, &msg).await?;
-                leases = self.leases.lock().await;
-                let route_leases = leases.entry(route.to_string()).or_insert_with(HashMap::new);
-                route_leases.remove(&msg.id);
-                continue;
+            // Remove from leases
+            let mut leases = self.leases.lock().await;
+            if let Some(route_leases) = leases.get_mut(&route.to_string()) {
+                route_leases.remove(&msg_id);
             }
-            
-            // Reserve this message
-            let expiry = now.saturating_add(lease_secs as u64);
-            
-            // Generate HMAC-SHA256 delivery token
-            type HmacSha256 = Hmac<Sha256>;
-            let mut mac = HmacSha256::new_from_slice(&self.token_key)
-                .map_err(|_| "hmac error".to_string())?;
-            mac.update(format!("{}:{}:{}", route, msg.id, now).as_bytes());
-            let result_mac = mac.finalize();
-            let token = general_purpose::STANDARD.encode(result_mac.into_bytes());
-            
-            // Update in-memory lease (prevents other consumers from taking it)
-            let new_count = current_delivery_count.saturating_add(1);
-            route_leases.insert(msg.id.clone(), (expiry, token.clone(), new_count));
-            
-            // Add to batch result
-            reserved.push((msg.id, msg.body, token));
         }
         
         Ok(reserved)
