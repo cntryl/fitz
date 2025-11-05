@@ -2,7 +2,6 @@
 
 use crate::core::domain::{Domain, DomainRequest, DomainResponse, SubSender};
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_ROUTE_REPLY, TAG_SEQ, TAG_STREAM_END, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE};
-use crate::storage::traits::KvStore;
 use super::service::NoticeService;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -142,7 +141,6 @@ impl Domain for NoticeDomain {
     fn handle<'a>(
         &'a self,
         request: DomainRequest,
-        _kv_store: Arc<dyn KvStore>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Determine operation from TLV tags
@@ -306,7 +304,6 @@ mod tests {
     async fn should_handle_subscribe_request() {
         // Arrange
         let domain = NoticeDomain::new();
-        let store = Arc::new(Mutex::new(MemStore::new()));
         let mut payload = Vec::new();
         payload.push(TAG_SUBSCRIBE);
         payload.push(0);
@@ -326,7 +323,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request, store).await;
+        let response = domain.handle(request).await;
 
         // Assert
         match response {
@@ -341,7 +338,6 @@ mod tests {
     async fn should_handle_publish_request() {
         // Arrange
         let domain = NoticeDomain::new();
-        let store = Arc::new(Mutex::new(MemStore::new()));
         let mut payload = Vec::new();
         payload.push(TAG_ID);
         let id = b"msg-1";
@@ -367,7 +363,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request, store).await;
+        let response = domain.handle(request).await;
 
         // Assert
         match response {

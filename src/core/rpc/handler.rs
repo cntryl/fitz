@@ -1,8 +1,6 @@
 // RPC domain handler - routes all rpc:// operations
 
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
-use crate::storage::traits::KvStore;
-use std::sync::Arc;
 
 pub struct RpcDomain;
 
@@ -19,7 +17,7 @@ impl Default for RpcDomain {
 }
 
 impl Domain for RpcDomain {
-    fn handle<'a>(&'a self, _request: DomainRequest, _kv_store: Arc<dyn KvStore>) 
+    fn handle<'a>(&'a self, _request: DomainRequest) 
         -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             panic!("RpcDomain::handle not yet implemented")

@@ -7,7 +7,6 @@ use tokio::task::JoinHandle;
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::core::router::Router;
 use crate::protocol::route::parse_route;
-use crate::storage::traits::KvStore;
 
 // Keep the subscription sender type for compatibility
 pub type SubSender = mpsc::Sender<(
@@ -293,17 +292,38 @@ impl EngineHandle {
 }
 
 /// Start the engine task with domain handlers
-pub fn start_engine(kv_store: Arc<dyn KvStore>) -> EngineHandle {
-    let (handle, _jh) = start_engine_with_join(kv_store);
+pub fn start_engine() -> EngineHandle {
+    let (_jh, handle) = start_engine_with_join();
     handle
 }
 
-pub fn start_engine_with_join(kv_store: Arc<dyn KvStore>) -> (EngineHandle, JoinHandle<()>) {
+pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
     let (tx, mut rx) = mpsc::channel::<EngineCommand>(1024);
     let handle = EngineHandle::new(tx.clone());
 
     // Create domain handlers as Arc for shared ownership
     let mut domains: HashMap<&'static str, Arc<dyn Domain>> = HashMap::new();
+    
+    // Create a mock KV store for domains that need storage
+    // TODO: Replace with proper storage backend
+    use crate::storage::traits::{KvStore, KvTransaction};
+    use bytes::Bytes;
+    
+    #[derive(Clone)]
+    struct MockStore;
+    impl KvStore for MockStore {
+        fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> { Ok(()) }
+        fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> { Ok(None) }
+        fn delete(&self, _key: &[u8]) -> Result<(), String> { Ok(()) }
+        fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> { Ok(()) }
+        fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> { Ok(()) }
+        fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> { Ok(vec![]) }
+        fn flush(&self) -> Result<(), String> { Ok(()) }
+        fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
+            Err("Transactions not supported in mock".to_string())
+        }
+    }
+    let kv_store = Arc::new(MockStore) as Arc<dyn KvStore>;
     
     // Register all domains
     use crate::core::{control::ControlDomain, kv::KvDomain, lease::LeaseDomain, 
@@ -313,11 +333,11 @@ pub fn start_engine_with_join(kv_store: Arc<dyn KvStore>) -> (EngineHandle, Join
     // Queue domain
     domains.insert("queue", Arc::new(QueueDomain::new()));
     
-    // KV domain
-    domains.insert("kv", Arc::new(KvDomain::new()));
+    // KV domain - needs storage
+    domains.insert("kv", Arc::new(KvDomain::new(Arc::clone(&kv_store))));
     
-    // Stream domain
-    domains.insert("stream", Arc::new(StreamDomain::new()));
+    // Stream domain - needs storage
+    domains.insert("stream", Arc::new(StreamDomain::new(Arc::clone(&kv_store))));
     
     // Lease domain
     domains.insert("lease", Arc::new(LeaseDomain::new()));
@@ -374,7 +394,7 @@ pub fn start_engine_with_join(kv_store: Arc<dyn KvStore>) -> (EngineHandle, Join
                     };
                     
                     // Dispatch to domain
-                    let response = domain.handle(request, kv_store.clone()).await;
+                    let response = domain.handle(request).await;
                     
                     // Convert domain response to bytes and send response
                     match response {
@@ -453,5 +473,5 @@ pub fn start_engine_with_join(kv_store: Arc<dyn KvStore>) -> (EngineHandle, Join
         }
     });
 
-    (handle, jh)
+    (jh, handle)
 }

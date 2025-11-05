@@ -2,8 +2,6 @@
 // to handle all operations for its scheme
 
 use crate::protocol::route::Route;
-use crate::storage::traits::KvStore;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Type alias for subscriber channels (used by domains that support pub/sub)
@@ -42,7 +40,9 @@ pub trait Domain: Send + Sync {
     /// Handle a request for this domain
     /// Domain parses TLV tags from request.payload to extract operation details
     /// Returns DomainResponse with TLV-encoded response or error
-    fn handle<'a>(&'a self, request: DomainRequest, kv_store: Arc<dyn KvStore>) 
+    /// 
+    /// Domains that need persistent storage should manage their own KvStore instance
+    fn handle<'a>(&'a self, request: DomainRequest) 
         -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>>;
     
     /// Get the scheme(s) this domain handles (e.g., "queue", "kv", "stream")

@@ -4,8 +4,6 @@
 //! built on top of a low-level KvStore trait. This allows domain services to work with
 //! logical concepts while the actual persistence is delegated to the KvStore implementation.
 
-use std::collections::HashMap;
-
 // ============================================================================
 // KV STORE TRAIT (Foundation Layer)
 // ============================================================================

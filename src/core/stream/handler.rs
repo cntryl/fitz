@@ -12,9 +12,9 @@ pub struct StreamDomain {
 }
 
 impl StreamDomain {
-    pub fn new() -> Self {
+    pub fn new(kv_store: Arc<dyn KvStore>) -> Self {
         Self {
-            service: StreamService::new(),
+            service: StreamService::new(kv_store),
         }
     }
 
@@ -192,7 +192,25 @@ impl StreamDomain {
 
 impl Default for StreamDomain {
     fn default() -> Self {
-        Self::new()
+        // For tests - use a mock store
+        use crate::storage::traits::KvTransaction;
+        use bytes::Bytes;
+        
+        struct MockStore;
+        impl KvStore for MockStore {
+            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> { Ok(()) }
+            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> { Ok(None) }
+            fn delete(&self, _key: &[u8]) -> Result<(), String> { Ok(()) }
+            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> { Ok(()) }
+            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> { Ok(()) }
+            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> { Ok(vec![]) }
+            fn flush(&self) -> Result<(), String> { Ok(()) }
+            fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
+                Err("Transactions not supported in mock".to_string())
+            }
+        }
+        
+        Self::new(Arc::new(MockStore))
     }
 }
 
@@ -200,7 +218,6 @@ impl Domain for StreamDomain {
     fn handle<'a>(
         &'a self,
         request: DomainRequest,
-        kv_store: Arc<dyn KvStore>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Determine operation from route
@@ -218,7 +235,7 @@ impl Domain for StreamDomain {
             // Use route_str for the store operations
             let route_str = &request.route_str;
 
-            // Handle the operation
+            // Handle the operation (service now owns the store)
             let result = self
                 .service
                 .handle_operation(
@@ -230,7 +247,6 @@ impl Domain for StreamDomain {
                     is_end,
                     from_seq,
                     limit,
-                    kv_store,
                 )
                 .await;
 

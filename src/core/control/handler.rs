@@ -1,8 +1,7 @@
 // Control domain handler - routes all control:// operations
 
-use crate::core::domain::{Domain, DomainRequest, DomainResponse, SubSender};
+use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
-use crate::storage::traits::KvStore;
 use super::service::ControlService;
 use super::types::ControlOperation;
 use crate::core::notice::NoticeService;
@@ -113,7 +112,6 @@ impl Domain for ControlDomain {
     fn handle<'a>(
         &'a self,
         request: DomainRequest,
-        _kv_store: Arc<dyn KvStore>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Parse body from TLV payload
@@ -248,7 +246,6 @@ mod tests {
     async fn should_handle_heartbeat_operation() {
         // Arrange
         let domain = ControlDomain::new();
-        let store = Arc::new(crate::storage::mem::MemStore::new()) as Arc<dyn KvStore>;
         let mut payload = Vec::new();
         payload.push(TAG_BODY);
         let body = b"{\"nodeId\":\"test-node\",\"timestamp\":1234567890}";
@@ -270,7 +267,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request, store).await;
+        let response = domain.handle(request).await;
 
         // Assert
         match response {
@@ -285,7 +282,6 @@ mod tests {
     async fn should_handle_shutdown_operation() {
         // Arrange
         let domain = ControlDomain::new();
-        let store = Arc::new(crate::storage::mem::MemStore::new()) as Arc<dyn KvStore>;
         let mut payload = Vec::new();
         payload.push(TAG_BODY);
         let body = b"{\"nodeId\":\"test-node\",\"reason\":\"maintenance\"}";
@@ -307,7 +303,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request, store).await;
+        let response = domain.handle(request).await;
 
         // Assert
         match response {
@@ -322,7 +318,6 @@ mod tests {
     async fn should_return_error_when_body_missing() {
         // Arrange
         let domain = ControlDomain::new();
-        let store = Arc::new(crate::storage::mem::MemStore::new()) as Arc<dyn KvStore>;
         let payload = Vec::new(); // Empty payload
 
         let request = DomainRequest {
@@ -340,11 +335,12 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request, store).await;
+        let response = domain.handle(request).await;
 
         // Assert
         match response {
-            DomainResponse::Frame(frame) => {
+            DomainResponse::Frame(_frame) => {
+                // Success - error frame returned
             }
             _ => panic!("Expected Frame response with error"),
         }

@@ -1,8 +1,6 @@
 // Queue domain handler - routes all queue:// operations
 
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
-use crate::storage::traits::KvStore;
-use std::sync::Arc;
 
 pub struct QueueDomain;
 
@@ -19,7 +17,7 @@ impl Default for QueueDomain {
 }
 
 impl Domain for QueueDomain {
-    fn handle<'a>(&'a self, _request: DomainRequest, _kv_store: Arc<dyn KvStore>) 
+    fn handle<'a>(&'a self, _request: DomainRequest) 
         -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // TODO: Implement queue domain logic

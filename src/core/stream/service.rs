@@ -10,13 +10,15 @@ use std::sync::Arc;
 /// - ReadArea: read from area with watermark
 /// - Peek: peek without advancing
 /// - Subscribe: live event subscriptions
-#[derive(Debug, Clone)]
-pub struct StreamService;
+#[derive(Clone)]
+pub struct StreamService {
+    kv_store: Arc<dyn KvStore>,
+}
 
 impl StreamService {
     /// Create a new stream service
-    pub fn new() -> Self {
-        Self
+    pub fn new(kv_store: Arc<dyn KvStore>) -> Self {
+        Self { kv_store }
     }
 
     /// Process a stream operation
@@ -30,21 +32,20 @@ impl StreamService {
         is_end: bool,
         from_seq: Option<u64>,
         limit: Option<usize>,
-        _store: Arc<dyn KvStore>,
     ) -> Result<StreamResponse, String> {
         match operation {
             StreamOperation::Append => {
-                self.handle_append(route, resource_seq, body, metadata, is_end, _store)
+                self.handle_append(route, resource_seq, body, metadata, is_end)
                     .await
             }
             StreamOperation::Read => {
-                self.handle_read(route, from_seq, limit, _store).await
+                self.handle_read(route, from_seq, limit).await
             }
             StreamOperation::ReadArea => {
-                self.handle_read_area(route, from_seq, limit, _store).await
+                self.handle_read_area(route, from_seq, limit).await
             }
             StreamOperation::Peek => {
-                self.handle_peek(route, from_seq, limit, _store).await
+                self.handle_peek(route, from_seq, limit).await
             }
             StreamOperation::Subscribe => {
                 // TODO: Implement subscribe (requires pub/sub integration)
@@ -61,9 +62,8 @@ impl StreamService {
         _body: Option<Vec<u8>>,
         _metadata: Option<Vec<u8>>,
         _is_end: bool,
-        _store: Arc<dyn KvStore>,
     ) -> Result<StreamResponse, String> {
-        // TODO: Implement stream append using KvStore
+        // TODO: Implement stream append using self.kv_store
         Err("Stream append not yet implemented".to_string())
     }
 
@@ -73,9 +73,8 @@ impl StreamService {
         _route: &str,
         _from_seq: Option<u64>,
         _limit: Option<usize>,
-        _store: Arc<dyn KvStore>,
     ) -> Result<StreamResponse, String> {
-        // TODO: Implement stream read using KvStore
+        // TODO: Implement stream read using self.kv_store
         Err("Stream read not yet implemented".to_string())
     }
 
@@ -85,9 +84,8 @@ impl StreamService {
         _route: &str,
         _from_seq: Option<u64>,
         _limit: Option<usize>,
-        _store: Arc<dyn KvStore>,
     ) -> Result<StreamResponse, String> {
-        // TODO: Implement stream read area using KvStore
+        // TODO: Implement stream read area using self.kv_store
         Err("Stream read area not yet implemented".to_string())
     }
 
@@ -97,16 +95,33 @@ impl StreamService {
         _route: &str,
         _from_seq: Option<u64>,
         _limit: Option<usize>,
-        _store: Arc<dyn KvStore>,
     ) -> Result<StreamResponse, String> {
-        // TODO: Implement stream peek using KvStore
+        // TODO: Implement stream peek using self.kv_store
         Err("Stream peek not yet implemented".to_string())
     }
 }
 
 impl Default for StreamService {
     fn default() -> Self {
-        Self::new()
+        // For tests - use a mock store
+        use crate::storage::traits::KvTransaction;
+        use bytes::Bytes;
+        
+        struct MockStore;
+        impl KvStore for MockStore {
+            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> { Ok(()) }
+            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> { Ok(None) }
+            fn delete(&self, _key: &[u8]) -> Result<(), String> { Ok(()) }
+            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> { Ok(()) }
+            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> { Ok(()) }
+            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> { Ok(vec![]) }
+            fn flush(&self) -> Result<(), String> { Ok(()) }
+            fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
+                Err("Transactions not supported in mock".to_string())
+            }
+        }
+        
+        Self::new(Arc::new(MockStore))
     }
 }
 
