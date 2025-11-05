@@ -1,5 +1,7 @@
 //! Stream domain types
 
+use crate::protocol::route::Route;
+
 /// A stream event with monotonic sequencing.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamEvent {
@@ -42,4 +44,45 @@ pub enum ExpectedRevision {
     NoStream,
     StreamExists,
     Exact(u64),
+}
+
+/// Stream operation types determined by route operation segment
+#[derive(Debug, Clone)]
+pub enum StreamOperation {
+    /// Append - add event to stream (TAG_SEQ = resource_seq, TAG_BODY = event body)
+    Append,
+    /// Read - read events from resource stream (TAG_SEQ = from_seq, limit in route)
+    Read,
+    /// ReadArea - read from area with watermark (TAG_SEQ = from_seq, limit in route)
+    ReadArea,
+    /// Peek - peek events without advancing (TAG_SEQ = from_seq, limit in route)
+    Peek,
+    /// Subscribe - subscribe to stream for live updates
+    Subscribe,
+}
+
+impl StreamOperation {
+    /// Determine operation from route
+    pub fn from_route(route: &Route) -> Result<Self, String> {
+        match route.operation.as_deref() {
+            Some("append") => Ok(StreamOperation::Append),
+            Some("read") => Ok(StreamOperation::Read),
+            Some("read-area") => Ok(StreamOperation::ReadArea),
+            Some("peek") => Ok(StreamOperation::Peek),
+            Some("subscribe") => Ok(StreamOperation::Subscribe),
+            None => {
+                // Default based on route structure
+                // If route has resource, default to Read
+                // If route has only area, default to ReadArea
+                if route.resource.is_some() {
+                    Ok(StreamOperation::Read)
+                } else if route.area.is_some() {
+                    Ok(StreamOperation::ReadArea)
+                } else {
+                    Err("Stream operation requires operation or resource/area".to_string())
+                }
+            }
+            Some(op) => Err(format!("Unknown stream operation: {}", op)),
+        }
+    }
 }

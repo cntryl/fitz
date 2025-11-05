@@ -17,80 +17,18 @@ static ACTIVE_CONN: OnceCell<StdArc<AtomicUsize>> = OnceCell::new();
 
 /// Initialize transports (stub)
 pub fn init() {
-    // Start a minimal websocket transport in background
-    let store = std::sync::Arc::new(tokio::sync::Mutex::new(crate::storage::mem::MemStore::new()));
-    // start engine with the store and obtain a handle
-    let engine = crate::core::engine::start_engine(store.clone());
-    // initialize active connections counter (no-op if already set)
-    ACTIVE_CONN.set(StdArc::new(AtomicUsize::new(0))).ok();
-    let cfg = crate::config::load();
-    let ws_port = cfg.transport.ws_port;
-    let tcp_port = cfg.transport.tcp_port;
-    let addr: std::net::SocketAddr = ([0, 0, 0, 0], ws_port).into();
-    let ws_engine = engine.clone();
-    let transport = ws::WsTransport::new(addr, store, ws_engine);
-    tokio::spawn(async move {
-        if let Err(e) = transport.run().await {
-            eprintln!("ws transport failed: {}", e);
-        }
-    });
-
-    // Start TCP transport
-    let tcp_addr: std::net::SocketAddr = ([0, 0, 0, 0], tcp_port).into();
-    let tcp = tcp::TcpTransport::new(tcp_addr, engine.clone());
-    tokio::spawn(async move {
-        if let Err(e) = tcp.run().await {
-            eprintln!("tcp transport failed: {}", e);
-        }
-    });
-
-    // Emit control-plane frames over FTZ (baseline): register once, heartbeat periodically
-    let engine_ctrl = engine.clone();
-    tokio::spawn(async move {
-        // Register
-        let payload = serde_json::json!({
-            "brokerId": "node-1",
-            "version": env!("CARGO_PKG_VERSION"),
-            "realmSpan": ["*"],
-            "endpoints": { "ws_port": ws_port, "tcp_port": tcp_port },
-            "capabilities": { "stream_backend": "kv", "queue_backend": "kv", "supports_peek": true, "supports_consume_prefix": true }
-        }).to_string().into_bytes();
-        let _ = engine_ctrl
-            .publish(
-                "control://broker/register".to_string(),
-                format!("reg-{}", chrono::Utc::now().timestamp_millis()),
-                payload,
-                None,
-                None,
-                true,
-                None,
-            )
-            .await;
-
-        // Heartbeat loop (every 30s)
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            ticker.tick().await;
-            let metrics = serde_json::json!({
-                "nodeId": "node-1",
-                "clients": crate::transport::get_active_connections(),
-                "ts": chrono::Utc::now().to_rfc3339(),
-            })
-            .to_string()
-            .into_bytes();
-            let _ = engine_ctrl
-                .publish(
-                    "control://broker/heartbeat".to_string(),
-                    format!("hb-{}", chrono::Utc::now().timestamp_millis()),
-                    metrics,
-                    None,
-                    None,
-                    true,
-                    None,
-                )
-                .await;
-        }
-    });
+    // TODO: This is a temporary stub. In production, the application
+    // should create a KvStore implementation (e.g., ShaleStore) and
+    // start the engine before initializing transports.
+    
+    // For now, panic to indicate this needs proper setup
+    panic!("transport::init() is a stub - application must provide KvStore and start engine");
+    
+    // Example of how this should be called:
+    // let store: Arc<dyn KvStore> = Arc::new(MyKvStoreImpl::new());
+    // let engine = crate::core::engine::start_engine(store);
+    // let ws_transport = ws::WsTransport::new(addr, engine.clone());
+    // tokio::spawn(async move { ws_transport.run().await });
 }
 
 // Transport lifecycle state shared across transports

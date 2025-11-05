@@ -28,6 +28,10 @@ pub enum Scheme {
     Inbox,
     /// `control://...` broker control plane routes (system scoped)
     Control,
+    /// `kv://...` key-value storage
+    Kv,
+    /// `lease://...` lease management
+    Lease,
 }
 
 impl Scheme {
@@ -39,6 +43,8 @@ impl Scheme {
             Scheme::Rpc => "rpc",
             Scheme::Inbox => "inbox",
             Scheme::Control => "control",
+            Scheme::Kv => "kv",
+            Scheme::Lease => "lease",
         }
     }
 }
@@ -53,6 +59,8 @@ impl TryFrom<&str> for Scheme {
             "rpc" => Ok(Scheme::Rpc),
             "inbox" => Ok(Scheme::Inbox),
             "control" => Ok(Scheme::Control),
+            "kv" => Ok(Scheme::Kv),
+            "lease" => Ok(Scheme::Lease),
             _ => Err("unknown scheme"),
         }
     }

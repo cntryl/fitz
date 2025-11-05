@@ -1,9 +1,8 @@
 // Lease domain handler - routes all lease:// operations
 
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
-use crate::storage::mem::MemStore;
+use crate::storage::traits::KvStore;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub struct LeaseDomain;
 
@@ -20,7 +19,7 @@ impl Default for LeaseDomain {
 }
 
 impl Domain for LeaseDomain {
-    fn handle<'a>(&'a self, _request: DomainRequest, _store: Arc<Mutex<MemStore>>) 
+    fn handle<'a>(&'a self, _request: DomainRequest, _kv_store: Arc<dyn KvStore>) 
         -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             panic!("LeaseDomain::handle not yet implemented")

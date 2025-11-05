@@ -1,7 +1,8 @@
 //! Storage module
 
-pub mod mem;
 pub mod traits;
+
+pub use traits::{KvStore, KvTransaction};
 
 /// Initialize storage subsystem (stub)
 pub fn init() {

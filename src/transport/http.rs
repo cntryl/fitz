@@ -1,31 +1,29 @@
 //! HTTP transport (minimal probes + websocket upgrade)
 
-use crate::storage::mem::MemStore;
+use crate::core::engine::EngineHandle;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpTransport {
     addr: SocketAddr,
-    pub store: Arc<TokioMutex<MemStore>>,
+    engine: EngineHandle,
 }
 
 impl HttpTransport {
-    pub fn new(addr: SocketAddr, store: Arc<TokioMutex<MemStore>>) -> Self {
-        Self { addr, store }
+    pub fn new(addr: SocketAddr, engine: EngineHandle) -> Self {
+        Self { addr, engine }
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let make_svc = make_service_fn(move |_conn| {
-            let store = self.store.clone();
+            let engine = self.engine.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
-                    let store = store.clone();
-                    async move { handle_request(req, store).await }
+                    let engine = engine.clone();
+                    async move { handle_request(req, engine).await }
                 }))
             }
         });
@@ -38,7 +36,7 @@ impl HttpTransport {
 
 pub async fn handle_request(
     req: Request<Body>,
-    store: Arc<TokioMutex<MemStore>>,
+    engine: EngineHandle,
 ) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_string();
     match path.as_str() {
@@ -126,15 +124,13 @@ pub async fn handle_request(
             );
 
             // spawn a task to complete the upgrade and hand to ws processor
-            let store_for_task = store.clone();
-            // create engine handle using the same store so upgraded connections can use engine
-            let engine = crate::core::engine::start_engine(store_for_task.clone());
+            let engine_for_task = engine.clone();
             let fut = async move {
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => match tokio_tungstenite::accept_async(upgraded).await {
                         Ok(ws_stream) => {
                             if let Err(e) =
-                                crate::transport::ws::process_ws_stream(ws_stream, engine).await
+                                crate::transport::ws::process_ws_stream(ws_stream, engine_for_task).await
                             {
                                 eprintln!("ws session error (upgraded): {}", e);
                             }

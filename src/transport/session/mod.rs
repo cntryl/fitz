@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::core::engine::EngineHandle;
+use crate::core::stream::ExpectedRevision as StreamExpectedRevision;
 use crate::protocol::frame as fr;
-use crate::storage::mem::ExpectedRevision as StreamExpectedRevision;
 use crate::transport::mux::Muxer;
 
 mod state;

@@ -1,31 +1,26 @@
 // Clean, minimal ws.rs implementation that defers protocol handling to session.rs
 
 use crate::core::engine::EngineHandle;
-use crate::storage::mem::MemStore;
 use futures::sink::SinkExt;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::WebSocketStream;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WsTransport {
     pub addr: SocketAddr,
-    pub store: Arc<tokio::sync::Mutex<MemStore>>,
     pub engine: EngineHandle,
 }
 
 impl WsTransport {
     pub fn new(
         addr: SocketAddr,
-        store: Arc<tokio::sync::Mutex<MemStore>>,
         engine: EngineHandle,
     ) -> Self {
         Self {
             addr,
-            store,
             engine,
         }
     }

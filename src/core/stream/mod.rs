@@ -5,6 +5,6 @@ mod service;
 mod handler;
 
 // Re-export public API
-pub use types::{AppendResult, AreaReadResponse, ExpectedRevision, StreamError, StreamEvent};
-// pub use service::StreamService;
+pub use types::{AppendResult, AreaReadResponse, ExpectedRevision, StreamError, StreamEvent, StreamOperation};
+pub use service::StreamService;
 pub use handler::StreamDomain;

@@ -5,6 +5,6 @@ mod service;
 mod handler;
 
 // Re-export public API
-// pub use types::*;
-// pub use service::NoticeService;
+pub use types::*;
+pub use service::NoticeService;
 pub use handler::NoticeDomain;

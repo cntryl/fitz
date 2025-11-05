@@ -1,13 +1,13 @@
 // Refactored Engine: simple dispatcher that routes to domain handlers
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::core::router::Router;
 use crate::protocol::route::parse_route;
-use crate::storage::mem::MemStore;
+use crate::storage::traits::KvStore;
 
 // Keep the subscription sender type for compatibility
 pub type SubSender = mpsc::Sender<(
@@ -30,7 +30,7 @@ pub enum EngineCommand {
         resp: oneshot::Sender<Result<Vec<u8>, String>>,
     },
     
-    /// Subscribe to a route (for pub/sub)
+    /// Subscribe to a route (for pub/sub) - routed to domain
     Subscribe {
         route: String,
         sender: SubSender,
@@ -38,13 +38,13 @@ pub enum EngineCommand {
         resp: oneshot::Sender<Result<u64, String>>,
     },
     
-    /// Unsubscribe from a route
+    /// Unsubscribe from a route - routed to domain
     Unsubscribe {
         id: u64,
         resp: oneshot::Sender<Result<(), String>>,
     },
     
-    /// Cleanup channel subscriptions
+    /// Cleanup channel subscriptions - routed to domain
     CleanupChannel {
         channel_id: u32,
         resp: oneshot::Sender<Result<(), String>>,
@@ -293,17 +293,17 @@ impl EngineHandle {
 }
 
 /// Start the engine task with domain handlers
-pub fn start_engine(store: Arc<Mutex<MemStore>>) -> EngineHandle {
-    let (handle, _jh) = start_engine_with_join(store);
+pub fn start_engine(kv_store: Arc<dyn KvStore>) -> EngineHandle {
+    let (handle, _jh) = start_engine_with_join(kv_store);
     handle
 }
 
-pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, JoinHandle<()>) {
+pub fn start_engine_with_join(kv_store: Arc<dyn KvStore>) -> (EngineHandle, JoinHandle<()>) {
     let (tx, mut rx) = mpsc::channel::<EngineCommand>(1024);
     let handle = EngineHandle::new(tx.clone());
 
-    // Create domain handlers
-    let mut domains: HashMap<&'static str, Box<dyn Domain>> = HashMap::new();
+    // Create domain handlers as Arc for shared ownership
+    let mut domains: HashMap<&'static str, Arc<dyn Domain>> = HashMap::new();
     
     // Register all domains
     use crate::core::{control::ControlDomain, kv::KvDomain, lease::LeaseDomain, 
@@ -311,25 +311,27 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                       stream::StreamDomain};
     
     // Queue domain
-    domains.insert("queue", Box::new(QueueDomain::new()));
+    domains.insert("queue", Arc::new(QueueDomain::new()));
     
     // KV domain
-    domains.insert("kv", Box::new(KvDomain::new()));
+    domains.insert("kv", Arc::new(KvDomain::new()));
     
     // Stream domain
-    domains.insert("stream", Box::new(StreamDomain::new()));
+    domains.insert("stream", Arc::new(StreamDomain::new()));
     
     // Lease domain
-    domains.insert("lease", Box::new(LeaseDomain::new()));
+    domains.insert("lease", Arc::new(LeaseDomain::new()));
     
-    // Notice domain
-    domains.insert("notice", Box::new(NoticeDomain::new()));
+    // Notice domain - keep separate typed reference for subscription routing
+    let notice_domain = Arc::new(NoticeDomain::new());
+    domains.insert("notice", Arc::clone(&notice_domain) as Arc<dyn Domain>);
     
-    // Control domain
-    domains.insert("control", Box::new(ControlDomain::new()));
+    // Control domain - shares notice service for pub/sub
+    let control_domain = Arc::new(ControlDomain::with_notice_service(notice_domain.get_service()));
+    domains.insert("control", Arc::clone(&control_domain) as Arc<dyn Domain>);
     
     // RPC domain
-    domains.insert("rpc", Box::new(RpcDomain::new()));
+    domains.insert("rpc", Arc::new(RpcDomain::new()));
 
     let jh = tokio::spawn(async move {
         let mut router = Router::new();
@@ -365,16 +367,16 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                     
                     // Create domain request
                     let request = DomainRequest {
-                        route: parsed,
-                        route_str: route,
-                        payload,
+                        route: parsed.clone(),
+                        route_str: route.clone(),
+                        payload: payload.clone(),
                         channel_id,
                     };
                     
                     // Dispatch to domain
-                    let response = domain.handle(request, store.clone()).await;
+                    let response = domain.handle(request, kv_store.clone()).await;
                     
-                    // Convert domain response to bytes
+                    // Convert domain response to bytes and send response
                     match response {
                         DomainResponse::Ok => {
                             let _ = resp.send(Ok(Vec::new()));
@@ -394,16 +396,56 @@ pub fn start_engine_with_join(store: Arc<Mutex<MemStore>>) -> (EngineHandle, Joi
                     channel_id,
                     resp,
                 } => {
-                    let id = router.subscribe(route, channel_id, sender);
-                    let _ = resp.send(Ok(id));
+                    // Parse route to determine which domain handles it
+                    let scheme_str = if let Some(scheme_end) = route.find("://") {
+                        &route[..scheme_end]
+                    } else {
+                        "notice" // default to notice for bare routes
+                    };
+                    
+                    // Control routes use notice domain for pub/sub
+                    let lookup_scheme = if scheme_str == "control" {
+                        "notice"
+                    } else {
+                        scheme_str
+                    };
+                    
+                    // Find domain and delegate subscription
+                    if let Some(domain) = domains.get(lookup_scheme) {
+                        let result = domain.subscribe(route, channel_id, sender).await;
+                        let _ = resp.send(result);
+                    } else {
+                        // Fall back to legacy router for unknown schemes
+                        let id = router.subscribe(route, channel_id, sender);
+                        let _ = resp.send(Ok(id));
+                    }
                 }
 
                 EngineCommand::Unsubscribe { id, resp } => {
-                    let _ = router.unsubscribe(id);
+                    // Try each domain until one successfully unsubscribes
+                    // Domains that don't support subscriptions will return false
+                    let mut removed = false;
+                    for (_, domain) in &domains {
+                        if domain.unsubscribe(id).await {
+                            removed = true;
+                            break;
+                        }
+                    }
+                    
+                    // Fall back to legacy router if not handled by any domain
+                    if !removed {
+                        router.unsubscribe(id);
+                    }
                     let _ = resp.send(Ok(()));
                 }
 
                 EngineCommand::CleanupChannel { channel_id, resp } => {
+                    // Cleanup in all domains that support it
+                    for (_, domain) in &domains {
+                        domain.cleanup_channel(channel_id).await;
+                    }
+                    
+                    // Also cleanup legacy router
                     router.cleanup_channel(channel_id);
                     let _ = resp.send(Ok(()));
                 }
