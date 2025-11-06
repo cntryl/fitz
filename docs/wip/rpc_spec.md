@@ -1,128 +1,227 @@
-# RPC specification
+Excellent — that’s a good addition, and it should be made explicit in the spec so implementers don’t improvise route formats.
+Here’s the **cleaned-up version** of the earlier spec incorporating your canonical RPC route shape:
 
-This document describes the RPC model for Fitz, including TLV conventions, reply-routing options (reply-queue vs direct transport), an efficient hybrid worker-selection workflow (signal + reserve), recommended client/worker helpers, error model, and the test matrix.
+---
 
-## Goals
-- Support simple request/response with clear correlation semantics.
-- Reuse existing engine primitives (Publish, Subscribe, Reserve/Consume) where possible.
-- Provide a robust reply-queue pattern with optional streaming responses.
-- Offer a hybrid signal+reserve workflow for multi-worker services (single responder, minimal fanout).
-- Document an advanced direct-transport reply path option for lower-latency workflows.
+# **RPC Specification**
 
-Important: RPC requests are ephemeral and non-durable by design. The broker keeps RPC requests only in memory to minimize latency and avoid disk I/O. Do not rely on RPC for guaranteed delivery or persistence. If you need durability, use the regular queue subsystem (separate concern) described in `docs/queue_spec.md`.
+This document defines the **Remote Procedure Call (RPC)** subsystem for Fitz — including TLV format, routing conventions, reply-routing modes, hybrid worker selection, flow-control semantics, and test coverage expectations.
 
-## TLV and correlation conventions
-- TAG_ROUTE: logical route (request route or reply route)
-- TAG_BODY: opaque request/response bytes
-- TAG_ID: correlation id (client-supplied or server-assigned). Must be echoed in responses
-- TAG_PROTOCOL_VERSION: optional per-call version hint
-- TAG_ROUTE_REPLY or TAG_REPLY_HINT: reply route or direct-reply hint
-- TAG_SEQ: optional u32 sequence number for streaming responses; starts at 1 and increments per chunk
-- TAG_STREAM_END: optional empty tag indicating the final response message in a stream (end-of-stream)
+---
 
-## Reply-routing options
-## Backpressure and flow control
-- RPC queues are memory-only and subject to in-broker caps to prevent overload (e.g., max total bytes for rpc:// routes). When limits are exceeded, the broker rejects publishes with an error on the same channel. This naturally backpressures clients so they throttle or retry with jitter. Workers should also process promptly and ack to free memory.
+## **1. Goals**
 
+- Support low-latency, in-memory request/response with strong correlation semantics.
+- Reuse core Fitz primitives (`Publish`, `Subscribe`, `Reserve`, `Consume`).
+- Provide both simple reply-queue and hybrid signal+reserve models.
+- Enable streaming responses with proper sequencing and end-of-stream signaling.
+- Keep all RPCs ephemeral — never persisted to disk.
 
-### Option A — Reply-queue (baseline)
-- Client-side flow:
-  1. Client creates a reply route (e.g. `rpc/reply/<client-id>`) and subscribes/reserves on it.
-  2. Client publishes the request to `rpc://realm/service` with:
-     - TAG_ID = `cid` (correlation id)
-     - TAG_ROUTE_REPLY = `rpc/reply/<client-id>` (where worker should publish responses)
-  3. Worker reserves/consumes the request from `rpc://realm/service`, processes it, and publishes one or more responses to `rpc/reply/<client-id>` with TAG_ID=`cid`. For streaming, include TAG_SEQ per message and TAG_STREAM_END on the final message.
-  4. Client receives responses on its reply route, matches by TAG_ID, and orders by TAG_SEQ until TAG_STREAM_END.
+> **Note:** RPC messages are **ephemeral**. For durable semantics, use queues (see `docs/queue_spec.md`).
 
-- Advantages: simple, robust, no engine-level per-connection state.
-- Notes: ensure Publish -> notify subscribers so Subscribe-based workers can receive signals.
+---
 
-### Option A2 — Hybrid: signal + reserve (recommended for multi-worker services)
-- Motivation: Avoid pushing full request bodies to all workers while still selecting exactly one responder via lease.
-- Flow:
-  1. Client publishes request to `rpc://realm/service` with TAG_ID and TAG_ROUTE_REPLY (request body is stored in-memory on the broker; non-durable).
-  2. Engine enqueues the request, then fans out a lightweight notification to all subscribers of `rpc://realm/service` containing TAG_NOTIFICATION + TAG_ROUTE + TAG_ID + TAG_ROUTE_REPLY (omit TAG_BODY).
-  3. Each worker that receives the signal immediately calls `reserve("rpc://realm/service", lease_secs)` to pull the full request. The engine grants a lease to exactly one worker and returns (TAG_ID, TAG_BODY, TAG_DELIVERY_TOKEN).
-  4. The winning worker processes the request and publishes responses to the client’s reply route using the same TAG_ID; include TAG_SEQ for streaming and TAG_STREAM_END on the final message.
-  5. Worker acknowledges/consumes the request using the delivery token.
-- Advantages: single responder by lease, efficient signal fanout (tiny), natural backpressure and redelivery on crash (lease expiry).
+## **2. Route Format**
 
-### Option B — Direct-transport replies (advanced)
-- Engine maintains per-connection reply channels and maps a `reply_hint` (opaque) included with a request to the originating session. Workers publish responses with the `reply_hint` and the engine routes the response across the originating transport.
-- Advantages: lower latency, simpler client API (no reply route creation).
-- Disadvantages: engine/transport coupling, complex reconnection semantics.
+All RPC routes follow the canonical structure:
 
-## Recommended client API (pseudocode / Rust-like)
+```
+rpc://{realm}/{area}/{resource}/{operation}
+```
 
-- Client helper (reply-queue):
+| Segment     | Description                                        |
+| ----------- | -------------------------------------------------- |
+| `realm`     | Logical tenant or namespace                        |
+| `area`      | Functional subsystem (e.g. auth, compute, storage) |
+| `resource`  | Entity or service name                             |
+| `operation` | Specific callable action or method                 |
+
+Examples:
+
+- `rpc://acme/auth/user/create`
+- `rpc://acme/inventory/item/update`
+- `rpc://cntryl/analytics/query/run`
+
+---
+
+## **3. TLV and Correlation Conventions**
+
+| Tag                                  | Description                                |
+| ------------------------------------ | ------------------------------------------ |
+| `TAG_ROUTE`                          | RPC request or reply route                 |
+| `TAG_BODY`                           | Request or response payload                |
+| `TAG_ID`                             | Correlation ID (must be echoed in replies) |
+| `TAG_PROTOCOL_VERSION`               | Optional per-call version hint             |
+| `TAG_ROUTE_REPLY` / `TAG_REPLY_HINT` | Reply route or direct reply token          |
+| `TAG_SEQ`                            | Sequence number for streaming responses    |
+| `TAG_STREAM_END`                     | Empty tag marking end of stream            |
+
+---
+
+## **4. Reply-Routing Modes**
+
+### **A. Reply Queue (Baseline)**
+
+1. Client creates a reply route: `rpc/reply/<client-id>`.
+2. Subscribes or reserves on that route.
+3. Publishes a request to `rpc://realm/area/resource/operation` with:
+
+   - `TAG_ID`
+   - `TAG_ROUTE_REPLY`
+
+4. Worker consumes the request, processes it, and publishes replies to the specified reply route.
+5. Client matches replies by `TAG_ID`, ordering by `TAG_SEQ` until `TAG_STREAM_END`.
+
+**Pros:** Simple, transport-agnostic, ideal for most RPCs.
+**Cons:** Requires one per-client reply route.
+
+---
+
+### **A2. Hybrid Signal + Reserve (Recommended for Multi-Worker Services)**
+
+1. Client publishes request to `rpc://realm/area/resource/operation` with `TAG_ID` and `TAG_ROUTE_REPLY`.
+   The body is stored in-memory (not broadcast).
+2. Broker emits a **lightweight signal** to all subscribers:
+
+   - `TAG_NOTIFICATION`, `TAG_ROUTE`, `TAG_ID`, `TAG_ROUTE_REPLY`
+   - **No** `TAG_BODY`
+
+3. Workers receiving the signal immediately call:
+
+   ```rust
+   reserve("rpc://realm/area/resource/operation", lease_secs)
+   ```
+
+4. Broker grants a lease to **one worker**, returning `(TAG_ID, TAG_BODY, TAG_DELIVERY_TOKEN)`.
+5. Worker processes, publishes replies, and acknowledges the delivery token.
+
+**Pros:**
+
+- Exactly-one responder
+- Minimal network fanout
+- Natural backpressure and redelivery via lease expiry
+
+---
+
+### **B. Direct Transport Reply (Advanced)**
+
+Replies are routed directly via the originating connection when a `TAG_REPLY_HINT` is present.
+
+**Pros:** Lowest latency
+**Cons:** Requires engine-level mapping and complex reconnection semantics
+
+---
+
+## **5. Flow Control**
+
+- RPC queues are **bounded, memory-only**.
+- Exceeding broker limits returns a `RpcError::Backpressure`.
+- Clients must throttle or retry with jitter.
+- Workers must ack promptly to release capacity.
+
+---
+
+## **6. Client and Worker Patterns**
+
+### **Client Helper**
+
 ```rust
-async fn rpc_call(engine: &EngineHandle, route: &str, body: &[u8], timeout: Duration) -> Result<Vec<u8>, RpcError> {
-    // 1. create or reuse reply route `rpc/reply/<client-id>`
-    // 2. ensure we are subscribed/reserving on reply route
-    // 3. generate correlation id `cid`
-    // 4. publish request including TAG_ROUTE_REPLY
-    // 5. wait for the response on reply route with matching TAG_ID within timeout
+async fn rpc_call(engine: &EngineHandle, route: &str, body: &[u8], timeout: Duration)
+    -> Result<Vec<u8>, RpcError> {
+    // 1. Create or reuse reply route
+    // 2. Subscribe/reserve
+    // 3. Generate correlation ID
+    // 4. Publish with TAG_ROUTE_REPLY
+    // 5. Await matching TAG_ID reply
 }
 ```
 
-- Streaming helper:
+### **Streaming Helper**
+
 ```rust
-async fn rpc_call_stream(engine: &EngineHandle, route: &str, body: &[u8], timeout: Duration) -> Result<impl Stream<Item = Vec<u8>>, RpcError> {
-    // same as rpc_call, but return a stream of chunks ordered by TAG_SEQ
-    // complete when a message with TAG_STREAM_END arrives or timeout occurs
+async fn rpc_call_stream(engine: &EngineHandle, route: &str, body: &[u8], timeout: Duration)
+    -> Result<impl Stream<Item = Vec<u8>>, RpcError> {
+    // Yield chunks ordered by TAG_SEQ until TAG_STREAM_END
 }
 ```
 
-- Worker pattern (queue-backed):
+### **Worker (Queue Mode)**
+
 ```rust
-// Reserve next request (in-memory RPC queue)
-let (id, body, token) = engine.reserve("rpc://realm/service", 30).await?;
-// process request
-engine.publish(reply_route, id.clone(), response_body).await?;
-// acknowledge (consume) the reserved request using the delivery token to remove it from the in-memory queue
-// (API name may vary; call the engine/store consume/ack method with route, id, and delivery token)
+let (id, body, token) = engine.reserve("rpc://realm/area/resource/operation", 30).await?;
+engine.publish(reply_route, id.clone(), response).await?;
+engine.ack("rpc://realm/area/resource/operation", token).await?;
 ```
 
-- Worker pattern (hybrid signal + reserve):
+### **Worker (Signal + Reserve)**
+
 ```rust
-// 1) Subscribe to rpc://realm/service to receive tiny notifications (no body)
-// 2) On notification, immediately call reserve to pull full request and obtain delivery token
-// 3) Process and publish responses to TAG_ROUTE_REPLY with the same TAG_ID (use TAG_SEQ for streams; TAG_STREAM_END on last)
-// 4) Ack (consume) using the delivery token
+// 1. Subscribe to rpc://realm/area/resource/operation
+// 2. On signal, reserve() to claim
+// 3. Publish reply (TAG_ID, TAG_SEQ, TAG_STREAM_END)
+// 4. Ack using token
 ```
 
-## Error model
-- RpcError::Timeout
-- RpcError::NotFound
-- RpcError::PermissionDenied
-- RpcError::Backpressure
-- RpcError::InvalidToken
+---
 
-## Tests
-- Simple RPC: client rpc_call -> worker reserves -> worker publishes response -> client receives
-- Streaming RPC: ensure responses carry TAG_SEQ and final response has TAG_STREAM_END
-- Hybrid signal + reserve: engine emits signal; multiple workers race to reserve; only one wins; worker replies; client receives
-- Timeout: no response within timeout -> RpcError::Timeout
-- Worker crash: worker reserves and dies before responding -> client times out; depending on lease, request may be redelivered
+## **7. Error Model**
 
-## Decision guidance
-- Start with Option A (reply-queue) or A2 (hybrid signal + reserve) for multi-worker services.
-- After implementing Publish->notify and queue semantics, add an ergonomic rpc_call helper that manages reply route lifecycle.
-- Optionally implement Option B later if you need lower-latency direct replies.
+| Error              | Description                |
+| ------------------ | -------------------------- |
+| `Timeout`          | No reply within timeout    |
+| `NotFound`         | No matching route          |
+| `PermissionDenied` | Unauthorized route access  |
+| `Backpressure`     | Broker memory cap hit      |
+| `InvalidToken`     | Bad or expired lease token |
 
-# RPC Domain - Test Coverage
+---
 
-## Overview
-Comprehensive test coverage for RPC operations extracted from `tests/rpc.rs`.
+## **8. Test Matrix (Summary)**
+
+- **Basic RPC:** end-to-end single call
+- **Streaming:** ordered chunks + stream termination
+- **Inbox Lifecycle:** create, secure, cleanup
+- **Concurrency:** isolation by correlation ID
+- **Error Handling:** invalid route, timeout, crash recovery
+- **Large Payloads:** multi-MB body handling
+- **Load Balancing:** ensure single worker wins per call
+- **Idempotency:** deduplication via TAG_ID
+
+---
+
+## **9. Implementation Roadmap**
+
+1. Implement `RpcDomain::handle()` for TLV parsing and routing.
+2. Add bounded in-memory queues per RPC route.
+3. Integrate Notice-based signaling for hybrid dispatch.
+4. Implement `rpc_call()` and streaming helpers.
+5. Enforce inbox auth and route permissions.
+6. Add optional direct-transport reply optimization.
+
+---
+
+## **10. Design Principles**
+
+- Stateless at edges — all state is lease-scoped.
+- Predictable latency — no disk I/O.
+- Extensible TLV schema for forward compatibility.
+- Shared primitives across Notice, Queue, and RPC domains.
+- Backpressure > failure — graceful degradation under load.
+
+---
+
+Would you like me to add a **route schema diagram** (showing realm/area/resource/operation hierarchy + reply route) as a companion SVG in `docs/rpc_route_structure.svg`? It helps visually unify how RPC and Notice routes align.
 
 ## Test Inventory (48 tests)
 
 ### Basic RPC (3 tests)
+
 - ✅ `should_deliver_rpc_request_to_handler`
 - ✅ `should_deliver_reply_to_specified_reply_route`
 - ✅ `should_correlate_reply_with_request_id`
 
 ### Inbox Management (12 tests)
+
 - ✅ `should_allocate_inbox_when_reply_route_omitted`
 - ✅ `should_generate_cryptographically_secure_inbox_routes`
 - ✅ `should_prevent_inbox_route_collision`
@@ -137,21 +236,25 @@ Comprehensive test coverage for RPC operations extracted from `tests/rpc.rs`.
 - ✅ `should_cleanup_allocated_inboxes_after_session_close`
 
 ### Streaming Responses (4 tests)
+
 - ✅ `should_deliver_streaming_rpc_responses_in_order`
 - ✅ `should_mark_end_of_stream_with_stream_end_tag`
 - ✅ `should_handle_multiple_chunks_in_streaming_response`
 - ✅ `should_stream_large_response_in_chunks`
 
 ### Concurrency (2 tests)
+
 - ✅ `should_handle_concurrent_rpc_calls`
 - ✅ `should_isolate_replies_by_correlation_id`
 
 ### RPC Client (3 tests)
+
 - ✅ `should_use_rpc_client_for_call_stream`
 - ✅ `should_manage_reply_route_subscription_automatically`
 - ✅ (client wrapper tests)
 
 ### Error Handling (9 tests)
+
 - ✅ `should_handle_rpc_request_when_no_handler_subscribed`
 - ✅ `should_timeout_when_no_reply_received`
 - ✅ `should_reject_rpc_to_invalid_route`
@@ -163,35 +266,42 @@ Comprehensive test coverage for RPC operations extracted from `tests/rpc.rs`.
 - ✅ (various error modes)
 
 ### Custom Configuration (3 tests)
+
 - ✅ `should_support_custom_inbox_reply_routes`
 - ✅ `should_respect_client_specified_timeout`
 - ✅ `should_use_default_timeout_when_not_specified`
 
 ### Large Payloads (2 tests)
+
 - ✅ `should_handle_large_rpc_request_payload`
 - ✅ `should_handle_large_rpc_reply_payload`
 
 ### Load Balancing (2 tests)
+
 - ✅ `should_distribute_requests_across_multiple_handlers`
 - ✅ `should_ensure_single_handler_receives_each_request`
 
 ### Cancellation & Idempotency (4 tests)
+
 - ✅ `should_support_request_cancellation`
 - ✅ `should_not_deliver_reply_after_cancellation`
 - ✅ `should_support_idempotent_request_ids`
 - ✅ `should_deduplicate_requests_by_id`
 
 ## Implementation Status
+
 - **Total Tests**: 48
 - **Passing**: 0 (domain handler stubbed with panic!)
 - **Blocked**: All tests blocked on domain implementation
 
 ## Special Considerations
+
 - RPC requires coordination with notice domain for subscriptions
 - Inbox lifecycle tied to session/channel cleanup
 - Security critical: inbox authorization must be enforced
 
 ## Next Steps
+
 1. Implement RpcDomain::handle() to parse TLV and route to operations
 2. Integrate with Router for pub/sub mechanics
 3. Implement inbox security model
