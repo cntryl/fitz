@@ -8,5 +8,5 @@ mod types;
 // Re-export public API
 pub use handler::KvDomain;
 pub use service::KvService;
-pub use store::KvDomainStore;
+pub use store::KvStoreAdapter;
 pub use types::KvOperation;

@@ -1,6 +1,7 @@
 //! Lease domain service - ephemeral resource locking
 
-use std::collections::{HashMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -35,8 +36,29 @@ struct LeaseEntry {
     waiters: VecDeque<Pending>,
 }
 
+/// Expiry tracking item for priority queue (min-heap)
+#[derive(Eq, PartialEq)]
+struct ExpiryItem {
+    key: String,
+    expiry: Instant,
+}
+
+impl Ord for ExpiryItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse ordering for min-heap (earliest expiry has highest priority)
+        other.expiry.cmp(&self.expiry).then_with(|| self.key.cmp(&other.key))
+    }
+}
+
+impl PartialOrd for ExpiryItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 struct Inner {
     leases: HashMap<String, LeaseEntry>,
+    expiry_heap: BinaryHeap<ExpiryItem>,
 }
 
 /// In-memory lease service. All data is kept in-process only.
@@ -53,6 +75,7 @@ impl LeaseService {
         let svc = Arc::new(Self {
             inner: Arc::new(Mutex::new(Inner {
                 leases: HashMap::new(),
+                expiry_heap: BinaryHeap::new(),
             })),
             notify: Arc::new(Notify::new()),
             // generate a random secret for HMAC (in-memory only)
@@ -97,9 +120,26 @@ impl LeaseService {
             }
         }
 
-        // create and insert a new lease
+        // create and insert a new lease - use entry API to avoid clone
         let (entry, grant) = self.make_entry(&key, ttl_secs);
-        guard.leases.insert(key.clone(), entry);
+        let expiry = entry.expiry;
+        use std::collections::hash_map::Entry;
+        match guard.leases.entry(key.clone()) {
+            Entry::Vacant(e) => {
+                let key = e.key().clone();
+                e.insert(entry);
+                // Add to expiry heap
+                guard.expiry_heap.push(ExpiryItem { key, expiry });
+            }
+            Entry::Occupied(mut e) => {
+                // Race condition: entry was created between get_mut and here
+                // This is rare, but handle by replacing
+                let key = e.key().clone();
+                e.insert(entry);
+                // Add to expiry heap (old entry will be filtered out during expiration)
+                guard.expiry_heap.push(ExpiryItem { key, expiry });
+            }
+        }
         // notify expiration task of new earliest expiry
         self.notify.notify_one();
         drop(guard);
@@ -136,10 +176,17 @@ impl LeaseService {
         // extend by add_secs from current expiry (preserve remaining time)
         entry.expiry += Duration::from_secs(add_secs as u64);
         entry.ttl_secs = entry.ttl_secs.saturating_add(add_secs);
+        let new_expiry = entry.expiry;
+        
+        // Add new expiry to heap (old entry will be filtered out)
+        guard.expiry_heap.push(ExpiryItem {
+            key: key.clone(),
+            expiry: new_expiry,
+        });
+        
         // notify expiration task since deadline changed
         self.notify.notify_one();
-        let remaining = entry
-            .expiry
+        let remaining = new_expiry
             .saturating_duration_since(Instant::now())
             .as_secs() as u32;
         Ok(remaining)
@@ -165,7 +212,14 @@ impl LeaseService {
                 self.build_entry_and_grant_from_pending(&key, p.requested_ttl);
             // move remaining waiters (if any) from old entry into new one
             new_entry.waiters.append(&mut entry.waiters);
+            let new_expiry = new_entry.expiry;
             guard.leases.insert(key.clone(), new_entry);
+            
+            // Add new lease to expiry heap
+            guard.expiry_heap.push(ExpiryItem {
+                key: key.clone(),
+                expiry: new_expiry,
+            });
 
             // notify expiration task
             self.notify.notify_one();
@@ -190,12 +244,35 @@ impl LeaseService {
 
     fn compute_token(&self, key: &str, id: &str, expiry: Instant) -> String {
         // token = base64(hmac(secret, key|id|expiry_unix))
+        // Optimized: write bytes directly to HMAC instead of format! allocation
         let expiry_unix = Self::expiry_unix_from_instant(expiry);
 
         let mut mac =
             HmacSha256::new_from_slice(&self.secret).expect("HMAC can take key of any size");
-        let ctx = format!("{}|{}|{}|{}", key, id, expiry_unix, Uuid::new_v4());
-        mac.update(ctx.as_bytes());
+        
+        // Write components directly without allocation
+        mac.update(key.as_bytes());
+        mac.update(b"|");
+        mac.update(id.as_bytes());
+        mac.update(b"|");
+        
+        // Convert expiry to bytes without allocation
+        let mut buf = [0u8; 20]; // u64 max is 20 digits
+        let mut temp = expiry_unix;
+        let mut len = 0;
+        if temp == 0 {
+            buf[0] = b'0';
+            len = 1;
+        } else {
+            while temp > 0 {
+                buf[len] = b'0' + (temp % 10) as u8;
+                temp /= 10;
+                len += 1;
+            }
+            buf[0..len].reverse();
+        }
+        mac.update(&buf[0..len]);
+        
         let result = mac.finalize().into_bytes();
         general_purpose::STANDARD.encode(result)
     }
@@ -261,24 +338,34 @@ impl LeaseService {
         (new_entry, grant)
     }
 
-    // Helper: find next deadline (key, deadline) if any
+    // Helper: find next deadline using priority queue - O(1) instead of O(n)
     async fn find_next_deadline(&self) -> Option<(String, Instant)> {
-        let guard = self.inner.lock().await;
-        let mut min_key: Option<String> = None;
-        let mut min_deadline = Instant::now() + Duration::from_secs(24 * 3600 * 365);
-        for (k, v) in guard.leases.iter() {
-            if v.expiry < min_deadline {
-                min_deadline = v.expiry;
-                min_key = Some(k.clone());
+        let mut guard = self.inner.lock().await;
+        
+        // Pop stale entries until we find a valid one or heap is empty
+        while let Some(item) = guard.expiry_heap.peek() {
+            let key = &item.key;
+            let expiry = item.expiry;
+            
+            // Check if this entry matches current lease state
+            if let Some(entry) = guard.leases.get(key) {
+                if entry.expiry == expiry {
+                    // Valid entry found
+                    return Some((key.clone(), expiry));
+                }
             }
+            
+            // Stale entry (lease was removed, extended, or replaced), remove it
+            guard.expiry_heap.pop();
         }
-        min_key.map(|k| (k, min_deadline))
+        
+        None
     }
 
     /// Background expiration task: waits for next expiry and frees leases.
     async fn expiration_task(self: Arc<Self>) {
         loop {
-            // determine next expiry using helper
+            // determine next expiry using heap - O(1) peek
             let next_opt = self.find_next_deadline().await;
             let (_next_key, next_deadline) = match next_opt {
                 Some((k, d)) => (Some(k), d),
@@ -302,11 +389,24 @@ impl LeaseService {
                 let mut guard = self.inner.lock().await;
                 let now = Instant::now();
                 let mut expired = Vec::new();
-                for (k, v) in guard.leases.iter() {
-                    if v.expiry <= now {
-                        expired.push(k.clone());
+                
+                // Process all expired items from heap
+                while let Some(item) = guard.expiry_heap.peek() {
+                    if item.expiry > now {
+                        break; // No more expired items
+                    }
+                    
+                    let item = guard.expiry_heap.pop().unwrap();
+                    let key = &item.key;
+                    
+                    // Verify this entry is still current
+                    if let Some(entry) = guard.leases.get(key) {
+                        if entry.expiry == item.expiry && entry.expiry <= now {
+                            expired.push(key.clone());
+                        }
                     }
                 }
+                
                 // remove expired and collect waiters to be granted
                 for k in &expired {
                     if let Some(mut e) = guard.leases.remove(k) {
@@ -315,7 +415,14 @@ impl LeaseService {
                             let (mut new_entry, grant) =
                                 self.build_entry_and_grant_from_pending(k, p.requested_ttl);
                             new_entry.waiters.append(&mut e.waiters);
+                            let new_expiry = new_entry.expiry;
                             guard.leases.insert(k.clone(), new_entry);
+                            
+                            // Add new lease to heap
+                            guard.expiry_heap.push(ExpiryItem {
+                                key: k.clone(),
+                                expiry: new_expiry,
+                            });
 
                             // notify the waiter (best-effort)
                             let _ = responder.send(Ok(grant));

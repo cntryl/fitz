@@ -104,7 +104,7 @@ pub async fn handle_request(
             let mut hasher = Sha1::new();
             hasher.update(format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key).as_bytes());
             let result = hasher.finalize();
-            let accept = general_purpose::STANDARD.encode(result.as_slice());
+            let accept = general_purpose::STANDARD.encode(result);
 
             // build switching protocols response
             let mut response = Response::new(Body::empty());

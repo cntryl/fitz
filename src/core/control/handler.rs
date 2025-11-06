@@ -236,7 +236,7 @@ mod tests {
         let response = domain.build_tlv_response("control://heartbeat", None, b"test");
 
         // Assert
-        assert!(response.len() > 0);
+        assert!(!response.is_empty());
         assert_eq!(response[0], TAG_ROUTE);
     }
 

@@ -4,6 +4,18 @@ use super::types::{AppendResult, AreaReadResponse, StreamEvent, StreamOperation}
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 
+/// Parameters for stream operations
+pub struct StreamOperationParams<'a> {
+    pub operation: StreamOperation,
+    pub route: &'a str,
+    pub resource_seq: Option<u64>,
+    pub body: Option<Vec<u8>>,
+    pub metadata: Option<Vec<u8>>,
+    pub is_end: bool,
+    pub from_seq: Option<u64>,
+    pub limit: Option<usize>,
+}
+
 /// Stream service handles event stream operations
 /// - Append: add events with gap detection
 /// - Read: read from resource streams
@@ -25,23 +37,31 @@ impl StreamService {
     /// Process a stream operation
     pub async fn handle_operation(
         &self,
-        operation: StreamOperation,
-        route: &str,
-        resource_seq: Option<u64>,
-        body: Option<Vec<u8>>,
-        metadata: Option<Vec<u8>>,
-        is_end: bool,
-        from_seq: Option<u64>,
-        limit: Option<usize>,
+        params: StreamOperationParams<'_>,
     ) -> Result<StreamResponse, String> {
-        match operation {
+        match params.operation {
             StreamOperation::Append => {
-                self.handle_append(route, resource_seq, body, metadata, is_end)
+                self.handle_append(
+                    params.route,
+                    params.resource_seq,
+                    params.body,
+                    params.metadata,
+                    params.is_end,
+                )
+                .await
+            }
+            StreamOperation::Read => {
+                self.handle_read(params.route, params.from_seq, params.limit)
                     .await
             }
-            StreamOperation::Read => self.handle_read(route, from_seq, limit).await,
-            StreamOperation::ReadArea => self.handle_read_area(route, from_seq, limit).await,
-            StreamOperation::Peek => self.handle_peek(route, from_seq, limit).await,
+            StreamOperation::ReadArea => {
+                self.handle_read_area(params.route, params.from_seq, params.limit)
+                    .await
+            }
+            StreamOperation::Peek => {
+                self.handle_peek(params.route, params.from_seq, params.limit)
+                    .await
+            }
             StreamOperation::Subscribe => {
                 // TODO: Implement subscribe (requires pub/sub integration)
                 Err("Subscribe not yet implemented".to_string())

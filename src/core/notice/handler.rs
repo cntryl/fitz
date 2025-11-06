@@ -281,9 +281,7 @@ mod tests {
     fn should_parse_subscribe_operation() {
         // Arrange
         let domain = NoticeDomain::new();
-        let mut payload = Vec::new();
-        payload.push(TAG_SUBSCRIBE);
-        payload.push(0); // empty value
+        let payload = vec![TAG_SUBSCRIBE, 0]; // empty value
 
         // Act
         let result = domain.parse_operation(&payload);
@@ -312,9 +310,7 @@ mod tests {
     async fn should_handle_subscribe_request() {
         // Arrange
         let domain = NoticeDomain::new();
-        let mut payload = Vec::new();
-        payload.push(TAG_SUBSCRIBE);
-        payload.push(0);
+        let payload = vec![TAG_SUBSCRIBE, 0];
 
         let request = DomainRequest {
             route: Route {
@@ -376,7 +372,7 @@ mod tests {
         // Assert
         match response {
             DomainResponse::Frame(frame) => {
-                assert!(frame.len() > 0);
+                assert!(!frame.is_empty());
             }
             _ => panic!("Expected Frame response"),
         }

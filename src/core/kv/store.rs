@@ -5,13 +5,16 @@
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 
-/// KV domain store - manages key-value pairs with route-based namespacing
-pub struct KvDomainStore<K: KvStore> {
-    kv: Arc<K>,
+// Type alias for batch get result
+type BatchGetResult = Vec<(String, Option<Vec<u8>>)>;
+
+/// Wrap a KvStore and prepend route to key
+pub struct KvStoreAdapter {
+    kv: Arc<dyn KvStore>,
 }
 
-impl<K: KvStore> KvDomainStore<K> {
-    pub fn new(kv: Arc<K>) -> Self {
+impl KvStoreAdapter {
+    pub fn new(kv: Arc<dyn KvStore>) -> Self {
         Self { kv }
     }
 
@@ -95,7 +98,7 @@ impl<K: KvStore> KvDomainStore<K> {
         &self,
         route: &str,
         keys: Vec<String>,
-    ) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
+    ) -> Result<BatchGetResult, String> {
         let mut results = Vec::new();
 
         for key in keys {

@@ -9,6 +9,16 @@ use crate::protocol::tags::{
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 
+// Type alias for complex return type
+type TlvParseResult = (
+    Option<u64>,     // resource_seq
+    Option<Vec<u8>>, // body
+    Option<Vec<u8>>, // metadata
+    bool,            // is_end
+    Option<u64>,     // from_seq
+    Option<usize>,   // limit
+);
+
 pub struct StreamDomain {
     service: StreamService,
 }
@@ -22,16 +32,7 @@ impl StreamDomain {
 
     /// Parse TLV payload to extract stream operation parameters
     /// Returns: (resource_seq, body, metadata, is_end, from_seq, limit)
-    fn parse_tlv_payload(
-        payload: &[u8],
-    ) -> (
-        Option<u64>,
-        Option<Vec<u8>>,
-        Option<Vec<u8>>,
-        bool,
-        Option<u64>,
-        Option<usize>,
-    ) {
+    fn parse_tlv_payload(payload: &[u8]) -> TlvParseResult {
         let mut resource_seq = None;
         let mut body = None;
         let mut metadata = None;
@@ -249,19 +250,17 @@ impl Domain for StreamDomain {
             let route_str = &request.route_str;
 
             // Handle the operation (service now owns the store)
-            let result = self
-                .service
-                .handle_operation(
-                    operation,
-                    route_str,
-                    resource_seq,
-                    body,
-                    metadata,
-                    is_end,
-                    from_seq,
-                    limit,
-                )
-                .await;
+            let params = super::service::StreamOperationParams {
+                operation,
+                route: route_str,
+                resource_seq,
+                body,
+                metadata,
+                is_end,
+                from_seq,
+                limit,
+            };
+            let result = self.service.handle_operation(params).await;
 
             // Build response
             match result {

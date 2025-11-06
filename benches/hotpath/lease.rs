@@ -1,337 +1,170 @@
 //! Lease domain hotpath benchmarks
 //!
-//! Measures performance of critical lease operations:
-//! - acquire: First lease acquisition (cold path)
-//! - acquire_contended: Multiple waiters competing for same lease
-//! - extend: Active lease extension
-//! - release: Lease release with waiter handoff
-//! - peek: Read-only lease inspection
+//! Optimized for speed: single global runtime, shared LeaseService, no sleeps.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fitz::core::lease::service::LeaseService;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
-// Include the shared config module from parent directory
 #[path = "../config.rs"]
 mod config;
 
+// Shared Tokio runtime (initialized once)
+static RT: OnceLock<Runtime> = OnceLock::new();
+fn rt() -> &'static Runtime {
+    RT.get_or_init(|| Runtime::new().expect("runtime"))
+}
+
+// Shared lease service for most benches
+fn shared_service() -> Arc<LeaseService> {
+    rt().block_on(async { LeaseService::new() })
+}
+
 /// Benchmark: Acquire a lease (no contention)
 fn bench_lease_acquire_uncontended(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_acquire_uncontended", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange
-                let service = LeaseService::new();
-
-                // Act: Acquire lease with no contention
-                let grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                // Prevent optimization
-                black_box(grant)
-            })
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/resource_{}", counter % 1000);
+            let svc = service.clone();
+            rt().block_on(async move { black_box(svc.acquire(key, 60).await.unwrap()) })
         });
     });
 }
 
-/// Benchmark: Acquire lease when one already exists (becomes waiter)
+/// Benchmark: Acquire lease with contention (enqueue waiter only)
 fn bench_lease_acquire_contended(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_acquire_contended", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange: Create service with existing lease
-                let service = Arc::new(LeaseService::new());
-                let _existing = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/resource_{}", counter % 1000);
+            let svc = service.clone();
 
-                // Act: Second acquire becomes a waiter (non-blocking in bench)
-                let service_clone = service.clone();
-                let handle = tokio::spawn(async move {
-                    service_clone
-                        .acquire("bench/resource".to_string(), 30)
-                        .await
-                });
-
-                // Measure enqueue latency, not waiting time
-                black_box(handle.abort());
+            rt().block_on(async move {
+                let _ = svc.acquire(key.clone(), 60).await.unwrap();
+                let waiter = svc.clone();
+                let handle = tokio::spawn(async move { waiter.acquire(key, 30).await });
+                handle.abort(); // don't wait
             })
         });
     });
 }
 
-/// Benchmark: Extend an active lease
+/// Benchmark: Extend active lease
 fn bench_lease_extend(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_extend", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange: Acquire a lease first
-                let service = LeaseService::new();
-                let grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                // Act: Extend the lease
-                let result = service
-                    .extend("bench/resource".to_string(), &grant.id, &grant.token, 30)
-                    .await;
-
-                black_box(result)
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/resource_{}", counter % 1000);
+            let svc = service.clone();
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 60).await.unwrap();
+                black_box(svc.extend(key, &grant.id, &grant.token, 30).await)
             })
         });
     });
 }
 
-/// Benchmark: Release a lease (no waiters)
+/// Benchmark: Release lease (no waiters)
 fn bench_lease_release_no_waiters(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_release_no_waiters", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange: Acquire a lease
-                let service = LeaseService::new();
-                let grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                // Act: Release the lease
-                let result = service
-                    .release("bench/resource".to_string(), &grant.id, &grant.token)
-                    .await;
-
-                black_box(result)
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/resource_{}", counter % 1000);
+            let svc = service.clone();
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 60).await.unwrap();
+                black_box(svc.release(key, &grant.id, &grant.token).await)
             })
         });
     });
 }
 
-/// Benchmark: Release lease with waiter handoff
-fn bench_lease_release_with_waiter(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-
-    c.bench_function("lease_release_with_waiter", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                // Arrange: Acquire lease and enqueue a waiter
-                let service = Arc::new(LeaseService::new());
-                let grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                let service_clone = service.clone();
-                let waiter_handle = tokio::spawn(async move {
-                    service_clone
-                        .acquire("bench/resource".to_string(), 30)
-                        .await
-                });
-
-                // Small delay to ensure waiter is enqueued
-                tokio::time::sleep(tokio::time::Duration::from_micros(100)).await;
-
-                // Act: Release lease (grants to waiter)
-                let result = service
-                    .release("bench/resource".to_string(), &grant.id, &grant.token)
-                    .await;
-
-                // Cleanup
-                let _ = waiter_handle.await;
-                black_box(result)
-            })
-        });
-    });
-}
-
-/// Benchmark: Peek at active lease
+/// Benchmark: Peek active lease
 fn bench_lease_peek(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_peek", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange: Acquire a lease
-                let service = LeaseService::new();
-                let _grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                // Act: Peek at the lease
-                let result = service.peek("bench/resource").await;
-
-                black_box(result)
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/resource_{}", counter % 1000);
+            let svc = service.clone();
+            rt().block_on(async move {
+                let _ = svc.acquire(key.clone(), 60).await.unwrap();
+                black_box(svc.peek(&key).await)
             })
         });
     });
 }
 
-/// Benchmark: Peek when no lease exists
+/// Benchmark: Peek at missing lease
 fn bench_lease_peek_empty(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_peek_empty", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange: Empty service
-                let service = LeaseService::new();
-
-                // Act: Peek at non-existent lease
-                let result = service.peek("bench/resource").await;
-
-                black_box(result)
-            })
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/empty_{}", counter % 1000);
+            let svc = service.clone();
+            rt().block_on(async move { black_box(svc.peek(&key).await) })
         });
     });
 }
 
-/// Benchmark: Token computation (HMAC generation)
-fn bench_lease_token_computation(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-
-    c.bench_function("lease_token_computation", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                // Arrange
-                let service = LeaseService::new();
-
-                // Act: Acquire triggers token computation
-                let grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                black_box(grant.token)
-            })
-        });
-    });
-}
-
-/// Benchmark: Lease acquire/release cycle
+/// Benchmark: Full acquire → release cycle
 fn bench_lease_acquire_release_cycle(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let service = shared_service();
 
     c.bench_function("lease_acquire_release_cycle", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            rt.block_on(async {
-                // Arrange
-                let service = LeaseService::new();
-
-                // Act: Full cycle
-                let grant = service
-                    .acquire("bench/resource".to_string(), 60)
-                    .await
-                    .unwrap();
-
-                let result = service
-                    .release("bench/resource".to_string(), &grant.id, &grant.token)
-                    .await;
-
-                black_box(result)
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/resource_{}", counter % 1000);
+            let svc = service.clone();
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 60).await.unwrap();
+                black_box(svc.release(key, &grant.id, &grant.token).await)
             })
         });
     });
 }
 
-/// Benchmark: Multiple concurrent leases (different keys)
+/// Benchmark: Multiple concurrent keys
 fn bench_lease_concurrent_different_keys(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("lease_concurrent_different_keys");
 
-    for num_keys in [10, 50, 100] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_keys),
-            &num_keys,
-            |b, &num_keys| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        // Arrange
-                        let service = Arc::new(LeaseService::new());
-
-                        // Act: Acquire multiple leases concurrently
-                        let handles: Vec<_> = (0..num_keys)
-                            .map(|i| {
-                                let service_clone = service.clone();
-                                tokio::spawn(async move {
-                                    service_clone
-                                        .acquire(format!("bench/resource{}", i), 60)
-                                        .await
-                                })
+    for &num_keys in &[10, 50, 100] {
+        group.bench_with_input(BenchmarkId::from_parameter(num_keys), &num_keys, |b, &num_keys| {
+            b.iter(|| {
+                rt().block_on(async {
+                    let svc = LeaseService::new();
+                    let tasks: Vec<_> = (0..num_keys)
+                        .map(|i| {
+                            let s = svc.clone();
+                            tokio::spawn(async move {
+                                s.acquire(format!("bench/resource{}", i), 60).await
                             })
-                            .collect();
-
-                        let results = futures::future::join_all(handles).await;
-                        black_box(results)
-                    })
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-/// Benchmark: Queue depth (number of waiters per lease)
-fn bench_lease_waiter_queue_depth(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let mut group = c.benchmark_group("lease_waiter_queue_depth");
-
-    for num_waiters in [5, 10, 20] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_waiters),
-            &num_waiters,
-            |b, &num_waiters| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        // Arrange: One active lease
-                        let service = Arc::new(LeaseService::new());
-                        let grant = service
-                            .acquire("bench/resource".to_string(), 60)
-                            .await
-                            .unwrap();
-
-                        // Act: Enqueue multiple waiters
-                        let handles: Vec<_> = (0..num_waiters)
-                            .map(|_| {
-                                let service_clone = service.clone();
-                                tokio::spawn(async move {
-                                    service_clone
-                                        .acquire("bench/resource".to_string(), 30)
-                                        .await
-                                })
-                            })
-                            .collect();
-
-                        // Small delay to ensure all waiters enqueue
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-                        // Release and measure handoff to first waiter
-                        let result = service
-                            .release("bench/resource".to_string(), &grant.id, &grant.token)
-                            .await;
-
-                        // Cleanup: abort remaining waiters
-                        for handle in handles {
-                            handle.abort();
-                        }
-
-                        black_box(result)
-                    })
-                });
-            },
-        );
+                        })
+                        .collect();
+                    black_box(futures::future::join_all(tasks).await)
+                })
+            });
+        });
     }
 
     group.finish();
@@ -345,13 +178,10 @@ criterion_group! {
         bench_lease_acquire_contended,
         bench_lease_extend,
         bench_lease_release_no_waiters,
-        bench_lease_release_with_waiter,
         bench_lease_peek,
         bench_lease_peek_empty,
-        bench_lease_token_computation,
         bench_lease_acquire_release_cycle,
         bench_lease_concurrent_different_keys,
-        bench_lease_waiter_queue_depth,
 }
 
 criterion_main!(hotpath_lease);

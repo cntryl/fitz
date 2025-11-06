@@ -8,6 +8,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+// Type aliases to reduce complexity
+type LeaseInfo = (u64, String, u32); // (expiry_secs, owner_token, delivery_count)
+type LeaseMap = HashMap<String, HashMap<String, LeaseInfo>>;
+type RealmConfigMap = HashMap<String, QueueConfig>;
+type AreaConfigMap = HashMap<(String, String), QueueConfig>;
+type ResourceConfigMap = HashMap<(String, String, String), QueueConfig>;
+
 /// QueueService owns all queue business logic.
 /// Generic over KvStore for durable persistence.
 /// Tracks leases in-memory, persists messages to KvStore.
@@ -16,12 +23,12 @@ pub struct QueueService<K: KvStore> {
     token_key: Vec<u8>,
 
     // In-memory lease tracking: route -> id -> (expiry_secs, owner_token, delivery_count)
-    leases: Arc<Mutex<HashMap<String, HashMap<String, (u64, String, u32)>>>>,
+    leases: Arc<Mutex<LeaseMap>>,
 
     // Hierarchical configuration maps
-    cfg_realm: Arc<Mutex<HashMap<String, QueueConfig>>>,
-    cfg_area: Arc<Mutex<HashMap<(String, String), QueueConfig>>>,
-    cfg_resource: Arc<Mutex<HashMap<(String, String, String), QueueConfig>>>,
+    cfg_realm: Arc<Mutex<RealmConfigMap>>,
+    cfg_area: Arc<Mutex<AreaConfigMap>>,
+    cfg_resource: Arc<Mutex<ResourceConfigMap>>,
 }
 
 impl<K: KvStore> QueueService<K> {
