@@ -81,18 +81,20 @@ impl RpcClient {
         let cid_owned = cid.to_string();
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(64);
         tokio::spawn(async move {
-            let mut pending: HashMap<u32, Vec<u8>> = HashMap::new();
+            // Pre-allocate for typical streaming scenarios (usually <16 out-of-order chunks)
+            let mut pending: HashMap<u32, Vec<u8>> = HashMap::with_capacity(8);
             let mut next_seq: u32 = 1;
             let mut rx_guard = rx.lock().await;
             while let Some((_route, maybe_id, body, _reply_to, seq_opt, end)) =
                 rx_guard.recv().await
             {
+                // Fast path: skip non-matching correlation IDs
                 if maybe_id.as_deref() != Some(&cid_owned) {
                     continue;
                 }
                 let seq = seq_opt.unwrap_or(0);
                 pending.insert(seq, body);
-                // flush in order
+                // Flush in order
                 while let Some(b) = pending.remove(&next_seq) {
                     if out_tx.send(b).await.is_err() {
                         return;
