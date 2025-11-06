@@ -6,6 +6,7 @@ pub mod authz;
 pub mod config;
 pub mod core;
 pub mod protocol;
+pub mod routing;
 pub mod storage;
 pub mod transport;
 

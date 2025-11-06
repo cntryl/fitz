@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use fxhash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::collections::HashSet;
 
 use crate::core::domain::SubSender;
 
@@ -14,20 +14,20 @@ pub struct RtSubscription {
 }
 
 /// A node in the route trie for efficient pattern matching.
-/// 
+///
 /// Uses SmallVec with inline capacity of 4 for subscription lists,
 /// avoiding heap allocations for the majority of nodes (95%+ have ≤4 subs).
 #[derive(Debug, Default)]
 struct TrieNode {
     /// Subscriptions that match exactly at this path (inline up to 4)
     exact_subs: SmallVec<[u64; 4]>,
-    
+
     /// Subscriptions with trailing wildcard at this path (inline up to 4)
     trailing_wildcard_subs: SmallVec<[u64; 4]>,
-    
+
     /// Child nodes for exact segment matches (using FxHashMap for speed)
     children: FxHashMap<String, TrieNode>,
-    
+
     /// Child node for mid-path wildcard (e.g., "a/*/c")
     wildcard_child: Option<Box<TrieNode>>,
 }
@@ -74,10 +74,10 @@ impl RouteTrie {
 pub struct RouteTable {
     /// All subscriptions by ID (authoritative storage)
     subs: FxHashMap<u64, RtSubscription>,
-    
+
     /// Legacy index for cleanup (pattern -> subscription IDs)
     index: FxHashMap<String, HashSet<u64>>,
-    
+
     /// Trie for fast pattern matching
     trie: RouteTrie,
 }
@@ -94,13 +94,13 @@ impl RouteTable {
     pub fn insert(&mut self, sub: RtSubscription) {
         let id = sub.id;
         let pattern = sub.route_pattern.clone();
-        
+
         // Update legacy index
         self.index.entry(pattern.clone()).or_default().insert(id);
-        
+
         // Insert into trie
         self.insert_into_trie(&pattern, id);
-        
+
         // Store subscription
         self.subs.insert(id, sub);
     }
@@ -114,10 +114,10 @@ impl RouteTable {
                     self.index.remove(&sub.route_pattern);
                 }
             }
-            
+
             // Remove from trie
             self.remove_from_trie(&sub.route_pattern, sub_id);
-            
+
             return Some(sub);
         }
         None
@@ -135,29 +135,31 @@ impl RouteTable {
 
         // Check for trailing wildcard
         let has_trailing_wildcard = pattern.ends_with("/*");
-        
+
         // Split pattern into segments (SmallVec avoids heap for typical depth ≤8)
         let segments: SmallVec<[&str; 8]> = pattern.split('/').collect();
-        
+
         let mut current = &mut self.trie.root;
-        
+
         // Traverse/create path through trie
         let segments_to_traverse = if has_trailing_wildcard {
-            &segments[..segments.len() - 1]  // Exclude trailing "*"
+            &segments[..segments.len() - 1] // Exclude trailing "*"
         } else {
             &segments[..]
         };
-        
+
         for segment in segments_to_traverse {
             if *segment == "*" {
                 // Mid-path wildcard
-                current = current.wildcard_child.get_or_insert_with(|| Box::new(TrieNode::default()));
+                current = current
+                    .wildcard_child
+                    .get_or_insert_with(|| Box::new(TrieNode::default()));
             } else {
                 // Exact segment match
                 current = current.children.entry(segment.to_string()).or_default();
             }
         }
-        
+
         // Add subscription at the appropriate location
         if has_trailing_wildcard {
             if !current.trailing_wildcard_subs.contains(&sub_id) {
@@ -180,17 +182,23 @@ impl RouteTable {
 
         // For now, we'll use a simple approach: remove from the node if found
         // A full implementation would clean up empty nodes, but that's an optimization
-        
+
         let has_trailing_wildcard = pattern.ends_with("/*");
         let segments: SmallVec<[&str; 8]> = pattern.split('/').collect();
-        
+
         let segments_to_traverse = if has_trailing_wildcard {
             &segments[..segments.len() - 1]
         } else {
             &segments[..]
         };
-        
-        remove_from_trie_node(&mut self.trie.root, segments_to_traverse, sub_id, has_trailing_wildcard, 0);
+
+        remove_from_trie_node(
+            &mut self.trie.root,
+            segments_to_traverse,
+            sub_id,
+            has_trailing_wildcard,
+            0,
+        );
     }
 
     pub fn cleanup_channel(&mut self, channel_id: u32) {
@@ -211,18 +219,18 @@ impl RouteTable {
     /// Uses FxHashSet for faster hashing during match collection.
     pub fn matching_subscribers(&self, route: &str) -> Vec<RtSubscription> {
         let mut matching_ids = FxHashSet::default();
-        
+
         // Always include global wildcard subscribers
         for &id in &self.trie.global_subs {
             matching_ids.insert(id);
         }
-        
+
         // Parse route into segments (SmallVec avoids heap for typical depth ≤8)
         let segments: SmallVec<[&str; 8]> = route.split('/').collect();
-        
+
         // Traverse trie to find matches
         self.find_matches(&self.trie.root, &segments, 0, &mut matching_ids);
-        
+
         // Convert IDs to subscriptions
         matching_ids
             .into_iter()
@@ -242,7 +250,7 @@ impl RouteTable {
         for &id in &node.trailing_wildcard_subs {
             matching_ids.insert(id);
         }
-        
+
         // If we've consumed all route segments
         if depth == route_segments.len() {
             // Collect exact matches at this node
@@ -251,19 +259,19 @@ impl RouteTable {
             }
             return;
         }
-        
+
         let segment = route_segments[depth];
-        
+
         // Try exact segment match
         if let Some(child) = node.children.get(segment) {
             self.find_matches(child, route_segments, depth + 1, matching_ids);
         }
-        
+
         // Try wildcard child (matches any segment)
         if let Some(ref child) = node.wildcard_child {
             self.find_matches(child, route_segments, depth + 1, matching_ids);
         }
-        
+
         // For exact matches at this node, check hierarchical prefix matching
         // Example: pattern "a/b" should match route "a/b/c"
         if depth < route_segments.len() {
@@ -294,29 +302,31 @@ fn remove_from_trie_node(
         } else {
             node.exact_subs.retain(|id| *id != sub_id);
         }
-        
+
         // Check if this node is now empty and can be pruned
         return node.is_empty();
     }
-    
+
     let segment = segments[depth];
-    
+
     if segment == "*" {
         if let Some(ref mut child) = node.wildcard_child {
-            let should_prune = remove_from_trie_node(child, segments, sub_id, is_trailing_wildcard, depth + 1);
+            let should_prune =
+                remove_from_trie_node(child, segments, sub_id, is_trailing_wildcard, depth + 1);
             if should_prune {
                 node.wildcard_child = None;
             }
         }
     } else {
         if let Some(child) = node.children.get_mut(segment) {
-            let should_prune = remove_from_trie_node(child, segments, sub_id, is_trailing_wildcard, depth + 1);
+            let should_prune =
+                remove_from_trie_node(child, segments, sub_id, is_trailing_wildcard, depth + 1);
             if should_prune {
                 node.children.remove(segment);
             }
         }
     }
-    
+
     // Return whether this node is now empty
     node.is_empty()
 }
@@ -359,14 +369,16 @@ fn route_matches(pattern: &str, route: &str) -> bool {
     if pattern.contains('*') {
         // Check for trailing wildcard efficiently
         let has_trailing_wildcard = pattern.ends_with("/*");
-        
+
         // Match segments using iterators (zero allocations)
         let mut pattern_iter = pattern.split('/');
         let mut route_iter = route.split('/');
-        
+
         loop {
             match (pattern_iter.next(), route_iter.next()) {
-                (Some("*"), _) if has_trailing_wildcard && pattern_iter.clone().next().is_none() => {
+                (Some("*"), _)
+                    if has_trailing_wildcard && pattern_iter.clone().next().is_none() =>
+                {
                     // Trailing wildcard matches everything remaining (including nothing)
                     return true;
                 }
@@ -401,9 +413,9 @@ fn route_matches(pattern: &str, route: &str) -> bool {
 
     // Hierarchical matching without wildcards
     // Optimized: avoid format!() allocation, check boundary byte
-    if route.len() > pattern.len() 
-        && route.as_bytes()[pattern.len()] == b'/' 
-        && route.starts_with(pattern) 
+    if route.len() > pattern.len()
+        && route.as_bytes()[pattern.len()] == b'/'
+        && route.starts_with(pattern)
     {
         return true;
     }
@@ -466,22 +478,22 @@ mod tests {
         // Arrange
         let test_cases = vec![
             (
-                "notice://realm/area/resource/op",
-                "notice://realm/area/resource/op",
+                "scheme://realm/area/resource/op",
+                "scheme://realm/area/resource/op",
                 true,
             ),
             (
-                "notice://realm/area/resource",
-                "notice://realm/area/resource",
+                "scheme://realm/area/resource",
+                "scheme://realm/area/resource",
                 true,
             ),
-            ("notice://realm/area", "notice://realm/area", true),
-            ("notice://realm", "notice://realm", true),
+            ("scheme://realm/area", "scheme://realm/area", true),
+            ("scheme://realm", "scheme://realm", true),
             ("a/b/c/d", "a/b/c/d", true),
             // Note: patterns match hierarchically, so "a/b/c" matches "a/b/c/d"
             ("a/b/c", "a/b/c/d", true),
             ("a/b/c/d", "a/b/c", false), // Parent route doesn't match child pattern
-            ("notice://realm1/area", "notice://realm2/area", false),
+            ("scheme://realm1/area", "scheme://realm2/area", false),
         ];
 
         for (pattern, route, expected) in test_cases {
@@ -502,7 +514,7 @@ mod tests {
         // Arrange
         let test_cases = vec![
             ("*", "anything", true),
-            ("*", "notice://realm/area/resource/op", true),
+            ("*", "scheme://realm/area/resource/op", true),
             ("*", "a/b/c/d/e/f", true),
             ("*", "", true),
             ("*", "single", true),
@@ -525,13 +537,13 @@ mod tests {
     fn should_match_trailing_wildcard_at_realm() {
         // Arrange
         let test_cases = vec![
-            ("notice://realm/*", "notice://realm/area", true),
-            ("notice://realm/*", "notice://realm/area/resource", true),
-            ("notice://realm/*", "notice://realm/area/resource/op", true),
-            ("notice://realm/*", "notice://realm", true), // Exact match to prefix
-            ("notice://realm/*", "notice://realm2/area", false),
-            ("notice://realm/*", "notice://other/area", false),
-            ("notice://realm/*", "different://realm/area", false),
+            ("scheme://realm/*", "scheme://realm/area", true),
+            ("scheme://realm/*", "scheme://realm/area/resource", true),
+            ("scheme://realm/*", "scheme://realm/area/resource/op", true),
+            ("scheme://realm/*", "scheme://realm", true), // Exact match to prefix
+            ("scheme://realm/*", "scheme://realm2/area", false),
+            ("scheme://realm/*", "scheme://other/area", false),
+            ("scheme://realm/*", "different://realm/area", false),
         ];
 
         for (pattern, route, expected) in test_cases {
@@ -552,21 +564,21 @@ mod tests {
         // Arrange
         let test_cases = vec![
             (
-                "notice://realm/area/*",
-                "notice://realm/area/resource",
+                "scheme://realm/area/*",
+                "scheme://realm/area/resource",
                 true,
             ),
             (
-                "notice://realm/area/*",
-                "notice://realm/area/resource/op",
+                "scheme://realm/area/*",
+                "scheme://realm/area/resource/op",
                 true,
             ),
-            ("notice://realm/area/*", "notice://realm/area", true), // Exact match to prefix
-            ("notice://realm/area/*", "notice://realm", false),
-            ("notice://realm/area/*", "notice://realm/other", false),
+            ("scheme://realm/area/*", "scheme://realm/area", true), // Exact match to prefix
+            ("scheme://realm/area/*", "scheme://realm", false),
+            ("scheme://realm/area/*", "scheme://realm/other", false),
             (
-                "notice://realm/area/*",
-                "notice://realm/area2/resource",
+                "scheme://realm/area/*",
+                "scheme://realm/area2/resource",
                 false,
             ),
         ];
@@ -589,38 +601,38 @@ mod tests {
         // Arrange
         let test_cases = vec![
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area/resource/op",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area/resource/op",
                 true,
             ),
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area/resource/op1",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area/resource/op1",
                 true,
             ),
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area/resource/op/sub",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area/resource/op/sub",
                 true,
             ),
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area/resource",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area/resource",
                 true,
             ), // Exact match to prefix
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area",
                 false,
             ),
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area/other",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area/other",
                 false,
             ),
             (
-                "notice://realm/area/resource/*",
-                "notice://realm/area/resource2/op",
+                "scheme://realm/area/resource/*",
+                "scheme://realm/area/resource2/op",
                 false,
             ),
         ];
@@ -651,15 +663,15 @@ mod tests {
             ("a/b", "a", false),
             ("a/b", "a/bc", false), // Not a path separator boundary
             // Multi-level patterns
-            ("notice://realm/area", "notice://realm/area/resource", true),
+            ("scheme://realm/area", "scheme://realm/area/resource", true),
             (
-                "notice://realm/area",
-                "notice://realm/area/resource/op",
+                "scheme://realm/area",
+                "scheme://realm/area/resource/op",
                 true,
             ),
-            ("notice://realm/area", "notice://realm/area", true),
-            ("notice://realm/area", "notice://realm/other", false),
-            ("notice://realm/area", "notice://realm", false),
+            ("scheme://realm/area", "scheme://realm/area", true),
+            ("scheme://realm/area", "scheme://realm/other", false),
+            ("scheme://realm/area", "scheme://realm", false),
         ];
 
         for (pattern, route, expected) in test_cases {
@@ -679,9 +691,9 @@ mod tests {
     fn should_not_match_partial_segments() {
         // Arrange
         let test_cases = vec![
-            ("notice://realm", "notice://realm123", false),
-            ("notice://realm", "notice://realm-prod", false),
-            ("notice://rea", "notice://realm", false),
+            ("scheme://realm", "scheme://realm123", false),
+            ("scheme://realm", "scheme://realm-prod", false),
+            ("scheme://rea", "scheme://realm", false),
             ("a/b", "a/bc", false),
             ("a/b", "a/b-test", false),
             ("abc", "abcd", false),
@@ -740,58 +752,58 @@ mod tests {
         // Arrange
         let test_cases = vec![
             // Realm-wide alerts
-            ("notice://acme/*", "notice://acme/prod/syslog/error", true),
-            ("notice://acme/*", "notice://acme/dev/app/warning", true),
-            ("notice://acme/*", "notice://acme/staging/db/critical", true),
-            ("notice://acme/*", "notice://other/prod/syslog/error", false),
+            ("scheme://acme/*", "scheme://acme/prod/syslog/error", true),
+            ("scheme://acme/*", "scheme://acme/dev/app/warning", true),
+            ("scheme://acme/*", "scheme://acme/staging/db/critical", true),
+            ("scheme://acme/*", "scheme://other/prod/syslog/error", false),
             // Environment-specific
             (
-                "notice://acme/prod/*",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/prod/*",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
-            ("notice://acme/prod/*", "notice://acme/prod/app/info", true),
+            ("scheme://acme/prod/*", "scheme://acme/prod/app/info", true),
             (
-                "notice://acme/prod/*",
-                "notice://acme/dev/syslog/error",
+                "scheme://acme/prod/*",
+                "scheme://acme/dev/syslog/error",
                 false,
             ),
             // Service-specific
             (
-                "notice://acme/prod/syslog/*",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/prod/syslog/*",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
             (
-                "notice://acme/prod/syslog/*",
-                "notice://acme/prod/syslog/warning",
+                "scheme://acme/prod/syslog/*",
+                "scheme://acme/prod/syslog/warning",
                 true,
             ),
             (
-                "notice://acme/prod/syslog/*",
-                "notice://acme/prod/app/error",
+                "scheme://acme/prod/syslog/*",
+                "scheme://acme/prod/app/error",
                 false,
             ),
             // Exact operation subscription
             (
-                "notice://acme/prod/syslog/critical",
-                "notice://acme/prod/syslog/critical",
+                "scheme://acme/prod/syslog/critical",
+                "scheme://acme/prod/syslog/critical",
                 true,
             ),
             (
-                "notice://acme/prod/syslog/critical",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/prod/syslog/critical",
+                "scheme://acme/prod/syslog/error",
                 false,
             ),
             // Hierarchical without explicit wildcard
             (
-                "notice://acme/prod/syslog",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/prod/syslog",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
             (
-                "notice://acme/prod/syslog",
-                "notice://acme/prod/syslog/warning",
+                "scheme://acme/prod/syslog",
+                "scheme://acme/prod/syslog/warning",
                 true,
             ),
         ];
@@ -819,25 +831,25 @@ mod tests {
 
         rt.insert(RtSubscription {
             id: 1,
-            route_pattern: "notice://acme/*".to_string(),
+            route_pattern: "scheme://acme/*".to_string(),
             channel_id: 1,
             sender: tx1,
         });
         rt.insert(RtSubscription {
             id: 2,
-            route_pattern: "notice://acme/prod/*".to_string(),
+            route_pattern: "scheme://acme/prod/*".to_string(),
             channel_id: 2,
             sender: tx2,
         });
         rt.insert(RtSubscription {
             id: 3,
-            route_pattern: "notice://acme/prod/syslog/error".to_string(),
+            route_pattern: "scheme://acme/prod/syslog/error".to_string(),
             channel_id: 3,
             sender: tx3,
         });
 
         // Act
-        let matches = rt.matching_subscribers("notice://acme/prod/syslog/error");
+        let matches = rt.matching_subscribers("scheme://acme/prod/syslog/error");
 
         // Assert
         assert_eq!(matches.len(), 3);
@@ -852,19 +864,19 @@ mod tests {
 
         rt.insert(RtSubscription {
             id: 1,
-            route_pattern: "notice://acme/prod/*".to_string(),
+            route_pattern: "scheme://acme/prod/*".to_string(),
             channel_id: 1,
             sender: tx1,
         });
         rt.insert(RtSubscription {
             id: 2,
-            route_pattern: "notice://acme/staging/*".to_string(),
+            route_pattern: "scheme://acme/staging/*".to_string(),
             channel_id: 2,
             sender: tx2,
         });
 
         // Act
-        let matches = rt.matching_subscribers("notice://other/prod/syslog/error");
+        let matches = rt.matching_subscribers("scheme://other/prod/syslog/error");
 
         // Assert
         assert_eq!(matches.len(), 0);
@@ -876,38 +888,38 @@ mod tests {
         let test_cases = vec![
             // Single wildcard in middle
             (
-                "notice://acme/*/syslog/error",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
             (
-                "notice://acme/*/syslog/error",
-                "notice://acme/dev/syslog/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://acme/dev/syslog/error",
                 true,
             ),
             (
-                "notice://acme/*/syslog/error",
-                "notice://acme/staging/syslog/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://acme/staging/syslog/error",
                 true,
             ),
             (
-                "notice://acme/*/syslog/error",
-                "notice://acme/prod/app/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://acme/prod/app/error",
                 false,
             ),
             (
-                "notice://acme/*/syslog/error",
-                "notice://other/prod/syslog/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://other/prod/syslog/error",
                 false,
             ),
             (
-                "notice://acme/*/syslog/error",
-                "notice://acme/syslog/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://acme/syslog/error",
                 false,
             ), // Too few segments
             (
-                "notice://acme/*/syslog/error",
-                "notice://acme/prod/dev/syslog/error",
+                "scheme://acme/*/syslog/error",
+                "scheme://acme/prod/dev/syslog/error",
                 false,
             ), // Too many segments
             // Different positions
@@ -937,29 +949,29 @@ mod tests {
         let test_cases = vec![
             // Double wildcard
             (
-                "notice://acme/*/*/error",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/*/*/error",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
             (
-                "notice://acme/*/*/error",
-                "notice://acme/dev/app/error",
+                "scheme://acme/*/*/error",
+                "scheme://acme/dev/app/error",
                 true,
             ),
             (
-                "notice://acme/*/*/error",
-                "notice://acme/staging/database/error",
+                "scheme://acme/*/*/error",
+                "scheme://acme/staging/database/error",
                 true,
             ),
             (
-                "notice://acme/*/*/error",
-                "notice://other/prod/syslog/error",
+                "scheme://acme/*/*/error",
+                "scheme://other/prod/syslog/error",
                 false,
             ),
-            ("notice://acme/*/*/error", "notice://acme/prod/error", false), // Too few segments
+            ("scheme://acme/*/*/error", "scheme://acme/prod/error", false), // Too few segments
             (
-                "notice://acme/*/*/error",
-                "notice://acme/prod/syslog/app/error",
+                "scheme://acme/*/*/error",
+                "scheme://acme/prod/syslog/app/error",
                 false,
             ), // Too many segments
             // Triple wildcard
@@ -969,21 +981,21 @@ mod tests {
             ("a/*/*/*/e", "a/b/c/d/f", false),
             // Mixed with exact segments
             (
-                "notice://*/prod/*/error",
-                "notice://acme/prod/syslog/error",
+                "scheme://*/prod/*/error",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
             (
-                "notice://*/prod/*/error",
-                "notice://other/prod/app/error",
+                "scheme://*/prod/*/error",
+                "scheme://other/prod/app/error",
                 true,
             ),
             (
-                "notice://*/prod/*/error",
-                "notice://acme/dev/syslog/error",
+                "scheme://*/prod/*/error",
+                "scheme://acme/dev/syslog/error",
                 false,
             ),
-            ("notice://*/prod/*/error", "notice://acme/prod/error", false),
+            ("scheme://*/prod/*/error", "scheme://acme/prod/error", false),
         ];
 
         for (pattern, route, expected) in test_cases {
@@ -1005,54 +1017,54 @@ mod tests {
         let test_cases = vec![
             // Mid-path wildcard + trailing wildcard
             (
-                "notice://acme/*/syslog/*",
-                "notice://acme/prod/syslog/error",
+                "scheme://acme/*/syslog/*",
+                "scheme://acme/prod/syslog/error",
                 true,
             ),
             (
-                "notice://acme/*/syslog/*",
-                "notice://acme/prod/syslog/warning",
+                "scheme://acme/*/syslog/*",
+                "scheme://acme/prod/syslog/warning",
                 true,
             ),
             (
-                "notice://acme/*/syslog/*",
-                "notice://acme/dev/syslog/critical",
+                "scheme://acme/*/syslog/*",
+                "scheme://acme/dev/syslog/critical",
                 true,
             ),
             (
-                "notice://acme/*/syslog/*",
-                "notice://acme/prod/syslog/error/detail",
+                "scheme://acme/*/syslog/*",
+                "scheme://acme/prod/syslog/error/detail",
                 true,
             ), // Hierarchical match
             (
-                "notice://acme/*/syslog/*",
-                "notice://acme/prod/app/error",
+                "scheme://acme/*/syslog/*",
+                "scheme://acme/prod/app/error",
                 false,
             ),
             (
-                "notice://acme/*/syslog/*",
-                "notice://other/prod/syslog/error",
+                "scheme://acme/*/syslog/*",
+                "scheme://other/prod/syslog/error",
                 false,
             ),
             // Multiple mid-path + trailing
             (
-                "notice://*/prod/*/log/*",
-                "notice://acme/prod/app/log/info",
+                "scheme://*/prod/*/log/*",
+                "scheme://acme/prod/app/log/info",
                 true,
             ),
             (
-                "notice://*/prod/*/log/*",
-                "notice://other/prod/db/log/error",
+                "scheme://*/prod/*/log/*",
+                "scheme://other/prod/db/log/error",
                 true,
             ),
             (
-                "notice://*/prod/*/log/*",
-                "notice://acme/prod/app/log/info/detail",
+                "scheme://*/prod/*/log/*",
+                "scheme://acme/prod/app/log/info/detail",
                 true,
             ),
             (
-                "notice://*/prod/*/log/*",
-                "notice://acme/dev/app/log/info",
+                "scheme://*/prod/*/log/*",
+                "scheme://acme/dev/app/log/info",
                 false,
             ),
         ];

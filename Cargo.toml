@@ -59,3 +59,8 @@ path = "benches/hotpath/lease.rs"
 name = "hotpath_notice"
 harness = false
 path = "benches/hotpath/notice.rs"
+
+[[bench]]
+name = "hotpath_route_table"
+harness = false
+path = "benches/hotpath/route_table.rs"

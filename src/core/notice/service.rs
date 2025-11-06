@@ -5,10 +5,9 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
+use crate::routing::{RouteTable, RtSubscription};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
-
-use super::route_table::{RtSubscription, RouteTable};
 
 /// Notice service handles ephemeral pub/sub operations
 /// - Subscribe/Unsubscribe: manage in-memory subscriptions
