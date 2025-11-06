@@ -11,7 +11,7 @@ categories = ["message-broker"]
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "0.14", features = ["full"] }
-tokio-tungstenite = "0.20"
+tokio-tungstenite = "0.28"
 tungstenite = "0.20"
 futures = "0.3"
 tokio-stream = "0.1"
