@@ -138,9 +138,9 @@ fn bench_acquire_release_handler(c: &mut Criterion) {
 
                 // Parse response to extract id and token
                 if let DomainResponse::Frame(frame) = resp {
-                    let id =
-                        find_tlv(&frame, TAG_ID).map(|b| String::from_utf8_lossy(b).into_owned());
-                    let token = find_tlv(&frame, TAG_DELIVERY_TOKEN)
+                    let id = find_tlv(frame.as_ref(), TAG_ID)
+                        .map(|b| String::from_utf8_lossy(b).into_owned());
+                    let token = find_tlv(frame.as_ref(), TAG_DELIVERY_TOKEN)
                         .map(|b| String::from_utf8_lossy(b).into_owned());
                     if let (Some(id), Some(token)) = (id, token) {
                         // Build release payload
@@ -173,9 +173,9 @@ fn bench_renew_handler(c: &mut Criterion) {
                 let resp = (&*svc).handle(req).await;
 
                 if let DomainResponse::Frame(frame) = resp {
-                    let id =
-                        find_tlv(&frame, TAG_ID).map(|b| String::from_utf8_lossy(b).into_owned());
-                    let token = find_tlv(&frame, TAG_DELIVERY_TOKEN)
+                    let id = find_tlv(frame.as_ref(), TAG_ID)
+                        .map(|b| String::from_utf8_lossy(b).into_owned());
+                    let token = find_tlv(frame.as_ref(), TAG_DELIVERY_TOKEN)
                         .map(|b| String::from_utf8_lossy(b).into_owned());
                     if let (Some(id), Some(token)) = (id, token) {
                         // Extend payload

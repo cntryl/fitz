@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use uuid::Uuid;
 
 use crate::core::engine::EngineHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -14,24 +15,24 @@ type InboxMsg = (
 );
 
 /// A minimal in-process RPC client helper using reply-queue pattern.
-/// It manages a reply route subscription and offers a streaming call API
-/// where server responses must include TAG_SEQ for ordering.
+/// It manages a cryptographically secure inbox subscription (inbox://{uuid})
+/// and offers a streaming call API where server responses must include TAG_SEQ for ordering.
 #[derive(Clone)]
 pub struct RpcClient {
     engine: EngineHandle,
     pub reply_route: String,
-    channel_id: u32,
     sub_id: Arc<Mutex<Option<u64>>>,
     inbox_rx: Arc<Mutex<mpsc::Receiver<InboxMsg>>>,
 }
 
 impl RpcClient {
+    /// Create a new RPC client with a cryptographically secure inbox route.
+    /// The inbox route uses the format: inbox://{uuid-v4}
     pub async fn new(
         engine: EngineHandle,
-        client_id: &str,
         channel_id: u32,
     ) -> Result<Self, String> {
-        let reply_route = format!("rpc/reply/{}", client_id);
+        let reply_route = format!("inbox://{}", Uuid::new_v4());
         let (tx, rx) = mpsc::channel::<InboxMsg>(128);
         let sub_id = engine
             .subscribe(reply_route.clone(), tx, channel_id)
@@ -39,7 +40,6 @@ impl RpcClient {
         Ok(Self {
             engine,
             reply_route,
-            channel_id,
             sub_id: Arc::new(Mutex::new(Some(sub_id))),
             inbox_rx: Arc::new(Mutex::new(rx)),
         })
@@ -50,8 +50,6 @@ impl RpcClient {
         if let Some(id) = self.sub_id.lock().await.take() {
             let _ = self.engine.unsubscribe(id).await;
         }
-        // channel_id currently not used directly; kept for parity with session routing
-        let _ = self.channel_id;
     }
 
     /// Publish an RPC request with TAG_ROUTE_REPLY and return a receiver stream for ordered responses

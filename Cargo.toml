@@ -64,3 +64,8 @@ path = "benches/hotpath/notice.rs"
 name = "hotpath_route_table"
 harness = false
 path = "benches/hotpath/route_table.rs"
+
+[[bench]]
+name = "hotpath_rpc"
+harness = false
+path = "benches/hotpath/rpc.rs"

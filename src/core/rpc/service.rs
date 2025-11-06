@@ -27,7 +27,7 @@ pub struct RpcService {
     /// Route table for RPC handler subscriptions (rpc://realm/area/resource/operation)
     handler_routes: RouteTable,
     
-    /// Route table for inbox subscriptions (rpc/reply/*)
+    /// Route table for inbox subscriptions (inbox://*)
     inbox_routes: RouteTable,
     
     /// Inbox ownership tracking (inbox_route -> context)
@@ -50,11 +50,11 @@ impl RpcService {
     }
     
     /// Allocate a cryptographically secure inbox route for a channel
-    /// Returns the inbox route (e.g., "rpc/reply/a1b2c3d4...")
+    /// Returns the inbox route (e.g., "inbox://a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     pub fn allocate_inbox(&mut self, channel_id: u32) -> String {
         // Generate cryptographically secure random route using UUID v4
         let inbox_id = uuid::Uuid::new_v4().to_string();
-        let inbox_route = format!("rpc/reply/{}", inbox_id);
+        let inbox_route = format!("inbox://{}", inbox_id);
         
         // Register inbox ownership
         self.inboxes.insert(inbox_route.clone(), InboxContext {
@@ -205,7 +205,7 @@ mod tests {
     use tokio::sync::mpsc;
     
     #[test]
-    fn should_allocate_unique_inboxes() {
+    fn should_allocate_unique_inboxes_for_same_channel() {
         // Arrange
         let mut service = RpcService::new();
         
@@ -215,12 +215,12 @@ mod tests {
         
         // Assert
         assert_ne!(inbox1, inbox2);
-        assert!(inbox1.starts_with("rpc/reply/"));
-        assert!(inbox2.starts_with("rpc/reply/"));
+        assert!(inbox1.starts_with("inbox://"));
+        assert!(inbox2.starts_with("inbox://"));
     }
     
     #[test]
-    fn should_enforce_inbox_ownership() {
+    fn should_enforce_inbox_ownership_across_channels() {
         // Arrange
         let mut service = RpcService::new();
         let (tx, _rx) = mpsc::channel(1);
@@ -236,7 +236,7 @@ mod tests {
     }
     
     #[test]
-    fn should_cleanup_channel_resources() {
+    fn should_cleanup_channel_resources_when_channel_disconnects() {
         // Arrange
         let mut service = RpcService::new();
         let (tx, _rx) = mpsc::channel(1);
@@ -253,19 +253,19 @@ mod tests {
     }
     
     #[test]
-    fn should_track_active_requests() {
+    fn should_track_active_requests_for_authorization() {
         // Arrange
         let mut service = RpcService::new();
         let corr_id = "req-123".to_string();
         let handler_route = "rpc://test/svc/op".to_string();
-        let reply_route = "rpc/reply/abc".to_string();
+        let reply_route = "inbox://a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string();
         
         // Act
         service.register_request(corr_id.clone(), handler_route.clone(), reply_route.clone());
         
         // Assert
         assert!(service.can_publish_to_inbox(&reply_route, &corr_id));
-        assert!(!service.can_publish_to_inbox("rpc/reply/wrong", &corr_id));
+        assert!(!service.can_publish_to_inbox("inbox://wrong-inbox-id", &corr_id));
         assert!(!service.can_publish_to_inbox(&reply_route, "wrong-id"));
         
         let removed = service.deregister_request(&corr_id);

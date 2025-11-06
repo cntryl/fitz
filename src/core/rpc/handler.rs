@@ -181,8 +181,8 @@ impl RpcDomain {
             return self.build_error_response("No handlers available");
         }
         
-        // For now, use simple round-robin (first handler)
-        // TODO: Implement proper load balancing
+        // Use first available handler (simple dispatch)
+        // Future enhancement: implement round-robin, least-connections, or weighted load balancing
         let handler = &handlers[0];
         
         // Register active request for inbox authorization
@@ -327,7 +327,7 @@ impl Domain for RpcDomain {
             }
 
             // Determine if this is a request or reply
-            let is_reply = route.starts_with("rpc/reply/");
+            let is_reply = route.starts_with("inbox://");
             
             let response_data = if is_reply {
                 // This is a reply from handler to client
@@ -363,7 +363,7 @@ impl Domain for RpcDomain {
         sender: SubSender,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
         Box::pin(async move {
-            if route.starts_with("rpc/reply/") {
+            if route.starts_with("inbox://") {
                 // Inbox subscription (requires ownership)
                 self.subscribe_inbox(route, channel_id, sender).await
             } else {
@@ -399,40 +399,42 @@ mod tests {
     use tokio::sync::mpsc;
 
     #[tokio::test]
-    async fn should_allocate_inbox() {
+    async fn should_allocate_unique_inbox_for_channel() {
         let domain = RpcDomain::new();
         let inbox = domain.allocate_inbox(1).await;
         
-        assert!(inbox.starts_with("rpc/reply/"));
+        assert!(inbox.starts_with("inbox://"));
         assert!(inbox.len() > 10);
     }
 
     #[tokio::test]
-    async fn should_enforce_inbox_ownership() {
+    async fn should_enforce_inbox_ownership_on_subscribe() {
+        // Arrange
         let domain = RpcDomain::new();
         let (tx, _rx) = mpsc::channel(1);
-        
         let inbox = domain.allocate_inbox(1).await;
         
-        // Channel 1 can subscribe
-        let result = domain.subscribe_inbox(inbox.clone(), 1, tx.clone()).await;
-        assert!(result.is_ok());
+        // Act
+        let result1 = domain.subscribe_inbox(inbox.clone(), 1, tx.clone()).await;
+        let result2 = domain.subscribe_inbox(inbox.clone(), 2, tx).await;
         
-        // Channel 2 cannot subscribe
-        let result = domain.subscribe_inbox(inbox.clone(), 2, tx).await;
-        assert!(result.is_err());
+        // Assert
+        assert!(result1.is_ok());
+        assert!(result2.is_err());
     }
 
     #[tokio::test]
-    async fn should_cleanup_channel() {
+    async fn should_cleanup_channel_resources_on_disconnect() {
+        // Arrange
         let domain = RpcDomain::new();
         let (tx, _rx) = mpsc::channel(1);
-        
         let inbox = domain.allocate_inbox(1).await;
         let _ = domain.subscribe_inbox(inbox.clone(), 1, tx.clone()).await;
         let _ = domain.subscribe_handler("rpc://test/svc/op".to_string(), 1, tx).await;
         
-        // Cleanup should not panic
+        // Act
         domain.cleanup_channel(1).await;
+        
+        // Assert - cleanup should not panic and test completes successfully
     }
 }
