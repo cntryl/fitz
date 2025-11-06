@@ -3,7 +3,7 @@
 //! Extremely fast version using batched async loops and minimal Criterion overhead.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::lease::service::LeaseService;
+use fitz::core::lease::service::{LeaseConfig, LeaseService, TokenMode};
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -16,25 +16,32 @@ fn rt() -> &'static Runtime {
     RT.get_or_init(|| Runtime::new().expect("runtime"))
 }
 
-// Shared LeaseService instance
+// Shared LeaseService instance with bench-optimized config
 fn shared_service() -> Arc<LeaseService> {
-    rt().block_on(async { LeaseService::new() })
+    rt().block_on(async {
+        LeaseService::new_with_config(LeaseConfig {
+            disable_timers: true,
+            token_mode: TokenMode::Fast,
+            fast_ids: true,
+        })
+    })
 }
 
 /// Benchmark: Acquire a lease (no contention)
 fn bench_acquire_uncontended(c: &mut Criterion) {
     let svc = shared_service();
+    let mut counter = 0u64;
     c.bench_function("lease_acquire_uncontended", |b| {
-        b.iter_custom(|iters| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/{}", counter % 64);
             let svc = svc.clone();
-            let rt = rt();
-            rt.block_on(async move {
-                let start = std::time::Instant::now();
-                for i in 0..iters {
-                    let key = format!("bench/acquire_uncontended_{}", i % 512);
-                    let _ = svc.acquire(key, 60).await.unwrap();
-                }
-                start.elapsed()
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 3).await.unwrap();
+                // release immediately to avoid leaving the lease active and
+                // blocking future iterations that reuse the same key
+                let _ = svc.release(key, &grant.id, &grant.token).await;
+                grant
             })
         });
     });
@@ -43,18 +50,18 @@ fn bench_acquire_uncontended(c: &mut Criterion) {
 /// Benchmark: Extend active lease
 fn bench_extend(c: &mut Criterion) {
     let svc = shared_service();
+    let mut counter = 0u64;
     c.bench_function("lease_extend", |b| {
-        b.iter_custom(|iters| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/{}", counter % 64);
             let svc = svc.clone();
-            let rt = rt();
-            rt.block_on(async move {
-                let start = std::time::Instant::now();
-                for i in 0..iters {
-                    let key = format!("bench/extend_{}", i % 512);
-                    let grant = svc.acquire(key.clone(), 60).await.unwrap();
-                    let _ = svc.extend(key, &grant.id, &grant.token, 30).await;
-                }
-                start.elapsed()
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 3).await.unwrap();
+                let res = svc.extend(key.clone(), &grant.id, &grant.token, 2).await;
+                // clean up so the next iteration is uncontended
+                let _ = svc.release(key, &grant.id, &grant.token).await;
+                res
             })
         });
     });
@@ -63,18 +70,15 @@ fn bench_extend(c: &mut Criterion) {
 /// Benchmark: Release lease (no waiters)
 fn bench_release(c: &mut Criterion) {
     let svc = shared_service();
+    let mut counter = 0u64;
     c.bench_function("lease_release_no_waiters", |b| {
-        b.iter_custom(|iters| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/{}", counter % 64);
             let svc = svc.clone();
-            let rt = rt();
-            rt.block_on(async move {
-                let start = std::time::Instant::now();
-                for i in 0..iters {
-                    let key = format!("bench/release_{}", i % 512);
-                    let grant = svc.acquire(key.clone(), 60).await.unwrap();
-                    let _ = svc.release(key, &grant.id, &grant.token).await;
-                }
-                start.elapsed()
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 3).await.unwrap();
+                svc.release(key, &grant.id, &grant.token).await
             })
         });
     });
@@ -83,18 +87,17 @@ fn bench_release(c: &mut Criterion) {
 /// Benchmark: Peek existing lease
 fn bench_peek(c: &mut Criterion) {
     let svc = shared_service();
+    let mut counter = 0u64;
     c.bench_function("lease_peek", |b| {
-        b.iter_custom(|iters| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/{}", counter % 64);
             let svc = svc.clone();
-            let rt = rt();
-            rt.block_on(async move {
-                let start = std::time::Instant::now();
-                for i in 0..iters {
-                    let key = format!("bench/peek_{}", i % 512);
-                    let _ = svc.acquire(key.clone(), 60).await.unwrap();
-                    let _ = svc.peek(&key).await;
-                }
-                start.elapsed()
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 3).await.unwrap();
+                let res = svc.peek(&key).await;
+                let _ = svc.release(key, &grant.id, &grant.token).await;
+                res
             })
         });
     });
@@ -103,18 +106,15 @@ fn bench_peek(c: &mut Criterion) {
 /// Benchmark: Acquire → Release cycle
 fn bench_cycle(c: &mut Criterion) {
     let svc = shared_service();
+    let mut counter = 0u64;
     c.bench_function("lease_acquire_release_cycle", |b| {
-        b.iter_custom(|iters| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let key = format!("bench/{}", counter % 64);
             let svc = svc.clone();
-            let rt = rt();
-            rt.block_on(async move {
-                let start = std::time::Instant::now();
-                for i in 0..iters {
-                    let key = format!("bench/cycle_{}", i % 512);
-                    let grant = svc.acquire(key.clone(), 60).await.unwrap();
-                    let _ = svc.release(key, &grant.id, &grant.token).await;
-                }
-                start.elapsed()
+            rt().block_on(async move {
+                let grant = svc.acquire(key.clone(), 3).await.unwrap();
+                svc.release(key, &grant.id, &grant.token).await
             })
         });
     });

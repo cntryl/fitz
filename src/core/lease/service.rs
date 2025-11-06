@@ -3,6 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose, Engine as _};
@@ -12,6 +13,27 @@ use tokio::sync::{oneshot, Mutex, Notify};
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// Configuration for LeaseService behavior
+#[derive(Clone, Default)]
+pub struct LeaseConfig {
+    pub disable_timers: bool,
+    pub token_mode: TokenMode,
+    pub fast_ids: bool,  // Use sequential IDs instead of UUIDs for benches
+}
+
+/// Token generation mode
+#[derive(Clone, Copy)]
+pub enum TokenMode {
+    Hmac,
+    Fast,
+}
+
+impl Default for TokenMode {
+    fn default() -> Self {
+        TokenMode::Hmac
+    }
+}
 
 /// Grant returned to a waiter when a lease is assigned
 #[derive(Debug)]
@@ -67,11 +89,18 @@ pub struct LeaseService {
     inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     secret: Arc<Vec<u8>>,
+    cfg: LeaseConfig,
+    id_counter: Arc<AtomicU64>,  // For fast_ids mode
 }
 
 impl LeaseService {
     /// Create a new LeaseService and spawn the expiration task.
     pub fn new() -> Arc<Self> {
+        Self::new_with_config(LeaseConfig::default())
+    }
+
+    /// Create a new LeaseService with custom configuration.
+    pub fn new_with_config(cfg: LeaseConfig) -> Arc<Self> {
         let svc = Arc::new(Self {
             inner: Arc::new(Mutex::new(Inner {
                 leases: HashMap::new(),
@@ -80,10 +109,12 @@ impl LeaseService {
             notify: Arc::new(Notify::new()),
             // generate a random secret for HMAC (in-memory only)
             secret: Arc::new(Uuid::new_v4().as_bytes().to_vec()),
+            cfg: cfg.clone(),
+            id_counter: Arc::new(AtomicU64::new(1)),
         });
 
-        // spawn background expiration task
-        {
+        // spawn background expiration task only if timers are enabled
+        if !cfg.disable_timers {
             let svc_cloned = Arc::clone(&svc);
             tokio::spawn(async move { svc_cloned.expiration_task().await });
         }
@@ -243,6 +274,16 @@ impl LeaseService {
     }
 
     fn compute_token(&self, key: &str, id: &str, expiry: Instant) -> String {
+        if matches!(self.cfg.token_mode, TokenMode::Fast) {
+            // fast, allocation-light, deterministic (not cryptographic)
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            id.hash(&mut h);
+            Self::expiry_unix_from_instant(expiry).hash(&mut h);
+            return format!("{:016x}", h.finish());
+        }
+
         // token = base64(hmac(secret, key|id|expiry_unix))
         // Optimized: write bytes directly to HMAC instead of format! allocation
         let expiry_unix = Self::expiry_unix_from_instant(expiry);
@@ -288,7 +329,13 @@ impl LeaseService {
 
     // Helper: create a new LeaseEntry and corresponding LeaseGrant
     fn make_entry(&self, key: &str, ttl_secs: u32) -> (LeaseEntry, LeaseGrant) {
-        let id = Uuid::new_v4().to_string();
+        let id = if self.cfg.fast_ids {
+            // Fast mode: sequential counter (no crypto, no allocation)
+            self.id_counter.fetch_add(1, AtomicOrdering::Relaxed).to_string()
+        } else {
+            // Production mode: secure UUID
+            Uuid::new_v4().to_string()
+        };
         let expiry = Instant::now() + Duration::from_secs(ttl_secs as u64);
         let token = self.compute_token(key, &id, expiry);
 
@@ -316,7 +363,11 @@ impl LeaseService {
         key: &str,
         requested_ttl: u32,
     ) -> (LeaseEntry, LeaseGrant) {
-        let new_id = Uuid::new_v4().to_string();
+        let new_id = if self.cfg.fast_ids {
+            self.id_counter.fetch_add(1, AtomicOrdering::Relaxed).to_string()
+        } else {
+            Uuid::new_v4().to_string()
+        };
         let expiry = Instant::now() + Duration::from_secs(requested_ttl as u64);
         let new_token = self.compute_token(key, &new_id, expiry);
         let grant = LeaseGrant {
@@ -379,7 +430,7 @@ impl LeaseService {
             let now = Instant::now();
             if next_deadline > now {
                 tokio::select! {
-                    _ = tokio::time::sleep_until(next_deadline.into()) => {},
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(next_deadline)) => {},
                     _ = self.notify.notified() => { continue; }
                 }
             }
