@@ -94,11 +94,7 @@ impl KvStoreAdapter {
     }
 
     /// Get multiple values by keys in a batch
-    pub fn get_batch(
-        &self,
-        route: &str,
-        keys: Vec<String>,
-    ) -> Result<BatchGetResult, String> {
+    pub fn get_batch(&self, route: &str, keys: Vec<String>) -> Result<BatchGetResult, String> {
         let mut results = Vec::new();
 
         for key in keys {

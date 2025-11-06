@@ -120,7 +120,7 @@ impl LeaseDomain {
         key: String,
         ttl: u32,
     ) -> DomainResponse {
-        match svc.acquire(key, ttl).await {
+        match svc.acquire(&key, ttl).await {
             Ok(grant) => {
                 let mut out = Vec::new();
                 build_tlv(TAG_ID, grant.id.as_bytes(), &mut out);
@@ -143,7 +143,7 @@ impl LeaseDomain {
         token: String,
         add: u32,
     ) -> DomainResponse {
-        match svc.extend(key, &id, &token, add).await {
+        match svc.extend(&key, &id, &token, add).await {
             Ok(remaining) => {
                 let mut out = Vec::new();
                 build_tlv(TAG_LEASE, &remaining.to_be_bytes(), &mut out);
@@ -160,7 +160,7 @@ impl LeaseDomain {
         id: String,
         token: String,
     ) -> DomainResponse {
-        match svc.release(key, &id, &token).await {
+        match svc.release(&key, &id, &token).await {
             Ok(()) => DomainResponse::Ok,
             Err(e) => DomainResponse::Error(e),
         }

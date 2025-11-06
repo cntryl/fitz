@@ -1,9 +1,5 @@
-//! Lease domain hotpath benchmarks
-//!
-//! Extremely fast version using batched async loops and minimal Criterion overhead.
-
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::lease::service::{LeaseConfig, LeaseService, TokenMode};
+use fitz::core::lease::service::{LeaseConfig, LeaseService};
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -21,8 +17,6 @@ fn shared_service() -> Arc<LeaseService> {
     rt().block_on(async {
         LeaseService::new_with_config(LeaseConfig {
             disable_timers: true,
-            token_mode: TokenMode::Fast,
-            fast_ids: true,
         })
     })
 }

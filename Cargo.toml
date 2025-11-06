@@ -3,7 +3,7 @@ name = "fitz"
 version = "0.1.0"
 edition = "2021"
 authors = ["smiggleworth"]
-description = "A high-performance message broker"
+description = "The messaging layer your system was missing"
 repository = "https://github.com/cntryl/fitz"
 keywords = ["database", "kv", "lsm", "embedded", "storage"]
 categories = ["message-broker"]
@@ -33,6 +33,14 @@ rustls-pemfile = "1.0"
 futures-util = "0.3"
 url = "2"
 crc32fast = "1"
+
+# Lock-free / concurrency crates used by lease service
+crossbeam-epoch = "0.9"
+crossbeam-queue = "0.3"
+crossbeam-skiplist = "0.1"
+fxhash = "0.2"
+num_cpus = "1.15"
+dashmap = "5"
 
 [dev-dependencies]
 url = "2"
