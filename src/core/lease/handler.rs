@@ -308,7 +308,7 @@ mod tests {
         let domain = LeaseDomain::new();
         let mut payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
-        let req = make_request("lease://test", payload);
+        let req = make_request("lease://realm1/area1/test", payload);
 
         // Act
         let resp = domain.handle(req).await;
@@ -338,11 +338,11 @@ mod tests {
         let mut acq_payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut acq_payload);
         let _acq_resp = domain
-            .handle(make_request("lease://peek-test", acq_payload))
+            .handle(make_request("lease://realm1/area1/peek-test", acq_payload))
             .await;
 
         // Act - peek with empty payload
-        let peek_req = make_request("lease://peek-test", Vec::new());
+        let peek_req = make_request("lease://realm1/area1/peek-test", Vec::new());
         let resp = domain.handle(peek_req).await;
 
         // Assert - should return frame with TAG_ID

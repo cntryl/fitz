@@ -35,6 +35,15 @@ pub struct LeaseService {
 // --- Public API ---
 impl LeaseService {
     pub fn new() -> Arc<Self> {
+        Self::new_inner(true)
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Arc<Self> {
+        Self::new_inner(false)
+    }
+
+    fn new_inner(spawn_expirer: bool) -> Arc<Self> {
         let shard_count = std::cmp::max(4, num_cpus::get()); // CPU-scaled, stable
         let svc = Arc::new(Self {
             shards: (0..shard_count).map(|_| Arc::new(Shard::new())).collect(),
@@ -42,10 +51,12 @@ impl LeaseService {
             sweep_every: Duration::from_millis(100),
         });
 
-        for shard in &svc.shards {
-            let svc2 = svc.clone();
-            let shard2 = shard.clone();
-            tokio::spawn(async move { svc2.expirer(shard2).await });
+        if spawn_expirer {
+            for shard in &svc.shards {
+                let svc2 = svc.clone();
+                let shard2 = shard.clone();
+                tokio::spawn(async move { svc2.expirer(shard2).await });
+            }
         }
         svc
     }
@@ -86,7 +97,7 @@ impl LeaseService {
             return rx.await.unwrap_or_else(|_| Err("internal_error".into()));
         }
 
-        // free/expired → take lease
+        // free/expired → take lease (reuse expired lease or initialize new one)
         let id = Uuid::new_v4().to_string();
         let expiry = now + Duration::from_secs(ttl_secs as u64);
         let token = self.compute_token(key, &id, expiry);
@@ -94,10 +105,12 @@ impl LeaseService {
         lock.id = id.clone();
         lock.token = token.clone();
         lock.expiry = expiry;
+        // Keep existing body if any, or preserve None for new leases
+        let body = lock.body.clone();
 
         Ok(LeaseGrant {
             id,
-            body: lock.body.clone(),
+            body,
             token,
             ttl_secs,
         })
@@ -269,16 +282,23 @@ impl LeaseService {
                         let res = res_kv.key().clone();
                         let entry = res_kv.value().clone();
 
-                        // Quick read check; upgrade to write only when needed
-                        {
-                            let lock = entry.read().await;
-                            if lock.is_active(now) {
-                                continue;
+                        // Quick read check; skip if locked to avoid blocking acquire/release/extend
+                        let is_expired = {
+                            match entry.try_read() {
+                                Ok(lock) => !lock.is_active(now),
+                                Err(_) => continue, // skip if locked
                             }
+                        };
+
+                        if !is_expired {
+                            continue;
                         }
 
-                        // Expired: handoff or prune
-                        let mut lock = entry.write().await;
+                        // Expired: handoff or prune (non-blocking to avoid starving acquire calls)
+                        let mut lock = match entry.try_write() {
+                            Ok(l) => l,
+                            Err(_) => continue, // skip if locked by acquire/release/extend
+                        };
                         if lock.is_active(Instant::now()) {
                             continue;
                         } // raced
@@ -344,10 +364,15 @@ mod tests {
     use super::*;
     use tokio::time::{sleep, Duration};
 
+    // Override LeaseService::new() in tests to disable background expirer
+    fn new_test_service() -> Arc<LeaseService> {
+        LeaseService::new_for_test()
+    }
+
     #[tokio::test]
     async fn should_acquire_lease_successfully() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
 
         // Act
         let grant = svc.acquire("lease://realm1/area1/res1", 2).await.unwrap();
@@ -362,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn should_peek_active_lease() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res1", 2).await.unwrap();
 
         // Act
@@ -377,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn should_peek_returns_none_when_no_lease() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
 
         // Act
         let peek = svc.peek("lease://realm1/area1/no-such").await;
@@ -389,7 +414,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_acquire_with_zero_ttl() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
 
         // Act
         let result = svc.acquire("lease://realm1/area1/res", 0).await;
@@ -402,7 +427,7 @@ mod tests {
     #[tokio::test]
     async fn should_extend_active_lease() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res2", 2).await.unwrap();
 
         // Act
@@ -422,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_extend_with_zero_add_secs() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // Act
@@ -438,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_extend_with_wrong_id() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // Act
@@ -454,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_extend_with_wrong_token() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // Act
@@ -470,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_extend_for_nonexistent_lease() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
 
         // Act
         let result = svc
@@ -485,15 +510,15 @@ mod tests {
     #[tokio::test]
     async fn should_reject_extend_for_expired_lease() {
         // Arrange
-        let svc = LeaseService::new();
-        let grant = svc.acquire("lease://realm1/area1/res", 1).await.unwrap();
+        let svc = new_test_service();
+        let grant = svc.acquire("lease://realm1/area1/res_expired_test", 1).await.unwrap();
 
         // wait for lease to expire (expiration task may clean it up)
         sleep(Duration::from_secs(2)).await;
 
         // Act
         let result = svc
-            .extend("lease://realm1/area1/res", &grant.id, &grant.token, 5)
+            .extend("lease://realm1/area1/res_expired_test", &grant.id, &grant.token, 5)
             .await;
 
         // Assert - could be either lease_expired or lease_not_found depending on timing
@@ -509,7 +534,7 @@ mod tests {
     #[tokio::test]
     async fn should_release_lease_successfully() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // Act
@@ -524,7 +549,7 @@ mod tests {
     #[tokio::test]
     async fn should_remove_lease_after_release() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
         svc.release("lease://realm1/area1/res", &grant.id, &grant.token)
             .await
@@ -540,7 +565,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_release_with_wrong_id() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // Act
@@ -556,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn should_not_remove_lease_when_release_fails_with_wrong_id() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
         let _ = svc
             .release("lease://realm1/area1/res", "wrong-id", &grant.token)
@@ -572,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_release_with_wrong_token() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // Act
@@ -588,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn should_not_remove_lease_when_release_fails_with_wrong_token() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
         let _ = svc
             .release("lease://realm1/area1/res", &grant.id, "wrong-token")
@@ -604,7 +629,7 @@ mod tests {
     #[tokio::test]
     async fn should_reject_release_for_nonexistent_lease() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
 
         // Act
         let result = svc
@@ -619,7 +644,7 @@ mod tests {
     #[tokio::test]
     async fn should_enqueue_waiter_when_lease_busy() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let _holder = svc.acquire("lease://realm1/area1/res", 10).await.unwrap();
 
         // spawn a second acquire that should wait
@@ -636,7 +661,7 @@ mod tests {
     #[tokio::test]
     async fn should_grant_lease_to_waiter_on_release() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let holder = svc.acquire("lease://realm1/area1/res3", 5).await.unwrap();
 
         // spawn a waiter that will block until the lease is released
@@ -661,7 +686,7 @@ mod tests {
     #[tokio::test]
     async fn should_grant_lease_to_next_waiter_fifo() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let holder = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // spawn two waiters
@@ -688,7 +713,7 @@ mod tests {
     #[tokio::test]
     async fn should_keep_second_waiter_waiting_after_first_granted() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let holder = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
 
         // spawn two waiters
@@ -719,7 +744,7 @@ mod tests {
     #[tokio::test]
     async fn should_expire_lease_and_grant_to_waiter() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = LeaseService::new(); // needs expirer for this test
         let _holder = svc.acquire("lease://realm1/area1/res", 1).await.unwrap();
 
         // spawn a waiter
@@ -738,7 +763,7 @@ mod tests {
     #[tokio::test]
     async fn should_handle_multiple_keys_independently() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
 
         // Act
         let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
@@ -751,7 +776,7 @@ mod tests {
     #[tokio::test]
     async fn should_peek_both_independent_leases() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let _grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
         let _grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
 
@@ -767,7 +792,7 @@ mod tests {
     #[tokio::test]
     async fn should_release_one_lease_without_affecting_other() {
         // Arrange
-        let svc = LeaseService::new();
+        let svc = new_test_service();
         let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
         let _grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
 
@@ -784,14 +809,14 @@ mod tests {
     #[tokio::test]
     async fn should_allow_reacquire_after_expiration() {
         // Arrange
-        let svc = LeaseService::new();
-        let grant1 = svc.acquire("lease://realm1/area1/res", 1).await.unwrap();
+        let svc = new_test_service();
+        let grant1 = svc.acquire("lease://realm1/area1/res_reacquire_test", 1).await.unwrap();
 
         // wait for expiration
         sleep(Duration::from_secs(2)).await;
 
         // Act
-        let grant2 = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant2 = svc.acquire("lease://realm1/area1/res_reacquire_test", 5).await.unwrap();
 
         // Assert
         assert_ne!(grant1.id, grant2.id, "new lease should have different ID");
