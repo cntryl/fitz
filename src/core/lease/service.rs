@@ -35,7 +35,24 @@ pub struct LeaseService {
 // --- Public API ---
 impl LeaseService {
     pub fn new() -> Arc<Self> {
-        Self::new_inner(true)
+        // Allow env var override to disable expirer for harnesses/benches.
+        // If FITZ_LEASE_SPAWN_EXPIRER is set to "0" or "false" (case-insensitive)
+        // we won't spawn the per-shard expirer. Default is to spawn.
+        let spawn = std::env::var("FITZ_LEASE_SPAWN_EXPIRER")
+            .map(|v| {
+                let v = v.to_ascii_lowercase();
+                !(v == "0" || v == "false")
+            })
+            .unwrap_or(true);
+        Self::new_inner(spawn)
+    }
+
+    /// Create a service but do not spawn the per-shard background expirer.
+    ///
+    /// Useful for microbenchmarks and other situations where a quiescent
+    /// service is required (no background tasks scanning the maps).
+    pub fn new_no_expirer() -> Arc<Self> {
+        Self::new_inner(false)
     }
 
     #[cfg(test)]
@@ -61,6 +78,19 @@ impl LeaseService {
         svc
     }
 
+    #[inline]
+    /// Generate a UUID string into a pre-allocated buffer to avoid an extra
+    /// temporary allocation that `to_string()` would create.
+    fn new_uuid_string(&self) -> String {
+        // UUIDs are 36 chars with hyphens (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+        let mut s = String::with_capacity(36);
+        // Using display formatting writes directly into the allocated String.
+        use std::fmt::Write as _;
+        let u = Uuid::new_v4();
+        write!(&mut s, "{}", u).expect("writing uuid");
+        s
+    }
+
     /// Acquire `lease://{realm}/{area}/{resource}` (FIFO if busy).
     pub async fn acquire(&self, key: &str, ttl_secs: u32) -> Result<LeaseGrant, String> {
         if ttl_secs == 0 {
@@ -68,18 +98,24 @@ impl LeaseService {
         }
         let (realm, area, resource) = parse_lease_key(key)?;
 
-        let shard = self.pick_shard(realm);
+        // Allocate owned strings once and reuse for DashMap insert/lookups to
+        // avoid repeated temporary `String` allocations.
+        let realm_s = realm.to_string();
+        let area_s = area.to_string();
+        let resource_s = resource.to_string();
+
+        let shard = self.pick_shard(&realm_s);
         let area_map = shard
             .realms
-            .entry(realm.to_string())
+            .entry(realm_s.clone())
             .or_insert_with(|| Arc::new(AreaMap::new()))
             .clone();
         let res_map = area_map
-            .entry(area.to_string())
+            .entry(area_s.clone())
             .or_insert_with(|| Arc::new(ResourceMap::new()))
             .clone();
         let entry = res_map
-            .entry(resource.to_string())
+            .entry(resource_s.clone())
             .or_insert_with(|| Arc::new(RwLock::new(LeaseEntry::free())))
             .clone();
 
@@ -98,7 +134,7 @@ impl LeaseService {
         }
 
         // free/expired → take lease (reuse expired lease or initialize new one)
-        let id = Uuid::new_v4().to_string();
+    let id = self.new_uuid_string();
         let expiry = now + Duration::from_secs(ttl_secs as u64);
         let token = self.compute_token(key, &id, expiry);
 
@@ -173,7 +209,7 @@ impl LeaseService {
         if let Some(mut p) = lock.waiters.pop_front() {
             // handoff: skip any waiters that have dropped their receiver
             loop {
-                let new_id = Uuid::new_v4().to_string();
+                let new_id = self.new_uuid_string();
                 let new_expiry = Instant::now() + Duration::from_secs(p.requested_ttl as u64);
                 let new_token = self.compute_token(key, &new_id, new_expiry);
                 lock.id = new_id.clone();
@@ -279,6 +315,54 @@ impl LeaseService {
         general_purpose::STANDARD.encode(mac.finalize().into_bytes())
     }
 
+    #[inline]
+    /// Compute token without allocating a full key string by supplying the
+    /// lease key components separately: realm, area, resource. This avoids a
+    /// temporary `String` when callers already have the parts (used by the
+    /// per-shard expirer).
+    fn compute_token_parts(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        id: &str,
+        expiry: Instant,
+    ) -> String {
+        let expiry_unix = (std::time::SystemTime::now()
+            + expiry.saturating_duration_since(Instant::now()))
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+        let mut mac = HmacSha256::new_from_slice(&self.secret).expect("HMAC key");
+        mac.update(b"lease://");
+        mac.update(realm.as_bytes());
+        mac.update(b"/");
+        mac.update(area.as_bytes());
+        mac.update(b"/");
+        mac.update(resource.as_bytes());
+        mac.update(b"|");
+        mac.update(id.as_bytes());
+        mac.update(b"|");
+        // write digits of expiry without alloc
+        let mut buf = [0u8; 20];
+        let mut t = expiry_unix;
+        let mut len = 0;
+        if t == 0 {
+            buf[0] = b'0';
+            len = 1;
+        } else {
+            while t > 0 {
+                buf[len] = b'0' + (t % 10) as u8;
+                t /= 10;
+                len += 1;
+            }
+            buf[..len].reverse();
+        }
+        mac.update(&buf[..len]);
+        general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+    }
+
     fn get_entry(&self, key: &str) -> Option<LeaseLock> {
         let (realm, area, resource) = parse_lease_key(key).ok()?;
         let shard = self.pick_shard(realm);
@@ -323,18 +407,18 @@ impl LeaseService {
                             Ok(l) => l,
                             Err(_) => continue, // skip if locked by acquire/release/extend
                         };
-                        if lock.is_active(Instant::now()) {
+                        if lock.is_active(now) {
                             continue;
                         } // raced
 
                         if let Some(mut p) = lock.waiters.pop_front() {
                             // Handoff loop: skip waiters that dropped their receiver
                             loop {
-                                let new_id = Uuid::new_v4().to_string();
-                                let new_expiry =
-                                    Instant::now() + Duration::from_secs(p.requested_ttl as u64);
-                                let full_key = format!("lease://{}/{}/{}", realm, area, res);
-                                let new_token = self.compute_token(&full_key, &new_id, new_expiry);
+                                let new_id = self.new_uuid_string();
+                                let new_expiry = now + Duration::from_secs(p.requested_ttl as u64);
+                                // Compute token directly from components to avoid
+                                // allocating a temporary `String` for the full key.
+                                let new_token = self.compute_token_parts(&realm, &area, &res, &new_id, new_expiry);
                                 lock.id = new_id.clone();
                                 lock.token = new_token.clone();
                                 lock.expiry = new_expiry;

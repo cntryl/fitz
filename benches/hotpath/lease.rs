@@ -14,7 +14,7 @@ fn rt() -> &'static Runtime {
 
 // Shared LeaseService instance
 fn shared_service() -> Arc<LeaseService> {
-    rt().block_on(async { LeaseService::new() })
+    rt().block_on(async { LeaseService::new_no_expirer() })
 }
 
 /// Benchmark: Acquire a lease (no contention)
