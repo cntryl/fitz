@@ -56,7 +56,9 @@ pub fn test_single_test(
     // Find test end (next #[test] or end of file)
     let mut test_end = lines.len() - 1;
     for (i, line) in lines.iter().enumerate().skip(test_start + 2) {
-        if line.trim_start().starts_with("#[test]") {
+        // Stop at the next test attribute, either sync or async
+        let ts = line.trim_start();
+        if ts.starts_with("#[test]") || ts.starts_with("#[tokio::test]") {
             test_end = i - 1;
             break;
         }
@@ -214,7 +216,8 @@ pub fn find_tests_in_file(file_path: &Path) -> Vec<TestResult> {
     let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
     let mut results = Vec::new();
 
-    let test_attr_re = Regex::new(r"^\s*#\[test\]\s*$").unwrap();
+    // Accept both synchronous `#[test]` and async `#[tokio::test]` attributes
+    let test_attr_re = Regex::new(r"^\s*#\[(?:tokio::test|test)\]\s*$").unwrap();
     let fn_name_re = Regex::new(r"^\s*fn\s+(\w+)").unwrap();
 
     for i in 0..lines.len() {
@@ -383,7 +386,8 @@ pub fn check_test_organization() -> Vec<OrganizationIssue> {
     }
 
     // Compile regex once outside the loop
-    let test_attr_re = Regex::new(r"#\[test\]").unwrap();
+    // Accept both synchronous `#[test]` and async `#[tokio::test]` attributes
+    let test_attr_re = Regex::new(r"#\[(?:tokio::test|test)\]").unwrap();
 
     // Check for test files in subdirectories (should be modules, not integration tests)
     let subdirs = [

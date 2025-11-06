@@ -17,8 +17,10 @@ impl Default for QueueDomain {
 }
 
 impl Domain for QueueDomain {
-    fn handle<'a>(&'a self, _request: DomainRequest) 
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
+    fn handle<'a>(
+        &'a self,
+        _request: DomainRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // TODO: Implement queue domain logic
             // - Parse TLV tags from request.payload
@@ -28,9 +30,8 @@ impl Domain for QueueDomain {
             panic!("QueueDomain::handle not yet implemented")
         })
     }
-    
+
     fn schemes(&self) -> &[&str] {
         &["queue"]
     }
 }
-

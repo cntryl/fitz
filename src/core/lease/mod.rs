@@ -1,10 +1,10 @@
 //! Lease domain - ephemeral resource locks
 
-mod types;
-mod service;
 mod handler;
+pub mod service;
+mod types;
 
 // Re-export public API
 // pub use types::*;
-// pub use service::LeaseService;
 pub use handler::LeaseDomain;
+pub use service::LeaseService;

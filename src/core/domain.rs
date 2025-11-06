@@ -5,7 +5,14 @@ use crate::protocol::route::Route;
 use tokio::sync::mpsc;
 
 /// Type alias for subscriber channels (used by domains that support pub/sub)
-pub type SubSender = mpsc::Sender<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>;
+pub type SubSender = mpsc::Sender<(
+    String,
+    Option<String>,
+    Vec<u8>,
+    Option<String>,
+    Option<u32>,
+    bool,
+)>;
 
 /// A message dispatched from engine to a domain handler
 #[derive(Debug, Clone)]
@@ -25,11 +32,11 @@ pub struct DomainRequest {
 pub enum DomainResponse {
     /// Success with no data
     Ok,
-    
+
     /// Success with frame payload to send back (TLV encoded)
     /// Domains build response frames themselves
     Frame(Vec<u8>),
-    
+
     /// Error message
     Error(String),
 }
@@ -40,14 +47,16 @@ pub trait Domain: Send + Sync {
     /// Handle a request for this domain
     /// Domain parses TLV tags from request.payload to extract operation details
     /// Returns DomainResponse with TLV-encoded response or error
-    /// 
+    ///
     /// Domains that need persistent storage should manage their own KvStore instance
-    fn handle<'a>(&'a self, request: DomainRequest) 
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>>;
-    
+    fn handle<'a>(
+        &'a self,
+        request: DomainRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>>;
+
     /// Get the scheme(s) this domain handles (e.g., "queue", "kv", "stream")
     fn schemes(&self) -> &[&str];
-    
+
     /// Subscribe to a route pattern (optional, for pub/sub domains)
     /// Returns subscription ID
     /// Default implementation returns an error
@@ -57,11 +66,9 @@ pub trait Domain: Send + Sync {
         _channel_id: u32,
         _sender: SubSender,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
-        Box::pin(async move {
-            Err("This domain does not support subscriptions".to_string())
-        })
+        Box::pin(async move { Err("This domain does not support subscriptions".to_string()) })
     }
-    
+
     /// Unsubscribe by subscription ID (optional, for pub/sub domains)
     /// Returns true if subscription was found and removed
     /// Default implementation returns false
@@ -71,7 +78,7 @@ pub trait Domain: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
         Box::pin(async move { false })
     }
-    
+
     /// Cleanup all subscriptions for a channel (optional, for pub/sub domains)
     /// Default implementation does nothing
     fn cleanup_channel<'a>(
@@ -81,5 +88,3 @@ pub trait Domain: Send + Sync {
         Box::pin(async move {})
     }
 }
-
-

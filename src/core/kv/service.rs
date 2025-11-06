@@ -22,11 +22,9 @@ pub struct KvService {
 impl KvService {
     /// Create a new KV service
     pub fn new(kv_store: Arc<dyn KvStore>) -> Self {
-        Self {
-            store: kv_store,
-        }
+        Self { store: kv_store }
     }
-    
+
     /// Build namespaced key from route and key
     fn build_key(route: &str, key: &str) -> Vec<u8> {
         format!("{}:{}", route, key).into_bytes()
@@ -112,8 +110,9 @@ impl KvService {
         if let Some(last) = end_bytes.last_mut() {
             *last = last.saturating_add(1);
         }
-        
-        let results = self.store
+
+        let results = self
+            .store
             .scan(&start_bytes, &end_bytes)
             .map_err(|e| e.to_string())?;
 
@@ -142,12 +141,12 @@ impl KvService {
         body: Option<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>, String> {
         let body = body.ok_or_else(|| "Batch requires body with operations".to_string())?;
-        let operations = String::from_utf8(body)
-            .map_err(|_| "Batch body must be UTF-8".to_string())?;
+        let operations =
+            String::from_utf8(body).map_err(|_| "Batch body must be UTF-8".to_string())?;
 
         // Parse operations into separate put and delete lists
         let mut puts = Vec::new();
-        
+
         for line in operations.lines() {
             let parts: Vec<&str> = line.splitn(3, ' ').collect();
             match parts.as_slice() {
@@ -167,9 +166,7 @@ impl KvService {
 
         // Execute puts in batch
         if !puts.is_empty() {
-            self.store
-                .put_batch(puts)
-                .map_err(|e| e.to_string())?;
+            self.store.put_batch(puts).map_err(|e| e.to_string())?;
         }
 
         // Return empty response on success
@@ -185,8 +182,8 @@ impl KvService {
         body: Option<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>, String> {
         let body = body.ok_or_else(|| "GetMany requires body with keys".to_string())?;
-        let keys_str = String::from_utf8(body)
-            .map_err(|_| "GetMany body must be UTF-8".to_string())?;
+        let keys_str =
+            String::from_utf8(body).map_err(|_| "GetMany body must be UTF-8".to_string())?;
 
         let keys: Vec<String> = keys_str.lines().map(|s| s.to_string()).collect();
 
@@ -221,20 +218,21 @@ impl KvService {
         start_key: Option<String>,
         end_key_bytes: Option<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>, String> {
-        let start = start_key.ok_or_else(|| "DeleteRange requires start key (TAG_ID)".to_string())?;
-        let end_bytes = end_key_bytes.ok_or_else(|| "DeleteRange requires end key (TAG_BODY)".to_string())?;
-        let end = String::from_utf8(end_bytes)
-            .map_err(|_| "End key must be UTF-8".to_string())?;
+        let start =
+            start_key.ok_or_else(|| "DeleteRange requires start key (TAG_ID)".to_string())?;
+        let end_bytes =
+            end_key_bytes.ok_or_else(|| "DeleteRange requires end key (TAG_BODY)".to_string())?;
+        let end = String::from_utf8(end_bytes).map_err(|_| "End key must be UTF-8".to_string())?;
 
         let start_key_bytes = Self::build_key(route, &start);
         let end_key_bytes_full = Self::build_key(route, &end);
 
         // Scan the range to get all keys
-        let items = self.store.scan(&start_key_bytes, &end_key_bytes_full).map_err(|e| e.to_string())?;
-        let keys_to_delete: Vec<Vec<u8>> = items
-            .into_iter()
-            .map(|(k, _)| k.to_vec())
-            .collect();
+        let items = self
+            .store
+            .scan(&start_key_bytes, &end_key_bytes_full)
+            .map_err(|e| e.to_string())?;
+        let keys_to_delete: Vec<Vec<u8>> = items.into_iter().map(|(k, _)| k.to_vec()).collect();
 
         if !keys_to_delete.is_empty() {
             self.store

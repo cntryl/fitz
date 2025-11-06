@@ -3,7 +3,9 @@
 use super::service::{StreamResponse, StreamService};
 use super::types::StreamOperation;
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
-use crate::protocol::tags::{TAG_ASSIGNED_REV, TAG_BODY, TAG_ERR_MSG, TAG_METADATA, TAG_SEQ, TAG_STREAM_END};
+use crate::protocol::tags::{
+    TAG_ASSIGNED_REV, TAG_BODY, TAG_ERR_MSG, TAG_METADATA, TAG_SEQ, TAG_STREAM_END,
+};
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 
@@ -141,10 +143,7 @@ impl StreamDomain {
     }
 
     /// Build TLV response for area read (includes watermark)
-    fn build_area_response(
-        events: Vec<super::types::StreamEvent>,
-        watermark: u64,
-    ) -> Vec<u8> {
+    fn build_area_response(events: Vec<super::types::StreamEvent>, watermark: u64) -> Vec<u8> {
         let mut response = Vec::new();
 
         // Encode as JSON with watermark
@@ -195,21 +194,35 @@ impl Default for StreamDomain {
         // For tests - use a mock store
         use crate::storage::traits::KvTransaction;
         use bytes::Bytes;
-        
+
         struct MockStore;
         impl KvStore for MockStore {
-            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> { Ok(()) }
-            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> { Ok(None) }
-            fn delete(&self, _key: &[u8]) -> Result<(), String> { Ok(()) }
-            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> { Ok(()) }
-            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> { Ok(()) }
-            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> { Ok(vec![]) }
-            fn flush(&self) -> Result<(), String> { Ok(()) }
+            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> {
+                Ok(())
+            }
+            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> {
+                Ok(None)
+            }
+            fn delete(&self, _key: &[u8]) -> Result<(), String> {
+                Ok(())
+            }
+            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+                Ok(())
+            }
+            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
+                Ok(())
+            }
+            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+                Ok(vec![])
+            }
+            fn flush(&self) -> Result<(), String> {
+                Ok(())
+            }
             fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
                 Err("Transactions not supported in mock".to_string())
             }
         }
-        
+
         Self::new(Arc::new(MockStore))
     }
 }
@@ -264,8 +277,7 @@ impl Domain for StreamDomain {
                     DomainResponse::Frame(response)
                 }
                 Ok(StreamResponse::AreaRead(area_resp)) => {
-                    let response =
-                        Self::build_area_response(area_resp.events, area_resp.watermark);
+                    let response = Self::build_area_response(area_resp.events, area_resp.watermark);
                     DomainResponse::Frame(response)
                 }
                 Err(err) => DomainResponse::Frame(Self::build_error_response(err)),

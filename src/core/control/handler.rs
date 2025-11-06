@@ -1,10 +1,10 @@
 // Control domain handler - routes all control:// operations
 
-use crate::core::domain::{Domain, DomainRequest, DomainResponse};
-use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 use super::service::ControlService;
 use super::types::ControlOperation;
+use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::core::notice::NoticeService;
+use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -28,7 +28,7 @@ impl ControlDomain {
             notice_service: Arc::new(Mutex::new(NoticeService::new())),
         }
     }
-    
+
     pub fn with_notice_service(notice_service: Arc<Mutex<NoticeService>>) -> Self {
         Self {
             service: ControlService::new("default-node".to_string()),
@@ -136,10 +136,11 @@ impl Domain for ControlDomain {
             match self.service.handle_operation(operation, &body).await {
                 Ok(response_body) => {
                     // Dispatch to subscribers (pub/sub pattern)
-                    let msg_id_string = self.find_tlv(&request.payload, TAG_ID)
+                    let msg_id_string = self
+                        .find_tlv(&request.payload, TAG_ID)
                         .and_then(|b| std::str::from_utf8(&b).ok().map(|s| s.to_string()));
                     let msg_id = msg_id_string.as_deref();
-                    
+
                     let mut notice_service = self.notice_service.lock().await;
                     let (_delivered, _failed) = notice_service.publish(
                         &request.route_str,
@@ -150,14 +151,11 @@ impl Domain for ControlDomain {
                         false,
                     );
                     drop(notice_service);
-                    
+
                     // Build TLV-encoded response
                     // Echo the body back for pub/sub pattern
-                    let response = self.build_tlv_response(
-                        &request.route_str,
-                        None,
-                        &response_body,
-                    );
+                    let response =
+                        self.build_tlv_response(&request.route_str, None, &response_body);
                     DomainResponse::Frame(response)
                 }
                 Err(err) => {
@@ -171,7 +169,7 @@ impl Domain for ControlDomain {
     fn schemes(&self) -> &[&str] {
         &["control"]
     }
-    
+
     /// Subscribe to a route pattern (delegates to notice service)
     fn subscribe<'a>(
         &'a self,
@@ -184,7 +182,7 @@ impl Domain for ControlDomain {
             Ok(service.subscribe(route, channel_id, sender))
         })
     }
-    
+
     /// Unsubscribe by subscription ID (delegates to notice service)
     fn unsubscribe<'a>(
         &'a self,
@@ -195,7 +193,7 @@ impl Domain for ControlDomain {
             service.unsubscribe(sub_id)
         })
     }
-    
+
     /// Cleanup all subscriptions for a channel (delegates to notice service)
     fn cleanup_channel<'a>(
         &'a self,

@@ -1,10 +1,10 @@
 //! Control domain - system control plane
 
-mod types;
-mod service;
 mod handler;
+mod service;
+mod types;
 
 // Re-export public API
-pub use types::*;
-pub use service::ControlService;
 pub use handler::ControlDomain;
+pub use service::ControlService;
+pub use types::*;

@@ -7,11 +7,19 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 /// Type alias for subscriber channels
-pub type SubSender = mpsc::Sender<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>;
+pub type SubSender = mpsc::Sender<(
+    String,
+    Option<String>,
+    Vec<u8>,
+    Option<String>,
+    Option<u32>,
+    bool,
+)>;
 
 /// Subscription entry maintained by the notice service
 #[derive(Debug)]
 struct Subscription {
+    #[allow(dead_code)]
     id: u64,
     route_pattern: String,
     channel_id: u32,
@@ -41,7 +49,7 @@ impl NoticeService {
     pub fn subscribe(&mut self, route_pattern: String, channel_id: u32, sender: SubSender) -> u64 {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
-        
+
         self.subscriptions.insert(
             id,
             Subscription {
@@ -51,7 +59,7 @@ impl NoticeService {
                 sender,
             },
         );
-        
+
         id
     }
 
@@ -63,7 +71,8 @@ impl NoticeService {
 
     /// Cleanup all subscriptions for a channel (e.g., on disconnect)
     pub fn cleanup_channel(&mut self, channel_id: u32) {
-        self.subscriptions.retain(|_, sub| sub.channel_id != channel_id);
+        self.subscriptions
+            .retain(|_, sub| sub.channel_id != channel_id);
     }
 
     /// Publish a notification to all matching subscribers
@@ -175,16 +184,34 @@ mod tests {
 
     #[test]
     fn should_match_trailing_wildcard() {
-        assert!(route_matches("a/b/*", "a/b/c"));
-        assert!(route_matches("a/b/*", "a/b/c/d"));
-        assert!(!route_matches("a/b/*", "a/c/d"));
+        // Arrange
+        // (route patterns and test routes are literals)
+
+        // Act
+        let a = route_matches("a/b/*", "a/b/c");
+        let b = route_matches("a/b/*", "a/b/c/d");
+        let c = route_matches("a/b/*", "a/c/d");
+
+        // Assert
+        assert!(a);
+        assert!(b);
+        assert!(!c);
     }
 
     #[test]
     fn should_match_hierarchical_prefix() {
-        assert!(route_matches("a/b", "a/b/c"));
-        assert!(route_matches("a/b", "a/b/c/d"));
-        assert!(!route_matches("a/b", "a/c/d"));
+        // Arrange
+        // (route patterns and test routes are literals)
+
+        // Act
+        let a = route_matches("a/b", "a/b/c");
+        let b = route_matches("a/b", "a/b/c/d");
+        let c = route_matches("a/b", "a/c/d");
+
+        // Assert
+        assert!(a);
+        assert!(b);
+        assert!(!c);
     }
 
     #[tokio::test]
@@ -194,8 +221,9 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(10);
 
         // Act
-        let sub_id = service.subscribe("test/route".to_string(), 1, tx);
-        let (delivered, failed) = service.publish("test/route", Some("msg-1"), b"hello", None, None, false);
+        let _sub_id = service.subscribe("test/route".to_string(), 1, tx);
+        let (delivered, failed) =
+            service.publish("test/route", Some("msg-1"), b"hello", None, None, false);
 
         // Assert
         assert_eq!(delivered, 1);
@@ -214,7 +242,8 @@ mod tests {
 
         // Act
         let removed = service.unsubscribe(sub_id);
-        let (delivered, _) = service.publish("test/route", Some("msg-1"), b"hello", None, None, false);
+        let (delivered, _) =
+            service.publish("test/route", Some("msg-1"), b"hello", None, None, false);
 
         // Assert
         assert!(removed);
@@ -247,7 +276,8 @@ mod tests {
 
         // Act - fill the channel and overflow
         service.publish("test/route", Some("msg-1"), b"1", None, None, false);
-        let (delivered, failed) = service.publish("test/route", Some("msg-2"), b"2", None, None, false);
+        let (_delivered, failed) =
+            service.publish("test/route", Some("msg-2"), b"2", None, None, false);
 
         // Assert - second publish should fail due to backpressure
         assert_eq!(failed, 1);

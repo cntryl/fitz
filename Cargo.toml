@@ -41,3 +41,7 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 criterion = "0.4"
 
+[[bench]]
+name = "lease_hotpath"
+harness = false
+path = "benches/hotpath/lease.rs"

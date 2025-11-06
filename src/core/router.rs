@@ -230,27 +230,53 @@ mod tests {
 
     #[test]
     fn should_match_routes_exact_and_global() {
-        assert!(route_matches("a/b", "a/b"));
-        assert!(route_matches("*", "anything"));
-        assert!(!route_matches("a/b", "a/bb"));
+        // Arrange
+        // patterns and routes are literals for this pure function
+
+        // Act
+        let a = route_matches("a/b", "a/b");
+        let b = route_matches("*", "anything");
+        let c = route_matches("a/b", "a/bb");
+
+        // Assert
+        assert!(a);
+        assert!(b);
+        assert!(!c);
     }
 
     #[test]
     fn should_match_trailing_star_prefix() {
-        assert!(route_matches("a/b/*", "a/b/c"));
-        assert!(route_matches("a/*", "a/b/c"));
-        assert!(!route_matches("a/b/*", "a/x/c"));
+        // Arrange
+
+        // Act
+        let a = route_matches("a/b/*", "a/b/c");
+        let b = route_matches("a/*", "a/b/c");
+        let c = route_matches("a/b/*", "a/x/c");
+
+        // Assert
+        assert!(a);
+        assert!(b);
+        assert!(!c);
     }
 
     #[test]
     fn should_match_hierarchical_prefix() {
-        assert!(route_matches("a/b", "a/b/c"));
-        assert!(route_matches("a/b", "a/b"));
-        assert!(!route_matches("a/b", "a/ba/c"));
+        // Arrange
+
+        // Act
+        let a = route_matches("a/b", "a/b/c");
+        let b = route_matches("a/b", "a/b");
+        let c = route_matches("a/b", "a/ba/c");
+
+        // Assert
+        assert!(a);
+        assert!(b);
+        assert!(!c);
     }
 
     #[test]
     fn should_subscribe_unsubscribe_len_is_empty() {
+        // Arrange
         let mut r = Router::new();
         let (tx, _rx) = mpsc::channel::<(
             String,
@@ -260,7 +286,11 @@ mod tests {
             Option<u32>,
             bool,
         )>(4);
+
+        // Act
         let id = r.subscribe("foo".to_string(), 1, tx);
+
+        // Assert
         assert_eq!(r.len(), 1);
         assert!(!r.is_empty());
         assert!(r.unsubscribe(id));
@@ -270,13 +300,17 @@ mod tests {
 
     #[test]
     fn should_cleanup_channel() {
+        // Arrange
         let mut r = Router::new();
         let (tx1, _rx1) = mpsc::channel(4);
         let (tx2, _rx2) = mpsc::channel(4);
         let id1 = r.subscribe("a".to_string(), 10, tx1);
         let _id2 = r.subscribe("b".to_string(), 20, tx2);
-        assert_eq!(r.len(), 2);
+
+        // Act
         r.cleanup_channel(10);
+
+        // Assert
         assert_eq!(r.len(), 1);
         // ensure specific id removed
         assert!(!r.unsubscribe(id1));
@@ -284,11 +318,15 @@ mod tests {
 
     #[test]
     fn should_dispatch_success_and_receive() {
+        // Arrange
         let mut r = Router::new();
         let (tx, mut rx) = mpsc::channel(4);
         let _id = r.subscribe("route/a".to_string(), 1, tx);
 
+        // Act
         let (delivered, removed) = r.dispatch("route/a", Some("mid"), b"hi", None, Some(1), false);
+
+        // Assert
         assert_eq!(delivered, 1);
         assert!(removed.is_empty());
 
@@ -305,6 +343,7 @@ mod tests {
 
     #[test]
     fn should_not_remove_on_full_backpressure() {
+        // Arrange
         let mut r = Router::new();
         // small capacity so we can force Full
         let (tx, mut rx) = mpsc::channel(1);
@@ -312,8 +351,11 @@ mod tests {
         tx.try_send(("prefill".to_string(), None, vec![0u8], None, None, false))
             .expect("prefill send");
 
+        // Act
         let _id = r.subscribe("x".to_string(), 1, tx);
         let (delivered, removed) = r.dispatch("x", None, b"v", None, None, false);
+
+        // Assert
         // Full should not count as delivered and should not remove
         assert_eq!(delivered, 0);
         assert!(removed.is_empty());
@@ -328,12 +370,17 @@ mod tests {
 
     #[test]
     fn should_remove_closed_sub_on_dispatch() {
+        // Arrange
         let mut r = Router::new();
         let (tx, rx) = mpsc::channel(4);
         let id = r.subscribe("rm".to_string(), 2, tx);
+
+        // Act
         // drop receiver to close
         drop(rx);
         let (delivered, removed) = r.dispatch("rm", None, b"x", None, None, false);
+
+        // Assert
         assert_eq!(delivered, 0);
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0], id);

@@ -76,7 +76,7 @@ impl KvDomain {
             Ok(Some(body)) => {
                 // Success with body - handle multi-byte length encoding
                 response.push(TAG_BODY);
-                
+
                 if body.len() <= 255 {
                     // Single byte length for small bodies
                     response.push(body.len() as u8);
@@ -119,21 +119,35 @@ impl Default for KvDomain {
         // For tests - use a mock store
         use crate::storage::traits::KvTransaction;
         use bytes::Bytes;
-        
+
         struct MockStore;
         impl KvStore for MockStore {
-            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> { Ok(()) }
-            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> { Ok(None) }
-            fn delete(&self, _key: &[u8]) -> Result<(), String> { Ok(()) }
-            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> { Ok(()) }
-            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> { Ok(()) }
-            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> { Ok(vec![]) }
-            fn flush(&self) -> Result<(), String> { Ok(()) }
+            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> {
+                Ok(())
+            }
+            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> {
+                Ok(None)
+            }
+            fn delete(&self, _key: &[u8]) -> Result<(), String> {
+                Ok(())
+            }
+            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+                Ok(())
+            }
+            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
+                Ok(())
+            }
+            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+                Ok(vec![])
+            }
+            fn flush(&self) -> Result<(), String> {
+                Ok(())
+            }
             fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
                 Err("Transactions not supported in mock".to_string())
             }
         }
-        
+
         Self::new(Arc::new(MockStore))
     }
 }

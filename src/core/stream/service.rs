@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// - Subscribe: live event subscriptions
 #[derive(Clone)]
 pub struct StreamService {
+    #[allow(dead_code)]
     kv_store: Arc<dyn KvStore>,
 }
 
@@ -38,15 +39,9 @@ impl StreamService {
                 self.handle_append(route, resource_seq, body, metadata, is_end)
                     .await
             }
-            StreamOperation::Read => {
-                self.handle_read(route, from_seq, limit).await
-            }
-            StreamOperation::ReadArea => {
-                self.handle_read_area(route, from_seq, limit).await
-            }
-            StreamOperation::Peek => {
-                self.handle_peek(route, from_seq, limit).await
-            }
+            StreamOperation::Read => self.handle_read(route, from_seq, limit).await,
+            StreamOperation::ReadArea => self.handle_read_area(route, from_seq, limit).await,
+            StreamOperation::Peek => self.handle_peek(route, from_seq, limit).await,
             StreamOperation::Subscribe => {
                 // TODO: Implement subscribe (requires pub/sub integration)
                 Err("Subscribe not yet implemented".to_string())
@@ -106,21 +101,35 @@ impl Default for StreamService {
         // For tests - use a mock store
         use crate::storage::traits::KvTransaction;
         use bytes::Bytes;
-        
+
         struct MockStore;
         impl KvStore for MockStore {
-            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> { Ok(()) }
-            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> { Ok(None) }
-            fn delete(&self, _key: &[u8]) -> Result<(), String> { Ok(()) }
-            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> { Ok(()) }
-            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> { Ok(()) }
-            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> { Ok(vec![]) }
-            fn flush(&self) -> Result<(), String> { Ok(()) }
+            fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> {
+                Ok(())
+            }
+            fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> {
+                Ok(None)
+            }
+            fn delete(&self, _key: &[u8]) -> Result<(), String> {
+                Ok(())
+            }
+            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+                Ok(())
+            }
+            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
+                Ok(())
+            }
+            fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+                Ok(vec![])
+            }
+            fn flush(&self) -> Result<(), String> {
+                Ok(())
+            }
             fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
                 Err("Transactions not supported in mock".to_string())
             }
         }
-        
+
         Self::new(Arc::new(MockStore))
     }
 }

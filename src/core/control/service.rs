@@ -12,6 +12,7 @@ use super::types::ControlOperation;
 /// - Config: configuration updates from control plane
 #[derive(Debug, Clone)]
 pub struct ControlService {
+    #[allow(dead_code)]
     node_id: String,
 }
 

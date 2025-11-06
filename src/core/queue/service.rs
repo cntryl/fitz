@@ -14,10 +14,10 @@ use uuid::Uuid;
 pub struct QueueService<K: KvStore> {
     kv: Arc<K>,
     token_key: Vec<u8>,
-    
+
     // In-memory lease tracking: route -> id -> (expiry_secs, owner_token, delivery_count)
     leases: Arc<Mutex<HashMap<String, HashMap<String, (u64, String, u32)>>>>,
-    
+
     // Hierarchical configuration maps
     cfg_realm: Arc<Mutex<HashMap<String, QueueConfig>>>,
     cfg_area: Arc<Mutex<HashMap<(String, String), QueueConfig>>>,
@@ -29,7 +29,7 @@ impl<K: KvStore> QueueService<K> {
         // Generate random HMAC key for delivery tokens
         let uuid = Uuid::new_v4();
         let key = uuid.as_bytes().to_vec();
-        
+
         Self {
             kv,
             token_key: key,
@@ -52,7 +52,7 @@ impl<K: KvStore> QueueService<K> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        
+
         let msg = QueueMessage {
             id: id.clone(),
             route: route.clone(),
@@ -63,18 +63,18 @@ impl<K: KvStore> QueueService<K> {
             created_at: now,
             ttl_secs,
         };
-        
+
         // Serialize to JSON
         let json = serde_json::to_vec(&msg).map_err(|e| format!("serialize error: {}", e))?;
-        
+
         // Key: queue:{route}:{id}
         let key = format!("queue:{}:{}", route, id);
-        
+
         // Store in KvStore
         self.kv
             .put(key.as_bytes(), &json)
             .map_err(|e| format!("kv error: {:?}", e))?;
-        
+
         Ok(())
     }
 
@@ -88,44 +88,45 @@ impl<K: KvStore> QueueService<K> {
         lease_secs: u32,
     ) -> Result<Vec<(String, Vec<u8>, String)>, String> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         if batch_size == 0 {
             return Ok(Vec::new());
         }
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "time error".to_string())?
             .as_secs();
-        
+
         // Get config for DLQ threshold and TTL
         let cfg = self.resolve_queue_cfg_for_route(route).await;
         let dlq_threshold = cfg.dlq_threshold;
-        
+
         // Scan for messages in this route: queue:{route}: to queue:{route};
         let prefix = format!("queue:{}:", route);
         let end_prefix = format!("queue:{};", route);
-        let results = self.kv
+        let results = self
+            .kv
             .scan(prefix.as_bytes(), end_prefix.as_bytes())
             .map_err(|e| format!("scan error: {:?}", e))?;
-        
+
         let mut reserved = Vec::with_capacity(batch_size);
         let mut dlq_msgs = Vec::new(); // Messages to move to DLQ
-        
+
         // First pass: collect messages and check leases (single lock acquire)
         {
             let mut leases = self.leases.lock().await;
             let route_leases = leases.entry(route.to_string()).or_insert_with(HashMap::new);
-            
+
             // Process messages until we have batch_size or run out
             for (key_bytes, val_bytes) in results {
                 if reserved.len() >= batch_size {
                     break; // Got enough
                 }
-                
+
                 let msg: QueueMessage = serde_json::from_slice(&val_bytes)
                     .map_err(|e| format!("deserialize error: {}", e))?;
-                
+
                 // Check TTL expiration (per-message or queue-level)
                 let expired = if let Some(rec_ttl) = msg.ttl_secs {
                     now.saturating_sub(msg.created_at) >= rec_ttl
@@ -134,35 +135,35 @@ impl<K: KvStore> QueueService<K> {
                 } else {
                     false
                 };
-                
+
                 if expired {
                     // Delete expired message (defer to avoid holding lock)
                     self.kv.delete(&key_bytes).ok();
                     continue;
                 }
-                
+
                 // Check if leased (this prevents conflicts between consumers)
                 if let Some((expiry, _, _)) = route_leases.get(&msg.id) {
                     if *expiry > now {
                         continue; // Still leased by another consumer
                     }
                 }
-                
+
                 // Check DLQ threshold
                 let current_delivery_count = route_leases
                     .get(&msg.id)
                     .map(|(_, _, count)| *count)
                     .unwrap_or(0);
-                
+
                 if current_delivery_count >= dlq_threshold {
                     // Mark for DLQ (will be moved after lock is released)
                     dlq_msgs.push((msg.id.clone(), msg.clone()));
                     continue;
                 }
-                
+
                 // Reserve this message
                 let expiry = now.saturating_add(lease_secs as u64);
-                
+
                 // Generate HMAC-SHA256 delivery token
                 type HmacSha256 = Hmac<Sha256>;
                 let mut mac = HmacSha256::new_from_slice(&self.token_key)
@@ -170,27 +171,27 @@ impl<K: KvStore> QueueService<K> {
                 mac.update(format!("{}:{}:{}", route, msg.id, now).as_bytes());
                 let result_mac = mac.finalize();
                 let token = general_purpose::STANDARD.encode(result_mac.into_bytes());
-                
+
                 // Update in-memory lease (prevents other consumers from taking it)
                 let new_count = current_delivery_count.saturating_add(1);
                 route_leases.insert(msg.id.clone(), (expiry, token.clone(), new_count));
-                
+
                 // Add to batch result
                 reserved.push((msg.id, msg.body, token));
             }
         } // Lock released here
-        
+
         // Second pass: move DLQ messages (without holding lock)
         for (msg_id, msg) in dlq_msgs {
             self.move_to_dlq_internal(route, &msg_id, &msg).await?;
-            
+
             // Remove from leases
             let mut leases = self.leases.lock().await;
             if let Some(route_leases) = leases.get_mut(&route.to_string()) {
                 route_leases.remove(&msg_id);
             }
         }
-        
+
         Ok(reserved)
     }
 
@@ -203,7 +204,9 @@ impl<K: KvStore> QueueService<K> {
         lease_secs: u32,
     ) -> Result<(String, Vec<u8>, String), String> {
         let batch = self.reserve_batch(route, 1, lease_secs).await?;
-        batch.into_iter().next()
+        batch
+            .into_iter()
+            .next()
             .ok_or_else(|| "no available messages".to_string())
     }
 
@@ -216,32 +219,33 @@ impl<K: KvStore> QueueService<K> {
         add_secs: u32,
     ) -> Result<u32, String> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "time error".to_string())?
             .as_secs();
-        
+
         let mut leases = self.leases.lock().await;
-        let route_leases = leases.get_mut(route)
+        let route_leases = leases
+            .get_mut(route)
             .ok_or_else(|| "route not found".to_string())?;
-        
+
         if let Some((expiry, token, _count)) = route_leases.get_mut(id) {
             // Verify token
             if token != delivery_token {
                 return Err("invalid delivery token".to_string());
             }
-            
+
             // Extend expiry
             let new_expiry = expiry.saturating_add(add_secs as u64);
             *expiry = new_expiry;
-            
+
             let remaining = if new_expiry > now {
                 (new_expiry - now) as u32
             } else {
                 0
             };
-            
+
             Ok(remaining)
         } else {
             Err("no active lease".to_string())
@@ -249,17 +253,13 @@ impl<K: KvStore> QueueService<K> {
     }
 
     /// Consume (ack) a message - removes it from storage
-    pub async fn consume(
-        &self,
-        route: &str,
-        id: &str,
-        delivery_token: &str,
-    ) -> Result<(), String> {
+    pub async fn consume(&self, route: &str, id: &str, delivery_token: &str) -> Result<(), String> {
         // Verify lease
         let mut leases = self.leases.lock().await;
-        let route_leases = leases.get_mut(route)
+        let route_leases = leases
+            .get_mut(route)
             .ok_or_else(|| "route not found".to_string())?;
-        
+
         if let Some((_, token, _)) = route_leases.get(id) {
             if token != delivery_token {
                 return Err("invalid delivery token".to_string());
@@ -267,37 +267,38 @@ impl<K: KvStore> QueueService<K> {
         } else {
             return Err("no active lease".to_string());
         }
-        
+
         // Remove from storage
         let key = format!("queue:{}:{}", route, id);
-        self.kv.delete(key.as_bytes())
+        self.kv
+            .delete(key.as_bytes())
             .map_err(|e| format!("delete error: {:?}", e))?;
-        
+
         // Remove lease
         route_leases.remove(id);
-        
+
         Ok(())
     }
 
     /// Peek next available message without reserving
     pub async fn peek_next(&self, route: &str) -> Option<(String, Vec<u8>)> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()?
-            .as_secs();
-        
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+
         let prefix = format!("queue:{}:", route);
         let end_prefix = format!("queue:{};", route);
-        let results = self.kv.scan(prefix.as_bytes(), end_prefix.as_bytes()).ok()?;
-        
+        let results = self
+            .kv
+            .scan(prefix.as_bytes(), end_prefix.as_bytes())
+            .ok()?;
+
         let leases = self.leases.lock().await;
         let route_leases = leases.get(route);
-        
+
         for (_, val_bytes) in results {
             let msg: QueueMessage = serde_json::from_slice(&val_bytes).ok()?;
-            
+
             // Check if leased
             if let Some(route_leases) = route_leases {
                 if let Some((expiry, _, _)) = route_leases.get(&msg.id) {
@@ -306,10 +307,10 @@ impl<K: KvStore> QueueService<K> {
                     }
                 }
             }
-            
+
             return Some((msg.id, msg.body));
         }
-        
+
         None
     }
 
@@ -322,9 +323,10 @@ impl<K: KvStore> QueueService<K> {
     ) -> Result<(), String> {
         // Verify lease
         let mut leases = self.leases.lock().await;
-        let route_leases = leases.get_mut(route)
+        let route_leases = leases
+            .get_mut(route)
             .ok_or_else(|| "route not found".to_string())?;
-        
+
         if let Some((_, token, _)) = route_leases.get(id) {
             if token != delivery_token {
                 return Err("invalid delivery token".to_string());
@@ -332,23 +334,25 @@ impl<K: KvStore> QueueService<K> {
         } else {
             return Err("no active lease".to_string());
         }
-        
+
         // Get message
         let key = format!("queue:{}:{}", route, id);
-        let val_bytes = self.kv.get(key.as_bytes())
+        let val_bytes = self
+            .kv
+            .get(key.as_bytes())
             .map_err(|e| format!("get error: {:?}", e))?
             .ok_or_else(|| "message not found".to_string())?;
-        
-        let msg: QueueMessage = serde_json::from_slice(&val_bytes)
-            .map_err(|e| format!("deserialize error: {}", e))?;
-        
+
+        let msg: QueueMessage =
+            serde_json::from_slice(&val_bytes).map_err(|e| format!("deserialize error: {}", e))?;
+
         // Move to DLQ
         self.move_to_dlq_internal(route, id, &msg).await?;
-        
+
         // Remove original
         self.kv.delete(key.as_bytes()).ok();
         route_leases.remove(id);
-        
+
         Ok(())
     }
 
@@ -360,15 +364,15 @@ impl<K: KvStore> QueueService<K> {
         msg: &QueueMessage,
     ) -> Result<(), String> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        
+
         let dlq_route = format!("{}.dlq", route);
         let dlq_cfg = self.resolve_queue_cfg_for_route(&dlq_route).await;
-        
+
         // Compute remaining TTL
         let remaining_opt = msg.ttl_secs.map(|orig| {
             if now.saturating_sub(msg.created_at) >= orig {
@@ -377,7 +381,7 @@ impl<K: KvStore> QueueService<K> {
                 orig.saturating_sub(now.saturating_sub(msg.created_at))
             }
         });
-        
+
         // Choose TTL: min(remaining, dlq_ttl) or dlq_ttl if no remaining
         let effective_ttl = if let Some(rem) = remaining_opt {
             if rem == 0 {
@@ -392,7 +396,7 @@ impl<K: KvStore> QueueService<K> {
         } else {
             None
         };
-        
+
         // Create DLQ message (clear lease info)
         let dlq_msg = QueueMessage {
             id: msg.id.clone(),
@@ -404,15 +408,16 @@ impl<K: KvStore> QueueService<K> {
             created_at: now,
             ttl_secs: effective_ttl,
         };
-        
+
         // Store in DLQ
         let dlq_key = format!("queue:{}:{}", dlq_route, msg.id);
-        let dlq_json = serde_json::to_vec(&dlq_msg)
-            .map_err(|e| format!("serialize error: {}", e))?;
-        
-        self.kv.put(dlq_key.as_bytes(), &dlq_json)
+        let dlq_json =
+            serde_json::to_vec(&dlq_msg).map_err(|e| format!("serialize error: {}", e))?;
+
+        self.kv
+            .put(dlq_key.as_bytes(), &dlq_json)
             .map_err(|e| format!("kv put error: {:?}", e))?;
-        
+
         Ok(())
     }
 
@@ -423,9 +428,11 @@ impl<K: KvStore> QueueService<K> {
         id: &str,
     ) -> Result<Option<QueueMessage>, String> {
         let key = format!("queue:{}:{}", route, id);
-        let val_opt = self.kv.get(key.as_bytes())
+        let val_opt = self
+            .kv
+            .get(key.as_bytes())
             .map_err(|e| format!("get error: {:?}", e))?;
-        
+
         if let Some(val_bytes) = val_opt {
             let msg: QueueMessage = serde_json::from_slice(&val_bytes)
                 .map_err(|e| format!("deserialize error: {}", e))?;
@@ -438,17 +445,17 @@ impl<K: KvStore> QueueService<K> {
     /// Get queue statistics
     pub async fn get_queue_stats(&self, route: &str) -> Result<QueueStats, String> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        
+
         let leases = self.leases.lock().await;
         let route_leases = leases.get(route);
-        
+
         let mut in_flight_count = 0u32;
-        
+
         if let Some(route_leases) = route_leases {
             for (expiry, _, _) in route_leases.values() {
                 if *expiry > now {
@@ -456,7 +463,7 @@ impl<K: KvStore> QueueService<K> {
                 }
             }
         }
-        
+
         Ok(QueueStats { in_flight_count })
     }
 
@@ -471,7 +478,11 @@ impl<K: KvStore> QueueService<K> {
                 let mut g = self.cfg_area.lock().await;
                 g.insert((realm, area), cfg);
             }
-            QueueScope::Resource { realm, area, resource } => {
+            QueueScope::Resource {
+                realm,
+                area,
+                resource,
+            } => {
                 let mut g = self.cfg_resource.lock().await;
                 g.insert((realm, area, resource), cfg);
             }
@@ -486,21 +497,21 @@ impl<K: KvStore> QueueService<K> {
             if parts.is_empty() || parts[0].is_empty() {
                 return QueueConfig::default();
             }
-            
+
             let realm = parts[0].to_string();
             let area_opt = parts.get(1).map(|s| s.to_string());
             let res_opt = parts.get(2).map(|s| s.to_string());
-            
+
             // Resolve: realm -> area -> resource (later overrides earlier)
             let mut eff = QueueConfig::default();
-            
+
             if let Some(cfg) = {
                 let g = self.cfg_realm.lock().await;
                 g.get(&realm).copied()
             } {
                 eff = cfg;
             }
-            
+
             if let Some(area) = &area_opt {
                 if let Some(cfg) = {
                     let g = self.cfg_area.lock().await;
@@ -509,7 +520,7 @@ impl<K: KvStore> QueueService<K> {
                     eff = cfg;
                 }
             }
-            
+
             if let (Some(area), Some(res)) = (area_opt.as_ref(), res_opt.as_ref()) {
                 if let Some(cfg) = {
                     let g = self.cfg_resource.lock().await;
@@ -518,7 +529,7 @@ impl<K: KvStore> QueueService<K> {
                     eff = cfg;
                 }
             }
-            
+
             eff
         } else {
             QueueConfig::default()

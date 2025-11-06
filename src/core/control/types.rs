@@ -1,5 +1,5 @@
 //! Control domain types
-//! 
+//!
 //! Control domain uses raw body bytes (often JSON payloads in tests, but the
 //! domain itself treats them as opaque bytes). The domain handler processes
 //! TLV-encoded frames and the body contains the actual control data.

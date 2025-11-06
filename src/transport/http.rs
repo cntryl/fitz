@@ -130,7 +130,8 @@ pub async fn handle_request(
                     Ok(upgraded) => match tokio_tungstenite::accept_async(upgraded).await {
                         Ok(ws_stream) => {
                             if let Err(e) =
-                                crate::transport::ws::process_ws_stream(ws_stream, engine_for_task).await
+                                crate::transport::ws::process_ws_stream(ws_stream, engine_for_task)
+                                    .await
                             {
                                 eprintln!("ws session error (upgraded): {}", e);
                             }

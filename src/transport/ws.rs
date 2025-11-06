@@ -15,14 +15,8 @@ pub struct WsTransport {
 }
 
 impl WsTransport {
-    pub fn new(
-        addr: SocketAddr,
-        engine: EngineHandle,
-    ) -> Self {
-        Self {
-            addr,
-            engine,
-        }
+    pub fn new(addr: SocketAddr, engine: EngineHandle) -> Self {
+        Self { addr, engine }
     }
 
     pub async fn run(self) -> tokio::io::Result<()> {

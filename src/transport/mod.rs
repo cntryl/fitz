@@ -20,10 +20,10 @@ pub fn init() {
     // TODO: This is a temporary stub. In production, the application
     // should create a KvStore implementation (e.g., ShaleStore) and
     // start the engine before initializing transports.
-    
+
     // For now, panic to indicate this needs proper setup
     panic!("transport::init() is a stub - application must provide KvStore and start engine");
-    
+
     // Example of how this should be called:
     // let store: Arc<dyn KvStore> = Arc::new(MyKvStoreImpl::new());
     // let engine = crate::core::engine::start_engine(store);

@@ -44,7 +44,6 @@ fn should_enforce_test_naming_convention() {
 }
 
 #[test]
-#[ignore = "Test guidelines enforcement - run explicitly with --ignored"]
 fn should_enforce_arrange_act_assert_structure() {
     // Arrange
     let all_results = get_all_test_results();
@@ -137,12 +136,12 @@ fn should_enforce_single_behavior_principle() {
 }
 
 #[test]
-#[ignore = "Test guidelines enforcement - run explicitly with --ignored"]
 fn should_enforce_proper_test_file_organization() {
     // Arrange
     let issues = check_test_organization();
 
-    // Act - Check for any organization violations
+    // Act
+    // Check for any organization violations
 
     // Assert
     if !issues.is_empty() {

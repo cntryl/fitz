@@ -17,13 +17,13 @@ impl Default for RpcDomain {
 }
 
 impl Domain for RpcDomain {
-    fn handle<'a>(&'a self, _request: DomainRequest) 
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            panic!("RpcDomain::handle not yet implemented")
-        })
+    fn handle<'a>(
+        &'a self,
+        _request: DomainRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
+        Box::pin(async move { panic!("RpcDomain::handle not yet implemented") })
     }
-    
+
     fn schemes(&self) -> &[&str] {
         &["rpc"]
     }

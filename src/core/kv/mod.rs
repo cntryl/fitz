@@ -1,12 +1,12 @@
 //! KV domain - simple key-value storage
 
-mod types;
-mod store;
-mod service;
 mod handler;
+mod service;
+mod store;
+mod types;
 
 // Re-export public API
-pub use types::KvOperation;
-pub use store::KvDomainStore;
-pub use service::KvService;
 pub use handler::KvDomain;
+pub use service::KvService;
+pub use store::KvDomainStore;
+pub use types::KvOperation;
