@@ -1,30 +1,14 @@
 //! Notice domain service - owns all notice business logic and subscription routing
 //!
-//! The notice service maintains its own internal subscription registry for
-//! fine-tuned control over pub/sub semantics, backpressure, and routing.
+//! This implementation delegates subscription bookkeeping to an internal
+//! in-memory RouteTable (route_table.rs) and uses the shared SubSender alias
+//! from crate::core::domain.
 
-use std::collections::HashMap;
+use crate::core::domain::SubSender;
+// no external hash map needed here
 use tokio::sync::mpsc;
 
-/// Type alias for subscriber channels
-pub type SubSender = mpsc::Sender<(
-    String,
-    Option<String>,
-    Vec<u8>,
-    Option<String>,
-    Option<u32>,
-    bool,
-)>;
-
-/// Subscription entry maintained by the notice service
-#[derive(Debug)]
-struct Subscription {
-    #[allow(dead_code)]
-    id: u64,
-    route_pattern: String,
-    channel_id: u32,
-    sender: SubSender,
-}
+use super::route_table::{RtSubscription, RouteTable};
 
 /// Notice service handles ephemeral pub/sub operations
 /// - Subscribe/Unsubscribe: manage in-memory subscriptions
@@ -32,7 +16,7 @@ struct Subscription {
 /// - Best-effort delivery with backpressure handling
 pub struct NoticeService {
     next_sub_id: u64,
-    subscriptions: HashMap<u64, Subscription>,
+    route_table: RouteTable,
 }
 
 impl NoticeService {
@@ -40,7 +24,7 @@ impl NoticeService {
     pub fn new() -> Self {
         Self {
             next_sub_id: 1,
-            subscriptions: HashMap::new(),
+            route_table: RouteTable::new(),
         }
     }
 
@@ -50,15 +34,14 @@ impl NoticeService {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
 
-        self.subscriptions.insert(
+        let sub = RtSubscription {
             id,
-            Subscription {
-                id,
-                route_pattern,
-                channel_id,
-                sender,
-            },
-        );
+            route_pattern,
+            channel_id,
+            sender,
+        };
+
+    self.route_table.insert(sub);
 
         id
     }
@@ -66,13 +49,13 @@ impl NoticeService {
     /// Unsubscribe by subscription ID
     /// Returns true if subscription was found and removed
     pub fn unsubscribe(&mut self, sub_id: u64) -> bool {
-        self.subscriptions.remove(&sub_id).is_some()
+        let removed = self.route_table.remove(sub_id).is_some();
+        removed
     }
 
     /// Cleanup all subscriptions for a channel (e.g., on disconnect)
     pub fn cleanup_channel(&mut self, channel_id: u32) {
-        self.subscriptions
-            .retain(|_, sub| sub.channel_id != channel_id);
+    self.route_table.cleanup_channel(channel_id);
     }
 
     /// Publish a notification to all matching subscribers
@@ -82,42 +65,38 @@ impl NoticeService {
         route: &str,
         msg_id: Option<&str>,
         body: &[u8],
-        reply_to: Option<&str>,
-        seq: Option<u32>,
-        end: bool,
     ) -> (usize, usize) {
-        let mut delivered = 0;
-        let mut failed = 0;
+        let mut delivered = 0usize;
+        let mut failed = 0usize;
         let mut dead_subs = Vec::new();
 
-        for (sub_id, sub) in &self.subscriptions {
-            if route_matches(&sub.route_pattern, route) {
-                // Try to send notification (best-effort, non-blocking)
-                match sub.sender.try_send((
-                    route.to_string(),
-                    msg_id.map(|s| s.to_string()),
-                    body.to_vec(),
-                    reply_to.map(|s| s.to_string()),
-                    seq,
-                    end,
-                )) {
-                    Ok(_) => delivered += 1,
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        // Backpressure: drop notification for this subscriber
-                        failed += 1;
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        // Subscriber disconnected, mark for removal
-                        dead_subs.push(*sub_id);
-                        failed += 1;
-                    }
+        let matches = self.route_table.matching_subscribers(route);
+
+        for sub in matches {
+            match sub.sender.try_send((
+                route.to_string(),
+                msg_id.map(|s| s.to_string()),
+                body.to_vec(),
+                None,  // Notices never have reply_to
+                None,  // Notices never have seq
+                false, // Notices never have end flag
+            )) {
+                Ok(_) => delivered += 1,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Backpressure: drop notification for this subscriber
+                    failed += 1;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Subscriber disconnected, mark for removal
+                    dead_subs.push(sub.id);
+                    failed += 1;
                 }
             }
         }
 
         // Cleanup dead subscriptions
         for sub_id in dead_subs {
-            self.subscriptions.remove(&sub_id);
+            let _ = self.route_table.remove(sub_id);
         }
 
         (delivered, failed)
@@ -125,7 +104,7 @@ impl NoticeService {
 
     /// Get count of active subscriptions
     pub fn subscription_count(&self) -> usize {
-        self.subscriptions.len()
+        self.route_table.len()
     }
 }
 
@@ -135,84 +114,9 @@ impl Default for NoticeService {
     }
 }
 
-/// Route pattern matching for notices
-/// - Exact match
-/// - Trailing '*' wildcard as prefix match (e.g., "a/b/*")
-/// - Hierarchical prefix match (e.g., "a/b" matches "a/b/c")
-/// - Global wildcard '*' matches all routes
-fn route_matches(pattern: &str, route: &str) -> bool {
-    // Global wildcard
-    if pattern == "*" {
-        return true;
-    }
-
-    // Exact match
-    if pattern == route {
-        return true;
-    }
-
-    // Trailing wildcard: "a/b/*" matches "a/b/c" and "a/b/c/d"
-    if let Some(prefix) = pattern.strip_suffix("/*") {
-        if route == prefix || route.starts_with(&format!("{}/", prefix)) {
-            return true;
-        }
-    }
-
-    // Hierarchical prefix: "a/b" matches "a/b/c"
-    if route.starts_with(&format!("{}/", pattern)) {
-        return true;
-    }
-
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn should_match_exact_route() {
-        assert!(route_matches("a/b/c", "a/b/c"));
-        assert!(!route_matches("a/b/c", "a/b/d"));
-    }
-
-    #[test]
-    fn should_match_global_wildcard() {
-        assert!(route_matches("*", "a/b/c"));
-        assert!(route_matches("*", "anything"));
-    }
-
-    #[test]
-    fn should_match_trailing_wildcard() {
-        // Arrange
-        // (route patterns and test routes are literals)
-
-        // Act
-        let a = route_matches("a/b/*", "a/b/c");
-        let b = route_matches("a/b/*", "a/b/c/d");
-        let c = route_matches("a/b/*", "a/c/d");
-
-        // Assert
-        assert!(a);
-        assert!(b);
-        assert!(!c);
-    }
-
-    #[test]
-    fn should_match_hierarchical_prefix() {
-        // Arrange
-        // (route patterns and test routes are literals)
-
-        // Act
-        let a = route_matches("a/b", "a/b/c");
-        let b = route_matches("a/b", "a/b/c/d");
-        let c = route_matches("a/b", "a/c/d");
-
-        // Assert
-        assert!(a);
-        assert!(b);
-        assert!(!c);
-    }
 
     #[tokio::test]
     async fn should_subscribe_and_publish() {
@@ -223,7 +127,7 @@ mod tests {
         // Act
         let _sub_id = service.subscribe("test/route".to_string(), 1, tx);
         let (delivered, failed) =
-            service.publish("test/route", Some("msg-1"), b"hello", None, None, false);
+            service.publish("test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert_eq!(delivered, 1);
@@ -243,7 +147,7 @@ mod tests {
         // Act
         let removed = service.unsubscribe(sub_id);
         let (delivered, _) =
-            service.publish("test/route", Some("msg-1"), b"hello", None, None, false);
+            service.publish("test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert!(removed);
@@ -275,11 +179,295 @@ mod tests {
         service.subscribe("test/route".to_string(), 1, tx);
 
         // Act - fill the channel and overflow
-        service.publish("test/route", Some("msg-1"), b"1", None, None, false);
+        service.publish("test/route", Some("msg-1"), b"1");
         let (_delivered, failed) =
-            service.publish("test/route", Some("msg-2"), b"2", None, None, false);
+            service.publish("test/route", Some("msg-2"), b"2");
 
         // Assert - second publish should fail due to backpressure
         assert_eq!(failed, 1);
     }
+
+    // ========================================================================
+    // COMPREHENSIVE WILDCARD PATTERN MATCHING TESTS
+    // ========================================================================
+
+    #[tokio::test]
+    async fn should_match_global_wildcard_subscription() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("*".to_string(), 1, tx);
+
+        // Act & Assert - global wildcard matches everything
+        let test_routes = vec![
+            "notice://realm/area/resource/op",
+            "a/b/c",
+            "single",
+            "anything/goes/here",
+        ];
+
+        for route in test_routes {
+            let (delivered, failed) = service.publish(route, None, b"test");
+            assert_eq!(delivered, 1, "Route '{}' should match global wildcard", route);
+            assert_eq!(failed, 0);
+            let _ = rx.recv().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn should_match_realm_wildcard_subscription() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("notice://acme/*".to_string(), 1, tx);
+
+        // Act & Assert - should match all under realm
+        let matching_routes = vec![
+            ("notice://acme/prod/syslog/error", true),
+            ("notice://acme/dev/app/warning", true),
+            ("notice://acme/staging/db/critical", true),
+            ("notice://other/prod/syslog/error", false),
+            ("notice://acme", true),  // Exact match to prefix
+        ];
+
+        for (route, should_match) in matching_routes {
+            let (delivered, _) = service.publish(route, None, b"test");
+            if should_match {
+                assert_eq!(delivered, 1, "Route '{}' should match realm wildcard", route);
+                let _ = rx.recv().await.unwrap();
+            } else {
+                assert_eq!(delivered, 0, "Route '{}' should not match realm wildcard", route);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_match_area_wildcard_subscription() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("notice://acme/prod/*".to_string(), 1, tx);
+
+        // Act & Assert
+        let matching_routes = vec![
+            ("notice://acme/prod/syslog/error", true),
+            ("notice://acme/prod/app/info", true),
+            ("notice://acme/prod/db/query", true),
+            ("notice://acme/dev/syslog/error", false),
+            ("notice://acme/staging/app/info", false),
+            ("notice://other/prod/syslog/error", false),
+        ];
+
+        for (route, should_match) in matching_routes {
+            let (delivered, _) = service.publish(route, None, b"test");
+            if should_match {
+                assert_eq!(delivered, 1, "Route '{}' should match area wildcard", route);
+                let _ = rx.recv().await.unwrap();
+            } else {
+                assert_eq!(delivered, 0, "Route '{}' should not match area wildcard", route);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_match_resource_wildcard_subscription() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("notice://acme/prod/syslog/*".to_string(), 1, tx);
+
+        // Act & Assert
+        let matching_routes = vec![
+            ("notice://acme/prod/syslog/error", true),
+            ("notice://acme/prod/syslog/warning", true),
+            ("notice://acme/prod/syslog/info", true),
+            ("notice://acme/prod/app/error", false),
+            ("notice://acme/dev/syslog/error", false),
+        ];
+
+        for (route, should_match) in matching_routes {
+            let (delivered, _) = service.publish(route, None, b"test");
+            if should_match {
+                assert_eq!(delivered, 1, "Route '{}' should match resource wildcard", route);
+                let _ = rx.recv().await.unwrap();
+            } else {
+                assert_eq!(delivered, 0, "Route '{}' should not match resource wildcard", route);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_match_exact_subscription() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("notice://acme/prod/syslog/critical".to_string(), 1, tx);
+
+        // Act & Assert
+        let matching_routes = vec![
+            ("notice://acme/prod/syslog/critical", true),
+            ("notice://acme/prod/syslog/error", false),
+            ("notice://acme/prod/syslog/warning", false),
+            ("notice://acme/prod/app/critical", false),
+        ];
+
+        for (route, should_match) in matching_routes {
+            let (delivered, _) = service.publish(route, None, b"test");
+            if should_match {
+                assert_eq!(delivered, 1, "Route '{}' should match exact pattern", route);
+                let _ = rx.recv().await.unwrap();
+            } else {
+                assert_eq!(delivered, 0, "Route '{}' should not match exact pattern", route);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_match_hierarchical_prefix_subscription() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("notice://acme/prod/syslog".to_string(), 1, tx);
+
+        // Act & Assert - without trailing /*, still matches child paths
+        let matching_routes = vec![
+            ("notice://acme/prod/syslog", true),  // Exact
+            ("notice://acme/prod/syslog/error", true),  // Child
+            ("notice://acme/prod/syslog/warning", true),  // Child
+            ("notice://acme/prod/syslog/info/verbose", true),  // Deep child
+            ("notice://acme/prod/app", false),  // Different resource
+            ("notice://acme/prod", false),  // Parent
+        ];
+
+        for (route, should_match) in matching_routes {
+            let (delivered, _) = service.publish(route, None, b"test");
+            if should_match {
+                assert_eq!(delivered, 1, "Route '{}' should match hierarchical prefix", route);
+                let _ = rx.recv().await.unwrap();
+            } else {
+                assert_eq!(delivered, 0, "Route '{}' should not match hierarchical prefix", route);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_deliver_to_multiple_matching_subscriptions() {
+        // Arrange - multiple overlapping subscriptions
+        let mut service = NoticeService::new();
+        let (tx1, mut rx1) = mpsc::channel(10);
+        let (tx2, mut rx2) = mpsc::channel(10);
+        let (tx3, mut rx3) = mpsc::channel(10);
+        let (tx4, mut rx4) = mpsc::channel(10);
+        
+        service.subscribe("*".to_string(), 1, tx1);  // Global
+        service.subscribe("notice://acme/*".to_string(), 2, tx2);  // Realm
+        service.subscribe("notice://acme/prod/*".to_string(), 3, tx3);  // Area
+        service.subscribe("notice://acme/prod/syslog/error".to_string(), 4, tx4);  // Exact
+
+        // Act
+        let route = "notice://acme/prod/syslog/error";
+        let (delivered, failed) = service.publish(route, Some("msg-1"), b"alert");
+
+        // Assert - all 4 should receive the message
+        assert_eq!(delivered, 4);
+        assert_eq!(failed, 0);
+        
+        let msg1 = rx1.recv().await.unwrap();
+        assert_eq!(msg1.0, route);
+        assert_eq!(msg1.2, b"alert");
+        
+        let msg2 = rx2.recv().await.unwrap();
+        assert_eq!(msg2.0, route);
+        
+        let msg3 = rx3.recv().await.unwrap();
+        assert_eq!(msg3.0, route);
+        
+        let msg4 = rx4.recv().await.unwrap();
+        assert_eq!(msg4.0, route);
+    }
+
+    #[tokio::test]
+    async fn should_not_match_partial_segment_names() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, _rx) = mpsc::channel(10);
+        service.subscribe("notice://realm".to_string(), 1, tx);
+
+        // Act & Assert - should not match partial names
+        let non_matching_routes = vec![
+            "notice://realm123",
+            "notice://realm-prod",
+            "notice://rea",
+            "notice://realms",
+        ];
+
+        for route in non_matching_routes {
+            let (delivered, _) = service.publish(route, None, b"test");
+            assert_eq!(delivered, 0, "Route '{}' should not match partial segment", route);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_preserve_message_metadata_in_delivery() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("test/*".to_string(), 1, tx);
+
+        // Act
+        let (delivered, failed) = service.publish(
+            "test/alerts",
+            Some("msg-123"),
+            b"payload data",
+        );
+
+        // Assert
+        assert_eq!(delivered, 1);
+        assert_eq!(failed, 0);
+        
+        let msg = rx.recv().await.unwrap();
+        assert_eq!(msg.0, "test/alerts");  // route
+        assert_eq!(msg.1, Some("msg-123".to_string()));  // msg_id
+        assert_eq!(msg.2, b"payload data");  // body
+        assert_eq!(msg.3, None);  // reply_to (always None for notices)
+        assert_eq!(msg.4, None);  // seq (always None for notices)
+        assert_eq!(msg.5, false);  // end (always false for notices)
+    }
+
+    #[tokio::test]
+    async fn should_handle_no_matching_subscriptions() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, _rx) = mpsc::channel(10);
+        service.subscribe("notice://acme/prod/*".to_string(), 1, tx);
+
+        // Act - publish to non-matching route
+        let (delivered, failed) = service.publish(
+            "notice://other/staging/app/info",
+            None,
+            b"orphan message",
+        );
+
+        // Assert - no deliveries
+        assert_eq!(delivered, 0);
+        assert_eq!(failed, 0);
+    }
+
+    #[tokio::test]
+    async fn should_handle_empty_route_segments() {
+        // Arrange
+        let mut service = NoticeService::new();
+        let (tx, mut rx) = mpsc::channel(10);
+        service.subscribe("".to_string(), 1, tx);
+
+        // Act
+        let (delivered, _) = service.publish("", None, b"empty");
+
+        // Assert - exact match on empty string
+        assert_eq!(delivered, 1);
+        let msg = rx.recv().await.unwrap();
+        assert_eq!(msg.0, "");
+    }
 }
+
+

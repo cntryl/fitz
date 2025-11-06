@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::types::*;
 use base64::{engine::general_purpose, Engine as _};
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use tokio::sync::{oneshot, RwLock};
-use super::types::*;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -27,9 +27,10 @@ impl Shard {
 }
 
 pub struct LeaseService {
-    shards: Vec<Arc<Shard>>, // sharded by realm
-    secret: Arc<Vec<u8>>,    // HMAC key
-    sweep_every: Duration,   // expirer cadence
+    shards: Vec<Arc<Shard>>,      // sharded by realm
+    secret: Arc<Vec<u8>>,         // HMAC key
+    sweep_every: Duration,        // expirer cadence
+    acquire_timeout: Duration,    // max wait time for acquire when lease is busy
 }
 
 // --- Public API ---
@@ -61,11 +62,19 @@ impl LeaseService {
     }
 
     fn new_inner(spawn_expirer: bool) -> Arc<Self> {
+        Self::new_with_timeout(spawn_expirer, Duration::from_secs(10))
+    }
+
+    fn new_with_timeout(spawn_expirer: bool, acquire_timeout: Duration) -> Arc<Self> {
+        // Clamp timeout between 0 and 20 seconds
+        let clamped_timeout = acquire_timeout.min(Duration::from_secs(20));
+        
         let shard_count = std::cmp::max(4, num_cpus::get()); // CPU-scaled, stable
         let svc = Arc::new(Self {
             shards: (0..shard_count).map(|_| Arc::new(Shard::new())).collect(),
             secret: Arc::new(Uuid::new_v4().as_bytes().to_vec()),
             sweep_every: Duration::from_millis(100),
+            acquire_timeout: clamped_timeout,
         });
 
         if spawn_expirer {
@@ -123,18 +132,23 @@ impl LeaseService {
         let now = Instant::now();
 
         if lock.is_active(now) {
-            // busy → enqueue waiter and await
+            // busy → enqueue waiter and await with timeout
             let (tx, rx) = oneshot::channel();
             lock.waiters.push_back(Pending {
                 requested_ttl: ttl_secs,
                 responder: tx,
             });
             drop(lock);
-            return rx.await.unwrap_or_else(|_| Err("internal_error".into()));
+            
+            match tokio::time::timeout(self.acquire_timeout, rx).await {
+                Ok(Ok(result)) => return result,
+                Ok(Err(_)) => return Err("internal_error".into()),
+                Err(_) => return Err("lease_busy_timeout".into()),
+            }
         }
 
         // free/expired → take lease (reuse expired lease or initialize new one)
-    let id = self.new_uuid_string();
+        let id = self.new_uuid_string();
         let expiry = now + Duration::from_secs(ttl_secs as u64);
         let token = self.compute_token(key, &id, expiry);
 
@@ -153,7 +167,7 @@ impl LeaseService {
     }
 
     /// Extend by `add_secs`; returns remaining seconds.
-    pub async fn extend(
+    pub async fn renew(
         &self,
         key: &str,
         id: &str,
@@ -218,12 +232,14 @@ impl LeaseService {
 
                 // If the waiter is still listening, send the grant and stop.
                 // If send fails the receiver was dropped; try the next waiter (if any).
-                if p.responder.send(Ok(LeaseGrant {
-                    id: new_id.clone(),
-                    body: lock.body.clone(),
-                    token: new_token.clone(),
-                    ttl_secs: p.requested_ttl,
-                })).is_ok()
+                if p.responder
+                    .send(Ok(LeaseGrant {
+                        id: new_id.clone(),
+                        body: lock.body.clone(),
+                        token: new_token.clone(),
+                        ttl_secs: p.requested_ttl,
+                    }))
+                    .is_ok()
                 {
                     break;
                 }
@@ -258,17 +274,6 @@ impl LeaseService {
             }
         }
         Ok(())
-    }
-
-    /// Read-only peek.
-    pub async fn peek(&self, key: &str) -> Option<(String, Option<Vec<u8>>)> {
-        let entry = self.get_entry(key)?;
-        let lock = entry.read().await;
-        if lock.is_active(Instant::now()) {
-            Some((lock.id.clone(), lock.body.clone()))
-        } else {
-            None
-        }
     }
 }
 
@@ -418,17 +423,20 @@ impl LeaseService {
                                 let new_expiry = now + Duration::from_secs(p.requested_ttl as u64);
                                 // Compute token directly from components to avoid
                                 // allocating a temporary `String` for the full key.
-                                let new_token = self.compute_token_parts(&realm, &area, &res, &new_id, new_expiry);
+                                let new_token = self
+                                    .compute_token_parts(&realm, &area, &res, &new_id, new_expiry);
                                 lock.id = new_id.clone();
                                 lock.token = new_token.clone();
                                 lock.expiry = new_expiry;
 
-                                if p.responder.send(Ok(LeaseGrant {
-                                    id: new_id.clone(),
-                                    body: lock.body.clone(),
-                                    token: new_token.clone(),
-                                    ttl_secs: p.requested_ttl,
-                                })).is_ok()
+                                if p.responder
+                                    .send(Ok(LeaseGrant {
+                                        id: new_id.clone(),
+                                        body: lock.body.clone(),
+                                        token: new_token.clone(),
+                                        ttl_secs: p.requested_ttl,
+                                    }))
+                                    .is_ok()
                                 {
                                     break;
                                 }
@@ -499,6 +507,42 @@ mod tests {
         LeaseService::new_for_test()
     }
 
+    #[test]
+    fn should_clamp_acquire_timeout_to_max_20_seconds() {
+        // Arrange
+        let excessive_timeout = Duration::from_secs(100);
+
+        // Act
+        let svc = LeaseService::new_with_timeout(false, excessive_timeout);
+
+        // Assert
+        assert_eq!(svc.acquire_timeout, Duration::from_secs(20));
+    }
+
+    #[test]
+    fn should_allow_zero_second_timeout() {
+        // Arrange
+        let zero_timeout = Duration::from_secs(0);
+
+        // Act
+        let svc = LeaseService::new_with_timeout(false, zero_timeout);
+
+        // Assert
+        assert_eq!(svc.acquire_timeout, Duration::from_secs(0));
+    }
+
+    #[test]
+    fn should_preserve_timeout_within_range() {
+        // Arrange
+        let valid_timeout = Duration::from_secs(15);
+
+        // Act
+        let svc = LeaseService::new_with_timeout(false, valid_timeout);
+
+        // Assert
+        assert_eq!(svc.acquire_timeout, Duration::from_secs(15));
+    }
+
     #[tokio::test]
     async fn should_acquire_lease_successfully() {
         // Arrange
@@ -512,33 +556,6 @@ mod tests {
         assert!(!grant.token.is_empty());
         assert_eq!(grant.ttl_secs, 2);
         assert!(grant.body.is_none());
-    }
-
-    #[tokio::test]
-    async fn should_peek_active_lease() {
-        // Arrange
-        let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res1", 2).await.unwrap();
-
-        // Act
-        let peek = svc.peek("lease://realm1/area1/res1").await;
-
-        // Assert
-        assert!(peek.is_some());
-        let (id, _body) = peek.unwrap();
-        assert_eq!(id, grant.id);
-    }
-
-    #[tokio::test]
-    async fn should_peek_returns_none_when_no_lease() {
-        // Arrange
-        let svc = new_test_service();
-
-        // Act
-        let peek = svc.peek("lease://realm1/area1/no-such").await;
-
-        // Assert
-        assert!(peek.is_none());
     }
 
     #[tokio::test]
@@ -563,7 +580,7 @@ mod tests {
         // Act
         let added = 10u32;
         let remaining = svc
-            .extend("lease://realm1/area1/res2", &grant.id, &grant.token, added)
+            .renew("lease://realm1/area1/res2", &grant.id, &grant.token, added)
             .await
             .unwrap();
 
@@ -582,7 +599,7 @@ mod tests {
 
         // Act
         let result = svc
-            .extend("lease://realm1/area1/res", &grant.id, &grant.token, 0)
+            .renew("lease://realm1/area1/res", &grant.id, &grant.token, 0)
             .await;
 
         // Assert
@@ -598,7 +615,7 @@ mod tests {
 
         // Act
         let result = svc
-            .extend("lease://realm1/area1/res", "wrong-id", &grant.token, 5)
+            .renew("lease://realm1/area1/res", "wrong-id", &grant.token, 5)
             .await;
 
         // Assert
@@ -614,7 +631,7 @@ mod tests {
 
         // Act
         let result = svc
-            .extend("lease://realm1/area1/res", &grant.id, "wrong-token", 5)
+            .renew("lease://realm1/area1/res", &grant.id, "wrong-token", 5)
             .await;
 
         // Assert
@@ -629,7 +646,7 @@ mod tests {
 
         // Act
         let result = svc
-            .extend("lease://realm1/area1/no-lease", "fake-id", "fake-token", 5)
+            .renew("lease://realm1/area1/no-lease", "fake-id", "fake-token", 5)
             .await;
 
         // Assert
@@ -641,14 +658,22 @@ mod tests {
     async fn should_reject_extend_for_expired_lease() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res_expired_test", 1).await.unwrap();
+        let grant = svc
+            .acquire("lease://realm1/area1/res_expired_test", 1)
+            .await
+            .unwrap();
 
         // wait for lease to expire (expiration task may clean it up)
         sleep(Duration::from_secs(2)).await;
 
         // Act
         let result = svc
-            .extend("lease://realm1/area1/res_expired_test", &grant.id, &grant.token, 5)
+            .renew(
+                "lease://realm1/area1/res_expired_test",
+                &grant.id,
+                &grant.token,
+                5,
+            )
             .await;
 
         // Assert - could be either lease_expired or lease_not_found depending on timing
@@ -685,11 +710,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Act
-        let peek = svc.peek("lease://realm1/area1/res").await;
+        // Act - try to acquire again
+        let result = svc.acquire("lease://realm1/area1/res", 5).await;
 
-        // Assert
-        assert!(peek.is_none());
+        // Assert - should succeed because lease was removed
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -717,11 +742,14 @@ mod tests {
             .release("lease://realm1/area1/res", "wrong-id", &grant.token)
             .await;
 
-        // Act
-        let peek = svc.peek("lease://realm1/area1/res").await;
+        // Act - try to acquire again (with timeout since it should block)
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            svc.acquire("lease://realm1/area1/res", 5)
+        ).await;
 
-        // Assert
-        assert!(peek.is_some());
+        // Assert - should timeout because lease still exists
+        assert!(result.is_err(), "acquire should timeout/block because lease is still held");
     }
 
     #[tokio::test]
@@ -749,11 +777,14 @@ mod tests {
             .release("lease://realm1/area1/res", &grant.id, "wrong-token")
             .await;
 
-        // Act
-        let peek = svc.peek("lease://realm1/area1/res").await;
+        // Act - try to acquire again (with timeout since it should block)
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            svc.acquire("lease://realm1/area1/res", 5)
+        ).await;
 
-        // Assert
-        assert!(peek.is_some());
+        // Assert - should timeout because lease still exists
+        assert!(result.is_err(), "acquire should timeout/block because lease is still held");
     }
 
     #[tokio::test]
@@ -779,7 +810,8 @@ mod tests {
 
         // spawn a second acquire that should wait
         let svc_clone = svc.clone();
-        let waiter = tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res", 5).await });
+        let waiter =
+            tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res", 5).await });
 
         // give waiter time to enqueue
         sleep(Duration::from_millis(50)).await;
@@ -796,7 +828,8 @@ mod tests {
 
         // spawn a waiter that will block until the lease is released
         let svc_clone = svc.clone();
-        let waiter = tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res3", 3).await });
+        let waiter =
+            tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res3", 3).await });
 
         // give the waiter a moment to enqueue
         sleep(Duration::from_millis(50)).await;
@@ -821,12 +854,14 @@ mod tests {
 
         // spawn two waiters
         let svc1 = svc.clone();
-        let waiter1 = tokio::spawn(async move { svc1.acquire("lease://realm1/area1/res", 2).await });
+        let waiter1 =
+            tokio::spawn(async move { svc1.acquire("lease://realm1/area1/res", 2).await });
 
         sleep(Duration::from_millis(10)).await;
 
         let svc2 = svc.clone();
-        let _waiter2 = tokio::spawn(async move { svc2.acquire("lease://realm1/area1/res", 3).await });
+        let _waiter2 =
+            tokio::spawn(async move { svc2.acquire("lease://realm1/area1/res", 3).await });
 
         sleep(Duration::from_millis(50)).await;
 
@@ -848,12 +883,14 @@ mod tests {
 
         // spawn two waiters
         let svc1 = svc.clone();
-        let _waiter1 = tokio::spawn(async move { svc1.acquire("lease://realm1/area1/res", 2).await });
+        let _waiter1 =
+            tokio::spawn(async move { svc1.acquire("lease://realm1/area1/res", 2).await });
 
         sleep(Duration::from_millis(10)).await;
 
         let svc2 = svc.clone();
-        let _waiter2 = tokio::spawn(async move { svc2.acquire("lease://realm1/area1/res", 3).await });
+        let _waiter2 =
+            tokio::spawn(async move { svc2.acquire("lease://realm1/area1/res", 3).await });
 
         sleep(Duration::from_millis(50)).await;
 
@@ -879,7 +916,8 @@ mod tests {
 
         // spawn a waiter
         let svc_clone = svc.clone();
-        let waiter = tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res", 2).await });
+        let waiter =
+            tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res", 2).await });
 
         // Act
         sleep(Duration::from_secs(2)).await;
@@ -904,19 +942,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_peek_both_independent_leases() {
+    async fn should_acquire_two_independent_leases() {
         // Arrange
         let svc = new_test_service();
-        let _grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
-        let _grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
+        let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
+        let grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
 
-        // Act
-        let peek1 = svc.peek("lease://realm1/area1/key1").await;
-        let peek2 = svc.peek("lease://realm1/area1/key2").await;
+        // Act - verify by trying to renew each
+        let renew1 = svc.renew("lease://realm1/area1/key1", &grant1.id, &grant1.token, 5).await;
+        let renew2 = svc.renew("lease://realm1/area1/key2", &grant2.id, &grant2.token, 5).await;
 
         // Assert
-        assert!(peek1.is_some());
-        assert!(peek2.is_some());
+        assert!(renew1.is_ok());
+        assert!(renew2.is_ok());
     }
 
     #[tokio::test]
@@ -924,29 +962,44 @@ mod tests {
         // Arrange
         let svc = new_test_service();
         let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
-        let _grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
+        let grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
 
         // Act
         svc.release("lease://realm1/area1/key1", &grant1.id, &grant1.token)
             .await
             .unwrap();
 
-        // Assert
-        assert!(svc.peek("lease://realm1/area1/key1").await.is_none());
-        assert!(svc.peek("lease://realm1/area1/key2").await.is_some());
+        // Assert - key1 can be reacquired, key2 still held (timeout since blocked)
+        let reacquire1 = svc.acquire("lease://realm1/area1/key1", 5).await;
+        let try_acquire2 = tokio::time::timeout(
+            Duration::from_millis(100),
+            svc.acquire("lease://realm1/area1/key2", 5)
+        ).await;
+        assert!(reacquire1.is_ok());
+        assert!(try_acquire2.is_err(), "acquire of key2 should timeout because it's still held");
+        
+        // Verify key2 still responds to renew
+        let renew2 = svc.renew("lease://realm1/area1/key2", &grant2.id, &grant2.token, 5).await;
+        assert!(renew2.is_ok());
     }
 
     #[tokio::test]
     async fn should_allow_reacquire_after_expiration() {
         // Arrange
         let svc = new_test_service();
-        let grant1 = svc.acquire("lease://realm1/area1/res_reacquire_test", 1).await.unwrap();
+        let grant1 = svc
+            .acquire("lease://realm1/area1/res_reacquire_test", 1)
+            .await
+            .unwrap();
 
         // wait for expiration
         sleep(Duration::from_secs(2)).await;
 
         // Act
-        let grant2 = svc.acquire("lease://realm1/area1/res_reacquire_test", 5).await.unwrap();
+        let grant2 = svc
+            .acquire("lease://realm1/area1/res_reacquire_test", 5)
+            .await
+            .unwrap();
 
         // Assert
         assert_ne!(grant1.id, grant2.id, "new lease should have different ID");

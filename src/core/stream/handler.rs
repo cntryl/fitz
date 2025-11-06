@@ -238,7 +238,9 @@ impl Domain for StreamDomain {
             let operation = match StreamOperation::from_route(&request.route) {
                 Ok(op) => op,
                 Err(err) => {
-                    return DomainResponse::Frame(Self::build_error_response(err));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        Self::build_error_response(err),
+                    ));
                 }
             };
 
@@ -269,17 +271,19 @@ impl Domain for StreamDomain {
                         append_result.resource_seq,
                         append_result.area_seq_range,
                     );
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 Ok(StreamResponse::Events(events)) => {
                     let response = Self::build_events_response(events);
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 Ok(StreamResponse::AreaRead(area_resp)) => {
                     let response = Self::build_area_response(area_resp.events, area_resp.watermark);
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
-                Err(err) => DomainResponse::Frame(Self::build_error_response(err)),
+                Err(err) => DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    Self::build_error_response(err),
+                )),
             }
         })
     }

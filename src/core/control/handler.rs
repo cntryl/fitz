@@ -119,7 +119,7 @@ impl Domain for ControlDomain {
                 Some(b) => b,
                 None => {
                     let error_response = self.build_error_response("Missing body in request");
-                    return DomainResponse::Frame(error_response);
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
                 }
             };
 
@@ -128,7 +128,7 @@ impl Domain for ControlDomain {
                 Ok(op) => op,
                 Err(e) => {
                     let error_response = self.build_error_response(&e);
-                    return DomainResponse::Frame(error_response);
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
                 }
             };
 
@@ -146,9 +146,6 @@ impl Domain for ControlDomain {
                         &request.route_str,
                         msg_id,
                         &response_body,
-                        None,
-                        None,
-                        false,
                     );
                     drop(notice_service);
 
@@ -156,11 +153,11 @@ impl Domain for ControlDomain {
                     // Echo the body back for pub/sub pattern
                     let response =
                         self.build_tlv_response(&request.route_str, None, &response_body);
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 Err(err) => {
                     let error_response = self.build_error_response(&err);
-                    DomainResponse::Frame(error_response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response))
                 }
             }
         })

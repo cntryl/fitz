@@ -48,6 +48,90 @@ pub fn build_tlv(tag: u8, value: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(value);
 }
 
+// --- Small reusable buffer pool to reduce per-request Vec allocations ---
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+/// Simple fixed-size pool of Vec<u8>. Not intended to be a full-featured
+/// allocator — just a tiny reuse cache for small payloads to reduce churn.
+static BUF_POOL: Lazy<Mutex<Vec<Vec<u8>>>> = Lazy::new(|| {
+    // Pre-warm with a few buffers to cover common concurrent workloads.
+    let mut v = Vec::new();
+    for _ in 0..8 {
+        v.push(Vec::with_capacity(512));
+    }
+    Mutex::new(v)
+});
+
+/// Take a buffer from the global pool or allocate a new one with default capacity.
+pub fn take_buf() -> Vec<u8> {
+    if let Ok(mut pool) = BUF_POOL.lock() {
+        pool.pop().unwrap_or_else(|| Vec::with_capacity(512))
+    } else {
+        // On poisoning/failure just allocate
+        Vec::with_capacity(512)
+    }
+}
+
+/// Return a buffer to the pool for reuse. Buffers that grew too large are dropped
+/// to avoid unbounded memory use.
+pub fn return_buf(mut buf: Vec<u8>) {
+    // Clear contents but keep capacity for reuse
+    buf.clear();
+    if buf.capacity() > 8 * 1024 {
+        // drop oversized buffers
+        return;
+    }
+    if let Ok(mut pool) = BUF_POOL.lock() {
+        pool.push(buf);
+    }
+}
+
+/// A buffer wrapper that returns its internal Vec to the global pool on Drop
+/// unless the buffer has been consumed via `into_vec`.
+#[derive(Debug)]
+pub struct PooledFrame {
+    buf: Option<Vec<u8>>,
+}
+
+impl PooledFrame {
+    /// Create a PooledFrame from an existing Vec<u8> (takes ownership)
+    pub fn from_vec(v: Vec<u8>) -> Self {
+        Self { buf: Some(v) }
+    }
+
+    /// Consume self and return the inner Vec<u8>, preventing return to pool
+    pub fn into_vec(mut self) -> Vec<u8> {
+        self.buf.take().unwrap_or_default()
+    }
+
+    /// Borrow the frame as a byte slice
+    pub fn as_slice(&self) -> &[u8] {
+        self.buf.as_ref().map(|b| b.as_slice()).unwrap_or(&[])
+    }
+}
+
+impl AsRef<[u8]> for PooledFrame {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl Drop for PooledFrame {
+    fn drop(&mut self) {
+        if let Some(b) = self.buf.take() {
+            // Return buffer to pool (best-effort)
+            if b.capacity() <= 8 * 1024 {
+                if let Ok(mut pool) = BUF_POOL.lock() {
+                    pool.push(b);
+                    return;
+                }
+            }
+            // drop otherwise
+        }
+    }
+}
+
 /// Find the first TLV with `tag` in `buf` and return a slice pointing at the
 /// value bytes. Returns `None` if not found. If a TLV appears truncated
 /// (length exceeds buffer) this function returns `None` to indicate parse

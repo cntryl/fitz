@@ -10,8 +10,6 @@ pub struct LeaseDomain;
 
 impl LeaseDomain {
     pub fn new() -> Self {
-        // instantiate service (spawn expiration task)
-        let _svc = LeaseService::new();
         Self
     }
 
@@ -33,9 +31,9 @@ impl LeaseDomain {
         })
     }
 
-    // Helper: parse string TLV
-    fn parse_str(payload: &[u8], tag: u8) -> Option<String> {
-        find_tlv(payload, tag).and_then(|b| std::str::from_utf8(b).ok().map(|s| s.to_string()))
+    // Helper: parse string TLV as borrowed &str (avoids allocation)
+    fn parse_str(payload: &[u8], tag: u8) -> Option<&str> {
+        find_tlv(payload, tag).and_then(|b| std::str::from_utf8(b).ok())
     }
 }
 
@@ -67,21 +65,16 @@ impl LeaseDomain {
 
         match LeaseDomain::detect_op(&payload) {
             Operation::Acquire(ttl) => self.handle_acquire(svc, key, ttl).await,
-            Operation::Extend(id, token, add) => self.handle_extend(svc, key, id, token, add).await,
+            Operation::Renew(id, token, add) => self.handle_renew(svc, key, id, token, add).await,
             Operation::Release(id, token) => self.handle_release(svc, key, id, token).await,
-            Operation::Peek => self.handle_peek(svc, key).await,
             Operation::Unsupported => DomainResponse::Error("unsupported_operation".to_string()),
         }
     }
 
-    fn detect_op(payload: &[u8]) -> Operation {
+    fn detect_op<'a>(payload: &'a [u8]) -> Operation<'a> {
         let tlv_lease = find_tlv(payload, TAG_LEASE);
         let tlv_id = find_tlv(payload, TAG_ID);
         let tlv_token = find_tlv(payload, TAG_DELIVERY_TOKEN);
-
-        if payload.is_empty() {
-            return Operation::Peek;
-        }
 
         if tlv_lease.is_some() && tlv_id.is_none() && tlv_token.is_none() {
             if let Some(ttl) = LeaseDomain::parse_u32(payload, TAG_LEASE) {
@@ -96,7 +89,7 @@ impl LeaseDomain {
                 LeaseDomain::parse_str(payload, TAG_DELIVERY_TOKEN),
                 LeaseDomain::parse_u32(payload, TAG_LEASE),
             ) {
-                return Operation::Extend(id, token, add);
+                return Operation::Renew(id, token, add);
             }
             return Operation::Unsupported;
         }
@@ -122,32 +115,42 @@ impl LeaseDomain {
     ) -> DomainResponse {
         match svc.acquire(&key, ttl).await {
             Ok(grant) => {
-                let mut out = Vec::new();
+                // pre-allocate output buffer to avoid multiple re-allocations
+                let est = grant.id.len()
+                    + grant.token.len()
+                    + grant.body.as_ref().map(|b| b.len()).unwrap_or(0)
+                    + 16;
+                    let mut out = crate::protocol::frame::take_buf();
+                    out.clear(); // Ensure buffer is empty before use
+                    out.reserve(est);
                 build_tlv(TAG_ID, grant.id.as_bytes(), &mut out);
                 if let Some(body) = &grant.body {
                     build_tlv(TAG_BODY, body, &mut out);
                 }
                 build_tlv(TAG_DELIVERY_TOKEN, grant.token.as_bytes(), &mut out);
                 build_tlv(TAG_LEASE, &grant.ttl_secs.to_be_bytes(), &mut out);
-                DomainResponse::Frame(out)
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(out))
             }
             Err(e) => DomainResponse::Error(e),
         }
     }
 
-    async fn handle_extend(
+    async fn handle_renew(
         &self,
         svc: &Arc<LeaseService>,
         key: String,
-        id: String,
-        token: String,
+        id: &str,
+        token: &str,
         add: u32,
     ) -> DomainResponse {
-        match svc.extend(&key, &id, &token, add).await {
+        match svc.renew(&key, id, token, add).await {
             Ok(remaining) => {
-                let mut out = Vec::new();
+                // small response; reserve a few bytes to avoid tiny reallocs
+                    let mut out = crate::protocol::frame::take_buf();
+                    out.clear(); // Ensure buffer is empty before use
+                    out.reserve(8);
                 build_tlv(TAG_LEASE, &remaining.to_be_bytes(), &mut out);
-                DomainResponse::Frame(out)
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(out))
             }
             Err(e) => DomainResponse::Error(e),
         }
@@ -157,35 +160,20 @@ impl LeaseDomain {
         &self,
         svc: &Arc<LeaseService>,
         key: String,
-        id: String,
-        token: String,
+        id: &str,
+        token: &str,
     ) -> DomainResponse {
-        match svc.release(&key, &id, &token).await {
+        match svc.release(&key, id, token).await {
             Ok(()) => DomainResponse::Ok,
             Err(e) => DomainResponse::Error(e),
         }
     }
-
-    async fn handle_peek(&self, svc: &Arc<LeaseService>, key: String) -> DomainResponse {
-        match svc.peek(&key).await {
-            Some((id, body)) => {
-                let mut out = Vec::new();
-                build_tlv(TAG_ID, id.as_bytes(), &mut out);
-                if let Some(b) = body {
-                    build_tlv(TAG_BODY, &b, &mut out);
-                }
-                DomainResponse::Frame(out)
-            }
-            None => DomainResponse::Frame(Vec::new()),
-        }
-    }
 }
 
-enum Operation {
+enum Operation<'a> {
     Acquire(u32),
-    Extend(String, String, u32),
-    Release(String, String),
-    Peek,
+    Renew(&'a str, &'a str, u32),
+    Release(&'a str, &'a str),
     Unsupported,
 }
 
@@ -198,6 +186,8 @@ mod tests {
 
     // Helper to build a DomainRequest for a given raw route and payload
     fn make_request(raw: &str, payload: Vec<u8>) -> DomainRequest {
+        // allocate the raw string once and reuse
+        let raw_s = raw.to_string();
         DomainRequest {
             route: Route {
                 scheme: Scheme::Lease,
@@ -205,9 +195,9 @@ mod tests {
                 area: None,
                 resource: None,
                 operation: None,
-                raw: raw.to_string(),
+                raw: raw_s.clone(),
             },
-            route_str: raw.to_string(),
+            route_str: raw_s,
             payload,
             channel_id: 1,
         }
@@ -242,7 +232,7 @@ mod tests {
 
         // Assert
         match op {
-            Operation::Extend(id, token, add) => {
+            Operation::Renew(id, token, add) => {
                 assert_eq!(id, "lease-id-123");
                 assert_eq!(token, "token-abc");
                 assert_eq!(add, 10);
@@ -268,21 +258,6 @@ mod tests {
                 assert_eq!(token, "token-xyz");
             }
             _ => panic!("expected Release operation"),
-        }
-    }
-
-    #[test]
-    fn should_detect_peek_operation_from_empty_payload() {
-        // Arrange
-        let payload = Vec::new();
-
-        // Act
-        let op = LeaseDomain::detect_op(&payload);
-
-        // Assert
-        match op {
-            Operation::Peek => {}
-            _ => panic!("expected Peek operation"),
         }
     }
 
@@ -316,9 +291,9 @@ mod tests {
         // Assert
         match resp {
             DomainResponse::Frame(frame) => {
-                let id = find_tlv(&frame, TAG_ID);
-                let token = find_tlv(&frame, TAG_DELIVERY_TOKEN);
-                let lease = find_tlv(&frame, TAG_LEASE);
+                let id = find_tlv(frame.as_ref(), TAG_ID);
+                let token = find_tlv(frame.as_ref(), TAG_DELIVERY_TOKEN);
+                let lease = find_tlv(frame.as_ref(), TAG_LEASE);
                 assert!(id.is_some(), "response should contain TAG_ID");
                 assert!(
                     token.is_some(),
@@ -331,61 +306,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_build_tlv_response_for_peek_when_lease_exists() {
-        // Arrange
-        let domain = LeaseDomain::new();
-        // first acquire a lease
-        let mut acq_payload = Vec::new();
-        build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut acq_payload);
-        let _acq_resp = domain
-            .handle(make_request("lease://realm1/area1/peek-test", acq_payload))
-            .await;
-
-        // Act - peek with empty payload
-        let peek_req = make_request("lease://realm1/area1/peek-test", Vec::new());
-        let resp = domain.handle(peek_req).await;
-
-        // Assert - should return frame with TAG_ID
-        match resp {
-            DomainResponse::Frame(frame) => {
-                let id = find_tlv(&frame, TAG_ID);
-                assert!(
-                    id.is_some(),
-                    "peek response should contain TAG_ID when lease exists"
-                );
-            }
-            _ => panic!("expected Frame response for peek"),
-        }
-    }
-
-    #[tokio::test]
-    async fn should_return_empty_frame_for_peek_when_no_lease() {
-        // Arrange
-        let domain = LeaseDomain::new();
-        let req = make_request("lease://no-lease", Vec::new());
-
-        // Act
-        let resp = domain.handle(req).await;
-
-        // Assert
-        match resp {
-            DomainResponse::Frame(frame) => {
-                assert!(
-                    frame.is_empty(),
-                    "peek should return empty frame when no lease exists"
-                );
-            }
-            _ => panic!("expected Frame response for peek"),
-        }
-    }
-
-    #[tokio::test]
     async fn should_return_error_for_unsupported_operation() {
         // Arrange
         let domain = LeaseDomain::new();
         let mut payload = Vec::new();
         build_tlv(TAG_ID, b"malformed", &mut payload); // incomplete operation
-        let req = make_request("lease://test", payload);
+        let req = make_request("lease://realm1/area1/test", payload);
 
         // Act
         let resp = domain.handle(req).await;

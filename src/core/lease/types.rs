@@ -14,38 +14,38 @@ pub(crate) type RealmMap = DashMap<String, Arc<AreaMap>>;
 
 #[derive(Debug, Clone)]
 pub struct LeaseGrant {
-	pub id: String,
-	pub body: Option<Vec<u8>>,
-	pub token: String,
-	pub ttl_secs: u32,
+    pub id: String,
+    pub body: Option<Vec<u8>>,
+    pub token: String,
+    pub ttl_secs: u32,
 }
 
 #[derive(Debug)]
 pub(crate) struct Pending {
-	pub(crate) requested_ttl: u32,
-	pub(crate) responder: oneshot::Sender<Result<LeaseGrant, String>>,
+    pub(crate) requested_ttl: u32,
+    pub(crate) responder: oneshot::Sender<Result<LeaseGrant, String>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct LeaseEntry {
-	pub(crate) id: String,
-	pub(crate) token: String,
-	pub(crate) expiry: Instant,
-	pub(crate) body: Option<Vec<u8>>,
-	pub(crate) waiters: VecDeque<Pending>, // FIFO within the resource
+    pub(crate) id: String,
+    pub(crate) token: String,
+    pub(crate) expiry: Instant,
+    pub(crate) body: Option<Vec<u8>>,
+    pub(crate) waiters: VecDeque<Pending>, // FIFO within the resource
 }
 impl LeaseEntry {
-	pub(crate) fn free() -> Self {
-		Self {
-			id: String::new(),
-			token: String::new(),
-			expiry: Instant::now(),
-			body: None,
-			waiters: VecDeque::new(),
-		}
-	}
-	#[inline]
-	pub(crate) fn is_active(&self, now: Instant) -> bool {
-		!self.id.is_empty() && now < self.expiry
-	}
+    pub(crate) fn free() -> Self {
+        Self {
+            id: String::new(),
+            token: String::new(),
+            expiry: Instant::now(),
+            body: None,
+            waiters: VecDeque::new(),
+        }
+    }
+    #[inline]
+    pub(crate) fn is_active(&self, now: Instant) -> bool {
+        !self.id.is_empty() && now < self.expiry
+    }
 }

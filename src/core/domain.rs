@@ -35,7 +35,7 @@ pub enum DomainResponse {
 
     /// Success with frame payload to send back (TLV encoded)
     /// Domains build response frames themselves
-    Frame(Vec<u8>),
+    Frame(crate::protocol::frame::PooledFrame),
 
     /// Error message
     Error(String),

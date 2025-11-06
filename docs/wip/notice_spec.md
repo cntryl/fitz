@@ -99,3 +99,48 @@ ACK/ERR semantics:
 ---
 
 End of notice spec.
+
+## Test Coverage
+
+Consolidated test coverage notes and inventory for the Notice domain.
+
+### Overview
+Comprehensive test coverage for pub/sub operations (extracted from older test drafts and `tests/notice.rs`). The suite focuses on delivery, subscription lifecycle, metadata handling, error handling, and backpressure.
+
+### Test Inventory (representative)
+- Basic Pub/Sub
+  - `should_deliver_notice_to_single_subscriber`
+  - `should_deliver_notice_to_multiple_subscribers`
+  - `should_support_hierarchical_route_matching`
+
+- Subscription Management
+  - `should_unsubscribe_successfully`
+  - `should_subscribe_with_channel_id_one`
+  - `should_subscribe_with_channel_id_two`
+  - `should_cleanup_channel_subscriptions`
+  - other subscription lifecycle tests
+
+- Metadata
+  - `should_deliver_notice_with_metadata`
+
+- Error Handling
+  - `should_not_deliver_notice_to_unsubscribed_route`
+  - `should_handle_publish_when_no_subscribers_exist`
+  - `should_not_receive_notices_after_unsubscribe`
+  - `should_handle_invalid_subscription_route`
+  - `should_handle_unsubscribe_with_invalid_id`
+  - `should_handle_channel_cleanup_for_nonexistent_channel`
+
+- Backpressure
+  - `should_handle_subscriber_channel_full_backpressure`
+
+### Implementation status (at consolidation time)
+- Total tests (inventory): ~16
+- Tests implemented in this repo: core matching & publish/subscription unit tests exist in `src/core/notice/*` (route table and service)
+- Blockers: none for unit tests; some integration-style tests that exercise engine wiring may remain.
+
+### Next steps
+1. Ensure unit tests cover each listed behavior (small, focused tests per the repo test guidelines).
+2. Add integration tests that exercise `NoticeDomain` handling in the engine path (subscribe via REG frames, publish via DAT frames).
+3. Add CI gating for notice tests and keep coverage notes updated here.
+

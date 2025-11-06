@@ -150,3 +150,186 @@ pub fn realm_matches(route: &Route, jwt_realm: &str) -> bool {
         None => false,
     }
 }
+
+/// Validate a notice publish route.
+/// Publish routes MUST be complete: notice://{realm}/{area}/{resource}/{operation}
+pub fn validate_notice_publish(route: &Route) -> Result<(), &'static str> {
+    if route.scheme != Scheme::Notice {
+        return Err("route must be notice:// scheme");
+    }
+    if route.realm.is_none() {
+        return Err("publish route must have realm");
+    }
+    if route.area.is_none() {
+        return Err("publish route must have area");
+    }
+    if route.resource.is_none() {
+        return Err("publish route must have resource");
+    }
+    if route.operation.is_none() {
+        return Err("publish route must have operation");
+    }
+    Ok(())
+}
+
+/// Validate a notice subscription route.
+/// Subscription routes MUST have at least realm and can use wildcards.
+/// Valid patterns:
+/// - notice://{realm}/*
+/// - notice://{realm}/{area}/*
+/// - notice://{realm}/{area}/{resource}/*
+/// - notice://{realm}/{area}/{resource}/{operation}
+pub fn validate_notice_subscription(route_str: &str) -> Result<(), &'static str> {
+    // Check for wildcard patterns
+    if route_str.ends_with("/*") {
+        // Strip the /* and parse the prefix
+        let prefix = &route_str[..route_str.len() - 2];
+        let route = parse_route(prefix)?;
+        if route.scheme != Scheme::Notice {
+            return Err("subscription must be notice:// scheme");
+        }
+        if route.realm.is_none() {
+            return Err("subscription must have at least realm");
+        }
+        return Ok(());
+    }
+
+    // Parse as complete route
+    let route = parse_route(route_str)?;
+    if route.scheme != Scheme::Notice {
+        return Err("subscription must be notice:// scheme");
+    }
+    if route.realm.is_none() {
+        return Err("subscription must have at least realm");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_validate_complete_publish_route() {
+        // Arrange
+        let route = parse_route("notice://realm1/area1/resource1/operation1").unwrap();
+
+        // Act
+        let result = validate_notice_publish(&route);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_reject_publish_route_without_operation() {
+        // Arrange
+        let route = parse_route("notice://realm1/area1/resource1").unwrap();
+
+        // Act
+        let result = validate_notice_publish(&route);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "publish route must have operation");
+    }
+
+    #[test]
+    fn should_reject_publish_route_without_resource() {
+        // Arrange
+        let route = parse_route("notice://realm1/area1").unwrap();
+
+        // Act
+        let result = validate_notice_publish(&route);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "publish route must have resource");
+    }
+
+    #[test]
+    fn should_reject_publish_route_without_area() {
+        // Arrange
+        let route = parse_route("notice://realm1").unwrap();
+
+        // Act
+        let result = validate_notice_publish(&route);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "publish route must have area");
+    }
+
+    #[test]
+    fn should_validate_subscription_with_realm_wildcard() {
+        // Arrange
+        let route_str = "notice://realm1/*";
+
+        // Act
+        let result = validate_notice_subscription(route_str);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_validate_subscription_with_area_wildcard() {
+        // Arrange
+        let route_str = "notice://realm1/area1/*";
+
+        // Act
+        let result = validate_notice_subscription(route_str);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_validate_subscription_with_resource_wildcard() {
+        // Arrange
+        let route_str = "notice://realm1/area1/resource1/*";
+
+        // Act
+        let result = validate_notice_subscription(route_str);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_validate_subscription_with_complete_route() {
+        // Arrange
+        let route_str = "notice://realm1/area1/resource1/operation1";
+
+        // Act
+        let result = validate_notice_subscription(route_str);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_reject_subscription_without_realm() {
+        // Arrange
+        let route_str = "notice://*";
+
+        // Act
+        let result = validate_notice_subscription(route_str);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_subscription_with_wrong_scheme() {
+        // Arrange
+        let route_str = "queue://realm1/*";
+
+        // Act
+        let result = validate_notice_subscription(route_str);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "subscription must be notice:// scheme");
+    }
+}

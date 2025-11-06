@@ -162,7 +162,9 @@ impl Domain for KvDomain {
             let operation = match KvOperation::from_route(&request.route) {
                 Ok(op) => op,
                 Err(err) => {
-                    return DomainResponse::Frame(Self::build_tlv_response(Err(err)));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        Self::build_tlv_response(Err(err)),
+                    ));
                 }
             };
 
@@ -184,7 +186,9 @@ impl Domain for KvDomain {
                 .await;
 
             // Build and return response
-            DomainResponse::Frame(Self::build_tlv_response(result))
+            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                Self::build_tlv_response(result),
+            ))
         })
     }
 

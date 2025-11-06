@@ -3,7 +3,7 @@
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainRequest, DomainResponse, SubSender};
 use crate::protocol::tags::{
-    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_ROUTE_REPLY, TAG_SEQ, TAG_STREAM_END,
+    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE,
     TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
 use std::sync::Arc;
@@ -159,58 +159,59 @@ impl Domain for NoticeDomain {
                 Ok(op) => op,
                 Err(e) => {
                     let error_response = self.build_error_response(&e);
-                    return DomainResponse::Frame(error_response);
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
                 }
             };
 
             match operation {
                 NoticeOp::Subscribe => {
+                    // Validate subscription route format
+                    if let Err(e) = crate::protocol::route::validate_notice_subscription(&request.route_str) {
+                        let error_response = self.build_error_response(e);
+                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                    }
+
                     // Subscribe operation - handled by engine via Subscribe command
                     // Domain just acknowledges
                     let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
 
                 NoticeOp::Unsubscribe => {
                     // Unsubscribe operation - handled by engine via Unsubscribe command
                     // Domain just acknowledges
                     let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
 
                 NoticeOp::Publish => {
+                    // Validate publish route format
+                    if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route) {
+                        let error_response = self.build_error_response(e);
+                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                    }
+
                     // Publish operation - dispatch to subscribers
                     let body = match self.find_tlv(&request.payload, TAG_BODY) {
                         Some(b) => b,
                         None => {
                             let error_response =
                                 self.build_error_response("Missing body in publish");
-                            return DomainResponse::Frame(error_response);
+                            return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
                         }
                     };
 
                     let msg_id = self
                         .find_tlv(&request.payload, TAG_ID)
                         .and_then(|b| std::str::from_utf8(b).ok());
-                    let reply_to = self
-                        .find_tlv(&request.payload, TAG_ROUTE_REPLY)
-                        .and_then(|b| std::str::from_utf8(b).ok());
-                    let seq = self.find_tlv(&request.payload, TAG_SEQ).and_then(|b| {
-                        if b.len() == 4 {
-                            Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
-                        } else {
-                            None
-                        }
-                    });
-                    let end = self.find_tlv(&request.payload, TAG_STREAM_END).is_some();
 
                     // Dispatch to subscribers
                     let mut service = self.service.lock().await;
                     let (_delivered, _failed) =
-                        service.publish(&request.route_str, msg_id, body, reply_to, seq, end);
+                        service.publish(&request.route_str, msg_id, body);
 
                     // Return success response with the body echoed back
-                    let mut response = Vec::new();
+                            let mut response = Vec::new();
                     response.push(TAG_ROUTE);
                     let route_bytes = request.route_str.as_bytes();
                     response.push(route_bytes.len() as u8);
@@ -226,7 +227,7 @@ impl Domain for NoticeDomain {
                     response.push(body.len() as u8);
                     response.extend_from_slice(body);
 
-                    DomainResponse::Frame(response)
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
             }
         })
@@ -355,13 +356,49 @@ mod tests {
         let request = DomainRequest {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Notice,
-                realm: None,
-                area: None,
-                resource: Some("test".to_string()),
-                operation: None,
-                raw: "notice://test".to_string(),
+                realm: Some("realm1".to_string()),
+                area: Some("area1".to_string()),
+                resource: Some("resource1".to_string()),
+                operation: Some("alerts".to_string()),
+                raw: "notice://realm1/area1/resource1/alerts".to_string(),
             },
-            route_str: "notice://test".to_string(),
+            route_str: "notice://realm1/area1/resource1/alerts".to_string(),
+            payload,
+            channel_id: 1,
+        };
+
+        // Act
+        let response = domain.handle(request).await;
+
+        // Assert
+            match response {
+            DomainResponse::Frame(frame) => {
+                assert!(!frame.as_ref().is_empty());
+            }
+            _ => panic!("Expected Frame response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_reject_publish_without_complete_route() {
+        // Arrange
+        let domain = NoticeDomain::new();
+        let mut payload = Vec::new();
+        payload.push(TAG_BODY);
+        let body = b"hello";
+        payload.push(body.len() as u8);
+        payload.extend_from_slice(body);
+
+        let request = DomainRequest {
+            route: Route {
+                scheme: crate::protocol::route::Scheme::Notice,
+                realm: Some("realm1".to_string()),
+                area: Some("area1".to_string()),
+                resource: Some("resource1".to_string()),
+                operation: None, // Missing operation - should fail
+                raw: "notice://realm1/area1/resource1".to_string(),
+            },
+            route_str: "notice://realm1/area1/resource1".to_string(),
             payload,
             channel_id: 1,
         };
@@ -372,7 +409,85 @@ mod tests {
         // Assert
         match response {
             DomainResponse::Frame(frame) => {
-                assert!(!frame.is_empty());
+                // Should contain error message
+                let content = frame.as_ref();
+                assert!(content.len() > 0);
+                // Check for TAG_ERR_MSG
+                assert!(content.contains(&TAG_ERR_MSG));
+            }
+            _ => panic!("Expected Frame response with error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_reject_subscription_without_realm() {
+        // Arrange
+        let domain = NoticeDomain::new();
+        let mut payload = Vec::new();
+        payload.push(TAG_SUBSCRIBE);
+        payload.push(0); // Empty subscribe value
+
+        let request = DomainRequest {
+            route: Route {
+                scheme: crate::protocol::route::Scheme::Notice,
+                realm: None, // Missing realm - should fail
+                area: None,
+                resource: None,
+                operation: None,
+                raw: "notice://*".to_string(),
+            },
+            route_str: "notice://*".to_string(),
+            payload,
+            channel_id: 1,
+        };
+
+        // Act
+        let response = domain.handle(request).await;
+
+        // Assert
+        match response {
+            DomainResponse::Frame(frame) => {
+                // Should contain error message
+                let content = frame.as_ref();
+                assert!(content.len() > 0);
+                // Check for TAG_ERR_MSG
+                assert!(content.contains(&TAG_ERR_MSG));
+            }
+            _ => panic!("Expected Frame response with error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_accept_valid_subscription_with_wildcard() {
+        // Arrange
+        let domain = NoticeDomain::new();
+        let mut payload = Vec::new();
+        payload.push(TAG_SUBSCRIBE);
+        payload.push(0);
+
+        let request = DomainRequest {
+            route: Route {
+                scheme: crate::protocol::route::Scheme::Notice,
+                realm: Some("realm1".to_string()),
+                area: None,
+                resource: None,
+                operation: None,
+                raw: "notice://realm1/*".to_string(),
+            },
+            route_str: "notice://realm1/*".to_string(),
+            payload,
+            channel_id: 1,
+        };
+
+        // Act
+        let response = domain.handle(request).await;
+
+        // Assert
+        match response {
+            DomainResponse::Frame(frame) => {
+                // Should not contain error
+                let content = frame.as_ref();
+                assert!(!content.contains(&TAG_ERR_MSG));
             }
             _ => panic!("Expected Frame response"),
         }

@@ -26,7 +26,7 @@ pub enum EngineCommand {
         route: String,
         payload: Vec<u8>,
         channel_id: u32,
-        resp: oneshot::Sender<Result<Vec<u8>, String>>,
+        resp: oneshot::Sender<Result<crate::protocol::frame::PooledFrame, String>>,
     },
 
     /// Subscribe to a route (for pub/sub) - routed to domain
@@ -78,7 +78,9 @@ impl EngineHandle {
             .send(cmd)
             .await
             .map_err(|_| "engine stopped".to_string())?;
-        rx.await.map_err(|_| "no response".to_string())?
+        // Receive a pooled frame from the engine loop and convert to Vec<u8>
+        let pooled = rx.await.map_err(|_| "no response".to_string())?;
+        pooled.map(|pf| pf.into_vec()).map_err(|e| e)
     }
 
     pub async fn subscribe(
@@ -419,7 +421,7 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                     // Convert domain response to bytes and send response
                     match response {
                         DomainResponse::Ok => {
-                            let _ = resp.send(Ok(Vec::new()));
+                            let _ = resp.send(Ok(crate::protocol::frame::PooledFrame::from_vec(Vec::new())));
                         }
                         DomainResponse::Frame(data) => {
                             let _ = resp.send(Ok(data));
