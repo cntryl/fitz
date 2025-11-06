@@ -6,7 +6,6 @@ use hyper::{Body, Request, Response, Server};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize subsystems
-    fitz::control::init();
     fitz::authz::init();
     fitz::storage::init();
     fitz::transport::init();

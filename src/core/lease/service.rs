@@ -170,21 +170,45 @@ impl LeaseService {
             return Err("invalid_token".into());
         }
 
-        if let Some(p) = lock.waiters.pop_front() {
-            // handoff
-            let new_id = Uuid::new_v4().to_string();
-            let new_expiry = Instant::now() + Duration::from_secs(p.requested_ttl as u64);
-            let new_token = self.compute_token(key, &new_id, new_expiry);
-            lock.id = new_id.clone();
-            lock.token = new_token.clone();
-            lock.expiry = new_expiry;
+        if let Some(mut p) = lock.waiters.pop_front() {
+            // handoff: skip any waiters that have dropped their receiver
+            loop {
+                let new_id = Uuid::new_v4().to_string();
+                let new_expiry = Instant::now() + Duration::from_secs(p.requested_ttl as u64);
+                let new_token = self.compute_token(key, &new_id, new_expiry);
+                lock.id = new_id.clone();
+                lock.token = new_token.clone();
+                lock.expiry = new_expiry;
 
-            let _ = p.responder.send(Ok(LeaseGrant {
-                id: new_id,
-                body: lock.body.clone(),
-                token: new_token,
-                ttl_secs: p.requested_ttl,
-            }));
+                // If the waiter is still listening, send the grant and stop.
+                // If send fails the receiver was dropped; try the next waiter (if any).
+                if p.responder.send(Ok(LeaseGrant {
+                    id: new_id.clone(),
+                    body: lock.body.clone(),
+                    token: new_token.clone(),
+                    ttl_secs: p.requested_ttl,
+                })).is_ok()
+                {
+                    break;
+                }
+
+                // Try next waiter, if any. If none left, clear the lease and prune maps.
+                match lock.waiters.pop_front() {
+                    Some(next) => p = next,
+                    None => {
+                        *lock = LeaseEntry::free();
+                        drop(lock);
+                        res_map.remove(resource);
+                        if res_map.is_empty() {
+                            area_map.remove(area);
+                        }
+                        if area_map.is_empty() {
+                            shard.realms.remove(realm);
+                        }
+                        return Ok(());
+                    }
+                }
+            }
         } else {
             // clear & remove empty maps to keep memory bounded
             *lock = LeaseEntry::free();
@@ -303,22 +327,44 @@ impl LeaseService {
                             continue;
                         } // raced
 
-                        if let Some(p) = lock.waiters.pop_front() {
-                            let new_id = Uuid::new_v4().to_string();
-                            let new_expiry =
-                                Instant::now() + Duration::from_secs(p.requested_ttl as u64);
-                            let full_key = format!("lease://{}/{}/{}", realm, area, res);
-                            let new_token = self.compute_token(&full_key, &new_id, new_expiry);
-                            lock.id = new_id.clone();
-                            lock.token = new_token.clone();
-                            lock.expiry = new_expiry;
+                        if let Some(mut p) = lock.waiters.pop_front() {
+                            // Handoff loop: skip waiters that dropped their receiver
+                            loop {
+                                let new_id = Uuid::new_v4().to_string();
+                                let new_expiry =
+                                    Instant::now() + Duration::from_secs(p.requested_ttl as u64);
+                                let full_key = format!("lease://{}/{}/{}", realm, area, res);
+                                let new_token = self.compute_token(&full_key, &new_id, new_expiry);
+                                lock.id = new_id.clone();
+                                lock.token = new_token.clone();
+                                lock.expiry = new_expiry;
 
-                            let _ = p.responder.send(Ok(LeaseGrant {
-                                id: new_id,
-                                body: lock.body.clone(),
-                                token: new_token,
-                                ttl_secs: p.requested_ttl,
-                            }));
+                                if p.responder.send(Ok(LeaseGrant {
+                                    id: new_id.clone(),
+                                    body: lock.body.clone(),
+                                    token: new_token.clone(),
+                                    ttl_secs: p.requested_ttl,
+                                })).is_ok()
+                                {
+                                    break;
+                                }
+
+                                match lock.waiters.pop_front() {
+                                    Some(next) => p = next,
+                                    None => {
+                                        *lock = LeaseEntry::free();
+                                        drop(lock);
+                                        resources.remove(&res);
+                                        if resources.is_empty() {
+                                            areas.remove(&area);
+                                        }
+                                        if areas.is_empty() {
+                                            shard.realms.remove(&realm);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
                         } else {
                             *lock = LeaseEntry::free();
                             drop(lock);
