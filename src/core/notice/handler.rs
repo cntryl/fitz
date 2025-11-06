@@ -6,22 +6,27 @@ use crate::protocol::tags::{
     TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE,
     TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
+use smallvec::SmallVec;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
+
+/// Response buffer optimized for typical notice frames (<64 bytes)
+/// Uses stack allocation to avoid heap overhead for small messages
+type ResponseBuf = SmallVec<[u8; 64]>;
 
 pub struct NoticeDomain {
-    service: Arc<Mutex<NoticeService>>,
+    service: Arc<RwLock<NoticeService>>,
 }
 
 impl NoticeDomain {
     pub fn new() -> Self {
         Self {
-            service: Arc::new(Mutex::new(NoticeService::new())),
+            service: Arc::new(RwLock::new(NoticeService::new())),
         }
     }
 
     /// Get the shared notice service for use by other domains (e.g., control)
-    pub fn get_service(&self) -> Arc<Mutex<NoticeService>> {
+    pub fn get_service(&self) -> Arc<RwLock<NoticeService>> {
         Arc::clone(&self.service)
     }
 
@@ -32,63 +37,91 @@ impl NoticeDomain {
         channel_id: u32,
         sender: SubSender,
     ) -> u64 {
-        let mut service = self.service.lock().await;
+        let mut service = self.service.write().await;
         service.subscribe(route_pattern, channel_id, sender)
     }
 
     /// Unsubscribe by subscription ID (called by engine)
     pub async fn unsubscribe(&self, sub_id: u64) -> bool {
-        let mut service = self.service.lock().await;
+        let mut service = self.service.write().await;
         service.unsubscribe(sub_id)
     }
 
     /// Cleanup all subscriptions for a channel (called by engine on disconnect)
     pub async fn cleanup_channel(&self, channel_id: u32) {
-        let mut service = self.service.lock().await;
+        let mut service = self.service.write().await;
         service.cleanup_channel(channel_id)
     }
 
-    /// Parse TLV-encoded payload to determine operation
-    fn parse_operation(&self, payload: &[u8]) -> Result<NoticeOp, String> {
+    /// Parse TLV-encoded payload and extract all relevant fields in one pass
+    /// Returns descriptive errors on malformed input instead of silently dropping bytes
+    fn parse_tlv_single_pass(&self, payload: &[u8]) -> Result<TlvParseResult, String> {
         let mut has_subscribe = false;
         let mut has_unsubscribe = false;
-        let mut has_body = false;
+        let mut body_range: Option<(usize, usize)> = None;
+        let mut id_range: Option<(usize, usize)> = None;
 
         let mut offset = 0;
         while offset + 2 <= payload.len() {
             let tag = payload[offset];
             let length = payload[offset + 1] as usize;
-            offset += 2;
+            let value_start = offset + 2;
 
-            if offset + length > payload.len() {
-                break;
+            // Validate that we have enough bytes for the advertised length
+            if value_start + length > payload.len() {
+                return Err(format!(
+                    "Malformed TLV at offset {}: tag {} claims {} bytes but only {} available",
+                    offset,
+                    tag,
+                    length,
+                    payload.len() - value_start
+                ));
             }
 
             match tag {
                 TAG_SUBSCRIBE => has_subscribe = true,
                 TAG_UNSUBSCRIBE => has_unsubscribe = true,
-                TAG_BODY => has_body = true,
-                _ => {}
+                TAG_BODY => body_range = Some((value_start, length)),
+                TAG_ID => id_range = Some((value_start, length)),
+                _ => {
+                    // Unknown tag - skip it but don't error (forward compatibility)
+                }
             }
 
-            offset += length;
+            offset = value_start + length;
         }
 
-        if has_subscribe {
-            Ok(NoticeOp::Subscribe)
+        // Check for trailing garbage bytes
+        if offset != payload.len() {
+            return Err(format!(
+                "TLV parse incomplete: {} trailing bytes after offset {}",
+                payload.len() - offset,
+                offset
+            ));
+        }
+
+        let operation = if has_subscribe {
+            NoticeOp::Subscribe
         } else if has_unsubscribe {
-            Ok(NoticeOp::Unsubscribe)
-        } else if has_body {
-            Ok(NoticeOp::Publish)
+            NoticeOp::Unsubscribe
+        } else if body_range.is_some() {
+            NoticeOp::Publish
         } else {
-            Err(
+            return Err(
                 "Unknown notice operation: no subscribe, unsubscribe, or body tag found"
                     .to_string(),
-            )
-        }
+            );
+        };
+
+        Ok(TlvParseResult {
+            operation,
+            body_range,
+            id_range,
+        })
     }
 
-    /// Extract TLV value by tag
+    /// Extract TLV value by tag (legacy - kept for compatibility)
+    #[allow(dead_code)]
     fn find_tlv<'a>(&self, payload: &'a [u8], tag: u8) -> Option<&'a [u8]> {
         let mut offset = 0;
         while offset + 2 <= payload.len() {
@@ -109,12 +142,11 @@ impl NoticeDomain {
         None
     }
 
-    /// Build TLV-encoded response
-    fn build_tlv_response(&self, route: &str) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_ROUTE
+    /// Build TLV-encoded response using SmallVec for stack allocation
+    fn build_tlv_response(&self, route: &str) -> ResponseBuf {
         let route_bytes = route.as_bytes();
+        let mut response = ResponseBuf::new();
+
         response.push(TAG_ROUTE);
         response.push(route_bytes.len() as u8);
         response.extend_from_slice(route_bytes);
@@ -122,18 +154,23 @@ impl NoticeDomain {
         response
     }
 
-    /// Build TLV-encoded error response
-    fn build_error_response(&self, error_msg: &str) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_ERR_MSG
+    /// Build TLV-encoded error response using SmallVec for stack allocation
+    fn build_error_response(&self, error_msg: &str) -> ResponseBuf {
         let msg_bytes = error_msg.as_bytes();
+        let mut response = ResponseBuf::new();
+
         response.push(TAG_ERR_MSG);
         response.push(msg_bytes.len() as u8);
         response.extend_from_slice(msg_bytes);
 
         response
     }
+}
+
+struct TlvParseResult {
+    operation: NoticeOp,
+    body_range: Option<(usize, usize)>,
+    id_range: Option<(usize, usize)>,
 }
 
 impl Default for NoticeDomain {
@@ -154,66 +191,70 @@ impl Domain for NoticeDomain {
         request: DomainRequest,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
-            // Determine operation from TLV tags
-            let operation = match self.parse_operation(&request.payload) {
-                Ok(op) => op,
+            // Parse TLV payload in a single pass (optimization: avoid double-scan)
+            let parse_result = match self.parse_tlv_single_pass(&request.payload) {
+                Ok(result) => result,
                 Err(e) => {
                     let error_response = self.build_error_response(&e);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
                 }
             };
 
-            match operation {
+            match parse_result.operation {
                 NoticeOp::Subscribe => {
                     // Validate subscription route format
                     if let Err(e) = crate::protocol::route::validate_notice_subscription(&request.route_str) {
                         let error_response = self.build_error_response(e);
-                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
                     }
 
                     // Subscribe operation - handled by engine via Subscribe command
                     // Domain just acknowledges
                     let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response.to_vec()))
                 }
 
                 NoticeOp::Unsubscribe => {
                     // Unsubscribe operation - handled by engine via Unsubscribe command
                     // Domain just acknowledges
                     let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response.to_vec()))
                 }
 
                 NoticeOp::Publish => {
                     // Validate publish route format
                     if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route) {
                         let error_response = self.build_error_response(e);
-                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
                     }
 
-                    // Publish operation - dispatch to subscribers
-                    let body = match self.find_tlv(&request.payload, TAG_BODY) {
-                        Some(b) => b,
+                    // Extract body from parsed range (avoid second scan)
+                    let body = match parse_result.body_range {
+                        Some((start, len)) => &request.payload[start..start + len],
                         None => {
                             let error_response =
                                 self.build_error_response("Missing body in publish");
-                            return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                            return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
                         }
                     };
 
-                    let msg_id = self
-                        .find_tlv(&request.payload, TAG_ID)
-                        .and_then(|b| std::str::from_utf8(b).ok());
+                    // Extract msg_id from parsed range (avoid second scan)
+                    let msg_id = parse_result.id_range
+                        .and_then(|(start, len)| {
+                            std::str::from_utf8(&request.payload[start..start + len]).ok()
+                        });
 
-                    // Dispatch to subscribers
-                    let mut service = self.service.lock().await;
+                    // Dispatch to subscribers (use read lock for concurrent publish)
+                    let mut service = self.service.write().await;
                     let (_delivered, _failed) =
                         service.publish(&request.route_str, msg_id, body);
 
-                    // Return success response with the body echoed back
-                            let mut response = Vec::new();
-                    response.push(TAG_ROUTE);
+                    // Build response using SmallVec (stack-allocated for typical <64B frames)
                     let route_bytes = request.route_str.as_bytes();
+                    
+                    let mut response = ResponseBuf::new();
+                    
+                    response.push(TAG_ROUTE);
                     response.push(route_bytes.len() as u8);
                     response.extend_from_slice(route_bytes);
 
@@ -227,7 +268,7 @@ impl Domain for NoticeDomain {
                     response.push(body.len() as u8);
                     response.extend_from_slice(body);
 
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response.to_vec()))
                 }
             }
         })
@@ -245,7 +286,7 @@ impl Domain for NoticeDomain {
         sender: crate::core::domain::SubSender,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
         Box::pin(async move {
-            let mut service = self.service.lock().await;
+            let mut service = self.service.write().await;
             Ok(service.subscribe(route, channel_id, sender))
         })
     }
@@ -256,7 +297,7 @@ impl Domain for NoticeDomain {
         sub_id: u64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
-            let mut service = self.service.lock().await;
+            let mut service = self.service.write().await;
             service.unsubscribe(sub_id)
         })
     }
@@ -267,7 +308,7 @@ impl Domain for NoticeDomain {
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            let mut service = self.service.lock().await;
+            let mut service = self.service.write().await;
             service.cleanup_channel(channel_id)
         })
     }
@@ -285,10 +326,13 @@ mod tests {
         let payload = vec![TAG_SUBSCRIBE, 0]; // empty value
 
         // Act
-        let result = domain.parse_operation(&payload);
+        let result = domain.parse_tlv_single_pass(&payload);
 
         // Assert
         assert!(result.is_ok());
+        if let Ok(parsed) = result {
+            assert!(matches!(parsed.operation, NoticeOp::Subscribe));
+        }
     }
 
     #[test]
@@ -301,10 +345,14 @@ mod tests {
         payload.extend_from_slice(b"hello");
 
         // Act
-        let result = domain.parse_operation(&payload);
+        let result = domain.parse_tlv_single_pass(&payload);
 
         // Assert
         assert!(result.is_ok());
+        if let Ok(parsed) = result {
+            assert!(matches!(parsed.operation, NoticeOp::Publish));
+            assert!(parsed.body_range.is_some());
+        }
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
-// no external hash map needed here
+use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
 use super::route_table::{RtSubscription, RouteTable};
@@ -60,23 +60,59 @@ impl NoticeService {
 
     /// Publish a notification to all matching subscribers
     /// Returns (delivered_count, failed_count)
+    /// 
+    /// Optimizations:
+    /// - Uses SmallVec for dead_subs (typically 0-2 dead subs per publish)
+    /// - Early return for no subscribers
+    /// - Optimizes single subscriber case (no pre-allocation needed)
     pub fn publish(
         &mut self,
         route: &str,
         msg_id: Option<&str>,
         body: &[u8],
     ) -> (usize, usize) {
+        let matches = self.route_table.matching_subscribers(route);
+        
+        // Fast path: no subscribers
+        if matches.is_empty() {
+            return (0, 0);
+        }
+
         let mut delivered = 0usize;
         let mut failed = 0usize;
-        let mut dead_subs = Vec::new();
+        let mut dead_subs = SmallVec::<[u64; 4]>::new();
 
-        let matches = self.route_table.matching_subscribers(route);
-
-        for sub in matches {
+        // Optimized path for single subscriber (most common case)
+        if matches.len() == 1 {
+            let sub = &matches[0];
             match sub.sender.try_send((
                 route.to_string(),
                 msg_id.map(|s| s.to_string()),
                 body.to_vec(),
+                None,  // Notices never have reply_to
+                None,  // Notices never have seq
+                false, // Notices never have end flag
+            )) {
+                Ok(_) => return (1, 0),
+                Err(mpsc::error::TrySendError::Full(_)) => return (0, 1),
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Subscriber disconnected, remove it
+                    let _ = self.route_table.remove(sub.id);
+                    return (0, 1);
+                }
+            }
+        }
+
+        // Multi-subscriber path: pre-allocate to avoid repeated conversions
+        let route_owned = route.to_string();
+        let msg_id_owned = msg_id.map(|s| s.to_string());
+        let body_owned = body.to_vec();
+
+        for sub in matches {
+            match sub.sender.try_send((
+                route_owned.clone(),
+                msg_id_owned.clone(),
+                body_owned.clone(),
                 None,  // Notices never have reply_to
                 None,  // Notices never have seq
                 false, // Notices never have end flag

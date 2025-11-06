@@ -6,30 +6,30 @@ use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::core::notice::NoticeService;
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 pub struct ControlDomain {
     service: ControlService,
     // Control domain uses notice service for pub/sub
-    notice_service: Arc<Mutex<NoticeService>>,
+    notice_service: Arc<RwLock<NoticeService>>,
 }
 
 impl ControlDomain {
     pub fn new() -> Self {
         Self {
             service: ControlService::new("default-node".to_string()),
-            notice_service: Arc::new(Mutex::new(NoticeService::new())),
+            notice_service: Arc::new(RwLock::new(NoticeService::new())),
         }
     }
 
     pub fn with_node_id(node_id: String) -> Self {
         Self {
             service: ControlService::new(node_id),
-            notice_service: Arc::new(Mutex::new(NoticeService::new())),
+            notice_service: Arc::new(RwLock::new(NoticeService::new())),
         }
     }
 
-    pub fn with_notice_service(notice_service: Arc<Mutex<NoticeService>>) -> Self {
+    pub fn with_notice_service(notice_service: Arc<RwLock<NoticeService>>) -> Self {
         Self {
             service: ControlService::new("default-node".to_string()),
             notice_service,
@@ -141,7 +141,7 @@ impl Domain for ControlDomain {
                         .and_then(|b| std::str::from_utf8(&b).ok().map(|s| s.to_string()));
                     let msg_id = msg_id_string.as_deref();
 
-                    let mut notice_service = self.notice_service.lock().await;
+                    let mut notice_service = self.notice_service.write().await;
                     let (_delivered, _failed) = notice_service.publish(
                         &request.route_str,
                         msg_id,
@@ -175,7 +175,7 @@ impl Domain for ControlDomain {
         sender: crate::core::domain::SubSender,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
         Box::pin(async move {
-            let mut service = self.notice_service.lock().await;
+            let mut service = self.notice_service.write().await;
             Ok(service.subscribe(route, channel_id, sender))
         })
     }
@@ -186,7 +186,7 @@ impl Domain for ControlDomain {
         sub_id: u64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
-            let mut service = self.notice_service.lock().await;
+            let mut service = self.notice_service.write().await;
             service.unsubscribe(sub_id)
         })
     }
@@ -197,7 +197,7 @@ impl Domain for ControlDomain {
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            let mut service = self.notice_service.lock().await;
+            let mut service = self.notice_service.write().await;
             service.cleanup_channel(channel_id)
         })
     }
