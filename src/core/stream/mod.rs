@@ -1,5 +1,6 @@
 //! Stream domain - event log with gap detection and subscriptions
 
+mod encoding;
 mod handler;
 mod service;
 pub mod types;

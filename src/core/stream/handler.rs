@@ -1,6 +1,6 @@
 // Stream domain handler - routes all stream:// operations
 
-use super::service::{StreamResponse, StreamService};
+use super::service::{StreamOperationParams, StreamResponse, StreamService};
 use super::types::StreamOperation;
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::protocol::tags::{
@@ -8,16 +8,6 @@ use crate::protocol::tags::{
 };
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
-
-// Type alias for complex return type
-type TlvParseResult = (
-    Option<u64>,     // resource_seq
-    Option<Vec<u8>>, // body
-    Option<Vec<u8>>, // metadata
-    bool,            // is_end
-    Option<u64>,     // from_seq
-    Option<usize>,   // limit
-);
 
 pub struct StreamDomain {
     service: StreamService,
@@ -31,8 +21,16 @@ impl StreamDomain {
     }
 
     /// Parse TLV payload to extract stream operation parameters
-    /// Returns: (resource_seq, body, metadata, is_end, from_seq, limit)
-    fn parse_tlv_payload(payload: &[u8]) -> TlvParseResult {
+    fn parse_tlv_payload(
+        payload: &[u8],
+    ) -> (
+        Option<u64>,     // resource_seq
+        Option<Vec<u8>>, // body
+        Option<Vec<u8>>, // metadata
+        bool,            // is_end
+        Option<u64>,     // from_seq
+        Option<usize>,   // limit
+    ) {
         let mut resource_seq = None;
         let mut body = None;
         let mut metadata = None;
@@ -71,14 +69,11 @@ impl StreamDomain {
 
             match tag {
                 TAG_SEQ => {
-                    // TAG_SEQ can be used for both resource_seq and from_seq
-                    // For append it's resource_seq, for read it's from_seq
                     if len == 8 {
                         let bytes = [
                             data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                         ];
                         let seq = u64::from_be_bytes(bytes);
-                        // We'll set both and let the service decide which to use
                         resource_seq = Some(seq);
                         from_seq = Some(seq);
                     }
@@ -90,15 +85,12 @@ impl StreamDomain {
                     metadata = Some(data.to_vec());
                 }
                 TAG_STREAM_END => {
-                    // TAG_STREAM_END is a flag, value doesn't matter
                     is_end = true;
                 }
-                _ => {} // Ignore unknown tags
+                _ => {}
             }
         }
 
-        // Extract limit from route if present (not in TLV for now)
-        // This is a simplified approach; production might use a TAG_LIMIT
         (resource_seq, body, metadata, is_end, from_seq, limit)
     }
 
@@ -109,14 +101,9 @@ impl StreamDomain {
     ) -> Vec<u8> {
         let mut response = Vec::new();
 
-        // TAG_ASSIGNED_REV with resource_seq
         response.push(TAG_ASSIGNED_REV);
-        response.push(8); // u64 is 8 bytes
+        response.push(8);
         response.extend_from_slice(&resource_seq.to_be_bytes());
-
-        // If area_seq was assigned, include it
-        // For now, we'll just use TAG_ASSIGNED_REV for resource_seq
-        // In production, might add TAG_FIRST_ASSIGNED_REV and TAG_ASSIGNED_REV for ranges
 
         response
     }
@@ -125,7 +112,6 @@ impl StreamDomain {
     fn build_events_response(events: Vec<super::types::StreamEvent>) -> Vec<u8> {
         let mut response = Vec::new();
 
-        // Encode events as JSON for simplicity (production would use more efficient encoding)
         let json = serde_json::to_vec(&events).unwrap_or_default();
 
         response.push(TAG_BODY);
@@ -133,7 +119,6 @@ impl StreamDomain {
             response.push(json.len() as u8);
             response.extend_from_slice(&json);
         } else {
-            // Extended length
             response.push(255);
             let len = json.len() as u32;
             response.extend_from_slice(&len.to_be_bytes());
@@ -147,7 +132,6 @@ impl StreamDomain {
     fn build_area_response(events: Vec<super::types::StreamEvent>, watermark: u64) -> Vec<u8> {
         let mut response = Vec::new();
 
-        // Encode as JSON with watermark
         #[derive(serde::Serialize)]
         struct AreaResponse {
             events: Vec<super::types::StreamEvent>,
@@ -162,7 +146,6 @@ impl StreamDomain {
             response.push(json.len() as u8);
             response.extend_from_slice(&json);
         } else {
-            // Extended length
             response.push(255);
             let len = json.len() as u32;
             response.extend_from_slice(&len.to_be_bytes());
@@ -192,7 +175,6 @@ impl StreamDomain {
 
 impl Default for StreamDomain {
     fn default() -> Self {
-        // For tests - use a mock store
         use crate::storage::traits::KvTransaction;
         use bytes::Bytes;
 
@@ -234,7 +216,6 @@ impl Domain for StreamDomain {
         request: DomainRequest,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
-            // Determine operation from route
             let operation = match StreamOperation::from_route(&request.route) {
                 Ok(op) => op,
                 Err(err) => {
@@ -244,15 +225,12 @@ impl Domain for StreamDomain {
                 }
             };
 
-            // Parse TLV payload
             let (resource_seq, body, metadata, is_end, from_seq, limit) =
                 Self::parse_tlv_payload(&request.payload);
 
-            // Use route_str for the store operations
             let route_str = &request.route_str;
 
-            // Handle the operation (service now owns the store)
-            let params = super::service::StreamOperationParams {
+            let params = StreamOperationParams {
                 operation,
                 route: route_str,
                 resource_seq,
@@ -262,9 +240,9 @@ impl Domain for StreamDomain {
                 from_seq,
                 limit,
             };
+
             let result = self.service.handle_operation(params).await;
 
-            // Build response
             match result {
                 Ok(StreamResponse::AppendResult(append_result)) => {
                     let response = Self::build_append_response(
@@ -278,7 +256,8 @@ impl Domain for StreamDomain {
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 Ok(StreamResponse::AreaRead(area_resp)) => {
-                    let response = Self::build_area_response(area_resp.events, area_resp.watermark);
+                    let response =
+                        Self::build_area_response(area_resp.events, area_resp.watermark);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 Err(err) => DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(

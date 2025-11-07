@@ -87,6 +87,12 @@ pub const TAG_FIRST_ASSIGNED_REV: u8 = 0xA2;
 /// Optional metadata attached to stream events (opaque bytes; JSON/CBOR)
 pub const TAG_METADATA: u8 = 0xA3;
 
+/// Area sequence number for finalized stream events (u64 BE).
+pub const TAG_AREA_SEQ: u8 = 0xB0;
+
+/// Timestamp for stream events (u64 BE, epoch seconds).
+pub const TAG_TIMESTAMP: u8 = 0xB1;
+
 // ---------------------------------------------------------------------------
 // Control / error / auth TLVs
 // ---------------------------------------------------------------------------
