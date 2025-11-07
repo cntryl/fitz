@@ -337,7 +337,7 @@ impl StreamService {
     }
 
     /// Finalize a stream by assigning area sequences to all events
-    async fn finalize_stream(&mut self, route: &str) -> Result<std::ops::Range<u64>, String> {
+    pub async fn finalize_stream(&mut self, route: &str) -> Result<std::ops::Range<u64>, String> {
         // Parse route to get realm/area
         let parts: Vec<&str> = route.split('/').collect();
         if parts.len() < 3 {
