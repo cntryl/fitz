@@ -327,20 +327,23 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
         fn delete(&self, _key: &[u8]) -> MidgeResult<()> {
             Ok(())
         }
-        fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> MidgeResult<()> {
+        fn insert(&self, _key: &[u8], _value: &[u8]) -> MidgeResult<()> {
             Ok(())
         }
-        fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> MidgeResult<()> {
+        fn batch(&self, _operations: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> MidgeResult<()> {
+            Ok(())
+        }
+        fn delete_range(&self, _start: &[u8], _end: &[u8]) -> MidgeResult<()> {
             Ok(())
         }
         fn scan(&self, _start: &[u8], _end: &[u8]) -> MidgeResult<Vec<(Bytes, Bytes)>> {
             Ok(vec![])
         }
-        fn flush(&self) -> MidgeResult<()> {
+        fn commit_transaction(&self) -> MidgeResult<()> {
             Ok(())
         }
-        fn begin_transaction(&self) -> MidgeResult<Box<dyn KvTransaction>> {
-            Err(MidgeError::InvalidOperation("Transactions not supported in mock".to_string()))
+        fn rollback_transaction(&self) -> MidgeResult<()> {
+            Ok(())
         }
     }
     let kv_store = Arc::new(MockStore) as Arc<dyn KvStore>;
