@@ -28,11 +28,14 @@ pub trait KvStore: Send + Sync {
 }
 
 /// Transaction with snapshot isolation and ACID guarantees.
-pub trait KvTransaction: Send {
+pub trait KvTransaction: Send + Sync {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), String>;
     fn get(&self, key: &[u8]) -> Result<Option<Bytes>, String>;
     fn delete(&mut self, key: &[u8]) -> Result<(), String>;
     fn scan(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String>;
+
+    /// Insert a key-value pair. Fails if key already exists (optimistic concurrency).
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), String>;
 
     /// Commit the transaction. Returns error if conflicts detected.
     fn commit(self: Box<Self>) -> Result<(), String>;

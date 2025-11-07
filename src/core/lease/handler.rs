@@ -2,6 +2,7 @@
 
 use crate::core::domain::{Domain, DomainRequest, DomainResponse};
 use crate::core::lease::service::LeaseService;
+use crate::core::lease::types::LeaseOperation;
 use crate::protocol::frame::{build_tlv, find_tlv};
 use crate::protocol::tags::*;
 use std::sync::Arc;
@@ -60,51 +61,52 @@ impl LeaseDomain {
     async fn process(&self, request: DomainRequest) -> DomainResponse {
         let svc = LeaseDomain::svc();
 
+        // Parse operation from route
+        let operation = match LeaseOperation::from_route(&request.route) {
+            Ok(op) => op,
+            Err(err) => {
+                return DomainResponse::Error(err);
+            }
+        };
+
         let key = request.route.raw;
         let payload = request.payload;
 
-        match LeaseDomain::detect_op(&payload) {
-            Operation::Acquire(ttl) => self.handle_acquire(svc, key, ttl).await,
-            Operation::Renew(id, token, add) => self.handle_renew(svc, key, id, token, add).await,
-            Operation::Release(id, token) => self.handle_release(svc, key, id, token).await,
-            Operation::Unsupported => DomainResponse::Error("unsupported_operation".to_string()),
-        }
-    }
-
-    fn detect_op<'a>(payload: &'a [u8]) -> Operation<'a> {
-        let tlv_lease = find_tlv(payload, TAG_LEASE);
-        let tlv_id = find_tlv(payload, TAG_ID);
-        let tlv_token = find_tlv(payload, TAG_DELIVERY_TOKEN);
-
-        if tlv_lease.is_some() && tlv_id.is_none() && tlv_token.is_none() {
-            if let Some(ttl) = LeaseDomain::parse_u32(payload, TAG_LEASE) {
-                return Operation::Acquire(ttl);
+        // Route to appropriate handler based on operation and validate required TLV tags
+        match operation {
+            LeaseOperation::Acquire => {
+                // Acquire requires TAG_LEASE (TTL)
+                match LeaseDomain::parse_u32(&payload, TAG_LEASE) {
+                    Some(ttl) => self.handle_acquire(svc, key, ttl).await,
+                    None => DomainResponse::Error("acquire requires TAG_LEASE (TTL)".to_string()),
+                }
             }
-            return Operation::Unsupported;
-        }
-
-        if tlv_id.is_some() && tlv_token.is_some() && tlv_lease.is_some() {
-            if let (Some(id), Some(token), Some(add)) = (
-                LeaseDomain::parse_str(payload, TAG_ID),
-                LeaseDomain::parse_str(payload, TAG_DELIVERY_TOKEN),
-                LeaseDomain::parse_u32(payload, TAG_LEASE),
-            ) {
-                return Operation::Renew(id, token, add);
+            LeaseOperation::Renew => {
+                // Renew requires TAG_ID, TAG_DELIVERY_TOKEN, TAG_LEASE (additional time)
+                let id = LeaseDomain::parse_str(&payload, TAG_ID);
+                let token = LeaseDomain::parse_str(&payload, TAG_DELIVERY_TOKEN);
+                let add = LeaseDomain::parse_u32(&payload, TAG_LEASE);
+                
+                match (id, token, add) {
+                    (Some(id), Some(token), Some(add)) => {
+                        self.handle_renew(svc, key, id, token, add).await
+                    }
+                    _ => DomainResponse::Error("renew requires TAG_ID, TAG_DELIVERY_TOKEN, and TAG_LEASE".to_string()),
+                }
             }
-            return Operation::Unsupported;
-        }
-
-        if tlv_id.is_some() && tlv_token.is_some() && tlv_lease.is_none() {
-            if let (Some(id), Some(token)) = (
-                LeaseDomain::parse_str(payload, TAG_ID),
-                LeaseDomain::parse_str(payload, TAG_DELIVERY_TOKEN),
-            ) {
-                return Operation::Release(id, token);
+            LeaseOperation::Release => {
+                // Release requires TAG_ID and TAG_DELIVERY_TOKEN
+                let id = LeaseDomain::parse_str(&payload, TAG_ID);
+                let token = LeaseDomain::parse_str(&payload, TAG_DELIVERY_TOKEN);
+                
+                match (id, token) {
+                    (Some(id), Some(token)) => {
+                        self.handle_release(svc, key, id, token).await
+                    }
+                    _ => DomainResponse::Error("release requires TAG_ID and TAG_DELIVERY_TOKEN".to_string()),
+                }
             }
-            return Operation::Unsupported;
         }
-
-        Operation::Unsupported
     }
 
     async fn handle_acquire(
@@ -170,33 +172,20 @@ impl LeaseDomain {
     }
 }
 
-enum Operation<'a> {
-    Acquire(u32),
-    Renew(&'a str, &'a str, u32),
-    Release(&'a str, &'a str),
-    Unsupported,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::domain::{DomainRequest, DomainResponse};
     use crate::protocol::frame::{build_tlv, find_tlv};
-    use crate::protocol::route::{Route, Scheme};
+    use crate::protocol::route::parse_route;
 
     // Helper to build a DomainRequest for a given raw route and payload
     fn make_request(raw: &str, payload: Vec<u8>) -> DomainRequest {
         // allocate the raw string once and reuse
         let raw_s = raw.to_string();
+        let route = parse_route(&raw_s).unwrap();
         DomainRequest {
-            route: Route {
-                scheme: Scheme::Lease,
-                realm: None,
-                area: None,
-                resource: None,
-                operation: None,
-                raw: raw_s.clone(),
-            },
+            route,
             route_str: raw_s,
             payload,
             channel_id: 1,
@@ -204,77 +193,69 @@ mod tests {
     }
 
     #[test]
-    fn should_detect_acquire_operation_from_tlv() {
+    fn should_parse_acquire_operation_from_route() {
         // Arrange
-        let mut payload = Vec::new();
-        build_tlv(TAG_LEASE, &5u32.to_be_bytes(), &mut payload);
+        let route = parse_route("lease://realm1/area1/resource1/acquire").unwrap();
 
         // Act
-        let op = LeaseDomain::detect_op(&payload);
+        let op = LeaseOperation::from_route(&route);
 
         // Assert
-        match op {
-            Operation::Acquire(ttl) => assert_eq!(ttl, 5),
-            _ => panic!("expected Acquire operation"),
-        }
+        assert!(op.is_ok());
+        assert_eq!(op.unwrap(), LeaseOperation::Acquire);
     }
 
     #[test]
-    fn should_detect_extend_operation_from_tlv() {
+    fn should_parse_renew_operation_from_route() {
         // Arrange
-        let mut payload = Vec::new();
-        build_tlv(TAG_ID, b"lease-id-123", &mut payload);
-        build_tlv(TAG_DELIVERY_TOKEN, b"token-abc", &mut payload);
-        build_tlv(TAG_LEASE, &10u32.to_be_bytes(), &mut payload);
+        let route = parse_route("lease://realm1/area1/resource1/renew").unwrap();
 
         // Act
-        let op = LeaseDomain::detect_op(&payload);
+        let op = LeaseOperation::from_route(&route);
 
         // Assert
-        match op {
-            Operation::Renew(id, token, add) => {
-                assert_eq!(id, "lease-id-123");
-                assert_eq!(token, "token-abc");
-                assert_eq!(add, 10);
-            }
-            _ => panic!("expected Extend operation"),
-        }
+        assert!(op.is_ok());
+        assert_eq!(op.unwrap(), LeaseOperation::Renew);
     }
 
     #[test]
-    fn should_detect_release_operation_from_tlv() {
+    fn should_parse_release_operation_from_route() {
         // Arrange
-        let mut payload = Vec::new();
-        build_tlv(TAG_ID, b"lease-id-456", &mut payload);
-        build_tlv(TAG_DELIVERY_TOKEN, b"token-xyz", &mut payload);
+        let route = parse_route("lease://realm1/area1/resource1/release").unwrap();
 
         // Act
-        let op = LeaseDomain::detect_op(&payload);
+        let op = LeaseOperation::from_route(&route);
 
         // Assert
-        match op {
-            Operation::Release(id, token) => {
-                assert_eq!(id, "lease-id-456");
-                assert_eq!(token, "token-xyz");
-            }
-            _ => panic!("expected Release operation"),
-        }
+        assert!(op.is_ok());
+        assert_eq!(op.unwrap(), LeaseOperation::Release);
     }
 
     #[test]
-    fn should_detect_unsupported_operation_when_id_without_token() {
+    fn should_default_to_acquire_when_no_operation_specified() {
         // Arrange
-        let mut payload = Vec::new();
-        build_tlv(TAG_ID, b"some-id", &mut payload);
+        let route = parse_route("lease://realm1/area1/resource1").unwrap();
 
         // Act
-        let op = LeaseDomain::detect_op(&payload);
+        let op = LeaseOperation::from_route(&route);
 
         // Assert
-        match op {
-            Operation::Unsupported => {}
-            _ => panic!("expected Unsupported operation"),
-        }
+        assert!(op.is_ok());
+        assert_eq!(op.unwrap(), LeaseOperation::Acquire);
+    }
+
+    #[test]
+    fn should_return_error_for_unknown_operation() {
+        // Arrange
+        let mut route = parse_route("lease://realm1/area1/resource1").unwrap();
+        route.operation = Some("invalid".to_string());
+
+        // Act
+        let op = LeaseOperation::from_route(&route);
+
+        // Assert
+        assert!(op.is_err());
+        assert!(op.unwrap_err().contains("Unknown lease operation"));
     }
 
     #[tokio::test]
@@ -283,7 +264,7 @@ mod tests {
         let domain = LeaseDomain::new();
         let mut payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
-        let req = make_request("lease://realm1/area1/test", payload);
+        let req = make_request("lease://realm1/area1/test/acquire", payload);
 
         // Act
         let resp = domain.handle(req).await;
@@ -306,12 +287,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_return_error_for_unsupported_operation() {
+    async fn should_return_error_when_missing_required_tlv_for_acquire() {
         // Arrange
         let domain = LeaseDomain::new();
-        let mut payload = Vec::new();
-        build_tlv(TAG_ID, b"malformed", &mut payload); // incomplete operation
-        let req = make_request("lease://realm1/area1/test", payload);
+        let payload = Vec::new(); // missing TAG_LEASE
+        let req = make_request("lease://realm1/area1/test/acquire", payload);
 
         // Act
         let resp = domain.handle(req).await;
@@ -319,9 +299,29 @@ mod tests {
         // Assert
         match resp {
             DomainResponse::Error(msg) => {
-                assert_eq!(msg, "unsupported_operation");
+                assert!(msg.contains("TAG_LEASE"));
             }
-            _ => panic!("expected Error response for unsupported operation"),
+            _ => panic!("expected Error response when missing required TLV"),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_return_error_for_unknown_route_operation() {
+        // Arrange
+        let domain = LeaseDomain::new();
+        let mut payload = Vec::new();
+        build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
+        let req = make_request("lease://realm1/area1/test/invalid", payload);
+
+        // Act
+        let resp = domain.handle(req).await;
+
+        // Assert
+        match resp {
+            DomainResponse::Error(msg) => {
+                assert!(msg.contains("Unknown lease operation"));
+            }
+            _ => panic!("expected Error response for unknown operation"),
         }
     }
 }

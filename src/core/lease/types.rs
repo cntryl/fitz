@@ -7,10 +7,39 @@ use std::time::Instant;
 use dashmap::DashMap;
 use tokio::sync::{oneshot, RwLock};
 
+use crate::protocol::route::Route;
+
 pub(crate) type LeaseLock = Arc<RwLock<LeaseEntry>>;
 pub(crate) type ResourceMap = DashMap<String, LeaseLock>;
 pub(crate) type AreaMap = DashMap<String, Arc<ResourceMap>>;
 pub(crate) type RealmMap = DashMap<String, Arc<AreaMap>>;
+
+/// Lease operations following the route pattern: lease://{realm}/{area}/{resource}/{operation}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseOperation {
+    /// Acquire - request a lease on a resource
+    Acquire,
+    /// Renew - extend an existing lease
+    Renew,
+    /// Release - voluntarily release a lease
+    Release,
+}
+
+impl LeaseOperation {
+    /// Determine operation from route
+    pub fn from_route(route: &Route) -> Result<Self, String> {
+        match route.operation.as_deref() {
+            Some("acquire") => Ok(LeaseOperation::Acquire),
+            Some("renew") => Ok(LeaseOperation::Renew),
+            Some("release") => Ok(LeaseOperation::Release),
+            None => {
+                // Default to Acquire if no operation specified
+                Ok(LeaseOperation::Acquire)
+            }
+            Some(op) => Err(format!("Unknown lease operation: {}", op)),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LeaseGrant {

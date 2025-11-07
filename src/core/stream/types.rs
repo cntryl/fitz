@@ -51,6 +51,12 @@ pub enum ExpectedRevision {
 pub enum StreamOperation {
     /// Append - add event to stream (TAG_SEQ = resource_seq, TAG_BODY = event body)
     Append,
+    /// BeginAppend - start a new append transaction
+    BeginAppend,
+    /// CommitAppend - commit the current append transaction
+    CommitAppend,
+    /// RollbackAppend - rollback the current append transaction
+    RollbackAppend,
     /// Read - read events from resource stream (TAG_SEQ = from_seq, limit in route)
     Read,
     /// ReadArea - read from area with watermark (TAG_SEQ = from_seq, limit in route)
@@ -59,6 +65,8 @@ pub enum StreamOperation {
     Peek,
     /// Subscribe - subscribe to stream for live updates
     Subscribe,
+    /// Unsubscribe - unsubscribe from stream updates
+    Unsubscribe,
 }
 
 impl StreamOperation {
@@ -66,10 +74,14 @@ impl StreamOperation {
     pub fn from_route(route: &Route) -> Result<Self, String> {
         match route.operation.as_deref() {
             Some("append") => Ok(StreamOperation::Append),
+            Some("begin-append") => Ok(StreamOperation::BeginAppend),
+            Some("commit-append") => Ok(StreamOperation::CommitAppend),
+            Some("rollback-append") => Ok(StreamOperation::RollbackAppend),
             Some("read") => Ok(StreamOperation::Read),
             Some("read-area") => Ok(StreamOperation::ReadArea),
             Some("peek") => Ok(StreamOperation::Peek),
             Some("subscribe") => Ok(StreamOperation::Subscribe),
+            Some("unsubscribe") => Ok(StreamOperation::Unsubscribe),
             None => {
                 // Default based on route structure
                 // If route has resource, default to Read
