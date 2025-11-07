@@ -9,7 +9,6 @@ use std::sync::Arc;
 pub struct StreamOperationParams<'a> {
     pub operation: StreamOperation,
     pub route: &'a str,
-    pub resource_seq: Option<u64>,
     pub body: Option<Vec<u8>>,
     pub metadata: Option<Vec<u8>>,
     pub is_end: bool,
@@ -58,14 +57,7 @@ impl StreamService {
     ) -> Result<StreamResponse, String> {
         match params.operation {
             StreamOperation::Append => {
-                self.handle_append(
-                    params.route,
-                    params.resource_seq,
-                    params.body,
-                    params.metadata,
-                    params.is_end,
-                )
-                .await
+                self.handle_append(params.route, params.body, params.metadata, params.is_end).await
             }
             StreamOperation::Read => {
                 self.handle_read(params.route, params.from_seq, params.limit)
@@ -90,12 +82,10 @@ impl StreamService {
     async fn handle_append(
         &self,
         route: &str,
-        resource_seq: Option<u64>,
         body: Option<Vec<u8>>,
         metadata: Option<Vec<u8>>,
         is_end: bool,
     ) -> Result<StreamResponse, String> {
-        let resource_seq = resource_seq.ok_or("Resource sequence required for append")?;
         let body = body.ok_or("Body required for append")?;
 
         // Check if stream is closed
@@ -104,7 +94,7 @@ impl StreamService {
             return Err("Stream is closed".to_string());
         }
 
-        // Get current head
+        // Get current head; server assigns resource_seq as head+1 (or 0 if none)
         let head_key = format!("stream:{}:head", route);
         let current_head = if let Some(bytes) = self.kv_store.get(head_key.as_bytes())? {
             if bytes.len() == 8 {
@@ -117,51 +107,10 @@ impl StreamService {
         } else {
             None
         };
-
-        // Validate sequence
-        match current_head {
-            None => {
-                // First append must be seq 0
-                if resource_seq != 0 {
-                    return Err(format!(
-                        "First resource_seq must be 0, got {}",
-                        resource_seq
-                    ));
-                }
-            }
-            Some(head) => {
-                // Check for gap
-                if resource_seq != head + 1 {
-                    // Check if it's idempotent retry (same seq)
-                    if resource_seq == head {
-                        // Verify body matches
-                        let event_key = format!("stream:{}:event:{}", route, resource_seq);
-                        if let Some(existing) = self.kv_store.get(event_key.as_bytes())? {
-                            let existing_event = decode_event(&existing)?;
-                            if existing_event.body == body {
-                                // Idempotent retry - return success
-                                return Ok(StreamResponse::AppendResult(AppendResult {
-                                    resource_seq,
-                                    area_seq_range: existing_event
-                                        .area_seq
-                                        .map(|s| s..s + 1),
-                                }));
-                            } else {
-                                return Err(format!(
-                                    "Sequence conflict at {}: body mismatch",
-                                    resource_seq
-                                ));
-                            }
-                        }
-                    }
-                    return Err(format!(
-                        "Sequence gap: expected {}, got {}",
-                        head + 1,
-                        resource_seq
-                    ));
-                }
-            }
-        }
+        let resource_seq = match current_head {
+            None => 0,
+            Some(head) => head + 1,
+        };
 
         // Create event
         let now = std::time::SystemTime::now()

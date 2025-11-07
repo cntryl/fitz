@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn should_fail_decoding_without_required_tags() {
-        // Arrange - empty bytes
+        // Arrange
         let empty = Vec::new();
 
         // Act

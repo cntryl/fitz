@@ -21,17 +21,18 @@ impl StreamDomain {
     }
 
     /// Parse TLV payload to extract stream operation parameters
+    /// Note: For append operations the server will assign `resource_seq` and `created_at`.
+    /// Clients may still include TAG_SEQ for read/seek purposes; TAG_SEQ in append
+    /// payloads will be ignored.
     fn parse_tlv_payload(
         payload: &[u8],
     ) -> (
-        Option<u64>,     // resource_seq
         Option<Vec<u8>>, // body
         Option<Vec<u8>>, // metadata
         bool,            // is_end
         Option<u64>,     // from_seq
         Option<usize>,   // limit
     ) {
-        let mut resource_seq = None;
         let mut body = None;
         let mut metadata = None;
         let mut is_end = false;
@@ -74,7 +75,8 @@ impl StreamDomain {
                             data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                         ];
                         let seq = u64::from_be_bytes(bytes);
-                        resource_seq = Some(seq);
+                        // Treat TAG_SEQ as a "from"/seek value for reads. Do not
+                        // treat it as a client-supplied assignment for appends.
                         from_seq = Some(seq);
                     }
                 }
@@ -91,7 +93,7 @@ impl StreamDomain {
             }
         }
 
-        (resource_seq, body, metadata, is_end, from_seq, limit)
+        (body, metadata, is_end, from_seq, limit)
     }
 
     /// Build TLV response for append result
@@ -225,7 +227,7 @@ impl Domain for StreamDomain {
                 }
             };
 
-            let (resource_seq, body, metadata, is_end, from_seq, limit) =
+            let (body, metadata, is_end, from_seq, limit) =
                 Self::parse_tlv_payload(&request.payload);
 
             let route_str = &request.route_str;
@@ -233,7 +235,6 @@ impl Domain for StreamDomain {
             let params = StreamOperationParams {
                 operation,
                 route: route_str,
-                resource_seq,
                 body,
                 metadata,
                 is_end,
