@@ -6,6 +6,7 @@ mod tests {
     use crate::core::stream::service::{StreamService, StreamOperationParams, StreamResponse};
     use crate::core::stream::types::StreamOperation;
     use crate::storage::traits::{KvStore, KvTransaction};
+    use midge::MidgeResult;
     use bytes::Bytes;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -24,7 +25,7 @@ mod tests {
     }
 
     impl KvStore for MockKvStore {
-        fn put(&self, key: &[u8], value: &[u8]) -> Result<(), String> {
+        fn put(&self, key: &[u8], value: &[u8]) -> MidgeResult<()> {
             self.data
                 .lock()
                 .unwrap()
@@ -32,7 +33,7 @@ mod tests {
             Ok(())
         }
 
-        fn get(&self, key: &[u8]) -> Result<Option<Bytes>, String> {
+        fn get(&self, key: &[u8]) -> MidgeResult<Option<Bytes>> {
             Ok(self
                 .data
                 .lock()
@@ -41,12 +42,12 @@ mod tests {
                 .map(|v| Bytes::from(v.clone())))
         }
 
-        fn delete(&self, key: &[u8]) -> Result<(), String> {
+        fn delete(&self, key: &[u8]) -> MidgeResult<()> {
             self.data.lock().unwrap().remove(key);
             Ok(())
         }
 
-        fn put_batch(&self, writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+        fn put_batch(&self, writes: Vec<(Vec<u8>, Vec<u8>)>) -> MidgeResult<()> {
             let mut data = self.data.lock().unwrap();
             for (key, value) in writes {
                 data.insert(key, value);
@@ -54,7 +55,7 @@ mod tests {
             Ok(())
         }
 
-        fn delete_batch(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
+        fn delete_batch(&self, keys: Vec<Vec<u8>>) -> MidgeResult<()> {
             let mut data = self.data.lock().unwrap();
             for key in keys {
                 data.remove(&key);
@@ -62,15 +63,15 @@ mod tests {
             Ok(())
         }
 
-        fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+        fn scan(&self, _start: &[u8], _end: &[u8]) -> MidgeResult<Vec<(Bytes, Bytes)>> {
             Ok(vec![])
         }
 
-        fn flush(&self) -> Result<(), String> {
+        fn flush(&self) -> MidgeResult<()> {
             Ok(())
         }
 
-        fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
+        fn begin_transaction(&self) -> MidgeResult<Box<dyn KvTransaction>> {
             Ok(Box::new(MockTransaction {
                 data: self.data.clone(),
                 writes: HashMap::new(),
@@ -87,12 +88,12 @@ mod tests {
     }
 
     impl KvTransaction for MockTransaction {
-        fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), String> {
+        fn put(&mut self, key: &[u8], value: &[u8]) -> MidgeResult<()> {
             self.writes.insert(key.to_vec(), value.to_vec());
             Ok(())
         }
 
-        fn get(&self, key: &[u8]) -> Result<Option<Bytes>, String> {
+        fn get(&self, key: &[u8]) -> MidgeResult<Option<Bytes>> {
             // Check buffered writes first
             if let Some(value) = self.writes.get(key) {
                 return Ok(Some(Bytes::from(value.clone())));
@@ -106,29 +107,17 @@ mod tests {
                 .map(|v| Bytes::from(v.clone())))
         }
 
-        fn delete(&mut self, key: &[u8]) -> Result<(), String> {
+        fn delete(&mut self, key: &[u8]) -> MidgeResult<()> {
             self.writes.remove(key);
             Ok(())
         }
 
-        fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+        fn scan(&self, _start: &[u8], _end: &[u8]) -> MidgeResult<Vec<(Bytes, Bytes)>> {
             // Not needed for these tests
             Ok(vec![])
         }
 
-        fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), String> {
-            // Check if key exists in committed data or buffered writes
-            if self.writes.contains_key(key) {
-                return Err("Key already exists".to_string());
-            }
-            if self.data.lock().unwrap().contains_key(key) {
-                return Err("Key already exists".to_string());
-            }
-            self.writes.insert(key.to_vec(), value.to_vec());
-            Ok(())
-        }
-
-        fn commit(mut self: Box<Self>) -> Result<(), String> {
+        fn commit(mut self: Box<Self>) -> MidgeResult<()> {
             let mut data = self.data.lock().unwrap();
             for (key, value) in &self.writes {
                 data.insert(key.clone(), value.clone());
@@ -137,7 +126,7 @@ mod tests {
             Ok(())
         }
 
-        fn rollback(self: Box<Self>) -> Result<(), String> {
+        fn rollback(self: Box<Self>) -> MidgeResult<()> {
             // Just drop buffered writes
             Ok(())
         }

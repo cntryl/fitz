@@ -312,34 +312,35 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
     // Create a mock KV store for domains that need storage
     // TODO: Replace with proper storage backend
     use crate::storage::traits::{KvStore, KvTransaction};
+    use midge::{MidgeError, MidgeResult};
     use bytes::Bytes;
 
     #[derive(Clone)]
     struct MockStore;
     impl KvStore for MockStore {
-        fn put(&self, _key: &[u8], _value: &[u8]) -> Result<(), String> {
+        fn put(&self, _key: &[u8], _value: &[u8]) -> MidgeResult<()> {
             Ok(())
         }
-        fn get(&self, _key: &[u8]) -> Result<Option<Bytes>, String> {
+        fn get(&self, _key: &[u8]) -> MidgeResult<Option<Bytes>> {
             Ok(None)
         }
-        fn delete(&self, _key: &[u8]) -> Result<(), String> {
+        fn delete(&self, _key: &[u8]) -> MidgeResult<()> {
             Ok(())
         }
-        fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+        fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> MidgeResult<()> {
             Ok(())
         }
-        fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
+        fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> MidgeResult<()> {
             Ok(())
         }
-        fn scan(&self, _start: &[u8], _end: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
+        fn scan(&self, _start: &[u8], _end: &[u8]) -> MidgeResult<Vec<(Bytes, Bytes)>> {
             Ok(vec![])
         }
-        fn flush(&self) -> Result<(), String> {
+        fn flush(&self) -> MidgeResult<()> {
             Ok(())
         }
-        fn begin_transaction(&self) -> Result<Box<dyn KvTransaction>, String> {
-            Err("Transactions not supported in mock".to_string())
+        fn begin_transaction(&self) -> MidgeResult<Box<dyn KvTransaction>> {
+            Err(MidgeError::InvalidOperation("Transactions not supported in mock".to_string()))
         }
     }
     let kv_store = Arc::new(MockStore) as Arc<dyn KvStore>;
