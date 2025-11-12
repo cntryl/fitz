@@ -5,7 +5,7 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription, DEFAULT_RF};
+use crate::routing::{RouteTable, RtSubscription, RouteFamilyId, DEFAULT_RF};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
@@ -27,9 +27,9 @@ impl NoticeService {
         }
     }
 
-    /// Subscribe to a route pattern
+    /// Subscribe to a route pattern for a specific route family (tenant)
     /// Returns subscription ID
-    pub fn subscribe(&mut self, route_pattern: String, channel_id: u32, sender: SubSender) -> u64 {
+    pub fn subscribe(&mut self, rf: u32, route_pattern: String, channel_id: u32, sender: SubSender) -> u64 {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
 
@@ -40,32 +40,32 @@ impl NoticeService {
             sender,
         };
 
-        self.route_table.insert(DEFAULT_RF, sub);
+        self.route_table.insert(rf, sub);
 
         id
     }
 
-    /// Unsubscribe by subscription ID
+    /// Unsubscribe by subscription ID for a specific route family (tenant)
     /// Returns true if subscription was found and removed
-    pub fn unsubscribe(&mut self, sub_id: u64) -> bool {
-        let removed = self.route_table.remove(DEFAULT_RF, sub_id).is_some();
+    pub fn unsubscribe(&mut self, rf: u32, sub_id: u64) -> bool {
+        let removed = self.route_table.remove(rf, sub_id).is_some();
         removed
     }
 
-    /// Cleanup all subscriptions for a channel (e.g., on disconnect)
-    pub fn cleanup_channel(&mut self, channel_id: u32) {
-        self.route_table.cleanup_channel(DEFAULT_RF, channel_id);
+    /// Cleanup all subscriptions for a channel in a specific route family (tenant)
+    pub fn cleanup_channel(&mut self, rf: u32, channel_id: u32) {
+        self.route_table.cleanup_channel(rf, channel_id);
     }
 
-    /// Publish a notification to all matching subscribers
+    /// Publish a notification to all matching subscribers in a specific route family (tenant)
     /// Returns (delivered_count, failed_count)
     ///
     /// Optimizations:
     /// - Uses SmallVec for dead_subs (typically 0-2 dead subs per publish)
     /// - Early return for no subscribers
     /// - Optimizes single subscriber case (no pre-allocation needed)
-    pub fn publish(&mut self, route: &str, msg_id: Option<&str>, body: &[u8]) -> (usize, usize) {
-        let matches = self.route_table.matching_subscribers(DEFAULT_RF, route);
+    pub fn publish(&mut self, rf: u32, route: &str, msg_id: Option<&str>, body: &[u8]) -> (usize, usize) {
+        let matches = self.route_table.matching_subscribers(rf, route);
 
         // Fast path: no subscribers
         if matches.is_empty() {
@@ -155,8 +155,8 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(10);
 
         // Act
-        let _sub_id = service.subscribe("test/route".to_string(), 1, tx);
-        let (delivered, failed) = service.publish("test/route", Some("msg-1"), b"hello");
+        let _sub_id = service.subscribe(DEFAULT_RF, "test/route".to_string(), 1, tx);
+        let (delivered, failed) = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert_eq!(delivered, 1);
@@ -171,11 +171,11 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        let sub_id = service.subscribe("test/route".to_string(), 1, tx);
+        let sub_id = service.subscribe(DEFAULT_RF, "test/route".to_string(), 1, tx);
 
         // Act
-        let removed = service.unsubscribe(sub_id);
-        let (delivered, _) = service.publish("test/route", Some("msg-1"), b"hello");
+        let removed = service.unsubscribe(DEFAULT_RF, sub_id);
+        let (delivered, _) = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert!(removed);
@@ -189,11 +189,11 @@ mod tests {
         let mut service = NoticeService::new();
         let (tx1, _rx1) = mpsc::channel(10);
         let (tx2, _rx2) = mpsc::channel(10);
-        service.subscribe("route1".to_string(), 1, tx1);
-        service.subscribe("route2".to_string(), 2, tx2);
+        service.subscribe(DEFAULT_RF, "route1".to_string(), 1, tx1);
+        service.subscribe(DEFAULT_RF, "route2".to_string(), 2, tx2);
 
         // Act
-        service.cleanup_channel(1);
+        service.cleanup_channel(DEFAULT_RF, 1);
 
         // Assert
         assert_eq!(service.subscription_count(), 1);
@@ -204,11 +204,11 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, _rx) = mpsc::channel(1);
-        service.subscribe("test/route".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "test/route".to_string(), 1, tx);
 
         // Act - fill the channel and overflow
-        service.publish("test/route", Some("msg-1"), b"1");
-        let (_delivered, failed) = service.publish("test/route", Some("msg-2"), b"2");
+        service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"1");
+        let (_delivered, failed) = service.publish(DEFAULT_RF, "test/route", Some("msg-2"), b"2");
 
         // Assert - second publish should fail due to backpressure
         assert_eq!(failed, 1);
@@ -223,7 +223,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("*".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "*".to_string(), 1, tx);
 
         // Act & Assert - global wildcard matches everything
         let test_routes = vec![
@@ -234,7 +234,7 @@ mod tests {
         ];
 
         for route in test_routes {
-            let (delivered, failed) = service.publish(route, None, b"test");
+            let (delivered, failed) = service.publish(DEFAULT_RF, route, None, b"test");
             assert_eq!(
                 delivered, 1,
                 "Route '{}' should match global wildcard",
@@ -250,7 +250,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("notice://acme/*".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 1, tx);
 
         // Act & Assert - should match all under realm
         let matching_routes = vec![
@@ -262,7 +262,7 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(route, None, b"test");
+            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
             if should_match {
                 assert_eq!(
                     delivered, 1,
@@ -285,7 +285,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("notice://acme/prod/*".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1, tx);
 
         // Act & Assert
         let matching_routes = vec![
@@ -298,7 +298,7 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(route, None, b"test");
+            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
             if should_match {
                 assert_eq!(delivered, 1, "Route '{}' should match area wildcard", route);
                 let _ = rx.recv().await.unwrap();
@@ -317,7 +317,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("notice://acme/prod/syslog/*".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/*".to_string(), 1, tx);
 
         // Act & Assert
         let matching_routes = vec![
@@ -329,7 +329,7 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(route, None, b"test");
+            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
             if should_match {
                 assert_eq!(
                     delivered, 1,
@@ -352,7 +352,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("notice://acme/prod/syslog/critical".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/critical".to_string(), 1, tx);
 
         // Act & Assert
         let matching_routes = vec![
@@ -363,7 +363,7 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(route, None, b"test");
+            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
             if should_match {
                 assert_eq!(delivered, 1, "Route '{}' should match exact pattern", route);
                 let _ = rx.recv().await.unwrap();
@@ -382,7 +382,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("notice://acme/prod/syslog".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog".to_string(), 1, tx);
 
         // Act & Assert - without trailing /*, still matches child paths
         let matching_routes = vec![
@@ -395,7 +395,7 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(route, None, b"test");
+            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
             if should_match {
                 assert_eq!(
                     delivered, 1,
@@ -422,14 +422,14 @@ mod tests {
         let (tx3, mut rx3) = mpsc::channel(10);
         let (tx4, mut rx4) = mpsc::channel(10);
 
-        service.subscribe("*".to_string(), 1, tx1); // Global
-        service.subscribe("notice://acme/*".to_string(), 2, tx2); // Realm
-        service.subscribe("notice://acme/prod/*".to_string(), 3, tx3); // Area
-        service.subscribe("notice://acme/prod/syslog/error".to_string(), 4, tx4); // Exact
+        service.subscribe(DEFAULT_RF, "*".to_string(), 1, tx1); // Global
+        service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 2, tx2); // Realm
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 3, tx3); // Area
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/error".to_string(), 4, tx4); // Exact
 
         // Act
         let route = "notice://acme/prod/syslog/error";
-        let (delivered, failed) = service.publish(route, Some("msg-1"), b"alert");
+        let (delivered, failed) = service.publish(DEFAULT_RF, route, Some("msg-1"), b"alert");
 
         // Assert - all 4 should receive the message
         assert_eq!(delivered, 4);
@@ -454,7 +454,7 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, _rx) = mpsc::channel(10);
-        service.subscribe("notice://realm".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://realm".to_string(), 1, tx);
 
         // Act & Assert - should not match partial names
         let non_matching_routes = vec![
@@ -465,7 +465,7 @@ mod tests {
         ];
 
         for route in non_matching_routes {
-            let (delivered, _) = service.publish(route, None, b"test");
+            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
             assert_eq!(
                 delivered, 0,
                 "Route '{}' should not match partial segment",
@@ -479,10 +479,10 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("test/*".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "test/*".to_string(), 1, tx);
 
         // Act
-        let (delivered, failed) = service.publish("test/alerts", Some("msg-123"), b"payload data");
+        let (delivered, failed) = service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
 
         // Assert
         assert_eq!(delivered, 1);
@@ -502,11 +502,11 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, _rx) = mpsc::channel(10);
-        service.subscribe("notice://acme/prod/*".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1, tx);
 
         // Act - publish to non-matching route
         let (delivered, failed) =
-            service.publish("notice://other/staging/app/info", None, b"orphan message");
+            service.publish(DEFAULT_RF, "notice://other/staging/app/info", None, b"orphan message");
 
         // Assert - no deliveries
         assert_eq!(delivered, 0);
@@ -518,10 +518,10 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe("".to_string(), 1, tx);
+        service.subscribe(DEFAULT_RF, "".to_string(), 1, tx);
 
         // Act
-        let (delivered, _) = service.publish("", None, b"empty");
+        let (delivered, _) = service.publish(DEFAULT_RF, "", None, b"empty");
 
         // Assert - exact match on empty string
         assert_eq!(delivered, 1);

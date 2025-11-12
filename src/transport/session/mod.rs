@@ -95,7 +95,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                         let tenant_opt = auth_task.lock().await;
                         match tenant_opt.as_ref() {
                             Some(tenant) => tenant_to_route_family(tenant),
-                            None => crate::storage::DEFAULT_RF,
+                            None => DEFAULT_RF,
                         }
                     };
 
@@ -1161,7 +1161,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
             let tenant_opt = auth_state.lock().await;
             match tenant_opt.as_ref() {
                 Some(tenant) => tenant_to_route_family(tenant),
-                None => crate::storage::DEFAULT_RF,
+                None => DEFAULT_RF,
             }
         };
         let _ = engine_clone.cleanup_channel(channel, route_family).await;

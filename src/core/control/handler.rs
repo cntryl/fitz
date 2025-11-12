@@ -147,7 +147,7 @@ impl Domain for ControlDomain {
 
                     let mut notice_service = self.notice_service.write().await;
                     let (_delivered, _failed) =
-                        notice_service.publish(&request.route_str, msg_id, &response_body);
+                        notice_service.publish(request.route_family, &request.route_str, msg_id, &response_body);
                     drop(notice_service);
 
                     // Build TLV-encoded response
@@ -169,12 +169,12 @@ impl Domain for ControlDomain {
     /// Cleanup all subscriptions for a channel (delegates to notice service)
     fn cleanup_channel<'a>(
         &'a self,
-        _rf: crate::storage::RouteFamilyId,
+        rf: crate::routing::RouteFamilyId,
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             let mut service = self.notice_service.write().await;
-            service.cleanup_channel(channel_id)
+            service.cleanup_channel(rf, channel_id)
         })
     }
 }

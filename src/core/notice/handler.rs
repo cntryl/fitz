@@ -238,7 +238,7 @@ impl Domain for NoticeDomain {
 
                     // Dispatch to subscribers (use read lock for concurrent publish)
                     let mut service = self.service.write().await;
-                    let (_delivered, _failed) = service.publish(&request.route_str, msg_id, body);
+                    let (_delivered, _failed) = service.publish(request.route_family, &request.route_str, msg_id, body);
 
                     // Build response using SmallVec (stack-allocated for typical <64B frames)
                     let route_bytes = request.route_str.as_bytes();
@@ -270,12 +270,12 @@ impl Domain for NoticeDomain {
     /// Cleanup all subscriptions for a channel
     fn cleanup_channel<'a>(
         &'a self,
-        _rf: crate::storage::RouteFamilyId,
+        rf: crate::routing::RouteFamilyId,
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             let mut service = self.service.write().await;
-            service.cleanup_channel(channel_id)
+            service.cleanup_channel(rf, channel_id)
         })
     }
 }
