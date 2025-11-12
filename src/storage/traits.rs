@@ -4,7 +4,7 @@
 //! the low-level key-value storage interface used throughout Fitz.
 
 // Re-export Midge's storage traits and types
-pub use midge::{KvStore, KvTransaction, MidgeError, MidgeResult};
+pub use cntryl_midge::{KvStore, KvTransaction, MidgeError, MidgeResult};
 
 /// Helper to convert MidgeError to String for legacy code
 pub fn midge_error_to_string(err: MidgeError) -> String {

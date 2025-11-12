@@ -6,7 +6,7 @@ mod tests {
     use crate::core::stream::service::{StreamService, StreamOperationParams, StreamResponse};
     use crate::core::stream::types::StreamOperation;
     use crate::storage::traits::{KvStore, KvTransaction};
-    use midge::MidgeResult;
+    use cntryl_midge::MidgeResult;
     use bytes::Bytes;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

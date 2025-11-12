@@ -5,7 +5,7 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription};
+use crate::routing::{RouteTable, RtSubscription, DEFAULT_RF};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
@@ -40,7 +40,7 @@ impl NoticeService {
             sender,
         };
 
-    self.route_table.insert(sub);
+        self.route_table.insert(DEFAULT_RF, sub);
 
         id
     }
@@ -48,13 +48,13 @@ impl NoticeService {
     /// Unsubscribe by subscription ID
     /// Returns true if subscription was found and removed
     pub fn unsubscribe(&mut self, sub_id: u64) -> bool {
-        let removed = self.route_table.remove(sub_id).is_some();
+        let removed = self.route_table.remove(DEFAULT_RF, sub_id).is_some();
         removed
     }
 
     /// Cleanup all subscriptions for a channel (e.g., on disconnect)
     pub fn cleanup_channel(&mut self, channel_id: u32) {
-    self.route_table.cleanup_channel(channel_id);
+        self.route_table.cleanup_channel(DEFAULT_RF, channel_id);
     }
 
     /// Publish a notification to all matching subscribers
@@ -70,7 +70,7 @@ impl NoticeService {
         msg_id: Option<&str>,
         body: &[u8],
     ) -> (usize, usize) {
-        let matches = self.route_table.matching_subscribers(route);
+        let matches = self.route_table.matching_subscribers(DEFAULT_RF, route);
         
         // Fast path: no subscribers
         if matches.is_empty() {
@@ -96,7 +96,7 @@ impl NoticeService {
                 Err(mpsc::error::TrySendError::Full(_)) => return (0, 1),
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Subscriber disconnected, remove it
-                    let _ = self.route_table.remove(sub.id);
+                    let _ = self.route_table.remove(DEFAULT_RF, sub.id);
                     return (0, 1);
                 }
             }
@@ -131,7 +131,7 @@ impl NoticeService {
 
         // Cleanup dead subscriptions
         for sub_id in dead_subs {
-            let _ = self.route_table.remove(sub_id);
+            let _ = self.route_table.remove(DEFAULT_RF, sub_id);
         }
 
         (delivered, failed)
@@ -504,5 +504,6 @@ mod tests {
         assert_eq!(msg.0, "");
     }
 }
+
 
 

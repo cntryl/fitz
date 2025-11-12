@@ -312,7 +312,7 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
     // Create a mock KV store for domains that need storage
     // TODO: Replace with proper storage backend
     use crate::storage::traits::{KvStore, KvTransaction};
-    use midge::{MidgeError, MidgeResult};
+    use cntryl_midge::{MidgeError, MidgeResult};
     use bytes::Bytes;
 
     #[derive(Clone)]

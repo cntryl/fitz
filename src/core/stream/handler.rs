@@ -251,7 +251,7 @@ impl StreamDomain {
 impl Default for StreamDomain {
     fn default() -> Self {
         use crate::storage::traits::KvTransaction;
-        use midge::{MidgeError, MidgeResult};
+        use cntryl_midge::{MidgeError, MidgeResult};
         use bytes::Bytes;
 
         struct MockStore;

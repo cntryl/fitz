@@ -2,7 +2,7 @@
 
 use super::encoding::{decode_event, encode_event};
 use super::types::{AppendResult, AreaReadResponse, StreamEvent, StreamOperation};
-use crate::routing::RouteTable;
+use crate::routing::{RouteTable, DEFAULT_RF};
 use crate::storage::traits::{KvStore, KvTransaction};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -79,23 +79,29 @@ impl StreamService {
     ) -> Result<StreamResponse, String> {
         match params.operation {
             StreamOperation::BeginAppend => {
-                self.handle_begin_append(params.channel_id, params.route).await
+                self.handle_begin_append(params.channel_id, params.route)
+                    .await
             }
             StreamOperation::Append => {
-                self.handle_append(params.channel_id, params.route, params.body, params.metadata, params.is_end).await
+                self.handle_append(
+                    params.channel_id,
+                    params.route,
+                    params.body,
+                    params.metadata,
+                    params.is_end,
+                )
+                .await
             }
             StreamOperation::CommitAppend => {
-                self.handle_commit_append(params.channel_id, params.route).await
+                self.handle_commit_append(params.channel_id, params.route)
+                    .await
             }
             StreamOperation::RollbackAppend => {
-                self.handle_rollback_append(params.channel_id, params.route).await
+                self.handle_rollback_append(params.channel_id, params.route)
+                    .await
             }
-            StreamOperation::Subscribe => {
-                self.handle_subscribe(params.route).await
-            }
-            StreamOperation::Unsubscribe => {
-                self.handle_unsubscribe(params.route).await
-            }
+            StreamOperation::Subscribe => self.handle_subscribe(params.route).await,
+            StreamOperation::Unsubscribe => self.handle_unsubscribe(params.route).await,
             StreamOperation::Read => {
                 self.handle_read(params.route, params.from_seq, params.limit)
                     .await
@@ -112,7 +118,7 @@ impl StreamService {
     }
 
     /// Handle begin-append operation - starts a new transaction
-    /// 
+    ///
     /// CRITICAL FOR EVENT SOURCING:
     /// Atomically allocates a sequence range for this transaction by incrementing
     /// the stream head counter. This allows the client to know sequence numbers
@@ -121,9 +127,13 @@ impl StreamService {
     /// - Conditional writes (CAS-style operations)
     /// - Local projections (client maintains state based on known sequences)
     /// - Idempotent retries (sequences are stable across retries)
-    async fn handle_begin_append(&mut self, channel_id: u32, route: &str) -> Result<StreamResponse, String> {
+    async fn handle_begin_append(
+        &mut self,
+        channel_id: u32,
+        route: &str,
+    ) -> Result<StreamResponse, String> {
         let key = (channel_id, route.to_string());
-        
+
         // Check if transaction already active for this channel+route
         if self.active_transactions.contains_key(&key) {
             return Err("Transaction already active for this stream on this channel".to_string());
@@ -162,9 +172,11 @@ impl StreamService {
         // This allocates the maximum possible range upfront
         let reserved_head = first_seq + MAX_EVENTS_PER_TRANSACTION as u64 - 1;
         alloc_txn.put(head_key.as_bytes(), &reserved_head.to_be_bytes())?;
-        
+
         // Commit the allocation transaction
-        alloc_txn.commit().map_err(|e| format!("Failed to allocate sequence range: {}", e))?;
+        alloc_txn
+            .commit()
+            .map_err(|e| format!("Failed to allocate sequence range: {}", e))?;
 
         // Now begin the actual event append transaction
         let txn = self.kv_store.begin_transaction()?;
@@ -183,15 +195,19 @@ impl StreamService {
     }
 
     /// Handle commit-append operation - commits the active transaction
-    /// 
+    ///
     /// Commits the append transaction and reclaims any unused sequence space.
     /// Since begin-append pre-allocates MAX_EVENTS_PER_TRANSACTION sequences,
     /// we need to update the head to the actual last sequence used.
-    /// 
+    ///
     /// After successful commit, notifies all subscribers of the new events.
-    async fn handle_commit_append(&mut self, channel_id: u32, route: &str) -> Result<StreamResponse, String> {
+    async fn handle_commit_append(
+        &mut self,
+        channel_id: u32,
+        route: &str,
+    ) -> Result<StreamResponse, String> {
         let key = (channel_id, route.to_string());
-        
+
         // Get and remove active transaction
         let active = self
             .active_transactions
@@ -201,14 +217,16 @@ impl StreamService {
         if active.event_count == 0 {
             // Empty transaction - rollback and reclaim sequence space
             let _ = active.txn.rollback();
-            
+
             // Reclaim the reserved sequences by resetting head
             let mut reclaim_txn = self.kv_store.begin_transaction()?;
             let head_key = format!("stream:{}:head", route);
             let actual_head = active.first_seq.saturating_sub(1);
             reclaim_txn.put(head_key.as_bytes(), &actual_head.to_be_bytes())?;
-            reclaim_txn.commit().map_err(|e| format!("Failed to reclaim sequences: {}", e))?;
-            
+            reclaim_txn
+                .commit()
+                .map_err(|e| format!("Failed to reclaim sequences: {}", e))?;
+
             return Err("Cannot commit empty transaction".to_string());
         }
 
@@ -225,11 +243,14 @@ impl StreamService {
             let mut reclaim_txn = self.kv_store.begin_transaction()?;
             let head_key = format!("stream:{}:head", route);
             reclaim_txn.put(head_key.as_bytes(), &last_seq.to_be_bytes())?;
-            reclaim_txn.commit().map_err(|e| format!("Failed to reclaim sequences: {}", e))?;
+            reclaim_txn
+                .commit()
+                .map_err(|e| format!("Failed to reclaim sequences: {}", e))?;
         }
 
         // Notify all subscribers about the newly committed events
-        self.notify_subscribers(route, active.first_seq, last_seq).await;
+        self.notify_subscribers(route, active.first_seq, last_seq)
+            .await;
 
         Ok(StreamResponse::CommitAppendOk {
             first_seq: active.first_seq,
@@ -239,11 +260,15 @@ impl StreamService {
     }
 
     /// Handle rollback-append operation - rolls back the active transaction
-    /// 
+    ///
     /// Rolls back the append transaction and reclaims all reserved sequences.
-    async fn handle_rollback_append(&mut self, channel_id: u32, route: &str) -> Result<StreamResponse, String> {
+    async fn handle_rollback_append(
+        &mut self,
+        channel_id: u32,
+        route: &str,
+    ) -> Result<StreamResponse, String> {
         let key = (channel_id, route.to_string());
-        
+
         // Get and remove active transaction
         let active = self
             .active_transactions
@@ -261,13 +286,15 @@ impl StreamService {
         let head_key = format!("stream:{}:head", route);
         let actual_head = active.first_seq.saturating_sub(1);
         reclaim_txn.put(head_key.as_bytes(), &actual_head.to_be_bytes())?;
-        reclaim_txn.commit().map_err(|e| format!("Failed to reclaim sequences: {}", e))?;
+        reclaim_txn
+            .commit()
+            .map_err(|e| format!("Failed to reclaim sequences: {}", e))?;
 
         Ok(StreamResponse::RollbackAppendOk)
     }
 
     /// Handle append operation
-    /// 
+    ///
     /// This method appends an event to an active transaction started with begin-append.
     /// Enforces MAX_EVENTS_PER_TRANSACTION limit to prevent unbounded transaction sizes.
     async fn handle_append(
@@ -282,10 +309,9 @@ impl StreamService {
         let key = (channel_id, route.to_string());
 
         // Get active transaction
-        let active = self
-            .active_transactions
-            .get_mut(&key)
-            .ok_or("No active transaction for this stream on this channel. Call begin-append first.")?;
+        let active = self.active_transactions.get_mut(&key).ok_or(
+            "No active transaction for this stream on this channel. Call begin-append first.",
+        )?;
 
         // Check transaction size limit
         if active.event_count >= MAX_EVENTS_PER_TRANSACTION {
@@ -431,9 +457,7 @@ impl StreamService {
     ) -> Result<(), String> {
         // Get current watermark
         let watermark_key = format!("stream:{}:watermark", area_prefix);
-        let current_watermark = if let Some(bytes) =
-            self.kv_store.get(watermark_key.as_bytes())?
-        {
+        let current_watermark = if let Some(bytes) = self.kv_store.get(watermark_key.as_bytes())? {
             if bytes.len() == 8 {
                 let mut arr = [0u8; 8];
                 arr.copy_from_slice(&bytes[..8]);
@@ -617,7 +641,7 @@ impl StreamService {
     async fn handle_subscribe(&mut self, route: &str) -> Result<StreamResponse, String> {
         // Parse route to determine if it's resource or area subscription
         let parts: Vec<&str> = route.split('/').collect();
-        
+
         let (last_resource_seq, last_area_seq, watermark) = if parts.len() >= 3 {
             let resource_route = if parts.len() == 3 && parts[2] == "*" {
                 // Area wildcard subscription: stream://{realm}/{area}/*
@@ -689,7 +713,7 @@ impl StreamService {
 
         // TODO: Register subscription in route_table for push notifications
         // This would integrate with a pub/sub mechanism to notify on new appends
-        
+
         Ok(StreamResponse::Subscription(SubscriptionInfo {
             last_resource_seq,
             last_area_seq,
@@ -701,7 +725,7 @@ impl StreamService {
     async fn handle_unsubscribe(&mut self, _route: &str) -> Result<StreamResponse, String> {
         // TODO: Remove subscription from route_table
         // For now, return success - subscriptions are lightweight and stateless
-        
+
         Ok(StreamResponse::Subscription(SubscriptionInfo {
             last_resource_seq: None,
             last_area_seq: None,
@@ -713,8 +737,8 @@ impl StreamService {
     /// Sends a single notification with the tail position (last_seq) of the stream
     async fn notify_subscribers(&mut self, route: &str, first_seq: u64, last_seq: u64) {
         // Find all matching subscribers for this stream route
-        let subscribers = self.subscriptions.matching_subscribers(route);
-        
+        let subscribers = self.subscriptions.matching_subscribers(DEFAULT_RF, route);
+
         if subscribers.is_empty() {
             return; // No subscribers, skip notification
         }
@@ -722,12 +746,12 @@ impl StreamService {
         // Build a single notification with sequence range information
         // SubSender tuple: (route, body_opt, payload, metadata_opt, seq_opt, is_end)
         let notification = (
-            route.to_string(),                      // route
-            None,                                   // body_opt (no body for tail notification)
-            Vec::new(),                             // payload (empty for tail notification)
+            route.to_string(),                            // route
+            None,       // body_opt (no body for tail notification)
+            Vec::new(), // payload (empty for tail notification)
             Some(format!("{}..{}", first_seq, last_seq)), // metadata contains sequence range
-            Some(last_seq as u32),                  // seq_opt is the tail (last_seq)
-            false,                                  // is_end
+            Some(last_seq as u32), // seq_opt is the tail (last_seq)
+            false,      // is_end
         );
 
         // Send notification to each subscriber
@@ -752,13 +776,16 @@ impl StreamService {
             if let Some(active) = self.active_transactions.remove(&key) {
                 // Rollback the transaction (ignore errors during cleanup)
                 let _ = active.txn.rollback();
-                
+
                 // Reclaim sequences (best effort, ignore errors)
                 let route = &key.1;
                 if let Ok(mut reclaim_txn) = self.kv_store.begin_transaction() {
                     let head_key = format!("stream:{}:head", route);
                     let actual_head = active.first_seq.saturating_sub(1);
-                    if reclaim_txn.put(head_key.as_bytes(), &actual_head.to_be_bytes()).is_ok() {
+                    if reclaim_txn
+                        .put(head_key.as_bytes(), &actual_head.to_be_bytes())
+                        .is_ok()
+                    {
                         let _ = reclaim_txn.commit();
                     }
                 }
@@ -771,36 +798,10 @@ impl Default for StreamService {
     fn default() -> Self {
         // For tests - use a mock store
         use crate::storage::traits::KvTransaction;
-        use midge::{MidgeError, MidgeResult};
         use bytes::Bytes;
+        use cntryl_midge::{MidgeError, MidgeResult};
 
-        struct MockStore;
-        impl KvStore for MockStore {
-            fn put(&self, _key: &[u8], _value: &[u8]) -> MidgeResult<()> {
-                Ok(())
-            }
-            fn get(&self, _key: &[u8]) -> MidgeResult<Option<Bytes>> {
-                Ok(None)
-            }
-            fn delete(&self, _key: &[u8]) -> MidgeResult<()> {
-                Ok(())
-            }
-            fn put_batch(&self, _writes: Vec<(Vec<u8>, Vec<u8>)>) -> MidgeResult<()> {
-                Ok(())
-            }
-            fn delete_batch(&self, _keys: Vec<Vec<u8>>) -> MidgeResult<()> {
-                Ok(())
-            }
-            fn scan(&self, _start: &[u8], _end: &[u8]) -> MidgeResult<Vec<(Bytes, Bytes)>> {
-                Ok(vec![])
-            }
-            fn flush(&self) -> MidgeResult<()> {
-                Ok(())
-            }
-            fn begin_transaction(&self) -> MidgeResult<Box<dyn KvTransaction>> {
-                Err(MidgeError::InvalidOperation("Transactions not supported in mock".to_string()))
-            }
-        }
+
 
         Self::new(Arc::new(MockStore))
     }
@@ -815,7 +816,9 @@ pub enum StreamResponse {
     /// Subscription info: last available resource/area sequences (lightweight)
     Subscription(SubscriptionInfo),
     /// Begin append acknowledged with first sequence number
-    BeginAppendOk { first_seq: u64 },
+    BeginAppendOk {
+        first_seq: u64,
+    },
     /// Commit append successful with range details
     CommitAppendOk {
         first_seq: u64,
@@ -833,3 +836,4 @@ pub struct SubscriptionInfo {
     pub last_area_seq: Option<u64>,
     pub watermark: Option<u64>,
 }
+

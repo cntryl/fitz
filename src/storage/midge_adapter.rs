@@ -4,7 +4,7 @@
 //! that Fitz uses, we just need to re-export and provide helper functions
 //! for creating Midge instances with appropriate configurations.
 
-pub use midge::{MidgeEngine, MidgeOptions, StorageMode};
+pub use cntryl_midge::{MidgeEngine, MidgeOptions, StorageMode};
 
 use std::path::Path;
 use std::sync::Arc;

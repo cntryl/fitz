@@ -3,6 +3,10 @@ use smallvec::SmallVec;
 use std::collections::HashSet;
 
 use crate::core::domain::SubSender;
+pub use crate::storage::RouteFamilyId;
+
+/// Default route family when a specific RF is not provided (tests, legacy)
+pub use crate::storage::DEFAULT_RF;
 
 /// Internal subscription entry
 #[derive(Debug, Clone)]
@@ -52,6 +56,7 @@ impl RouteTrie {
 /// In-memory route table for notice subscriptions.
 ///
 /// Uses a hierarchical trie for O(depth) matching instead of O(N) linear scan.
+/// Column-family aware: maintains separate tries per CF for tenant isolation.
 ///
 /// ## Performance Characteristics
 /// - **Insert**: O(depth) - ~5-10 µs with FxHashMap + SmallVec
@@ -66,6 +71,7 @@ impl RouteTrie {
 /// 4. **SmallVec segments**: Inline path parsing for typical depth ≤8
 /// 5. **Duplicate prevention**: Guards against re-insertions
 /// 6. **Node pruning**: Automatically collapses empty nodes on removal
+/// 7. **Per-CF tries**: Separate tries per column family for tenant isolation
 ///
 /// ## Scalability
 /// - ✅ Tested at 100K+ subscriptions with <350ns matching
@@ -78,8 +84,8 @@ pub struct RouteTable {
     /// Legacy index for cleanup (pattern -> subscription IDs)
     index: FxHashMap<String, HashSet<u64>>,
 
-    /// Trie for fast pattern matching
-    trie: RouteTrie,
+    /// Per-RF tries for tenant isolation (RF -> Trie)
+    tries: FxHashMap<RouteFamilyId, RouteTrie>,
 }
 
 impl RouteTable {
@@ -87,25 +93,25 @@ impl RouteTable {
         Self {
             subs: FxHashMap::default(),
             index: FxHashMap::default(),
-            trie: RouteTrie::new(),
+            tries: FxHashMap::default(),
         }
     }
 
-    pub fn insert(&mut self, sub: RtSubscription) {
+    pub fn insert(&mut self, rf: RouteFamilyId, sub: RtSubscription) {
         let id = sub.id;
         let pattern = sub.route_pattern.clone();
 
         // Update legacy index
         self.index.entry(pattern.clone()).or_default().insert(id);
 
-        // Insert into trie
-        self.insert_into_trie(&pattern, id);
+        // Insert into RF-specific trie
+        self.insert_into_trie(rf, &pattern, id);
 
         // Store subscription
         self.subs.insert(id, sub);
     }
 
-    pub fn remove(&mut self, sub_id: u64) -> Option<RtSubscription> {
+    pub fn remove(&mut self, rf: RouteFamilyId, sub_id: u64) -> Option<RtSubscription> {
         if let Some(sub) = self.subs.remove(&sub_id) {
             // Update legacy index
             if let Some(set) = self.index.get_mut(&sub.route_pattern) {
@@ -115,20 +121,23 @@ impl RouteTable {
                 }
             }
 
-            // Remove from trie
-            self.remove_from_trie(&sub.route_pattern, sub_id);
+            // Remove from RF-specific trie
+            self.remove_from_trie(rf, &sub.route_pattern, sub_id);
 
             return Some(sub);
         }
         None
     }
 
-    /// Insert a subscription ID into the trie based on its pattern
-    fn insert_into_trie(&mut self, pattern: &str, sub_id: u64) {
+    /// Insert a subscription ID into the trie based on its pattern and RF
+    fn insert_into_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
+        // Get or create trie for this RF
+        let trie = self.tries.entry(rf).or_insert_with(RouteTrie::new);
+
         // Handle global wildcard
         if pattern == "*" {
-            if !self.trie.global_subs.contains(&sub_id) {
-                self.trie.global_subs.push(sub_id);
+            if !trie.global_subs.contains(&sub_id) {
+                trie.global_subs.push(sub_id);
             }
             return;
         }
@@ -139,7 +148,7 @@ impl RouteTable {
         // Split pattern into segments (SmallVec avoids heap for typical depth ≤8)
         let segments: SmallVec<[&str; 8]> = pattern.split('/').collect();
 
-        let mut current = &mut self.trie.root;
+        let mut current = &mut trie.root;
 
         // Traverse/create path through trie
         let segments_to_traverse = if has_trailing_wildcard {
@@ -172,16 +181,18 @@ impl RouteTable {
         }
     }
 
-    /// Remove a subscription ID from the trie
-    fn remove_from_trie(&mut self, pattern: &str, sub_id: u64) {
+    /// Remove a subscription ID from the trie for a specific RF
+    fn remove_from_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
+        // Get mutable reference to RF's trie
+        let Some(trie) = self.tries.get_mut(&rf) else {
+            return;
+        };
+
         // Handle global wildcard
         if pattern == "*" {
-            self.trie.global_subs.retain(|id| *id != sub_id);
+            trie.global_subs.retain(|id| *id != sub_id);
             return;
         }
-
-        // For now, we'll use a simple approach: remove from the node if found
-        // A full implementation would clean up empty nodes, but that's an optimization
 
         let has_trailing_wildcard = pattern.ends_with("/*");
         let segments: SmallVec<[&str; 8]> = pattern.split('/').collect();
@@ -193,7 +204,7 @@ impl RouteTable {
         };
 
         remove_from_trie_node(
-            &mut self.trie.root,
+            &mut trie.root,
             segments_to_traverse,
             sub_id,
             has_trailing_wildcard,
@@ -201,7 +212,7 @@ impl RouteTable {
         );
     }
 
-    pub fn cleanup_channel(&mut self, channel_id: u32) {
+    pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
         let mut to_remove = Vec::new();
         for (id, sub) in &self.subs {
             if sub.channel_id == channel_id {
@@ -210,18 +221,22 @@ impl RouteTable {
         }
 
         for id in to_remove {
-            let _ = self.remove(id);
+            let _ = self.remove(rf, id);
         }
     }
 
-    /// Return cloned subscriptions that match the provided route.
+    /// Return cloned subscriptions that match the provided route for a specific RF.
     /// Uses trie-based matching for O(depth) complexity instead of O(N).
     /// Uses FxHashSet for faster hashing during match collection.
-    pub fn matching_subscribers(&self, route: &str) -> Vec<RtSubscription> {
+    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
+        let Some(trie) = self.tries.get(&rf) else {
+            return Vec::new();
+        };
+
         let mut matching_ids = FxHashSet::default();
 
         // Always include global wildcard subscribers
-        for &id in &self.trie.global_subs {
+        for &id in &trie.global_subs {
             matching_ids.insert(id);
         }
 
@@ -229,7 +244,7 @@ impl RouteTable {
         let segments: SmallVec<[&str; 8]> = route.split('/').collect();
 
         // Traverse trie to find matches
-        self.find_matches(&self.trie.root, &segments, 0, &mut matching_ids);
+        self.find_matches(&trie.root, &segments, 0, &mut matching_ids);
 
         // Convert IDs to subscriptions
         matching_ids
@@ -354,7 +369,7 @@ impl TrieNode {
 /// Production matching uses the trie-based approach in `find_matches()`.
 #[cfg(test)]
 #[inline]
-fn route_matches(pattern: &str, route: &str) -> bool {
+fn route_matches(_rf: RouteFamilyId, pattern: &str, route: &str) -> bool {
     // Fast path: global wildcard
     if pattern == "*" {
         return true;
@@ -439,8 +454,8 @@ mod tests {
             sender: tx,
         };
 
-        rt.insert(sub);
-        let matches = rt.matching_subscribers("a/b/c");
+        rt.insert(DEFAULT_RF, sub);
+        let matches = rt.matching_subscribers(DEFAULT_RF, "a/b/c");
         assert_eq!(matches.len(), 1);
     }
 
@@ -450,22 +465,22 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(10);
         let (tx2, _rx2) = mpsc::channel(10);
 
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 1,
             route_pattern: "r1".to_string(),
             channel_id: 1,
             sender: tx1,
         });
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 2,
             route_pattern: "r2".to_string(),
             channel_id: 2,
             sender: tx2,
         });
 
-        rt.cleanup_channel(1);
+        rt.cleanup_channel(DEFAULT_RF, 1);
         assert_eq!(rt.len(), 1);
-        assert!(rt.remove(2).is_some());
+        assert!(rt.remove(DEFAULT_RF, 2).is_some());
         assert_eq!(rt.len(), 0);
     }
 
@@ -498,7 +513,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+                let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -522,7 +537,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -548,7 +563,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -585,7 +600,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -639,7 +654,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -676,7 +691,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -701,7 +716,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -736,7 +751,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -810,7 +825,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -829,19 +844,19 @@ mod tests {
         let (tx2, _rx2) = mpsc::channel(10);
         let (tx3, _rx3) = mpsc::channel(10);
 
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 1,
             route_pattern: "scheme://acme/*".to_string(),
             channel_id: 1,
             sender: tx1,
         });
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 2,
             route_pattern: "scheme://acme/prod/*".to_string(),
             channel_id: 2,
             sender: tx2,
         });
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 3,
             route_pattern: "scheme://acme/prod/syslog/error".to_string(),
             channel_id: 3,
@@ -849,7 +864,7 @@ mod tests {
         });
 
         // Act
-        let matches = rt.matching_subscribers("scheme://acme/prod/syslog/error");
+        let matches = rt.matching_subscribers(DEFAULT_RF, "scheme://acme/prod/syslog/error");
 
         // Assert
         assert_eq!(matches.len(), 3);
@@ -862,13 +877,13 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(10);
         let (tx2, _rx2) = mpsc::channel(10);
 
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 1,
             route_pattern: "scheme://acme/prod/*".to_string(),
             channel_id: 1,
             sender: tx1,
         });
-        rt.insert(RtSubscription {
+        rt.insert(DEFAULT_RF, RtSubscription {
             id: 2,
             route_pattern: "scheme://acme/staging/*".to_string(),
             channel_id: 2,
@@ -876,7 +891,7 @@ mod tests {
         });
 
         // Act
-        let matches = rt.matching_subscribers("scheme://other/prod/syslog/error");
+        let matches = rt.matching_subscribers(DEFAULT_RF, "scheme://other/prod/syslog/error");
 
         // Assert
         assert_eq!(matches.len(), 0);
@@ -932,7 +947,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -1000,7 +1015,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -1071,7 +1086,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -1102,7 +1117,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-            let result = route_matches(pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -1112,4 +1127,423 @@ mod tests {
             );
         }
     }
+
+    // ========================================================================
+    // MULTI-COLUMN FAMILY TESTS - Verify CF Isolation
+    // ========================================================================
+
+    #[tokio::test]
+    async fn should_isolate_subscriptions_between_cfs() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_TENANT_A: u32 = 1;
+        const CF_TENANT_B: u32 = 2;
+
+        let (tx_a, _rx_a) = mpsc::channel(10);
+        let (tx_b, _rx_b) = mpsc::channel(10);
+
+        let sub_a = RtSubscription {
+            id: 1,
+            route_pattern: "app/alerts/*".to_string(),
+            channel_id: 10,
+            sender: tx_a,
+        };
+
+        let sub_b = RtSubscription {
+            id: 2,
+            route_pattern: "app/alerts/*".to_string(),
+            channel_id: 20,
+            sender: tx_b,
+        };
+
+        // Act: Insert same pattern into different CFs
+        rt.insert(CF_TENANT_A, sub_a);
+        rt.insert(CF_TENANT_B, sub_b);
+
+        // Assert: Verify each CF has its own subscription
+        let matches_a = rt.matching_subscribers(CF_TENANT_A, "app/alerts/error");
+        let matches_b = rt.matching_subscribers(CF_TENANT_B, "app/alerts/error");
+
+        assert_eq!(matches_a.len(), 1, "CF A should have exactly 1 match");
+        assert_eq!(matches_b.len(), 1, "CF B should have exactly 1 match");
+        assert_eq!(matches_a[0].id, 1, "CF A match should have id=1");
+        assert_eq!(matches_b[0].id, 2, "CF B match should have id=2");
+    }
+
+    #[tokio::test]
+    async fn should_not_return_other_cf_subscriptions() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_PROD: u32 = 1;
+        const CF_DEV: u32 = 2;
+
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+
+        // Insert pattern into PROD CF
+        rt.insert(CF_PROD, RtSubscription {
+            id: 100,
+            route_pattern: "system/alerts/*".to_string(),
+            channel_id: 1,
+            sender: tx1,
+        });
+
+        // Insert different pattern into DEV CF
+        rt.insert(CF_DEV, RtSubscription {
+            id: 101,
+            route_pattern: "system/alerts/*".to_string(),
+            channel_id: 2,
+            sender: tx2,
+        });
+
+        // Act: Query PROD with a matching route
+        let matches_prod = rt.matching_subscribers(CF_PROD, "system/alerts/critical");
+
+        // Assert: Should only get the PROD subscription, not DEV
+        assert_eq!(matches_prod.len(), 1);
+        assert_eq!(matches_prod[0].id, 100, "Should only return PROD subscription");
+        assert_eq!(matches_prod[0].channel_id, 1);
+    }
+
+    #[tokio::test]
+    async fn should_maintain_separate_tries_per_cf() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_1: u32 = 1;
+        const CF_2: u32 = 2;
+        const CF_3: u32 = 3;
+
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+        let (tx3, _rx3) = mpsc::channel(10);
+
+        // Insert hierarchical patterns into each CF
+        rt.insert(CF_1, RtSubscription {
+            id: 1,
+            route_pattern: "realm1/area/*".to_string(),
+            channel_id: 10,
+            sender: tx1,
+        });
+
+        rt.insert(CF_2, RtSubscription {
+            id: 2,
+            route_pattern: "realm2/area/*".to_string(),
+            channel_id: 20,
+            sender: tx2,
+        });
+
+        rt.insert(CF_3, RtSubscription {
+            id: 3,
+            route_pattern: "realm1/area/*".to_string(),
+            channel_id: 30,
+            sender: tx3,
+        });
+
+        // Act: Query each CF
+        let cf1_matches = rt.matching_subscribers(CF_1, "realm1/area/resource");
+        let cf2_matches = rt.matching_subscribers(CF_2, "realm2/area/resource");
+        let cf3_matches = rt.matching_subscribers(CF_3, "realm1/area/resource");
+        let cf1_realm2 = rt.matching_subscribers(CF_1, "realm2/area/resource");
+
+        // Assert: Each CF returns only its own subscriptions
+        assert_eq!(cf1_matches.len(), 1);
+        assert_eq!(cf1_matches[0].id, 1);
+
+        assert_eq!(cf2_matches.len(), 1);
+        assert_eq!(cf2_matches[0].id, 2);
+
+        assert_eq!(cf3_matches.len(), 1);
+        assert_eq!(cf3_matches[0].id, 3);
+
+        // CF1 should not match realm2 pattern (even though other CFs have realm2)
+        assert_eq!(cf1_realm2.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn should_support_multiple_subscriptions_per_cf() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_MULTI: u32 = 5;
+
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+        let (tx3, _rx3) = mpsc::channel(10);
+
+        // Insert multiple patterns into the same CF
+        rt.insert(CF_MULTI, RtSubscription {
+            id: 1,
+            route_pattern: "app/*".to_string(),
+            channel_id: 100,
+            sender: tx1,
+        });
+
+        rt.insert(CF_MULTI, RtSubscription {
+            id: 2,
+            route_pattern: "app/alerts/*".to_string(),
+            channel_id: 101,
+            sender: tx2,
+        });
+
+        rt.insert(CF_MULTI, RtSubscription {
+            id: 3,
+            route_pattern: "app/alerts/critical".to_string(),
+            channel_id: 102,
+            sender: tx3,
+        });
+
+        // Act: Query with a specific route
+        let matches = rt.matching_subscribers(CF_MULTI, "app/alerts/critical");
+
+        // Assert: Should match all three patterns (hierarchical matching)
+        assert_eq!(matches.len(), 3, "Should match all 3 patterns hierarchically");
+        let ids: Vec<u64> = matches.iter().map(|s| s.id).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+        assert!(ids.contains(&3));
+    }
+
+    #[test]
+    fn should_remove_subscription_only_from_specific_cf() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_A: u32 = 10;
+        const CF_B: u32 = 20;
+
+        let (tx_a, _rx_a) = mpsc::channel(10);
+        let (tx_b, _rx_b) = mpsc::channel(10);
+
+        let sub_a = RtSubscription {
+            id: 1,
+            route_pattern: "service/*".to_string(),
+            channel_id: 1,
+            sender: tx_a,
+        };
+
+        let sub_b = RtSubscription {
+            id: 2,
+            route_pattern: "service/*".to_string(),
+            channel_id: 2,
+            sender: tx_b,
+        };
+
+        rt.insert(CF_A, sub_a);
+        rt.insert(CF_B, sub_b);
+
+        // Act: Remove from CF_A only
+        let removed = rt.remove(CF_A, 1);
+
+        // Assert: Removal successful
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().id, 1);
+
+        // CF_A should no longer have the subscription
+        let cf_a_matches = rt.matching_subscribers(CF_A, "service/endpoint");
+        assert_eq!(cf_a_matches.len(), 0);
+
+        // CF_B should still have its subscription
+        let cf_b_matches = rt.matching_subscribers(CF_B, "service/endpoint");
+        assert_eq!(cf_b_matches.len(), 1);
+        assert_eq!(cf_b_matches[0].id, 2);
+    }
+
+    #[test]
+    fn should_cleanup_channel_only_in_specific_cf() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_PRIMARY: u32 = 100;
+        const CF_SECONDARY: u32 = 200;
+        const CHANNEL_ID: u32 = 5;
+
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+        let (tx3, _rx3) = mpsc::channel(10);
+        let (tx4, _rx4) = mpsc::channel(10);
+
+        // Insert subscriptions from CHANNEL_ID into both CFs
+        rt.insert(CF_PRIMARY, RtSubscription {
+            id: 1,
+            route_pattern: "r1".to_string(),
+            channel_id: CHANNEL_ID,
+            sender: tx1,
+        });
+
+        rt.insert(CF_PRIMARY, RtSubscription {
+            id: 2,
+            route_pattern: "r2".to_string(),
+            channel_id: CHANNEL_ID,
+            sender: tx2,
+        });
+
+        // Insert subscriptions from different channel into CF_SECONDARY
+        rt.insert(CF_SECONDARY, RtSubscription {
+            id: 3,
+            route_pattern: "r3".to_string(),
+            channel_id: CHANNEL_ID,
+            sender: tx3,
+        });
+
+        rt.insert(CF_SECONDARY, RtSubscription {
+            id: 4,
+            route_pattern: "r4".to_string(),
+            channel_id: 999, // Different channel
+            sender: tx4,
+        });
+
+        // Act: Cleanup CHANNEL_ID in CF_PRIMARY only
+        rt.cleanup_channel(CF_PRIMARY, CHANNEL_ID);
+
+        // Assert: CF_PRIMARY should have no subscriptions from CHANNEL_ID
+        assert_eq!(rt.len(), 2, "Should have 2 subscriptions remaining");
+
+        // CF_PRIMARY should be empty for that channel
+        let cf_primary_remaining = rt.matching_subscribers(CF_PRIMARY, "r1");
+        assert_eq!(cf_primary_remaining.len(), 0);
+
+        // CF_SECONDARY should still have CHANNEL_ID's subscription
+        let cf_secondary_remaining = rt.matching_subscribers(CF_SECONDARY, "r3");
+        assert_eq!(cf_secondary_remaining.len(), 1);
+        assert_eq!(cf_secondary_remaining[0].id, 3);
+
+        // CF_SECONDARY should still have the subscription from channel 999
+        let cf_secondary_999 = rt.matching_subscribers(CF_SECONDARY, "r4");
+        assert_eq!(cf_secondary_999.len(), 1);
+        assert_eq!(cf_secondary_999[0].id, 4);
+    }
+
+    #[test]
+    fn should_handle_empty_queries_for_nonexistent_cf() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_EXISTS: u32 = 1;
+        const CF_MISSING: u32 = 999;
+
+        let (tx, _rx) = mpsc::channel(10);
+
+        rt.insert(CF_EXISTS, RtSubscription {
+            id: 1,
+            route_pattern: "test/route".to_string(),
+            channel_id: 1,
+            sender: tx,
+        });
+
+        // Act: Query a CF that has no subscriptions
+        let matches = rt.matching_subscribers(CF_MISSING, "test/route");
+
+        // Assert: Should return empty vec, not panic
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn should_support_global_wildcard_per_cf() {
+        // Arrange
+        let mut rt = RouteTable::new();
+        const CF_GLOBAL_ENABLED: u32 = 1;
+        const CF_NO_GLOBAL: u32 = 2;
+
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+
+        // CF_GLOBAL_ENABLED has a global wildcard subscription
+        rt.insert(CF_GLOBAL_ENABLED, RtSubscription {
+            id: 1,
+            route_pattern: "*".to_string(),
+            channel_id: 1,
+            sender: tx1,
+        });
+
+        // CF_NO_GLOBAL has a specific pattern
+        rt.insert(CF_NO_GLOBAL, RtSubscription {
+            id: 2,
+            route_pattern: "specific/route".to_string(),
+            channel_id: 2,
+            sender: tx2,
+        });
+
+        // Act: Query both CFs with a route that doesn't match CF_NO_GLOBAL's pattern
+        let matches_enabled = rt.matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route");
+        let matches_disabled = rt.matching_subscribers(CF_NO_GLOBAL, "any/random/route");
+
+        // Assert: Only global wildcard CF should match
+        assert_eq!(matches_enabled.len(), 1);
+        assert_eq!(matches_enabled[0].id, 1);
+
+        assert_eq!(matches_disabled.len(), 0);
+    }
+
+    #[test]
+    fn should_handle_complex_multi_cf_scenario() {
+        // Arrange: Simulate multi-tenant system with complex routing
+        let mut rt = RouteTable::new();
+        const CF_TENANT_ACME: u32 = 1;
+        const CF_TENANT_WIDGETS: u32 = 2;
+
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+        let (tx3, _rx3) = mpsc::channel(10);
+        let (tx4, _rx4) = mpsc::channel(10);
+        let (tx5, _rx5) = mpsc::channel(10);
+
+        // ACME tenant subscriptions
+        rt.insert(CF_TENANT_ACME, RtSubscription {
+            id: 1,
+            route_pattern: "acme/*".to_string(),
+            channel_id: 100,
+            sender: tx1,
+        });
+
+        rt.insert(CF_TENANT_ACME, RtSubscription {
+            id: 2,
+            route_pattern: "acme/prod/*".to_string(),
+            channel_id: 101,
+            sender: tx2,
+        });
+
+        // WIDGETS tenant subscriptions
+        rt.insert(CF_TENANT_WIDGETS, RtSubscription {
+            id: 3,
+            route_pattern: "widgets/*".to_string(),
+            channel_id: 200,
+            sender: tx3,
+        });
+
+        rt.insert(CF_TENANT_WIDGETS, RtSubscription {
+            id: 4,
+            route_pattern: "widgets/alerts/*".to_string(),
+            channel_id: 201,
+            sender: tx4,
+        });
+
+        // Cross-tenant subscription (both have generic monitoring)
+        rt.insert(CF_TENANT_ACME, RtSubscription {
+            id: 5,
+            route_pattern: "*".to_string(),
+            channel_id: 102,
+            sender: tx5,
+        });
+
+        // Act: Query specific routes for each tenant
+        let acme_prod = rt.matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts");
+        let acme_any = rt.matching_subscribers(CF_TENANT_ACME, "anything");
+        let widgets_alert = rt.matching_subscribers(CF_TENANT_WIDGETS, "widgets/alerts/critical");
+        let widgets_other = rt.matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts");
+
+        // Assert: Each tenant gets the right matches
+        assert_eq!(acme_prod.len(), 3, "ACME prod should match 3 patterns (including global)");
+        let acme_prod_ids: Vec<u64> = acme_prod.iter().map(|s| s.id).collect();
+        assert!(acme_prod_ids.contains(&1));
+        assert!(acme_prod_ids.contains(&2));
+        assert!(acme_prod_ids.contains(&5)); // Global wildcard
+
+        assert_eq!(acme_any.len(), 1, "Any route should only match ACME's global wildcard");
+        assert_eq!(acme_any[0].id, 5);
+
+        assert_eq!(widgets_alert.len(), 2, "WIDGETS alerts should match 2 patterns");
+        let widget_ids: Vec<u64> = widgets_alert.iter().map(|s| s.id).collect();
+        assert!(widget_ids.contains(&3));
+        assert!(widget_ids.contains(&4));
+
+        // WIDGETS tenant should NOT see ACME routes (even though ACME has global wildcard)
+        assert_eq!(widgets_other.len(), 0, "WIDGETS should not see ACME-only routes");
+    }
 }
+

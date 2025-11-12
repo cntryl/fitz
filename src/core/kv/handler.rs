@@ -118,7 +118,7 @@ impl Default for KvDomain {
     fn default() -> Self {
         // For tests - use a mock store
         use crate::storage::traits::KvTransaction;
-        use midge::{MidgeError, MidgeResult};
+        use cntryl_midge::{MidgeError, MidgeResult};
         use bytes::Bytes;
 
         struct MockStore;
