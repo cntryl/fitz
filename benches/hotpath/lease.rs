@@ -10,13 +10,50 @@ use tokio::runtime::Runtime;
 #[path = "../config.rs"]
 mod config;
 
-// Shared Tokio runtime
+// ---------------------------------------------------------
+// Shared Runtime
+// ---------------------------------------------------------
 static RT: OnceLock<Runtime> = OnceLock::new();
 fn rt() -> &'static Runtime {
     RT.get_or_init(|| Runtime::new().expect("runtime"))
 }
 
-// Helper to build a DomainContext for a given raw route and payload (used by handler benches)
+// ---------------------------------------------------------
+// Shared LeaseService (no expirer for microbench)
+// ---------------------------------------------------------
+static SVC: OnceLock<Arc<LeaseService>> = OnceLock::new();
+fn shared_service() -> Arc<LeaseService> {
+    SVC.get_or_init(|| {
+        std::env::set_var("FITZ_LEASE_SPAWN_EXPIRER", "0");
+        rt().block_on(async { LeaseService::new_no_expirer() })
+    })
+    .clone()
+}
+
+// ---------------------------------------------------------
+// Shared LeaseDomain
+// ---------------------------------------------------------
+static DOMAIN: OnceLock<Arc<LeaseDomain>> = OnceLock::new();
+fn shared_domain() -> Arc<LeaseDomain> {
+    DOMAIN
+        .get_or_init(|| {
+            std::env::set_var("FITZ_LEASE_SPAWN_EXPIRER", "0");
+            Arc::new(LeaseDomain::new())
+        })
+        .clone()
+}
+
+// ---------------------------------------------------------
+// Key helper (256-key pool)
+// ---------------------------------------------------------
+#[inline]
+fn key(i: u64) -> String {
+    format!("lease://bench/hot/{}", i & 0xFF)
+}
+
+// ---------------------------------------------------------
+// DomainContext builder for handler benches
+// ---------------------------------------------------------
 fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContext {
     fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
@@ -30,126 +67,132 @@ fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContex
         route_str: raw.to_string(),
         payload,
         channel_id: 1,
-        route_family: 0, // benchmarks use default route family
+        route_family: 0,
     }
 }
 
-// Shared LeaseService instance (no expirer for benches)
-fn shared_service() -> Arc<LeaseService> {
-    rt().block_on(async { LeaseService::new_no_expirer() })
-}
-
-// Shared LeaseDomain instance (use Arc so benches can clone cheaply)
-fn shared_domain() -> Arc<LeaseDomain> {
-    // Ensure background expirer is disabled for microbench (quiescent service)
-    std::env::set_var("FITZ_LEASE_SPAWN_EXPIRER", "0");
-    Arc::new(LeaseDomain::new())
-}
-
-/// Benchmark: Acquire a lease (no contention)
+// ---------------------------------------------------------
+// Base: acquire (uncontended)
+// ---------------------------------------------------------
 fn bench_acquire_uncontended(c: &mut Criterion) {
     let svc = shared_service();
     let mut counter = 0u64;
+
     c.bench_function("lease_acquire_uncontended", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
-            let key = format!("lease://hotpath/bench/{}", counter % 64);
+            let k = key(counter);
             let svc = svc.clone();
+
             rt().block_on(async move {
-                let grant = svc.acquire(&key, 3).await.unwrap();
-                // release immediately to avoid leaving the lease active and
-                // blocking future iterations that reuse the same key
-                let _ = svc.surrender(&key, &grant.id, &grant.token).await;
+                let grant = svc.acquire(0, &k, 3).await.unwrap();
+                let _ = svc.surrender(0, &k, &grant.id, &grant.token).await;
                 grant
             })
         });
     });
 }
 
-/// Benchmark: Extend active lease
+// ---------------------------------------------------------
+// Base: renew
+// ---------------------------------------------------------
 fn bench_renew(c: &mut Criterion) {
     let svc = shared_service();
     let mut counter = 0u64;
+
     c.bench_function("lease_extend", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
-            let key = format!("lease://hotpath/bench/{}", counter % 64);
+            let k = key(counter);
             let svc = svc.clone();
+
             rt().block_on(async move {
-                let grant = svc.acquire(&key, 3).await.unwrap();
-                let res = svc.renew(&key, &grant.id, &grant.token, 2).await;
-                // clean up so the next iteration is uncontended
-                let _ = svc.surrender(&key, &grant.id, &grant.token).await;
-                res
+                let grant = svc.acquire(0, &k, 3).await.unwrap();
+                let _ = svc.renew(0, &k, &grant.id, &grant.token, 2).await;
+                let _ = svc.surrender(0, &k, &grant.id, &grant.token).await;
+                grant
             })
         });
     });
 }
 
-/// Benchmark: Release lease (no waiters)
+// ---------------------------------------------------------
+// Base: release only
+// ---------------------------------------------------------
 fn bench_release(c: &mut Criterion) {
     let svc = shared_service();
     let mut counter = 0u64;
+
     c.bench_function("lease_release_no_waiters", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
-            let key = format!("lease://hotpath/bench/{}", counter % 64);
+            let k = key(counter);
             let svc = svc.clone();
+
             rt().block_on(async move {
-                let grant = svc.acquire(&key, 3).await.unwrap();
-                svc.surrender(&key, &grant.id, &grant.token).await
+                let grant = svc.acquire(0, &k, 3).await.unwrap();
+                svc.surrender(0, &k, &grant.id, &grant.token).await
             })
         });
     });
 }
 
-/// Benchmark: Acquire  Release cycle
+// ---------------------------------------------------------
+// Base: acquire + release cycle
+// ---------------------------------------------------------
 fn bench_cycle(c: &mut Criterion) {
     let svc = shared_service();
     let mut counter = 0u64;
-    c.bench_function("lease_acquire_release_cycle", |b| {
+
+    c.bench_function("lease_cycle", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
-            let key = format!("lease://hotpath/bench/{}", counter % 64);
+            let k = key(counter);
             let svc = svc.clone();
+
             rt().block_on(async move {
-                let grant = svc.acquire(&key, 3).await.unwrap();
-                svc.surrender(&key, &grant.id, &grant.token).await
+                let grant = svc.acquire(0, &k, 3).await.unwrap();
+                svc.surrender(0, &k, &grant.id, &grant.token).await
             })
         });
     });
 }
 
-/// --- handler-level benches (via LeaseDomain)
-/// Benchmark: Acquire + immediate release through the handler (no contention)
+// ---------------------------------------------------------
+// Handler benches: Acquire + Release
+// ---------------------------------------------------------
 fn bench_acquire_release_handler(c: &mut Criterion) {
     let domain = shared_domain();
     let mut counter = 0u64;
-    c.bench_function("handler_acquire_release_uncontended", |b| {
+
+    c.bench_function("handler_acquire_release", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
-            let key = format!("lease://hotpath/handler/{}", counter % 64);
-            let svc = domain.clone();
-            rt().block_on(async move {
-                // Acquire payload
-                let mut acq_payload = Vec::new();
-                build_tlv(TAG_LEASE, &3u32.to_be_bytes(), &mut acq_payload);
-                let req = make_request(&key, acq_payload);
-                let resp = (&*svc).handle(req).await;
+            let route = key(counter);
+            let domain = domain.clone();
 
-                // Parse response to extract id and token
-                if let DomainResponse::Frame(frame) = resp {
-                    let id = find_tlv(frame.as_ref(), TAG_ID)
+            rt().block_on(async move {
+                // acquire payload
+                let mut acq = Vec::with_capacity(16);
+                build_tlv(TAG_LEASE, &3u32.to_be_bytes(), &mut acq);
+
+                let req = make_request(&route, acq);
+                let resp = domain.handle(req).await;
+
+                if let DomainResponse::Frame(fr) = resp {
+                    let id = find_tlv(fr.as_ref(), TAG_ID)
                         .map(|b| String::from_utf8_lossy(b).into_owned());
-                    let token = find_tlv(frame.as_ref(), TAG_DELIVERY_TOKEN)
+                    let token = find_tlv(fr.as_ref(), TAG_DELIVERY_TOKEN)
                         .map(|b| String::from_utf8_lossy(b).into_owned());
+
                     if let (Some(id), Some(token)) = (id, token) {
-                        // Build release payload
-                        let mut rel_payload = Vec::new();
-                        build_tlv(TAG_ID, id.as_bytes(), &mut rel_payload);
-                        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut rel_payload);
-                        let rel_req = make_request(&key, rel_payload);
-                        let _ = (&*svc).handle(rel_req).await;
+                        // release
+                        let mut rel = Vec::with_capacity(32);
+                        build_tlv(TAG_ID, id.as_bytes(), &mut rel);
+                        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut rel);
+
+                        let rel_req = make_request(&route, rel);
+                        let _ = domain.handle(rel_req).await;
                     }
                 }
             })
@@ -157,42 +200,45 @@ fn bench_acquire_release_handler(c: &mut Criterion) {
     });
 }
 
-/// Benchmark: Extend via handler
+// ---------------------------------------------------------
+// Handler benches: renew
+// ---------------------------------------------------------
 fn bench_renew_handler(c: &mut Criterion) {
     let domain = shared_domain();
     let mut counter = 0u64;
+
     c.bench_function("handler_extend", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
-            let key = format!("lease://hotpath/handler/{}", counter % 64);
-            let svc = domain.clone();
+            let route = key(counter);
+            let domain = domain.clone();
+
             rt().block_on(async move {
-                // Acquire
-                let mut acq_payload = Vec::new();
-                build_tlv(TAG_LEASE, &3u32.to_be_bytes(), &mut acq_payload);
-                let req = make_request(&key, acq_payload);
-                let resp = (&*svc).handle(req).await;
+                // acquire
+                let mut acq = Vec::with_capacity(16);
+                build_tlv(TAG_LEASE, &3u32.to_be_bytes(), &mut acq);
+                let resp = domain.handle(make_request(&route, acq)).await;
 
-                if let DomainResponse::Frame(frame) = resp {
-                    let id = find_tlv(frame.as_ref(), TAG_ID)
+                if let DomainResponse::Frame(fr) = resp {
+                    let id = find_tlv(fr.as_ref(), TAG_ID)
                         .map(|b| String::from_utf8_lossy(b).into_owned());
-                    let token = find_tlv(frame.as_ref(), TAG_DELIVERY_TOKEN)
+                    let token = find_tlv(fr.as_ref(), TAG_DELIVERY_TOKEN)
                         .map(|b| String::from_utf8_lossy(b).into_owned());
+
                     if let (Some(id), Some(token)) = (id, token) {
-                        // Extend payload
-                        let mut ext_payload = Vec::new();
-                        build_tlv(TAG_ID, id.as_bytes(), &mut ext_payload);
-                        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut ext_payload);
-                        build_tlv(TAG_LEASE, &5u32.to_be_bytes(), &mut ext_payload);
-                        let ext_req = make_request(&key, ext_payload);
-                        let _ = (&*svc).handle(ext_req).await;
+                        // renew
+                        let mut ext = Vec::with_capacity(32);
+                        build_tlv(TAG_ID, id.as_bytes(), &mut ext);
+                        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut ext);
+                        build_tlv(TAG_LEASE, &5u32.to_be_bytes(), &mut ext);
 
-                        // Release to keep next iteration clean
-                        let mut rel_payload = Vec::new();
-                        build_tlv(TAG_ID, id.as_bytes(), &mut rel_payload);
-                        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut rel_payload);
-                        let rel_req = make_request(&key, rel_payload);
-                        let _ = (&*svc).handle(rel_req).await;
+                        let _ = domain.handle(make_request(&route, ext)).await;
+
+                        // release
+                        let mut rel = Vec::with_capacity(32);
+                        build_tlv(TAG_ID, id.as_bytes(), &mut rel);
+                        build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut rel);
+                        let _ = domain.handle(make_request(&route, rel)).await;
                     }
                 }
             })
@@ -200,6 +246,198 @@ fn bench_renew_handler(c: &mut Criterion) {
     });
 }
 
+// ---------------------------------------------------------
+// Multi-tenant: 5 route families
+// ---------------------------------------------------------
+fn bench_acquire_multi_tenant_5(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_acquire_multi_tenant_5rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 5) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                let _ = svc.surrender(rf, &k, &grant.id, &grant.token).await;
+                grant
+            })
+        });
+    });
+}
+
+fn bench_renew_multi_tenant_5(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_renew_multi_tenant_5rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 5) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                let _ = svc.renew(rf, &k, &grant.id, &grant.token, 2).await;
+                let _ = svc.surrender(rf, &k, &grant.id, &grant.token).await;
+                grant
+            })
+        });
+    });
+}
+
+fn bench_cycle_multi_tenant_5(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_cycle_multi_tenant_5rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 5) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                svc.surrender(rf, &k, &grant.id, &grant.token).await
+            })
+        });
+    });
+}
+
+// ---------------------------------------------------------
+// Multi-tenant: 10 route families
+// ---------------------------------------------------------
+fn bench_acquire_multi_tenant_10(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_acquire_multi_tenant_10rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 10) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                let _ = svc.surrender(rf, &k, &grant.id, &grant.token).await;
+                grant
+            })
+        });
+    });
+}
+
+fn bench_renew_multi_tenant_10(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_renew_multi_tenant_10rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 10) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                let _ = svc.renew(rf, &k, &grant.id, &grant.token, 2).await;
+                let _ = svc.surrender(rf, &k, &grant.id, &grant.token).await;
+                grant
+            })
+        });
+    });
+}
+
+fn bench_cycle_multi_tenant_10(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_cycle_multi_tenant_10rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 10) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                svc.surrender(rf, &k, &grant.id, &grant.token).await
+            })
+        });
+    });
+}
+
+// ---------------------------------------------------------
+// Multi-tenant: 100 route families
+// ---------------------------------------------------------
+fn bench_acquire_multi_tenant_100(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_acquire_multi_tenant_100rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 100) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                let _ = svc.surrender(rf, &k, &grant.id, &grant.token).await;
+                grant
+            })
+        });
+    });
+}
+
+fn bench_renew_multi_tenant_100(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_renew_multi_tenant_100rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 100) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                let _ = svc.renew(rf, &k, &grant.id, &grant.token, 2).await;
+                let _ = svc.surrender(rf, &k, &grant.id, &grant.token).await;
+                grant
+            })
+        });
+    });
+}
+
+fn bench_cycle_multi_tenant_100(c: &mut Criterion) {
+    let svc = shared_service();
+    let mut counter = 0u64;
+
+    c.bench_function("lease_cycle_multi_tenant_100rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = (counter % 100) as u32;
+            let k = key(counter);
+            let svc = svc.clone();
+
+            rt().block_on(async move {
+                let grant = svc.acquire(rf, &k, 3).await.unwrap();
+                svc.surrender(rf, &k, &grant.id, &grant.token).await
+            })
+        });
+    });
+}
+
+// ---------------------------------------------------------
+// Criterion group + main
+// ---------------------------------------------------------
 criterion_group! {
     name = hotpath_lease;
     config = config::criterion_config();
@@ -210,6 +448,15 @@ criterion_group! {
         bench_cycle,
         bench_acquire_release_handler,
         bench_renew_handler,
+        bench_acquire_multi_tenant_5,
+        bench_renew_multi_tenant_5,
+        bench_cycle_multi_tenant_5,
+        bench_acquire_multi_tenant_10,
+        bench_renew_multi_tenant_10,
+        bench_cycle_multi_tenant_10,
+        bench_acquire_multi_tenant_100,
+        bench_renew_multi_tenant_100,
+        bench_cycle_multi_tenant_100,
 }
 
 criterion_main!(hotpath_lease);
