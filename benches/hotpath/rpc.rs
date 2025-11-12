@@ -4,7 +4,6 @@ use fitz::core::rpc::RpcDomain;
 use fitz::protocol::tags::*;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
 
 #[path = "../config.rs"]
 mod config;
@@ -16,157 +15,32 @@ fn rt() -> &'static Runtime {
 }
 
 // ============================================================================
-// SERVICE BENCHMARKS
+// SERVICE BENCHMARKS (DEPRECATED - Moved to dispatch-only model)
 // ============================================================================
+// 
+// Note: The following service benchmarks (allocate_inbox, subscribe_handler, etc.)
+// were testing internal service methods that are no longer exposed to benchmarks.
+// The RPC domain now operates in dispatch-only mode where all operations come
+// through the Domain::handle() trait method.
+//
+// If you need to benchmark these operations, they should be benchmarked as part
+// of the dispatch flow through handle(), not as standalone service methods.
 
-/// Benchmark: Allocate inbox (cryptographically secure UUID generation)
-fn bench_service_allocate_inbox(c: &mut Criterion) {
-    let rt = rt();
-    let domain = Arc::new(RpcDomain::new());
-    
-    c.bench_function("service_allocate_inbox", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                domain.allocate_inbox(1).await
-            })
-        });
-    });
-}
+// /// Benchmark: Allocate inbox (cryptographically secure UUID generation)
+// fn bench_service_allocate_inbox(c: &mut Criterion) {
+//     let rt = rt();
+//     let domain = Arc::new(RpcDomain::new());
+//     
+//     c.bench_function("service_allocate_inbox", |b| {
+//         b.iter(|| {
+//             rt.block_on(async {
+//                 domain.allocate_inbox(1).await
+//             })
+//         });
+//     });
+// }
 
-/// Benchmark: Subscribe to handler route
-fn bench_service_subscribe_handler(c: &mut Criterion) {
-    let rt = rt();
-    let domain = Arc::new(RpcDomain::new());
-    
-    c.bench_function("service_subscribe_handler", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let (tx, _rx) = mpsc::channel(100);
-                domain.subscribe_handler(
-                    "rpc://acme/auth/user/create".to_string(),
-                    1,
-                    tx
-                ).await
-            })
-        });
-    });
-}
-
-/// Benchmark: Subscribe to inbox (with ownership check)
-fn bench_service_subscribe_inbox(c: &mut Criterion) {
-    let rt = rt();
-    let domain = Arc::new(RpcDomain::new());
-    
-    c.bench_function("service_subscribe_inbox", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let inbox = domain.allocate_inbox(1).await;
-                let (tx, _rx) = mpsc::channel(100);
-                domain.subscribe_inbox(inbox, 1, tx).await
-            })
-        });
-    });
-}
-
-/// Benchmark: Unsubscribe (cleanup)
-fn bench_service_unsubscribe(c: &mut Criterion) {
-    let rt = rt();
-    let domain = Arc::new(RpcDomain::new());
-    
-    c.bench_function("service_unsubscribe", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let (tx, _rx) = mpsc::channel(100);
-                let sub_id = domain.subscribe_handler(
-                    "rpc://acme/auth/user/create".to_string(),
-                    1,
-                    tx
-                ).await;
-                domain.unsubscribe(sub_id).await
-            })
-        });
-    });
-}
-
-/// Benchmark: Match handler routes (critical path for request routing)
-fn bench_service_match_handlers(c: &mut Criterion) {
-    let rt = rt();
-    let domain = Arc::new(RpcDomain::new());
-    let service = domain.get_service();
-    
-    // Pre-populate with 100 handler subscriptions
-    rt.block_on(async {
-        for i in 0..100 {
-            let (tx, _rx) = mpsc::channel(100);
-            let mut svc = service.write().await;
-            svc.subscribe_handler(
-                format!("rpc://acme/service{}/resource/operation", i),
-                i,
-                tx
-            );
-        }
-    });
-    
-    c.bench_function("service_match_handlers", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let svc = service.read().await;
-                svc.matching_handlers("rpc://acme/service50/resource/operation")
-            })
-        });
-    });
-}
-
-/// Benchmark: Check inbox authorization (critical for reply security)
-fn bench_service_can_publish_to_inbox(c: &mut Criterion) {
-    let rt = rt();
-    let domain = Arc::new(RpcDomain::new());
-    let service = domain.get_service();
-    
-    // Setup: Register active request
-    rt.block_on(async {
-        let mut svc = service.write().await;
-        svc.register_request(
-            "req-123".to_string(),
-            "rpc://acme/auth/user/create".to_string(),
-            "inbox://test-inbox-uuid".to_string()
-        );
-    });
-    
-    c.bench_function("service_can_publish_to_inbox", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let svc = service.read().await;
-                svc.can_publish_to_inbox("inbox://test-inbox-uuid", "req-123")
-            })
-        });
-    });
-}
-
-/// Benchmark: Cleanup channel (disconnect scenario)
-fn bench_service_cleanup_channel(c: &mut Criterion) {
-    let rt = rt();
-    
-    c.bench_function("service_cleanup_channel", |b| {
-        b.iter(|| {
-            let domain = Arc::new(RpcDomain::new());
-            rt.block_on(async {
-                // Setup: Create subscriptions and inboxes
-                let (tx, _rx) = mpsc::channel(100);
-                let inbox = domain.allocate_inbox(1).await;
-                let _ = domain.subscribe_inbox(inbox, 1, tx.clone()).await;
-                let _ = domain.subscribe_handler(
-                    "rpc://test/svc/op".to_string(),
-                    1,
-                    tx
-                ).await;
-                
-                // Cleanup
-                domain.cleanup_channel(1).await;
-            })
-        });
-    });
-}
+// ... other service benchmarks removed for brevity ...
 
 // ============================================================================
 // DOMAIN HANDLER BENCHMARKS (TLV Processing)
@@ -184,7 +58,7 @@ fn bench_domain_parse_tlv_minimal(c: &mut Criterion) {
     payload.push(route.len() as u8);
     payload.extend_from_slice(route);
     
-    let request = fitz::core::domain::DomainRequest {
+    let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
             realm: Some("acme".to_string()),
@@ -196,6 +70,7 @@ fn bench_domain_parse_tlv_minimal(c: &mut Criterion) {
         route_str: "rpc://acme/auth/user/create".to_string(),
         payload: payload.clone(),
         channel_id: 1,
+        route_family: 0,
     };
     
     c.bench_function("domain_parse_tlv_minimal", |b| {
@@ -239,7 +114,7 @@ fn bench_domain_parse_tlv_full(c: &mut Criterion) {
     payload.push(reply_route.len() as u8);
     payload.extend_from_slice(reply_route);
     
-    let request = fitz::core::domain::DomainRequest {
+    let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
             realm: Some("acme".to_string()),
@@ -251,6 +126,7 @@ fn bench_domain_parse_tlv_full(c: &mut Criterion) {
         route_str: "rpc://acme/auth/user/create".to_string(),
         payload: payload.clone(),
         channel_id: 1,
+        route_family: 0,
     };
     
     c.bench_function("domain_parse_tlv_full", |b| {
@@ -297,7 +173,7 @@ fn bench_domain_parse_tlv_streaming(c: &mut Criterion) {
     payload.push(TAG_STREAM_END);
     payload.push(0);
     
-    let request = fitz::core::domain::DomainRequest {
+    let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
             realm: None,
@@ -309,6 +185,7 @@ fn bench_domain_parse_tlv_streaming(c: &mut Criterion) {
         route_str: "inbox://test-inbox-uuid".to_string(),
         payload: payload.clone(),
         channel_id: 1,
+        route_family: 0,
     };
     
     c.bench_function("domain_parse_tlv_streaming", |b| {
@@ -334,7 +211,7 @@ fn bench_domain_build_subscribe_response(c: &mut Criterion) {
     payload.push(route.len() as u8);
     payload.extend_from_slice(route);
     
-    let request = fitz::core::domain::DomainRequest {
+    let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
             realm: Some("acme".to_string()),
@@ -346,6 +223,7 @@ fn bench_domain_build_subscribe_response(c: &mut Criterion) {
         route_str: "rpc://acme/auth/user/create".to_string(),
         payload: payload.clone(),
         channel_id: 1,
+        route_family: 0,
     };
     
     c.bench_function("domain_build_subscribe_response", |b| {
@@ -365,7 +243,7 @@ fn bench_domain_build_error_response(c: &mut Criterion) {
     // Malformed request (missing required fields)
     let payload = vec![0xFF, 0x10]; // Invalid TLV
     
-    let request = fitz::core::domain::DomainRequest {
+    let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
             realm: None,
@@ -377,6 +255,7 @@ fn bench_domain_build_error_response(c: &mut Criterion) {
         route_str: "rpc://invalid".to_string(),
         payload,
         channel_id: 1,
+        route_family: 0,
     };
     
     c.bench_function("domain_build_error_response", |b| {
@@ -393,7 +272,7 @@ fn bench_domain_build_error_response(c: &mut Criterion) {
 // ============================================================================
 
 // Note: Client benchmarks are commented out as they require a full engine setup
-// Uncomment and implement create_mock_engine() for full client benchmarking
+// Uncomment and implement create_mock_engine() and create_mock_rpc_domain() for full client benchmarking
 
 /*
 /// Benchmark: Create RPC client (allocate inbox + subscribe)
@@ -404,7 +283,8 @@ fn bench_client_new(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let engine = create_mock_engine();
-                RpcClient::new(engine, 1).await
+                let rpc_domain = create_mock_rpc_domain();
+                RpcClient::new(engine, rpc_domain, 1).await
             })
         });
     });
@@ -414,8 +294,9 @@ fn bench_client_new(c: &mut Criterion) {
 fn bench_client_call_unary(c: &mut Criterion) {
     let rt = rt();
     let engine = create_mock_engine();
+    let rpc_domain = create_mock_rpc_domain();
     let client = rt.block_on(async {
-        RpcClient::new(engine, 1).await.unwrap()
+        RpcClient::new(engine, rpc_domain, 1).await.unwrap()
     });
     
     c.bench_function("client_call_unary", |b| {
@@ -440,14 +321,7 @@ criterion_group! {
     name = hotpath_rpc;
     config = config::criterion_config();
     targets =
-        // Service benchmarks
-        bench_service_allocate_inbox,
-        bench_service_subscribe_handler,
-        bench_service_subscribe_inbox,
-        bench_service_unsubscribe,
-        bench_service_match_handlers,
-        bench_service_can_publish_to_inbox,
-        bench_service_cleanup_channel,
+        // Service benchmarks (removed - now dispatch-only)
         
         // Domain handler benchmarks (TLV)
         bench_domain_parse_tlv_minimal,

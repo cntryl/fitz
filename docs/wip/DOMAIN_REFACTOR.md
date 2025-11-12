@@ -41,12 +41,12 @@ Transport Layer (WebSocket/HTTP/TCP)
 
 ```rust
 pub trait Domain: Send + Sync {
-    async fn handle(&self, request: DomainRequest, store: Arc<Mutex<MemStore>>) -> DomainResponse;
+    async fn handle(&self, request: DomainContext, store: Arc<Mutex<MemStore>>) -> DomainResponse;
     fn schemes(&self) -> &[&str];
 }
 ```
 
-### DomainRequest
+### DomainContext
 - `route: Route` - Parsed route (scheme, realm, area, resource)
 - `route_str: String` - Raw route string
 - `payload: Vec<u8>` - TLV-encoded frame payload

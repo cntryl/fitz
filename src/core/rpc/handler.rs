@@ -1,7 +1,7 @@
 // RPC domain handler - routes all rpc:// operations
 
 use super::service::RpcService;
-use crate::core::domain::{Domain, DomainRequest, DomainResponse, SubSender};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
     TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_ROUTE_REPLY, TAG_SEQ, TAG_STREAM_END,
     TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
@@ -28,46 +28,6 @@ impl RpcDomain {
     /// Get the shared RPC service
     pub fn get_service(&self) -> Arc<RwLock<RpcService>> {
         Arc::clone(&self.service)
-    }
-
-    /// Subscribe to an RPC handler route
-    pub async fn subscribe_handler(
-        &self,
-        route_pattern: String,
-        channel_id: u32,
-        sender: SubSender,
-    ) -> u64 {
-        let mut service = self.service.write().await;
-        service.subscribe_handler(route_pattern, channel_id, sender)
-    }
-
-    /// Subscribe to an inbox route (with ownership enforcement)
-    pub async fn subscribe_inbox(
-        &self,
-        inbox_route: String,
-        channel_id: u32,
-        sender: SubSender,
-    ) -> Result<u64, String> {
-        let mut service = self.service.write().await;
-        service.subscribe_inbox(inbox_route, channel_id, sender)
-    }
-
-    /// Unsubscribe by subscription ID
-    pub async fn unsubscribe(&self, sub_id: u64) -> bool {
-        let mut service = self.service.write().await;
-        service.unsubscribe(sub_id)
-    }
-
-    /// Allocate an inbox for a channel
-    pub async fn allocate_inbox(&self, channel_id: u32) -> String {
-        let mut service = self.service.write().await;
-        service.allocate_inbox(channel_id)
-    }
-
-    /// Cleanup all resources for a channel (on disconnect)
-    pub async fn cleanup_channel(&self, channel_id: u32) {
-        let mut service = self.service.write().await;
-        service.cleanup_channel(channel_id)
     }
 
     /// Parse TLV-encoded payload and extract all relevant fields in one pass
@@ -283,7 +243,7 @@ impl Default for RpcDomain {
 impl Domain for RpcDomain {
     fn handle<'a>(
         &'a self,
-        request: DomainRequest,
+        request: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             let payload = &request.payload;
@@ -352,89 +312,22 @@ impl Domain for RpcDomain {
         })
     }
 
-    fn schemes(&self) -> &[&str] {
-        &["rpc"]
-    }
-
-    fn subscribe<'a>(
-        &'a self,
-        route: String,
-        channel_id: u32,
-        sender: SubSender,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
-        Box::pin(async move {
-            if route.starts_with("inbox://") {
-                // Inbox subscription (requires ownership)
-                self.subscribe_inbox(route, channel_id, sender).await
-            } else {
-                // Handler subscription
-                let sub_id = self.subscribe_handler(route, channel_id, sender).await;
-                Ok(sub_id)
-            }
-        })
-    }
-
-    fn unsubscribe<'a>(
-        &'a self,
-        sub_id: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            self.unsubscribe(sub_id).await
-        })
-    }
-
     fn cleanup_channel<'a>(
         &'a self,
+        _rf: crate::storage::RouteFamilyId,
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        let service = Arc::clone(&self.service);
         Box::pin(async move {
-            self.cleanup_channel(channel_id).await
+            let mut svc = service.write().await;
+            svc.cleanup_channel(channel_id)
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tokio::sync::mpsc;
-
-    #[tokio::test]
-    async fn should_allocate_unique_inbox_for_channel() {
-        let domain = RpcDomain::new();
-        let inbox = domain.allocate_inbox(1).await;
-        
-        assert!(inbox.starts_with("inbox://"));
-        assert!(inbox.len() > 10);
-    }
-
-    #[tokio::test]
-    async fn should_enforce_inbox_ownership_on_subscribe() {
-        // Arrange
-        let domain = RpcDomain::new();
-        let (tx, _rx) = mpsc::channel(1);
-        let inbox = domain.allocate_inbox(1).await;
-        
-        // Act
-        let result1 = domain.subscribe_inbox(inbox.clone(), 1, tx.clone()).await;
-        let result2 = domain.subscribe_inbox(inbox.clone(), 2, tx).await;
-        
-        // Assert
-        assert!(result1.is_ok());
-        assert!(result2.is_err());
-    }
-
-    #[tokio::test]
-    async fn should_cleanup_channel_resources_on_disconnect() {
-        // Arrange
-        let domain = RpcDomain::new();
-        let (tx, _rx) = mpsc::channel(1);
-        let inbox = domain.allocate_inbox(1).await;
-        let _ = domain.subscribe_inbox(inbox.clone(), 1, tx.clone()).await;
-        let _ = domain.subscribe_handler("rpc://test/svc/op".to_string(), 1, tx).await;
-        
-        // Act
-        domain.cleanup_channel(1).await;
-        
-        // Assert - cleanup should not panic and test completes successfully
-    }
+    // TODO: Tests for subscribe/unsubscribe removed - these operations now happen
+    // via dispatch commands through the Domain trait handle() method.
+    // Once RPC dispatch handlers are implemented, add tests for those operations.
 }

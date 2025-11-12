@@ -1,6 +1,6 @@
 // Lease domain handler - routes all lease:// operations
 
-use crate::core::domain::{Domain, DomainRequest, DomainResponse};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::lease::service::LeaseService;
 use crate::core::lease::types::LeaseOperation;
 use crate::protocol::frame::{build_tlv, find_tlv};
@@ -47,18 +47,14 @@ impl Default for LeaseDomain {
 impl Domain for LeaseDomain {
     fn handle<'a>(
         &'a self,
-        _request: DomainRequest,
+        _request: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(self.process(_request))
-    }
-
-    fn schemes(&self) -> &[&str] {
-        &["lease"]
     }
 }
 
 impl LeaseDomain {
-    async fn process(&self, request: DomainRequest) -> DomainResponse {
+    async fn process(&self, request: DomainContext) -> DomainResponse {
         let svc = LeaseDomain::svc();
 
         // Parse operation from route
@@ -175,20 +171,21 @@ impl LeaseDomain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::domain::{DomainRequest, DomainResponse};
+    use crate::core::domain::{DomainContext, DomainResponse};
     use crate::protocol::frame::{build_tlv, find_tlv};
     use crate::protocol::route::parse_route;
 
-    // Helper to build a DomainRequest for a given raw route and payload
-    fn make_request(raw: &str, payload: Vec<u8>) -> DomainRequest {
+    // Helper to build a DomainContext for a given raw route and payload
+    fn make_request(raw: &str, payload: Vec<u8>) -> DomainContext {
         // allocate the raw string once and reuse
         let raw_s = raw.to_string();
         let route = parse_route(&raw_s).unwrap();
-        DomainRequest {
+        DomainContext {
             route,
             route_str: raw_s,
             payload,
             channel_id: 1,
+            route_family: 0,  // tests use default route family
         }
     }
 

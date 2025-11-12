@@ -4,6 +4,7 @@ use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 
 use crate::core::engine::EngineHandle;
+use crate::core::rpc::RpcDomain;
 use tokio_stream::wrappers::ReceiverStream;
 type InboxMsg = (
     String,
@@ -20,6 +21,7 @@ type InboxMsg = (
 #[derive(Clone)]
 pub struct RpcClient {
     engine: EngineHandle,
+    rpc_domain: Arc<RpcDomain>,
     pub reply_route: String,
     sub_id: Arc<Mutex<Option<u64>>>,
     inbox_rx: Arc<Mutex<mpsc::Receiver<InboxMsg>>>,
@@ -28,28 +30,29 @@ pub struct RpcClient {
 impl RpcClient {
     /// Create a new RPC client with a cryptographically secure inbox route.
     /// The inbox route uses the format: inbox://{uuid-v4}
+    /// 
+    /// TODO: RpcClient subscription patterns now handled via dispatch commands.
+    /// This method is deprecated - subscribe/unsubscribe removed from RpcDomain.
+    #[deprecated(note = "Use dispatch-based RPC pattern instead")]
     pub async fn new(
         engine: EngineHandle,
+        rpc_domain: Arc<RpcDomain>,
         channel_id: u32,
     ) -> Result<Self, String> {
         let reply_route = format!("inbox://{}", Uuid::new_v4());
-        let (tx, rx) = mpsc::channel::<InboxMsg>(128);
-        let sub_id = engine
-            .subscribe(reply_route.clone(), tx, channel_id)
-            .await?;
+        // TODO: Implement via dispatch instead of domain methods
         Ok(Self {
             engine,
+            rpc_domain,
             reply_route,
-            sub_id: Arc::new(Mutex::new(Some(sub_id))),
-            inbox_rx: Arc::new(Mutex::new(rx)),
+            sub_id: Arc::new(Mutex::new(None)),
+            inbox_rx: Arc::new(Mutex::new(mpsc::channel(128).1)),
         })
     }
 
     /// Unsubscribe the reply route; optional cleanup
     pub async fn close(&self) {
-        if let Some(id) = self.sub_id.lock().await.take() {
-            let _ = self.engine.unsubscribe(id).await;
-        }
+        // TODO: Implement cleanup via dispatch
     }
 
     /// Publish an RPC request with TAG_ROUTE_REPLY and return a receiver stream for ordered responses
@@ -61,18 +64,21 @@ impl RpcClient {
         cid: &str,
         body: &[u8],
     ) -> Result<ReceiverStream<Vec<u8>>, String> {
-        // Publish request with TAG_ROUTE_REPLY; note engine.publish handles store+notify, but the
-        // transport-side TLV build is client responsibility outside engine. For the in-process helper
-        // we just call engine.publish with reply_to metadata so subscribers get it.
+        // Build request payload with TAG_ID, TAG_BODY, and TAG_ROUTE_REPLY
+        use crate::protocol::frame::build_tlv;
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_ID, cid.as_bytes(), &mut payload);
+        build_tlv(TAG_BODY, body, &mut payload);
+        build_tlv(TAG_ROUTE_REPLY, self.reply_route.as_bytes(), &mut payload);
+        
         self.engine
-            .publish(
+            .dispatch(
                 route.to_string(),
-                cid.to_string(),
-                body.to_vec(),
-                Some(self.reply_route.clone()),
-                None,
-                false,
-                None,
+                payload,
+                0,
+                crate::storage::DEFAULT_RF,
             )
             .await?;
 
@@ -137,10 +143,18 @@ impl RpcWorker {
         cid: String,
         body: Vec<u8>,
     ) -> Result<(), String> {
-        // For replies we do not set seq or end; caller may use publish_reply_seq or publish_reply_end when streaming
+        // Build reply payload
+        use crate::protocol::frame::build_tlv;
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_ID, cid.as_bytes(), &mut payload);
+        build_tlv(TAG_BODY, &body, &mut payload);
+        
         self.engine
-            .publish(reply_route, cid, body, None, None, false, None)
-            .await
+            .dispatch(reply_route, payload, 0, crate::storage::DEFAULT_RF)
+            .await?;
+        Ok(())
     }
 
     pub async fn publish_reply_seq(
@@ -151,8 +165,21 @@ impl RpcWorker {
         body: Vec<u8>,
         end: bool,
     ) -> Result<(), String> {
+        // Build reply payload with seq and optional end flag
+        use crate::protocol::frame::build_tlv;
+        use crate::protocol::tags::*;
+        
+        let mut payload = Vec::new();
+        build_tlv(TAG_ID, cid.as_bytes(), &mut payload);
+        build_tlv(TAG_BODY, &body, &mut payload);
+        build_tlv(TAG_SEQ, &seq.to_be_bytes(), &mut payload);
+        if end {
+            build_tlv(TAG_STREAM_END, &[], &mut payload);
+        }
+        
         self.engine
-            .publish(reply_route, cid, body, None, Some(seq), end, None)
-            .await
+            .dispatch(reply_route, payload, 0, crate::storage::DEFAULT_RF)
+            .await?;
+        Ok(())
     }
 }

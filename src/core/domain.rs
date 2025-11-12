@@ -2,6 +2,7 @@
 // to handle all operations for its scheme
 
 use crate::protocol::route::Route;
+use crate::storage::RouteFamilyId;
 use tokio::sync::mpsc;
 
 /// Type alias for subscriber channels (used by domains that support pub/sub)
@@ -14,9 +15,10 @@ pub type SubSender = mpsc::Sender<(
     bool,
 )>;
 
-/// A message dispatched from engine to a domain handler
+/// Complete context for a domain operation
+/// Encapsulates all information needed to handle a request or manage resources
 #[derive(Debug, Clone)]
-pub struct DomainRequest {
+pub struct DomainContext {
     /// Parsed route (scheme, realm, area, resource, etc.)
     pub route: Route,
     /// Raw route string
@@ -25,6 +27,8 @@ pub struct DomainRequest {
     pub payload: Vec<u8>,
     /// Channel ID from frame (for tracking subscriptions/sessions)
     pub channel_id: u32,
+    /// Storage route family (for namespacing/multi-tenant operations)
+    pub route_family: RouteFamilyId,
 }
 
 /// Response from domain operation
@@ -42,47 +46,23 @@ pub enum DomainResponse {
 }
 
 /// Domain trait - each domain implements this to handle its operations
-/// Domains that support pub/sub can override the subscription methods
 pub trait Domain: Send + Sync {
     /// Handle a request for this domain
-    /// Domain parses TLV tags from request.payload to extract operation details
+    /// Domain parses TLV tags from context.payload to extract operation details
     /// Returns DomainResponse with TLV-encoded response or error
     ///
     /// Domains that need persistent storage should manage their own KvStore instance
     fn handle<'a>(
         &'a self,
-        request: DomainRequest,
+        context: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>>;
 
-    /// Get the scheme(s) this domain handles (e.g., "queue", "kv", "stream")
-    fn schemes(&self) -> &[&str];
-
-    /// Subscribe to a route pattern (optional, for pub/sub domains)
-    /// Returns subscription ID
-    /// Default implementation returns an error
-    fn subscribe<'a>(
-        &'a self,
-        _route: String,
-        _channel_id: u32,
-        _sender: SubSender,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
-        Box::pin(async move { Err("This domain does not support subscriptions".to_string()) })
-    }
-
-    /// Unsubscribe by subscription ID (optional, for pub/sub domains)
-    /// Returns true if subscription was found and removed
-    /// Default implementation returns false
-    fn unsubscribe<'a>(
-        &'a self,
-        _sub_id: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move { false })
-    }
-
-    /// Cleanup all subscriptions for a channel (optional, for pub/sub domains)
+    /// Cleanup all subscriptions and resources for a channel
+    /// Called when a channel closes or session ends
     /// Default implementation does nothing
     fn cleanup_channel<'a>(
         &'a self,
+        _route_family: RouteFamilyId,
         _channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {})

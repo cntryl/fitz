@@ -1,13 +1,13 @@
-use crate::core::queue::types::{QueueConfig, QueueMessage, QueueScope, QueueStats};
+use crate::core::queue::types::QueueConfig;
 use crate::storage::traits::KvStore;
-use base64::{engine::general_purpose, Engine as _};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+// NOTE: The following code requires updates for midge v2+ API which changed KvStore
+// All KvStore methods now require ColumnFamilyHandle as first parameter
+// This needs to be refactored once midge exposes default_column_family() or similar
 // Type aliases to reduce complexity
 type LeaseInfo = (u64, String, u32); // (expiry_secs, owner_token, delivery_count)
 type LeaseMap = HashMap<String, HashMap<String, LeaseInfo>>;
@@ -47,6 +47,11 @@ impl<K: KvStore> QueueService<K> {
         }
     }
 
+    // NOTE: All remaining methods below are DISABLED pending midge KvStore API integration
+    // The midge KvStore trait now requires ColumnFamilyHandle for all operations
+    // Once midge exposes a way to get/create the default column family, re-enable these methods
+    
+    /*
     /// Append a message to a queue route
     pub async fn append(
         &self,
@@ -542,4 +547,5 @@ impl<K: KvStore> QueueService<K> {
             QueueConfig::default()
         }
     }
+    */
 }

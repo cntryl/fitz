@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tokio::sync::mpsc::error::TrySendError;
 
-use crate::core::engine::SubSender;
+use crate::core::domain::SubSender;
 
 /// Subscription entry maintained by the Router
 #[derive(Debug, Clone)]

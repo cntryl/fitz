@@ -108,8 +108,8 @@ where
         }
     }
 
-    // Cleanup on disconnect
-    let _ = engine.cleanup_channel(1).await;
+    // Cleanup on disconnect - handled at session layer with proper context
+    // (channel_id and route_family are only available in session, not transport)
     crate::transport::dec_active_connections();
     Ok(())
 }

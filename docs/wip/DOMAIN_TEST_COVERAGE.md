@@ -73,7 +73,7 @@ All tests follow strict guidelines from `.github/copilot-instructions.md`:
 ## Next Actions
 1. Pick a domain (recommend starting with KV)
 2. Implement `Domain::handle()` method
-3. Parse TLV tags from `DomainRequest.payload`
+3. Parse TLV tags from `DomainContext.payload`
 4. Route to appropriate operation
 5. Build TLV response frame
 6. Run tests and iterate

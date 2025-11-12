@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::routing::{RouteTable, RtSubscription};
+use fitz::routing::{RouteTable, RtSubscription, DEFAULT_RF};
 use tokio::sync::mpsc;
 
 #[path = "../config.rs"]
@@ -22,7 +22,7 @@ fn bench_route_table_insert(c: &mut Criterion) {
                     channel_id: 1,
                     sender: tx.clone(),
                 };
-                rt.insert(sub);
+                rt.insert(DEFAULT_RF, sub);
             }
             rt
         });
@@ -42,11 +42,11 @@ fn bench_route_table_remove(c: &mut Criterion) {
                     channel_id: 1,
                     sender: tx.clone(),
                 };
-                rt.insert(sub);
+                rt.insert(DEFAULT_RF, sub);
             }
             // Remove half of them
             for i in 0..5 {
-                rt.remove(i);
+                rt.remove(DEFAULT_RF, i);
             }
             rt
         });
@@ -64,12 +64,12 @@ fn bench_route_table_match_exact(c: &mut Criterion) {
             channel_id: 1,
             sender: tx.clone(),
         };
-        rt.insert(sub);
+        rt.insert(DEFAULT_RF, sub);
     }
     
     c.bench_function("route_table_match_exact", |b| {
         b.iter(|| {
-            rt.matching_subscribers("scheme://realm/area42/resource/op")
+            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op")
         });
     });
 }
@@ -86,7 +86,7 @@ fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
         channel_id: 1,
         sender: tx.clone(),
     };
-    rt.insert(sub);
+    rt.insert(DEFAULT_RF, sub);
     
     // Add many specific subscriptions
     for i in 0..100 {
@@ -96,12 +96,12 @@ fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
             channel_id: 1,
             sender: tx.clone(),
         };
-        rt.insert(sub);
+        rt.insert(DEFAULT_RF, sub);
     }
     
     c.bench_function("route_table_match_global_wildcard", |b| {
         b.iter(|| {
-            rt.matching_subscribers("scheme://realm/area42/resource/op")
+            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op")
         });
     });
 }
@@ -119,12 +119,12 @@ fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
             channel_id: 1,
             sender: tx.clone(),
         };
-        rt.insert(sub);
+        rt.insert(DEFAULT_RF, sub);
     }
     
     c.bench_function("route_table_match_trailing_wildcard", |b| {
         b.iter(|| {
-            rt.matching_subscribers("scheme://realm/area10/resource/op")
+            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area10/resource/op")
         });
     });
 }
@@ -142,12 +142,12 @@ fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
             channel_id: 1,
             sender: tx.clone(),
         };
-        rt.insert(sub);
+        rt.insert(DEFAULT_RF, sub);
     }
     
     c.bench_function("route_table_match_mid_path_wildcard", |b| {
         b.iter(|| {
-            rt.matching_subscribers("scheme://realm/anyarea/resource10/op")
+            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/anyarea/resource10/op")
         });
     });
 }
@@ -164,12 +164,12 @@ fn bench_route_table_match_none(c: &mut Criterion) {
             channel_id: 1,
             sender: tx.clone(),
         };
-        rt.insert(sub);
+        rt.insert(DEFAULT_RF, sub);
     }
     
     c.bench_function("route_table_match_none", |b| {
         b.iter(|| {
-            rt.matching_subscribers("scheme://nomatch/area/resource/op")
+            rt.matching_subscribers(DEFAULT_RF, "scheme://nomatch/area/resource/op")
         });
     });
 }
@@ -190,12 +190,12 @@ fn bench_route_table_cleanup_channel(c: &mut Criterion) {
                         channel_id,
                         sender: tx.clone(),
                     };
-                    rt.insert(sub);
+                    rt.insert(DEFAULT_RF, sub);
                 }
             }
             
             // Cleanup channel 3
-            rt.cleanup_channel(3);
+            rt.cleanup_channel(DEFAULT_RF, 3);
             rt
         });
     });
@@ -221,12 +221,12 @@ fn bench_route_table_match_exact_scaling(c: &mut Criterion) {
                 channel_id: 1,
                 sender: tx.clone(),
             };
-            rt.insert(sub);
+            rt.insert(DEFAULT_RF, sub);
         }
         
         group.bench_with_input(format!("{}", n), &rt, |b, rt| {
             b.iter(|| {
-                rt.matching_subscribers(&format!("scheme://realm/area{}/resource/op", n / 2))
+                rt.matching_subscribers(DEFAULT_RF, &format!("scheme://realm/area{}/resource/op", n / 2))
             });
         });
     }
@@ -255,12 +255,12 @@ fn bench_route_table_match_wildcard_scaling(c: &mut Criterion) {
                 channel_id: 1,
                 sender: tx.clone(),
             };
-            rt.insert(sub);
+            rt.insert(DEFAULT_RF, sub);
         }
         
         group.bench_with_input(format!("{}", n), &rt, |b, rt| {
             b.iter(|| {
-                rt.matching_subscribers(&format!("scheme://realm/area{}/resource/op", n / 2))
+                rt.matching_subscribers(DEFAULT_RF, &format!("scheme://realm/area{}/resource/op", n / 2))
             });
         });
     }

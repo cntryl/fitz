@@ -1,6 +1,6 @@
 // Queue domain handler - routes all queue:// operations
 
-use crate::core::domain::{Domain, DomainRequest, DomainResponse};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 
 pub struct QueueDomain;
 
@@ -19,7 +19,7 @@ impl Default for QueueDomain {
 impl Domain for QueueDomain {
     fn handle<'a>(
         &'a self,
-        _request: DomainRequest,
+        _request: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // TODO: Implement queue domain logic
@@ -29,9 +29,5 @@ impl Domain for QueueDomain {
             // - Build TLV response frame
             panic!("QueueDomain::handle not yet implemented")
         })
-    }
-
-    fn schemes(&self) -> &[&str] {
-        &["queue"]
     }
 }

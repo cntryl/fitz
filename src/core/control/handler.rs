@@ -2,7 +2,7 @@
 
 use super::service::ControlService;
 use super::types::ControlOperation;
-use crate::core::domain::{Domain, DomainRequest, DomainResponse};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::notice::NoticeService;
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
@@ -111,7 +111,7 @@ impl Default for ControlDomain {
 impl Domain for ControlDomain {
     fn handle<'a>(
         &'a self,
-        request: DomainRequest,
+        request: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Parse body from TLV payload
@@ -163,37 +163,10 @@ impl Domain for ControlDomain {
         })
     }
 
-    fn schemes(&self) -> &[&str] {
-        &["control"]
-    }
-
-    /// Subscribe to a route pattern (delegates to notice service)
-    fn subscribe<'a>(
-        &'a self,
-        route: String,
-        channel_id: u32,
-        sender: crate::core::domain::SubSender,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.notice_service.write().await;
-            Ok(service.subscribe(route, channel_id, sender))
-        })
-    }
-
-    /// Unsubscribe by subscription ID (delegates to notice service)
-    fn unsubscribe<'a>(
-        &'a self,
-        sub_id: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.notice_service.write().await;
-            service.unsubscribe(sub_id)
-        })
-    }
-
     /// Cleanup all subscriptions for a channel (delegates to notice service)
     fn cleanup_channel<'a>(
         &'a self,
+        _rf: crate::storage::RouteFamilyId,
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
@@ -247,7 +220,7 @@ mod tests {
         payload.push(body.len() as u8);
         payload.extend_from_slice(body);
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Control,
                 realm: None,
@@ -259,6 +232,7 @@ mod tests {
             route_str: "control://heartbeat".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // tests use default route family
         };
 
         // Act
@@ -283,7 +257,7 @@ mod tests {
         payload.push(body.len() as u8);
         payload.extend_from_slice(body);
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Control,
                 realm: None,
@@ -295,6 +269,7 @@ mod tests {
             route_str: "control://shutdown".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // tests use default route family
         };
 
         // Act
@@ -315,7 +290,7 @@ mod tests {
         let domain = ControlDomain::new();
         let payload = Vec::new(); // Empty payload
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Control,
                 realm: None,
@@ -327,6 +302,7 @@ mod tests {
             route_str: "control://heartbeat".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // tests use default route family
         };
 
         // Act

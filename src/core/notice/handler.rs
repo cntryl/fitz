@@ -1,7 +1,7 @@
 // Notice domain handler - routes all notice:// operations
 
 use super::service::NoticeService;
-use crate::core::domain::{Domain, DomainRequest, DomainResponse, SubSender};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
     TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE,
     TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
@@ -28,29 +28,6 @@ impl NoticeDomain {
     /// Get the shared notice service for use by other domains (e.g., control)
     pub fn get_service(&self) -> Arc<RwLock<NoticeService>> {
         Arc::clone(&self.service)
-    }
-
-    /// Subscribe to a route pattern (called by engine)
-    pub async fn subscribe(
-        &self,
-        route_pattern: String,
-        channel_id: u32,
-        sender: SubSender,
-    ) -> u64 {
-        let mut service = self.service.write().await;
-        service.subscribe(route_pattern, channel_id, sender)
-    }
-
-    /// Unsubscribe by subscription ID (called by engine)
-    pub async fn unsubscribe(&self, sub_id: u64) -> bool {
-        let mut service = self.service.write().await;
-        service.unsubscribe(sub_id)
-    }
-
-    /// Cleanup all subscriptions for a channel (called by engine on disconnect)
-    pub async fn cleanup_channel(&self, channel_id: u32) {
-        let mut service = self.service.write().await;
-        service.cleanup_channel(channel_id)
     }
 
     /// Parse TLV-encoded payload and extract all relevant fields in one pass
@@ -188,7 +165,7 @@ enum NoticeOp {
 impl Domain for NoticeDomain {
     fn handle<'a>(
         &'a self,
-        request: DomainRequest,
+        request: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Parse TLV payload in a single pass (optimization: avoid double-scan)
@@ -274,37 +251,10 @@ impl Domain for NoticeDomain {
         })
     }
 
-    fn schemes(&self) -> &[&str] {
-        &["notice"]
-    }
-
-    /// Subscribe to a route pattern
-    fn subscribe<'a>(
-        &'a self,
-        route: String,
-        channel_id: u32,
-        sender: crate::core::domain::SubSender,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.service.write().await;
-            Ok(service.subscribe(route, channel_id, sender))
-        })
-    }
-
-    /// Unsubscribe by subscription ID
-    fn unsubscribe<'a>(
-        &'a self,
-        sub_id: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.service.write().await;
-            service.unsubscribe(sub_id)
-        })
-    }
-
     /// Cleanup all subscriptions for a channel
     fn cleanup_channel<'a>(
         &'a self,
+        _rf: crate::storage::RouteFamilyId,
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
@@ -361,7 +311,7 @@ mod tests {
         let domain = NoticeDomain::new();
         let payload = vec![TAG_SUBSCRIBE, 0];
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Notice,
                 realm: None,
@@ -373,6 +323,7 @@ mod tests {
             route_str: "notice://test".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // test uses default route family
         };
 
         // Act
@@ -401,7 +352,7 @@ mod tests {
         payload.push(body.len() as u8);
         payload.extend_from_slice(body);
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Notice,
                 realm: Some("realm1".to_string()),
@@ -413,6 +364,7 @@ mod tests {
             route_str: "notice://realm1/area1/resource1/alerts".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // test uses default route family
         };
 
         // Act
@@ -437,7 +389,7 @@ mod tests {
         payload.push(body.len() as u8);
         payload.extend_from_slice(body);
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Notice,
                 realm: Some("realm1".to_string()),
@@ -449,6 +401,7 @@ mod tests {
             route_str: "notice://realm1/area1/resource1".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // test uses default route family
         };
 
         // Act
@@ -475,7 +428,7 @@ mod tests {
         payload.push(TAG_SUBSCRIBE);
         payload.push(0); // Empty subscribe value
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Notice,
                 realm: None, // Missing realm - should fail
@@ -487,6 +440,7 @@ mod tests {
             route_str: "notice://*".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // test uses default route family
         };
 
         // Act
@@ -513,7 +467,7 @@ mod tests {
         payload.push(TAG_SUBSCRIBE);
         payload.push(0);
 
-        let request = DomainRequest {
+        let request = DomainContext {
             route: Route {
                 scheme: crate::protocol::route::Scheme::Notice,
                 realm: Some("realm1".to_string()),
@@ -525,6 +479,7 @@ mod tests {
             route_str: "notice://realm1/*".to_string(),
             payload,
             channel_id: 1,
+            route_family: 0,  // test uses default route family
         };
 
         // Act

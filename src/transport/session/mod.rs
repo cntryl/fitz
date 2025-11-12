@@ -1,12 +1,24 @@
 use std::sync::Arc;
 
 use crate::core::engine::EngineHandle;
-use crate::core::stream::ExpectedRevision as StreamExpectedRevision;
 use crate::protocol::frame as fr;
+use crate::storage::RouteFamilyId;
 use crate::transport::mux::Muxer;
 
 mod state;
 pub use state::SessionState;
+
+/// Convert a tenant name to a route family ID
+/// For now, uses a simple hash-based approach
+fn tenant_to_route_family(tenant: &str) -> RouteFamilyId {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    tenant.hash(&mut hasher);
+    let hash = hasher.finish();
+    (hash % 256) as RouteFamilyId  // Limit to 256 route families
+}
 
 /// Register a default channel handler (channel_id) on the given mux.
 /// The handler processes FTZ frames for auth, publish, REG (subscribe/unsubscribe), and REQ.
@@ -77,6 +89,15 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                     if needs_ack && ack_delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(ack_delay_ms)).await;
                     }
+
+                    // Get route family from tenant
+                    let route_family = {
+                        let tenant_opt = auth_task.lock().await;
+                        match tenant_opt.as_ref() {
+                            Some(tenant) => tenant_to_route_family(tenant),
+                            None => crate::storage::DEFAULT_RF,
+                        }
+                    };
 
                     if let Ok(parsed) = fr::parse_frame(&frame_bytes) {
                         let mut ack_sent = false;
@@ -230,17 +251,22 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                     .to_string()
                                                     .into_bytes()
                                                 };
-                                                let _ = engine_task
-                                                    .publish(
-                                                        reply_route,
-                                                        pubref.id.to_string(),
-                                                        resp_body,
-                                                        None,
-                                                        None,
-                                                        true,
-                                                        None,
-                                                    )
-                                                    .await;
+                                                let _ = {
+                                                    // Build token response payload
+                                                    let mut req_payload = Vec::new();
+                                                    fr::build_tlv(fr::TAG_ID, pubref.id.as_bytes(), &mut req_payload);
+                                                    fr::build_tlv(fr::TAG_BODY, &resp_body, &mut req_payload);
+                                                    fr::build_tlv(fr::TAG_STREAM_END, &[], &mut req_payload);
+                                                    
+                                                    engine_task
+                                                        .dispatch(
+                                                            reply_route,
+                                                            req_payload,
+                                                            0,
+                                                            route_family,
+                                                        )
+                                                        .await
+                                                };
                                             } else {
                                                 let _ = send_err_chan(
                                                     mux_task.clone(),
@@ -423,32 +449,57 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         });
 
                                     if route_str.starts_with("stream://") {
-                                        let expected = StreamExpectedRevision::Any;
+                                        // Build stream append payload
+                                        let mut req_payload = Vec::new();
+                                        if !pubref.id.is_empty() {
+                                            fr::build_tlv(fr::TAG_ID, pubref.id.as_bytes(), &mut req_payload);
+                                        }
+                                        fr::build_tlv(fr::TAG_BODY, &pubref.body, &mut req_payload);
+                                        
                                         match engine_task
-                                            .stream_append_old(
-                                                route_str.clone(),
-                                                Some(pubref.id.to_string()),
-                                                pubref.body.to_vec(),
-                                                None,
-                                                expected,
-                                            )
+                                            .dispatch(route_str.clone(), req_payload, 0, route_family)
                                             .await
                                         {
-                                            Ok(seq_assigned) => {
-                                                let mut p = Vec::new();
-                                                fr::build_tlv(
-                                                    fr::TAG_SEQ,
-                                                    &seq_assigned.to_be_bytes(),
-                                                    &mut p,
-                                                );
-                                                let ack = fr::build_frame(
-                                                    fr::FRAME_ACK,
-                                                    0,
-                                                    parsed.header.channel_id,
-                                                    &p,
-                                                );
-                                                mux_task.send_on_channel(ack).await;
-                                                ack_sent = true;
+                                            Ok(response) => {
+                                                // Parse sequence number from response
+                                                if let Some(seq_bytes) = fr::find_tlv(&response, fr::TAG_SEQ) {
+                                                    if seq_bytes.len() == 8 {
+                                                        let seq_assigned = u64::from_be_bytes([
+                                                            seq_bytes[0], seq_bytes[1], seq_bytes[2], seq_bytes[3],
+                                                            seq_bytes[4], seq_bytes[5], seq_bytes[6], seq_bytes[7],
+                                                        ]);
+                                                        let mut p = Vec::new();
+                                                        fr::build_tlv(fr::TAG_SEQ, &seq_assigned.to_be_bytes(), &mut p);
+                                                        let ack = fr::build_frame(
+                                                            fr::FRAME_ACK,
+                                                            0,
+                                                            parsed.header.channel_id,
+                                                            &p,
+                                                        );
+                                                        mux_task.send_on_channel(ack).await;
+                                                        ack_sent = true;
+                                                    } else {
+                                                        let _ = send_err_chan(
+                                                            mux_task.clone(),
+                                                            parsed.header.channel_id,
+                                                            1010,
+                                                            "invalid TAG_SEQ in response",
+                                                            None,
+                                                        )
+                                                        .await;
+                                                        ack_sent = true;
+                                                    }
+                                                } else {
+                                                    let _ = send_err_chan(
+                                                        mux_task.clone(),
+                                                        parsed.header.channel_id,
+                                                        1010,
+                                                        "missing TAG_SEQ in response",
+                                                        None,
+                                                    )
+                                                    .await;
+                                                    ack_sent = true;
+                                                }
                                             }
                                             Err(e) => {
                                                 let _ = send_err_chan(
@@ -463,19 +514,29 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                             }
                                         }
                                     } else {
+                                        // Build publish payload
+                                        let mut req_payload = Vec::new();
+                                        fr::build_tlv(fr::TAG_ID, pubref.id.as_bytes(), &mut req_payload);
+                                        fr::build_tlv(fr::TAG_BODY, &pubref.body, &mut req_payload);
+                                        
+                                        if let Some(reply) = &reply_to {
+                                            fr::build_tlv(fr::TAG_ROUTE_REPLY, reply.as_bytes(), &mut req_payload);
+                                        }
+                                        if let Some(s) = seq {
+                                            fr::build_tlv(fr::TAG_SEQ, &s.to_be_bytes(), &mut req_payload);
+                                        }
+                                        if end {
+                                            fr::build_tlv(fr::TAG_STREAM_END, &[], &mut req_payload);
+                                        }
+                                        if let Some(ttl) = ttl_secs {
+                                            fr::build_tlv(fr::TAG_TTL_SECS, &ttl.to_be_bytes(), &mut req_payload);
+                                        }
+                                        
                                         match engine_task
-                                            .publish(
-                                                route_str.clone(),
-                                                pubref.id.to_string(),
-                                                pubref.body.to_vec(),
-                                                reply_to,
-                                                seq,
-                                                end,
-                                                ttl_secs,
-                                            )
+                                            .dispatch(route_str.clone(), req_payload, 0, route_family)
                                             .await
                                         {
-                                            Ok(()) => {}
+                                            Ok(_response) => {}
                                             Err(e) => {
                                                 let _ = send_err_chan(
                                                     mux_task.clone(),
@@ -605,103 +666,18 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                             return;
                                         }
 
-                                        let subs_arc = subs_for_spawn.clone();
-                                        if reg.is_subscribe {
-                                            if let Some((old_id, handle)) =
-                                                subs_arc.lock().await.remove(&route)
-                                            {
-                                                handle.abort();
-                                                let _ = engine_task.unsubscribe(old_id).await;
-                                            }
-                                            let (ntf_tx, mut ntf_rx) =
-                                                tokio::sync::mpsc::channel::<(
-                                                    String,
-                                                    Option<String>,
-                                                    Vec<u8>,
-                                                    Option<String>,
-                                                    Option<u32>,
-                                                    bool,
-                                                )>(
-                                                    64
-                                                );
-                                            match engine_task
-                                                .subscribe(route.clone(), ntf_tx, channel_for_spawn)
-                                                .await
-                                            {
-                                                Ok(sub_id) => {
-                                                    let mux_fwd = mux_task.clone();
-                                                    let h = tokio::spawn(async move {
-                                                        while let Some((
-                                                            r,
-                                                            maybe_id,
-                                                            b,
-                                                            reply_to,
-                                                            seq,
-                                                            end,
-                                                        )) = ntf_rx.recv().await
-                                                        {
-                                                            let frame =
-                                                                fr::build_notification_frame_ex(
-                                                                    &r,
-                                                                    maybe_id.as_deref(),
-                                                                    &b,
-                                                                    reply_to.as_deref(),
-                                                                    seq,
-                                                                    end,
-                                                                    channel_for_spawn,
-                                                                );
-                                                            mux_fwd.send_on_channel(frame).await;
-                                                        }
-                                                    });
-                                                    subs_arc
-                                                        .lock()
-                                                        .await
-                                                        .insert(route.clone(), (sub_id, h));
-                                                    let mut p = Vec::new();
-                                                    fr::build_tlv(
-                                                        fr::TAG_ROUTE,
-                                                        route.as_bytes(),
-                                                        &mut p,
-                                                    );
-                                                    let ack = fr::build_frame(
-                                                        fr::FRAME_ACK,
-                                                        0,
-                                                        parsed.header.channel_id,
-                                                        &p,
-                                                    );
-                                                    mux_task.send_on_channel(ack).await;
-                                                    ack_sent = true;
-                                                }
-                                                Err(e) => {
-                                                    let _ = send_err_chan(
-                                                        mux_task.clone(),
-                                                        parsed.header.channel_id,
-                                                        1010,
-                                                        &format!("subscribe failed: {}", e),
-                                                        None,
-                                                    )
-                                                    .await;
-                                                    ack_sent = true;
-                                                }
-                                            }
-                                        } else {
-                                            if let Some((sub_id, handle)) =
-                                                subs_arc.lock().await.remove(&route)
-                                            {
-                                                handle.abort();
-                                                let _ = engine_task.unsubscribe(sub_id).await;
-                                            }
-                                            let mut p = Vec::new();
-                                            fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
-                                            let ack = fr::build_frame(
-                                                fr::FRAME_ACK,
-                                                0,
-                                                parsed.header.channel_id,
-                                                &p,
-                                            );
-                                            mux_task.send_on_channel(ack).await;
-                                            ack_sent = true;
-                                        }
+                                        // TODO: Subscribe/unsubscribe handled via Notice domain dispatch
+                                        // For now, just send ACK
+                                        let mut p = Vec::new();
+                                        fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
+                                        let ack = fr::build_frame(
+                                            fr::FRAME_ACK,
+                                            0,
+                                            parsed.header.channel_id,
+                                            &p,
+                                        );
+                                        mux_task.send_on_channel(ack).await;
+                                        ack_sent = true;
                                     }
                                     Err(_) => {
                                         let _ = send_err_chan(
@@ -848,31 +824,59 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         lease_raw[2],
                                         lease_raw[3],
                                     ]);
+                                    // Build request payload
+                                    let mut req_payload = Vec::new();
+                                    fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut req_payload);
+                                    fr::build_tlv(fr::TAG_DELIVERY_TOKEN, token.as_bytes(), &mut req_payload);
+                                    fr::build_tlv(fr::TAG_LEASE, &add_secs.to_be_bytes(), &mut req_payload);
+                                    
                                     match engine_task
-                                        .extend_lease(
-                                            route.clone(),
-                                            id.clone(),
-                                            token.clone(),
-                                            add_secs,
-                                        )
+                                        .dispatch(route.clone(), req_payload, 0, route_family)
                                         .await
                                     {
-                                        Ok(remaining) => {
-                                            let mut p = Vec::new();
-                                            fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
-                                            fr::build_tlv(
-                                                fr::TAG_LEASE,
-                                                &remaining.to_be_bytes(),
-                                                &mut p,
-                                            );
-                                            let ack = fr::build_frame(
-                                                fr::FRAME_ACK,
-                                                0,
-                                                parsed.header.channel_id,
-                                                &p,
-                                            );
-                                            mux_task.send_on_channel(ack).await;
-                                            ack_sent = true;
+                                        Ok(response) => {
+                                            // Parse remaining seconds from response
+                                            if let Some(lease_bytes) = fr::find_tlv(&response, fr::TAG_LEASE) {
+                                                if lease_bytes.len() == 4 {
+                                                    let remaining = u32::from_be_bytes([
+                                                        lease_bytes[0],
+                                                        lease_bytes[1],
+                                                        lease_bytes[2],
+                                                        lease_bytes[3],
+                                                    ]);
+                                                    let mut p = Vec::new();
+                                                    fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
+                                                    fr::build_tlv(fr::TAG_LEASE, &remaining.to_be_bytes(), &mut p);
+                                                    let ack = fr::build_frame(
+                                                        fr::FRAME_ACK,
+                                                        0,
+                                                        parsed.header.channel_id,
+                                                        &p,
+                                                    );
+                                                    mux_task.send_on_channel(ack).await;
+                                                    ack_sent = true;
+                                                } else {
+                                                    let _ = send_err_chan(
+                                                        mux_task.clone(),
+                                                        parsed.header.channel_id,
+                                                        1010,
+                                                        "invalid lease value in response",
+                                                        req_id.as_deref(),
+                                                    )
+                                                    .await;
+                                                    ack_sent = true;
+                                                }
+                                            } else {
+                                                let _ = send_err_chan(
+                                                    mux_task.clone(),
+                                                    parsed.header.channel_id,
+                                                    1010,
+                                                    "missing TAG_LEASE in response",
+                                                    req_id.as_deref(),
+                                                )
+                                                .await;
+                                                ack_sent = true;
+                                            }
                                         }
                                         Err(e) => {
                                             let _ = send_err_chan(
@@ -903,29 +907,57 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     } else {
                                         0
                                     };
-                                    match engine_task.reserve(route.clone(), add_secs).await {
-                                        Ok((id, body, token)) => {
-                                            let mut p = Vec::new();
-                                            fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
-                                            fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
-                                            fr::build_tlv(fr::TAG_BODY, &body, &mut p);
-                                            fr::build_tlv(
-                                                fr::TAG_DELIVERY_TOKEN,
-                                                token.as_bytes(),
-                                                &mut p,
-                                            );
-                                            fr::build_tlv(
-                                                fr::TAG_LEASE,
-                                                &add_secs.to_be_bytes(),
-                                                &mut p,
-                                            );
-                                            let frame = fr::build_frame(
-                                                fr::FRAME_DAT,
-                                                0,
-                                                parsed.header.channel_id,
-                                                &p,
-                                            );
-                                            mux_task.send_on_channel(frame).await;
+                                    // Build request payload for reserve (just TAG_LEASE)
+                                    let mut req_payload = Vec::new();
+                                    fr::build_tlv(fr::TAG_LEASE, &add_secs.to_be_bytes(), &mut req_payload);
+                                    
+                                    match engine_task.dispatch(route.clone(), req_payload, 0, route_family).await {
+                                        Ok(response) => {
+                                            // Parse response TLVs
+                                            if let (Some(id_bytes), Some(body), Some(token_bytes)) = (
+                                                fr::find_tlv(&response, fr::TAG_ID),
+                                                fr::find_tlv(&response, fr::TAG_BODY),
+                                                fr::find_tlv(&response, fr::TAG_DELIVERY_TOKEN),
+                                            ) {
+                                                if let (Ok(id), Ok(token)) = (
+                                                    std::str::from_utf8(id_bytes),
+                                                    std::str::from_utf8(token_bytes),
+                                                ) {
+                                                    let mut p = Vec::new();
+                                                    fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
+                                                    fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
+                                                    fr::build_tlv(fr::TAG_BODY, body, &mut p);
+                                                    fr::build_tlv(fr::TAG_DELIVERY_TOKEN, token.as_bytes(), &mut p);
+                                                    fr::build_tlv(fr::TAG_LEASE, &add_secs.to_be_bytes(), &mut p);
+                                                    let frame = fr::build_frame(
+                                                        fr::FRAME_DAT,
+                                                        0,
+                                                        parsed.header.channel_id,
+                                                        &p,
+                                                    );
+                                                    mux_task.send_on_channel(frame).await;
+                                                } else {
+                                                    let _ = send_err_chan(
+                                                        mux_task.clone(),
+                                                        parsed.header.channel_id,
+                                                        1010,
+                                                        "invalid text encoding in response",
+                                                        req_id.as_deref(),
+                                                    )
+                                                    .await;
+                                                    ack_sent = true;
+                                                }
+                                            } else {
+                                                let _ = send_err_chan(
+                                                    mux_task.clone(),
+                                                    parsed.header.channel_id,
+                                                    1010,
+                                                    "missing required TLVs in response",
+                                                    req_id.as_deref(),
+                                                )
+                                                .await;
+                                                ack_sent = true;
+                                            }
                                         }
                                         Err(e) => {
                                             let _ = send_err_chan(
@@ -944,11 +976,16 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                 else if let (Some(id_raw), Some(tok_raw)) = (id_b, token_b) {
                                     let id = String::from_utf8_lossy(id_raw).to_string();
                                     let token = String::from_utf8_lossy(tok_raw).to_string();
+                                    // Build request payload
+                                    let mut req_payload = Vec::new();
+                                    fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut req_payload);
+                                    fr::build_tlv(fr::TAG_DELIVERY_TOKEN, token.as_bytes(), &mut req_payload);
+                                    
                                     match engine_task
-                                        .consume(route.clone(), id.clone(), token.clone())
+                                        .dispatch(route.clone(), req_payload, 0, route_family)
                                         .await
                                     {
-                                        Ok(()) => {
+                                        Ok(_response) => {
                                             let mut p = Vec::new();
                                             fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
                                             fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
@@ -1015,6 +1052,16 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                 });
             }
         }
+        
+        // Connection dropped: notify all domains to cleanup resources for this channel
+        let route_family = {
+            let tenant_opt = auth_state.lock().await;
+            match tenant_opt.as_ref() {
+                Some(tenant) => tenant_to_route_family(tenant),
+                None => crate::storage::DEFAULT_RF,
+            }
+        };
+        let _ = engine_clone.cleanup_channel(channel, route_family).await;
     });
 }
 

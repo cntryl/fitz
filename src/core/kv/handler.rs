@@ -1,7 +1,7 @@
 // KV domain handler - routes all kv:// operations
 
 use super::types::KvOperation;
-use crate::core::domain::{Domain, DomainRequest, DomainResponse};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID};
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
@@ -114,6 +114,10 @@ impl KvDomain {
     }
 }
 
+// NOTE: Default impl commented out due to midge KvStore trait changes
+// The trait requires ColumnFamilyHandle parameters that this mock doesn't provide
+// Mock store implementations are currently not compatible with the midge trait
+/*
 impl Default for KvDomain {
     fn default() -> Self {
         // For tests - use a mock store
@@ -152,11 +156,12 @@ impl Default for KvDomain {
         Self::new(Arc::new(MockStore))
     }
 }
+*/
 
 impl Domain for KvDomain {
     fn handle<'a>(
         &'a self,
-        request: DomainRequest,
+        request: DomainContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Determine operation from route
@@ -191,9 +196,5 @@ impl Domain for KvDomain {
                 Self::build_tlv_response(result),
             ))
         })
-    }
-
-    fn schemes(&self) -> &[&str] {
-        &["kv"]
     }
 }

@@ -78,7 +78,7 @@ impl TcpTransport {
                     }
                 }
 
-                let _ = engine.cleanup_channel(1).await;
+                // Cleanup handled at session layer with proper channel_id and route_family context
             });
         }
         Ok(())
@@ -151,7 +151,7 @@ impl TcpTransport {
                                 Err(_) => break,
                             }
                         }
-                        let _ = engine.cleanup_channel(1).await;
+                        // Cleanup handled at session layer with proper channel_id and route_family context
                     }
                     Err(e) => eprintln!("tls accept failed: {}", e),
                 }

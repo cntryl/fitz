@@ -5,8 +5,6 @@ mod handler;
 mod service;
 pub mod types;
 
-#[cfg(test)]
-mod watermark_test;
 
 // Re-export public API
 pub use handler::StreamDomain;

@@ -4,7 +4,6 @@ pub mod traits;
 pub mod midge_adapter;
 
 pub use traits::{KvStore, KvTransaction};
-pub use cntryl_midge_adapter::{create_local_store, create_memory_store, create_store_with_options, MidgeEngine};
 
 /// Route Family identifier for tenant/shard isolation
 ///

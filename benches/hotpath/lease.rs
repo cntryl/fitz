@@ -16,9 +16,9 @@ fn rt() -> &'static Runtime {
     RT.get_or_init(|| Runtime::new().expect("runtime"))
 }
 
-// Helper to build a DomainRequest for a given raw route and payload (used by handler benches)
-fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainRequest {
-    fitz::core::domain::DomainRequest {
+// Helper to build a DomainContext for a given raw route and payload (used by handler benches)
+fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContext {
+    fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Lease,
             realm: None,
@@ -30,6 +30,7 @@ fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainReques
         route_str: raw.to_string(),
         payload,
         channel_id: 1,
+        route_family: 0,  // benchmarks use default route family
     }
 }
 
