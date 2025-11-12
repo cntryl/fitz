@@ -5,7 +5,7 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription, RouteFamilyId, DEFAULT_RF};
+use crate::routing::{RouteTable, RtSubscription, DEFAULT_RF};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
