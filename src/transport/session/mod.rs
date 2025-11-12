@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::core::engine::EngineHandle;
 use crate::protocol::frame as fr;
-use crate::storage::RouteFamilyId;
+use crate::routing::{RouteFamilyId, DEFAULT_RF};
 use crate::transport::mux::Muxer;
 
 mod state;

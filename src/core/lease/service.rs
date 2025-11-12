@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::types::*;
-use crate::storage::RouteFamilyId;
+use crate::routing::RouteFamilyId;
 use base64::{engine::general_purpose, Engine as _};
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
@@ -549,7 +549,7 @@ fn parse_lease_key(key: &str) -> Result<(&str, &str, &str), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::DEFAULT_RF;
+    use crate::routing::DEFAULT_RF;
     use tokio::time::{sleep, Duration};
 
     // Override LeaseService::new() in tests to disable background expirer

@@ -3,10 +3,17 @@ use smallvec::SmallVec;
 use std::collections::HashSet;
 
 use crate::core::domain::SubSender;
-pub use crate::storage::RouteFamilyId;
+
+/// Route Family identifier for tenant/shard isolation
+///
+/// Fitz defines its own RouteFamilyId type (decoupled from midge) to:
+/// - Maintain clear separation between routing logic and storage implementation
+/// - Enable potential RF metadata, validation, or lifecycle management in the future
+/// - Provide flexibility in mapping between Fitz RFs and midge storage backend
+pub type RouteFamilyId = u32;
 
 /// Default route family when a specific RF is not provided (tests, legacy)
-pub use crate::storage::DEFAULT_RF;
+pub const DEFAULT_RF: RouteFamilyId = 0;
 
 /// Internal subscription entry
 #[derive(Debug, Clone)]

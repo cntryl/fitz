@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use crate::core::domain::{DomainContext, DomainResponse};
 use crate::core::registry::DomainRegistry;
 use crate::protocol::route::parse_route;
-use crate::storage::RouteFamilyId;
+use crate::routing::RouteFamilyId;
 
 /// Engine commands
 #[derive(Debug)]

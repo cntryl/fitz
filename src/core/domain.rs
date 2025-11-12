@@ -2,7 +2,7 @@
 // to handle all operations for its scheme
 
 use crate::protocol::route::Route;
-use crate::storage::RouteFamilyId;
+use crate::routing::RouteFamilyId;
 use tokio::sync::mpsc;
 
 /// Type alias for subscriber channels (used by domains that support pub/sub)
