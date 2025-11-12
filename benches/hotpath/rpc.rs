@@ -17,7 +17,7 @@ fn rt() -> &'static Runtime {
 // ============================================================================
 // SERVICE BENCHMARKS (DEPRECATED - Moved to dispatch-only model)
 // ============================================================================
-// 
+//
 // Note: The following service benchmarks (allocate_inbox, subscribe_handler, etc.)
 // were testing internal service methods that are no longer exposed to benchmarks.
 // The RPC domain now operates in dispatch-only mode where all operations come
@@ -30,7 +30,7 @@ fn rt() -> &'static Runtime {
 // fn bench_service_allocate_inbox(c: &mut Criterion) {
 //     let rt = rt();
 //     let domain = Arc::new(RpcDomain::new());
-//     
+//
 //     c.bench_function("service_allocate_inbox", |b| {
 //         b.iter(|| {
 //             rt.block_on(async {
@@ -50,14 +50,14 @@ fn rt() -> &'static Runtime {
 fn bench_domain_parse_tlv_minimal(c: &mut Criterion) {
     let rt = rt();
     let domain = Arc::new(RpcDomain::new());
-    
+
     // Build minimal TLV: route only
     let mut payload = Vec::new();
     payload.push(TAG_ROUTE);
     let route = b"rpc://acme/auth/user/create";
     payload.push(route.len() as u8);
     payload.extend_from_slice(route);
-    
+
     let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
@@ -72,13 +72,9 @@ fn bench_domain_parse_tlv_minimal(c: &mut Criterion) {
         channel_id: 1,
         route_family: 0,
     };
-    
+
     c.bench_function("domain_parse_tlv_minimal", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                domain.handle(request.clone()).await
-            })
-        });
+        b.iter(|| rt.block_on(async { domain.handle(request.clone()).await }));
     });
 }
 
@@ -86,34 +82,34 @@ fn bench_domain_parse_tlv_minimal(c: &mut Criterion) {
 fn bench_domain_parse_tlv_full(c: &mut Criterion) {
     let rt = rt();
     let domain = Arc::new(RpcDomain::new());
-    
+
     // Build full TLV: route + id + body + reply_route
     let mut payload = Vec::new();
-    
+
     // TAG_ROUTE
     payload.push(TAG_ROUTE);
     let route = b"rpc://acme/auth/user/create";
     payload.push(route.len() as u8);
     payload.extend_from_slice(route);
-    
+
     // TAG_ID (correlation ID)
     payload.push(TAG_ID);
     let corr_id = b"req-12345678";
     payload.push(corr_id.len() as u8);
     payload.extend_from_slice(corr_id);
-    
+
     // TAG_BODY
     payload.push(TAG_BODY);
     let body = b"{\"username\":\"alice\",\"email\":\"alice@example.com\"}";
     payload.push(body.len() as u8);
     payload.extend_from_slice(body);
-    
+
     // TAG_ROUTE_REPLY
     payload.push(TAG_ROUTE_REPLY);
     let reply_route = b"inbox://a1b2c3d4-e5f6-7890-abcd-ef1234567890";
     payload.push(reply_route.len() as u8);
     payload.extend_from_slice(reply_route);
-    
+
     let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
@@ -128,13 +124,9 @@ fn bench_domain_parse_tlv_full(c: &mut Criterion) {
         channel_id: 1,
         route_family: 0,
     };
-    
+
     c.bench_function("domain_parse_tlv_full", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                domain.handle(request.clone()).await
-            })
-        });
+        b.iter(|| rt.block_on(async { domain.handle(request.clone()).await }));
     });
 }
 
@@ -142,37 +134,37 @@ fn bench_domain_parse_tlv_full(c: &mut Criterion) {
 fn bench_domain_parse_tlv_streaming(c: &mut Criterion) {
     let rt = rt();
     let domain = Arc::new(RpcDomain::new());
-    
+
     // Build streaming TLV
     let mut payload = Vec::new();
-    
+
     // TAG_ROUTE (inbox route for reply)
     payload.push(TAG_ROUTE);
     let route = b"inbox://test-inbox-uuid";
     payload.push(route.len() as u8);
     payload.extend_from_slice(route);
-    
+
     // TAG_ID
     payload.push(TAG_ID);
     let corr_id = b"req-123";
     payload.push(corr_id.len() as u8);
     payload.extend_from_slice(corr_id);
-    
+
     // TAG_SEQ
     payload.push(TAG_SEQ);
     payload.push(8);
     payload.extend_from_slice(&5u64.to_be_bytes());
-    
+
     // TAG_BODY
     payload.push(TAG_BODY);
     let body = b"chunk data";
     payload.push(body.len() as u8);
     payload.extend_from_slice(body);
-    
+
     // TAG_STREAM_END
     payload.push(TAG_STREAM_END);
     payload.push(0);
-    
+
     let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
@@ -187,13 +179,9 @@ fn bench_domain_parse_tlv_streaming(c: &mut Criterion) {
         channel_id: 1,
         route_family: 0,
     };
-    
+
     c.bench_function("domain_parse_tlv_streaming", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                domain.handle(request.clone()).await
-            })
-        });
+        b.iter(|| rt.block_on(async { domain.handle(request.clone()).await }));
     });
 }
 
@@ -201,7 +189,7 @@ fn bench_domain_parse_tlv_streaming(c: &mut Criterion) {
 fn bench_domain_build_subscribe_response(c: &mut Criterion) {
     let rt = rt();
     let domain = Arc::new(RpcDomain::new());
-    
+
     // Subscribe request
     let mut payload = Vec::new();
     payload.push(TAG_SUBSCRIBE);
@@ -210,7 +198,7 @@ fn bench_domain_build_subscribe_response(c: &mut Criterion) {
     let route = b"rpc://acme/auth/user/create";
     payload.push(route.len() as u8);
     payload.extend_from_slice(route);
-    
+
     let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
@@ -225,13 +213,9 @@ fn bench_domain_build_subscribe_response(c: &mut Criterion) {
         channel_id: 1,
         route_family: 0,
     };
-    
+
     c.bench_function("domain_build_subscribe_response", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                domain.handle(request.clone()).await
-            })
-        });
+        b.iter(|| rt.block_on(async { domain.handle(request.clone()).await }));
     });
 }
 
@@ -239,10 +223,10 @@ fn bench_domain_build_subscribe_response(c: &mut Criterion) {
 fn bench_domain_build_error_response(c: &mut Criterion) {
     let rt = rt();
     let domain = Arc::new(RpcDomain::new());
-    
+
     // Malformed request (missing required fields)
     let payload = vec![0xFF, 0x10]; // Invalid TLV
-    
+
     let request = fitz::core::domain::DomainContext {
         route: fitz::protocol::route::Route {
             scheme: fitz::protocol::route::Scheme::Rpc,
@@ -257,13 +241,9 @@ fn bench_domain_build_error_response(c: &mut Criterion) {
         channel_id: 1,
         route_family: 0,
     };
-    
+
     c.bench_function("domain_build_error_response", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                domain.handle(request.clone()).await
-            })
-        });
+        b.iter(|| rt.block_on(async { domain.handle(request.clone()).await }));
     });
 }
 
@@ -278,7 +258,7 @@ fn bench_domain_build_error_response(c: &mut Criterion) {
 /// Benchmark: Create RPC client (allocate inbox + subscribe)
 fn bench_client_new(c: &mut Criterion) {
     let rt = rt();
-    
+
     c.bench_function("client_new", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -298,7 +278,7 @@ fn bench_client_call_unary(c: &mut Criterion) {
     let client = rt.block_on(async {
         RpcClient::new(engine, rpc_domain, 1).await.unwrap()
     });
-    
+
     c.bench_function("client_call_unary", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -322,7 +302,7 @@ criterion_group! {
     config = config::criterion_config();
     targets =
         // Service benchmarks (removed - now dispatch-only)
-        
+
         // Domain handler benchmarks (TLV)
         bench_domain_parse_tlv_minimal,
         bench_domain_parse_tlv_full,

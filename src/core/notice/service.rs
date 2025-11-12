@@ -59,19 +59,14 @@ impl NoticeService {
 
     /// Publish a notification to all matching subscribers
     /// Returns (delivered_count, failed_count)
-    /// 
+    ///
     /// Optimizations:
     /// - Uses SmallVec for dead_subs (typically 0-2 dead subs per publish)
     /// - Early return for no subscribers
     /// - Optimizes single subscriber case (no pre-allocation needed)
-    pub fn publish(
-        &mut self,
-        route: &str,
-        msg_id: Option<&str>,
-        body: &[u8],
-    ) -> (usize, usize) {
+    pub fn publish(&mut self, route: &str, msg_id: Option<&str>, body: &[u8]) -> (usize, usize) {
         let matches = self.route_table.matching_subscribers(DEFAULT_RF, route);
-        
+
         // Fast path: no subscribers
         if matches.is_empty() {
             return (0, 0);
@@ -161,8 +156,7 @@ mod tests {
 
         // Act
         let _sub_id = service.subscribe("test/route".to_string(), 1, tx);
-        let (delivered, failed) =
-            service.publish("test/route", Some("msg-1"), b"hello");
+        let (delivered, failed) = service.publish("test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert_eq!(delivered, 1);
@@ -181,8 +175,7 @@ mod tests {
 
         // Act
         let removed = service.unsubscribe(sub_id);
-        let (delivered, _) =
-            service.publish("test/route", Some("msg-1"), b"hello");
+        let (delivered, _) = service.publish("test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert!(removed);
@@ -215,8 +208,7 @@ mod tests {
 
         // Act - fill the channel and overflow
         service.publish("test/route", Some("msg-1"), b"1");
-        let (_delivered, failed) =
-            service.publish("test/route", Some("msg-2"), b"2");
+        let (_delivered, failed) = service.publish("test/route", Some("msg-2"), b"2");
 
         // Assert - second publish should fail due to backpressure
         assert_eq!(failed, 1);
@@ -243,7 +235,11 @@ mod tests {
 
         for route in test_routes {
             let (delivered, failed) = service.publish(route, None, b"test");
-            assert_eq!(delivered, 1, "Route '{}' should match global wildcard", route);
+            assert_eq!(
+                delivered, 1,
+                "Route '{}' should match global wildcard",
+                route
+            );
             assert_eq!(failed, 0);
             let _ = rx.recv().await.unwrap();
         }
@@ -262,16 +258,24 @@ mod tests {
             ("notice://acme/dev/app/warning", true),
             ("notice://acme/staging/db/critical", true),
             ("notice://other/prod/syslog/error", false),
-            ("notice://acme", true),  // Exact match to prefix
+            ("notice://acme", true), // Exact match to prefix
         ];
 
         for (route, should_match) in matching_routes {
             let (delivered, _) = service.publish(route, None, b"test");
             if should_match {
-                assert_eq!(delivered, 1, "Route '{}' should match realm wildcard", route);
+                assert_eq!(
+                    delivered, 1,
+                    "Route '{}' should match realm wildcard",
+                    route
+                );
                 let _ = rx.recv().await.unwrap();
             } else {
-                assert_eq!(delivered, 0, "Route '{}' should not match realm wildcard", route);
+                assert_eq!(
+                    delivered, 0,
+                    "Route '{}' should not match realm wildcard",
+                    route
+                );
             }
         }
     }
@@ -299,7 +303,11 @@ mod tests {
                 assert_eq!(delivered, 1, "Route '{}' should match area wildcard", route);
                 let _ = rx.recv().await.unwrap();
             } else {
-                assert_eq!(delivered, 0, "Route '{}' should not match area wildcard", route);
+                assert_eq!(
+                    delivered, 0,
+                    "Route '{}' should not match area wildcard",
+                    route
+                );
             }
         }
     }
@@ -323,10 +331,18 @@ mod tests {
         for (route, should_match) in matching_routes {
             let (delivered, _) = service.publish(route, None, b"test");
             if should_match {
-                assert_eq!(delivered, 1, "Route '{}' should match resource wildcard", route);
+                assert_eq!(
+                    delivered, 1,
+                    "Route '{}' should match resource wildcard",
+                    route
+                );
                 let _ = rx.recv().await.unwrap();
             } else {
-                assert_eq!(delivered, 0, "Route '{}' should not match resource wildcard", route);
+                assert_eq!(
+                    delivered, 0,
+                    "Route '{}' should not match resource wildcard",
+                    route
+                );
             }
         }
     }
@@ -352,7 +368,11 @@ mod tests {
                 assert_eq!(delivered, 1, "Route '{}' should match exact pattern", route);
                 let _ = rx.recv().await.unwrap();
             } else {
-                assert_eq!(delivered, 0, "Route '{}' should not match exact pattern", route);
+                assert_eq!(
+                    delivered, 0,
+                    "Route '{}' should not match exact pattern",
+                    route
+                );
             }
         }
     }
@@ -366,21 +386,29 @@ mod tests {
 
         // Act & Assert - without trailing /*, still matches child paths
         let matching_routes = vec![
-            ("notice://acme/prod/syslog", true),  // Exact
-            ("notice://acme/prod/syslog/error", true),  // Child
-            ("notice://acme/prod/syslog/warning", true),  // Child
-            ("notice://acme/prod/syslog/info/verbose", true),  // Deep child
-            ("notice://acme/prod/app", false),  // Different resource
-            ("notice://acme/prod", false),  // Parent
+            ("notice://acme/prod/syslog", true),              // Exact
+            ("notice://acme/prod/syslog/error", true),        // Child
+            ("notice://acme/prod/syslog/warning", true),      // Child
+            ("notice://acme/prod/syslog/info/verbose", true), // Deep child
+            ("notice://acme/prod/app", false),                // Different resource
+            ("notice://acme/prod", false),                    // Parent
         ];
 
         for (route, should_match) in matching_routes {
             let (delivered, _) = service.publish(route, None, b"test");
             if should_match {
-                assert_eq!(delivered, 1, "Route '{}' should match hierarchical prefix", route);
+                assert_eq!(
+                    delivered, 1,
+                    "Route '{}' should match hierarchical prefix",
+                    route
+                );
                 let _ = rx.recv().await.unwrap();
             } else {
-                assert_eq!(delivered, 0, "Route '{}' should not match hierarchical prefix", route);
+                assert_eq!(
+                    delivered, 0,
+                    "Route '{}' should not match hierarchical prefix",
+                    route
+                );
             }
         }
     }
@@ -393,11 +421,11 @@ mod tests {
         let (tx2, mut rx2) = mpsc::channel(10);
         let (tx3, mut rx3) = mpsc::channel(10);
         let (tx4, mut rx4) = mpsc::channel(10);
-        
-        service.subscribe("*".to_string(), 1, tx1);  // Global
-        service.subscribe("notice://acme/*".to_string(), 2, tx2);  // Realm
-        service.subscribe("notice://acme/prod/*".to_string(), 3, tx3);  // Area
-        service.subscribe("notice://acme/prod/syslog/error".to_string(), 4, tx4);  // Exact
+
+        service.subscribe("*".to_string(), 1, tx1); // Global
+        service.subscribe("notice://acme/*".to_string(), 2, tx2); // Realm
+        service.subscribe("notice://acme/prod/*".to_string(), 3, tx3); // Area
+        service.subscribe("notice://acme/prod/syslog/error".to_string(), 4, tx4); // Exact
 
         // Act
         let route = "notice://acme/prod/syslog/error";
@@ -406,17 +434,17 @@ mod tests {
         // Assert - all 4 should receive the message
         assert_eq!(delivered, 4);
         assert_eq!(failed, 0);
-        
+
         let msg1 = rx1.recv().await.unwrap();
         assert_eq!(msg1.0, route);
         assert_eq!(msg1.2, b"alert");
-        
+
         let msg2 = rx2.recv().await.unwrap();
         assert_eq!(msg2.0, route);
-        
+
         let msg3 = rx3.recv().await.unwrap();
         assert_eq!(msg3.0, route);
-        
+
         let msg4 = rx4.recv().await.unwrap();
         assert_eq!(msg4.0, route);
     }
@@ -438,7 +466,11 @@ mod tests {
 
         for route in non_matching_routes {
             let (delivered, _) = service.publish(route, None, b"test");
-            assert_eq!(delivered, 0, "Route '{}' should not match partial segment", route);
+            assert_eq!(
+                delivered, 0,
+                "Route '{}' should not match partial segment",
+                route
+            );
         }
     }
 
@@ -450,23 +482,19 @@ mod tests {
         service.subscribe("test/*".to_string(), 1, tx);
 
         // Act
-        let (delivered, failed) = service.publish(
-            "test/alerts",
-            Some("msg-123"),
-            b"payload data",
-        );
+        let (delivered, failed) = service.publish("test/alerts", Some("msg-123"), b"payload data");
 
         // Assert
         assert_eq!(delivered, 1);
         assert_eq!(failed, 0);
-        
+
         let msg = rx.recv().await.unwrap();
-        assert_eq!(msg.0, "test/alerts");  // route
-        assert_eq!(msg.1, Some("msg-123".to_string()));  // msg_id
-        assert_eq!(msg.2, b"payload data");  // body
-        assert_eq!(msg.3, None);  // reply_to (always None for notices)
-        assert_eq!(msg.4, None);  // seq (always None for notices)
-        assert_eq!(msg.5, false);  // end (always false for notices)
+        assert_eq!(msg.0, "test/alerts"); // route
+        assert_eq!(msg.1, Some("msg-123".to_string())); // msg_id
+        assert_eq!(msg.2, b"payload data"); // body
+        assert_eq!(msg.3, None); // reply_to (always None for notices)
+        assert_eq!(msg.4, None); // seq (always None for notices)
+        assert_eq!(msg.5, false); // end (always false for notices)
     }
 
     #[tokio::test]
@@ -477,11 +505,8 @@ mod tests {
         service.subscribe("notice://acme/prod/*".to_string(), 1, tx);
 
         // Act - publish to non-matching route
-        let (delivered, failed) = service.publish(
-            "notice://other/staging/app/info",
-            None,
-            b"orphan message",
-        );
+        let (delivered, failed) =
+            service.publish("notice://other/staging/app/info", None, b"orphan message");
 
         // Assert - no deliveries
         assert_eq!(delivered, 0);
@@ -504,6 +529,3 @@ mod tests {
         assert_eq!(msg.0, "");
     }
 }
-
-
-

@@ -13,11 +13,11 @@ pub use state::SessionState;
 fn tenant_to_route_family(tenant: &str) -> RouteFamilyId {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     tenant.hash(&mut hasher);
     let hash = hasher.finish();
-    (hash % 256) as RouteFamilyId  // Limit to 256 route families
+    (hash % 256) as RouteFamilyId // Limit to 256 route families
 }
 
 /// Register a default channel handler (channel_id) on the given mux.
@@ -254,10 +254,22 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                 let _ = {
                                                     // Build token response payload
                                                     let mut req_payload = Vec::new();
-                                                    fr::build_tlv(fr::TAG_ID, pubref.id.as_bytes(), &mut req_payload);
-                                                    fr::build_tlv(fr::TAG_BODY, &resp_body, &mut req_payload);
-                                                    fr::build_tlv(fr::TAG_STREAM_END, &[], &mut req_payload);
-                                                    
+                                                    fr::build_tlv(
+                                                        fr::TAG_ID,
+                                                        pubref.id.as_bytes(),
+                                                        &mut req_payload,
+                                                    );
+                                                    fr::build_tlv(
+                                                        fr::TAG_BODY,
+                                                        &resp_body,
+                                                        &mut req_payload,
+                                                    );
+                                                    fr::build_tlv(
+                                                        fr::TAG_STREAM_END,
+                                                        &[],
+                                                        &mut req_payload,
+                                                    );
+
                                                     engine_task
                                                         .dispatch(
                                                             reply_route,
@@ -452,24 +464,45 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         // Build stream append payload
                                         let mut req_payload = Vec::new();
                                         if !pubref.id.is_empty() {
-                                            fr::build_tlv(fr::TAG_ID, pubref.id.as_bytes(), &mut req_payload);
+                                            fr::build_tlv(
+                                                fr::TAG_ID,
+                                                pubref.id.as_bytes(),
+                                                &mut req_payload,
+                                            );
                                         }
                                         fr::build_tlv(fr::TAG_BODY, &pubref.body, &mut req_payload);
-                                        
+
                                         match engine_task
-                                            .dispatch(route_str.clone(), req_payload, 0, route_family)
+                                            .dispatch(
+                                                route_str.clone(),
+                                                req_payload,
+                                                0,
+                                                route_family,
+                                            )
                                             .await
                                         {
                                             Ok(response) => {
                                                 // Parse sequence number from response
-                                                if let Some(seq_bytes) = fr::find_tlv(&response, fr::TAG_SEQ) {
+                                                if let Some(seq_bytes) =
+                                                    fr::find_tlv(&response, fr::TAG_SEQ)
+                                                {
                                                     if seq_bytes.len() == 8 {
                                                         let seq_assigned = u64::from_be_bytes([
-                                                            seq_bytes[0], seq_bytes[1], seq_bytes[2], seq_bytes[3],
-                                                            seq_bytes[4], seq_bytes[5], seq_bytes[6], seq_bytes[7],
+                                                            seq_bytes[0],
+                                                            seq_bytes[1],
+                                                            seq_bytes[2],
+                                                            seq_bytes[3],
+                                                            seq_bytes[4],
+                                                            seq_bytes[5],
+                                                            seq_bytes[6],
+                                                            seq_bytes[7],
                                                         ]);
                                                         let mut p = Vec::new();
-                                                        fr::build_tlv(fr::TAG_SEQ, &seq_assigned.to_be_bytes(), &mut p);
+                                                        fr::build_tlv(
+                                                            fr::TAG_SEQ,
+                                                            &seq_assigned.to_be_bytes(),
+                                                            &mut p,
+                                                        );
                                                         let ack = fr::build_frame(
                                                             fr::FRAME_ACK,
                                                             0,
@@ -516,24 +549,49 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     } else {
                                         // Build publish payload
                                         let mut req_payload = Vec::new();
-                                        fr::build_tlv(fr::TAG_ID, pubref.id.as_bytes(), &mut req_payload);
+                                        fr::build_tlv(
+                                            fr::TAG_ID,
+                                            pubref.id.as_bytes(),
+                                            &mut req_payload,
+                                        );
                                         fr::build_tlv(fr::TAG_BODY, &pubref.body, &mut req_payload);
-                                        
+
                                         if let Some(reply) = &reply_to {
-                                            fr::build_tlv(fr::TAG_ROUTE_REPLY, reply.as_bytes(), &mut req_payload);
+                                            fr::build_tlv(
+                                                fr::TAG_ROUTE_REPLY,
+                                                reply.as_bytes(),
+                                                &mut req_payload,
+                                            );
                                         }
                                         if let Some(s) = seq {
-                                            fr::build_tlv(fr::TAG_SEQ, &s.to_be_bytes(), &mut req_payload);
+                                            fr::build_tlv(
+                                                fr::TAG_SEQ,
+                                                &s.to_be_bytes(),
+                                                &mut req_payload,
+                                            );
                                         }
                                         if end {
-                                            fr::build_tlv(fr::TAG_STREAM_END, &[], &mut req_payload);
+                                            fr::build_tlv(
+                                                fr::TAG_STREAM_END,
+                                                &[],
+                                                &mut req_payload,
+                                            );
                                         }
                                         if let Some(ttl) = ttl_secs {
-                                            fr::build_tlv(fr::TAG_TTL_SECS, &ttl.to_be_bytes(), &mut req_payload);
+                                            fr::build_tlv(
+                                                fr::TAG_TTL_SECS,
+                                                &ttl.to_be_bytes(),
+                                                &mut req_payload,
+                                            );
                                         }
-                                        
+
                                         match engine_task
-                                            .dispatch(route_str.clone(), req_payload, 0, route_family)
+                                            .dispatch(
+                                                route_str.clone(),
+                                                req_payload,
+                                                0,
+                                                route_family,
+                                            )
                                             .await
                                         {
                                             Ok(_response) => {}
@@ -827,16 +885,26 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     // Build request payload
                                     let mut req_payload = Vec::new();
                                     fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut req_payload);
-                                    fr::build_tlv(fr::TAG_DELIVERY_TOKEN, token.as_bytes(), &mut req_payload);
-                                    fr::build_tlv(fr::TAG_LEASE, &add_secs.to_be_bytes(), &mut req_payload);
-                                    
+                                    fr::build_tlv(
+                                        fr::TAG_DELIVERY_TOKEN,
+                                        token.as_bytes(),
+                                        &mut req_payload,
+                                    );
+                                    fr::build_tlv(
+                                        fr::TAG_LEASE,
+                                        &add_secs.to_be_bytes(),
+                                        &mut req_payload,
+                                    );
+
                                     match engine_task
                                         .dispatch(route.clone(), req_payload, 0, route_family)
                                         .await
                                     {
                                         Ok(response) => {
                                             // Parse remaining seconds from response
-                                            if let Some(lease_bytes) = fr::find_tlv(&response, fr::TAG_LEASE) {
+                                            if let Some(lease_bytes) =
+                                                fr::find_tlv(&response, fr::TAG_LEASE)
+                                            {
                                                 if lease_bytes.len() == 4 {
                                                     let remaining = u32::from_be_bytes([
                                                         lease_bytes[0],
@@ -845,8 +913,16 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                         lease_bytes[3],
                                                     ]);
                                                     let mut p = Vec::new();
-                                                    fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
-                                                    fr::build_tlv(fr::TAG_LEASE, &remaining.to_be_bytes(), &mut p);
+                                                    fr::build_tlv(
+                                                        fr::TAG_ID,
+                                                        id.as_bytes(),
+                                                        &mut p,
+                                                    );
+                                                    fr::build_tlv(
+                                                        fr::TAG_LEASE,
+                                                        &remaining.to_be_bytes(),
+                                                        &mut p,
+                                                    );
                                                     let ack = fr::build_frame(
                                                         fr::FRAME_ACK,
                                                         0,
@@ -909,9 +985,16 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     };
                                     // Build request payload for reserve (just TAG_LEASE)
                                     let mut req_payload = Vec::new();
-                                    fr::build_tlv(fr::TAG_LEASE, &add_secs.to_be_bytes(), &mut req_payload);
-                                    
-                                    match engine_task.dispatch(route.clone(), req_payload, 0, route_family).await {
+                                    fr::build_tlv(
+                                        fr::TAG_LEASE,
+                                        &add_secs.to_be_bytes(),
+                                        &mut req_payload,
+                                    );
+
+                                    match engine_task
+                                        .dispatch(route.clone(), req_payload, 0, route_family)
+                                        .await
+                                    {
                                         Ok(response) => {
                                             // Parse response TLVs
                                             if let (Some(id_bytes), Some(body), Some(token_bytes)) = (
@@ -924,11 +1007,27 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                     std::str::from_utf8(token_bytes),
                                                 ) {
                                                     let mut p = Vec::new();
-                                                    fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
-                                                    fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut p);
+                                                    fr::build_tlv(
+                                                        fr::TAG_ROUTE,
+                                                        route.as_bytes(),
+                                                        &mut p,
+                                                    );
+                                                    fr::build_tlv(
+                                                        fr::TAG_ID,
+                                                        id.as_bytes(),
+                                                        &mut p,
+                                                    );
                                                     fr::build_tlv(fr::TAG_BODY, body, &mut p);
-                                                    fr::build_tlv(fr::TAG_DELIVERY_TOKEN, token.as_bytes(), &mut p);
-                                                    fr::build_tlv(fr::TAG_LEASE, &add_secs.to_be_bytes(), &mut p);
+                                                    fr::build_tlv(
+                                                        fr::TAG_DELIVERY_TOKEN,
+                                                        token.as_bytes(),
+                                                        &mut p,
+                                                    );
+                                                    fr::build_tlv(
+                                                        fr::TAG_LEASE,
+                                                        &add_secs.to_be_bytes(),
+                                                        &mut p,
+                                                    );
                                                     let frame = fr::build_frame(
                                                         fr::FRAME_DAT,
                                                         0,
@@ -979,8 +1078,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     // Build request payload
                                     let mut req_payload = Vec::new();
                                     fr::build_tlv(fr::TAG_ID, id.as_bytes(), &mut req_payload);
-                                    fr::build_tlv(fr::TAG_DELIVERY_TOKEN, token.as_bytes(), &mut req_payload);
-                                    
+                                    fr::build_tlv(
+                                        fr::TAG_DELIVERY_TOKEN,
+                                        token.as_bytes(),
+                                        &mut req_payload,
+                                    );
+
                                     match engine_task
                                         .dispatch(route.clone(), req_payload, 0, route_family)
                                         .await
@@ -1052,7 +1155,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                 });
             }
         }
-        
+
         // Connection dropped: notify all domains to cleanup resources for this channel
         let route_family = {
             let tenant_opt = auth_state.lock().await;

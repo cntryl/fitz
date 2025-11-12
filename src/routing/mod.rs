@@ -2,5 +2,4 @@
 
 mod route_table;
 
-pub use route_table::{RouteTable, RtSubscription, RouteFamilyId, DEFAULT_RF};
-
+pub use route_table::{RouteFamilyId, RouteTable, RtSubscription, DEFAULT_RF};

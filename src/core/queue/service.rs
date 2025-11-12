@@ -50,7 +50,7 @@ impl<K: KvStore> QueueService<K> {
     // NOTE: All remaining methods below are DISABLED pending midge KvStore API integration
     // The midge KvStore trait now requires ColumnFamilyHandle for all operations
     // Once midge exposes a way to get/create the default column family, re-enable these methods
-    
+
     /*
     /// Append a message to a queue route
     pub async fn append(

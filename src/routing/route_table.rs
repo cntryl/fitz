@@ -465,18 +465,24 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(10);
         let (tx2, _rx2) = mpsc::channel(10);
 
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 1,
-            route_pattern: "r1".to_string(),
-            channel_id: 1,
-            sender: tx1,
-        });
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 2,
-            route_pattern: "r2".to_string(),
-            channel_id: 2,
-            sender: tx2,
-        });
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 1,
+                route_pattern: "r1".to_string(),
+                channel_id: 1,
+                sender: tx1,
+            },
+        );
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 2,
+                route_pattern: "r2".to_string(),
+                channel_id: 2,
+                sender: tx2,
+            },
+        );
 
         rt.cleanup_channel(DEFAULT_RF, 1);
         assert_eq!(rt.len(), 1);
@@ -513,7 +519,7 @@ mod tests {
 
         for (pattern, route, expected) in test_cases {
             // Act
-                let result = route_matches(DEFAULT_RF, pattern, route);
+            let result = route_matches(DEFAULT_RF, pattern, route);
 
             // Assert
             assert_eq!(
@@ -844,24 +850,33 @@ mod tests {
         let (tx2, _rx2) = mpsc::channel(10);
         let (tx3, _rx3) = mpsc::channel(10);
 
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 1,
-            route_pattern: "scheme://acme/*".to_string(),
-            channel_id: 1,
-            sender: tx1,
-        });
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 2,
-            route_pattern: "scheme://acme/prod/*".to_string(),
-            channel_id: 2,
-            sender: tx2,
-        });
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 3,
-            route_pattern: "scheme://acme/prod/syslog/error".to_string(),
-            channel_id: 3,
-            sender: tx3,
-        });
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 1,
+                route_pattern: "scheme://acme/*".to_string(),
+                channel_id: 1,
+                sender: tx1,
+            },
+        );
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 2,
+                route_pattern: "scheme://acme/prod/*".to_string(),
+                channel_id: 2,
+                sender: tx2,
+            },
+        );
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 3,
+                route_pattern: "scheme://acme/prod/syslog/error".to_string(),
+                channel_id: 3,
+                sender: tx3,
+            },
+        );
 
         // Act
         let matches = rt.matching_subscribers(DEFAULT_RF, "scheme://acme/prod/syslog/error");
@@ -877,18 +892,24 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(10);
         let (tx2, _rx2) = mpsc::channel(10);
 
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 1,
-            route_pattern: "scheme://acme/prod/*".to_string(),
-            channel_id: 1,
-            sender: tx1,
-        });
-        rt.insert(DEFAULT_RF, RtSubscription {
-            id: 2,
-            route_pattern: "scheme://acme/staging/*".to_string(),
-            channel_id: 2,
-            sender: tx2,
-        });
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 1,
+                route_pattern: "scheme://acme/prod/*".to_string(),
+                channel_id: 1,
+                sender: tx1,
+            },
+        );
+        rt.insert(
+            DEFAULT_RF,
+            RtSubscription {
+                id: 2,
+                route_pattern: "scheme://acme/staging/*".to_string(),
+                channel_id: 2,
+                sender: tx2,
+            },
+        );
 
         // Act
         let matches = rt.matching_subscribers(DEFAULT_RF, "scheme://other/prod/syslog/error");
@@ -1181,27 +1202,36 @@ mod tests {
         let (tx2, _rx2) = mpsc::channel(10);
 
         // Insert pattern into PROD CF
-        rt.insert(CF_PROD, RtSubscription {
-            id: 100,
-            route_pattern: "system/alerts/*".to_string(),
-            channel_id: 1,
-            sender: tx1,
-        });
+        rt.insert(
+            CF_PROD,
+            RtSubscription {
+                id: 100,
+                route_pattern: "system/alerts/*".to_string(),
+                channel_id: 1,
+                sender: tx1,
+            },
+        );
 
         // Insert different pattern into DEV CF
-        rt.insert(CF_DEV, RtSubscription {
-            id: 101,
-            route_pattern: "system/alerts/*".to_string(),
-            channel_id: 2,
-            sender: tx2,
-        });
+        rt.insert(
+            CF_DEV,
+            RtSubscription {
+                id: 101,
+                route_pattern: "system/alerts/*".to_string(),
+                channel_id: 2,
+                sender: tx2,
+            },
+        );
 
         // Act: Query PROD with a matching route
         let matches_prod = rt.matching_subscribers(CF_PROD, "system/alerts/critical");
 
         // Assert: Should only get the PROD subscription, not DEV
         assert_eq!(matches_prod.len(), 1);
-        assert_eq!(matches_prod[0].id, 100, "Should only return PROD subscription");
+        assert_eq!(
+            matches_prod[0].id, 100,
+            "Should only return PROD subscription"
+        );
         assert_eq!(matches_prod[0].channel_id, 1);
     }
 
@@ -1218,26 +1248,35 @@ mod tests {
         let (tx3, _rx3) = mpsc::channel(10);
 
         // Insert hierarchical patterns into each CF
-        rt.insert(CF_1, RtSubscription {
-            id: 1,
-            route_pattern: "realm1/area/*".to_string(),
-            channel_id: 10,
-            sender: tx1,
-        });
+        rt.insert(
+            CF_1,
+            RtSubscription {
+                id: 1,
+                route_pattern: "realm1/area/*".to_string(),
+                channel_id: 10,
+                sender: tx1,
+            },
+        );
 
-        rt.insert(CF_2, RtSubscription {
-            id: 2,
-            route_pattern: "realm2/area/*".to_string(),
-            channel_id: 20,
-            sender: tx2,
-        });
+        rt.insert(
+            CF_2,
+            RtSubscription {
+                id: 2,
+                route_pattern: "realm2/area/*".to_string(),
+                channel_id: 20,
+                sender: tx2,
+            },
+        );
 
-        rt.insert(CF_3, RtSubscription {
-            id: 3,
-            route_pattern: "realm1/area/*".to_string(),
-            channel_id: 30,
-            sender: tx3,
-        });
+        rt.insert(
+            CF_3,
+            RtSubscription {
+                id: 3,
+                route_pattern: "realm1/area/*".to_string(),
+                channel_id: 30,
+                sender: tx3,
+            },
+        );
 
         // Act: Query each CF
         let cf1_matches = rt.matching_subscribers(CF_1, "realm1/area/resource");
@@ -1270,32 +1309,45 @@ mod tests {
         let (tx3, _rx3) = mpsc::channel(10);
 
         // Insert multiple patterns into the same CF
-        rt.insert(CF_MULTI, RtSubscription {
-            id: 1,
-            route_pattern: "app/*".to_string(),
-            channel_id: 100,
-            sender: tx1,
-        });
+        rt.insert(
+            CF_MULTI,
+            RtSubscription {
+                id: 1,
+                route_pattern: "app/*".to_string(),
+                channel_id: 100,
+                sender: tx1,
+            },
+        );
 
-        rt.insert(CF_MULTI, RtSubscription {
-            id: 2,
-            route_pattern: "app/alerts/*".to_string(),
-            channel_id: 101,
-            sender: tx2,
-        });
+        rt.insert(
+            CF_MULTI,
+            RtSubscription {
+                id: 2,
+                route_pattern: "app/alerts/*".to_string(),
+                channel_id: 101,
+                sender: tx2,
+            },
+        );
 
-        rt.insert(CF_MULTI, RtSubscription {
-            id: 3,
-            route_pattern: "app/alerts/critical".to_string(),
-            channel_id: 102,
-            sender: tx3,
-        });
+        rt.insert(
+            CF_MULTI,
+            RtSubscription {
+                id: 3,
+                route_pattern: "app/alerts/critical".to_string(),
+                channel_id: 102,
+                sender: tx3,
+            },
+        );
 
         // Act: Query with a specific route
         let matches = rt.matching_subscribers(CF_MULTI, "app/alerts/critical");
 
         // Assert: Should match all three patterns (hierarchical matching)
-        assert_eq!(matches.len(), 3, "Should match all 3 patterns hierarchically");
+        assert_eq!(
+            matches.len(),
+            3,
+            "Should match all 3 patterns hierarchically"
+        );
         let ids: Vec<u64> = matches.iter().map(|s| s.id).collect();
         assert!(ids.contains(&1));
         assert!(ids.contains(&2));
@@ -1360,34 +1412,46 @@ mod tests {
         let (tx4, _rx4) = mpsc::channel(10);
 
         // Insert subscriptions from CHANNEL_ID into both CFs
-        rt.insert(CF_PRIMARY, RtSubscription {
-            id: 1,
-            route_pattern: "r1".to_string(),
-            channel_id: CHANNEL_ID,
-            sender: tx1,
-        });
+        rt.insert(
+            CF_PRIMARY,
+            RtSubscription {
+                id: 1,
+                route_pattern: "r1".to_string(),
+                channel_id: CHANNEL_ID,
+                sender: tx1,
+            },
+        );
 
-        rt.insert(CF_PRIMARY, RtSubscription {
-            id: 2,
-            route_pattern: "r2".to_string(),
-            channel_id: CHANNEL_ID,
-            sender: tx2,
-        });
+        rt.insert(
+            CF_PRIMARY,
+            RtSubscription {
+                id: 2,
+                route_pattern: "r2".to_string(),
+                channel_id: CHANNEL_ID,
+                sender: tx2,
+            },
+        );
 
         // Insert subscriptions from different channel into CF_SECONDARY
-        rt.insert(CF_SECONDARY, RtSubscription {
-            id: 3,
-            route_pattern: "r3".to_string(),
-            channel_id: CHANNEL_ID,
-            sender: tx3,
-        });
+        rt.insert(
+            CF_SECONDARY,
+            RtSubscription {
+                id: 3,
+                route_pattern: "r3".to_string(),
+                channel_id: CHANNEL_ID,
+                sender: tx3,
+            },
+        );
 
-        rt.insert(CF_SECONDARY, RtSubscription {
-            id: 4,
-            route_pattern: "r4".to_string(),
-            channel_id: 999, // Different channel
-            sender: tx4,
-        });
+        rt.insert(
+            CF_SECONDARY,
+            RtSubscription {
+                id: 4,
+                route_pattern: "r4".to_string(),
+                channel_id: 999, // Different channel
+                sender: tx4,
+            },
+        );
 
         // Act: Cleanup CHANNEL_ID in CF_PRIMARY only
         rt.cleanup_channel(CF_PRIMARY, CHANNEL_ID);
@@ -1419,12 +1483,15 @@ mod tests {
 
         let (tx, _rx) = mpsc::channel(10);
 
-        rt.insert(CF_EXISTS, RtSubscription {
-            id: 1,
-            route_pattern: "test/route".to_string(),
-            channel_id: 1,
-            sender: tx,
-        });
+        rt.insert(
+            CF_EXISTS,
+            RtSubscription {
+                id: 1,
+                route_pattern: "test/route".to_string(),
+                channel_id: 1,
+                sender: tx,
+            },
+        );
 
         // Act: Query a CF that has no subscriptions
         let matches = rt.matching_subscribers(CF_MISSING, "test/route");
@@ -1444,20 +1511,26 @@ mod tests {
         let (tx2, _rx2) = mpsc::channel(10);
 
         // CF_GLOBAL_ENABLED has a global wildcard subscription
-        rt.insert(CF_GLOBAL_ENABLED, RtSubscription {
-            id: 1,
-            route_pattern: "*".to_string(),
-            channel_id: 1,
-            sender: tx1,
-        });
+        rt.insert(
+            CF_GLOBAL_ENABLED,
+            RtSubscription {
+                id: 1,
+                route_pattern: "*".to_string(),
+                channel_id: 1,
+                sender: tx1,
+            },
+        );
 
         // CF_NO_GLOBAL has a specific pattern
-        rt.insert(CF_NO_GLOBAL, RtSubscription {
-            id: 2,
-            route_pattern: "specific/route".to_string(),
-            channel_id: 2,
-            sender: tx2,
-        });
+        rt.insert(
+            CF_NO_GLOBAL,
+            RtSubscription {
+                id: 2,
+                route_pattern: "specific/route".to_string(),
+                channel_id: 2,
+                sender: tx2,
+            },
+        );
 
         // Act: Query both CFs with a route that doesn't match CF_NO_GLOBAL's pattern
         let matches_enabled = rt.matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route");
@@ -1484,42 +1557,57 @@ mod tests {
         let (tx5, _rx5) = mpsc::channel(10);
 
         // ACME tenant subscriptions
-        rt.insert(CF_TENANT_ACME, RtSubscription {
-            id: 1,
-            route_pattern: "acme/*".to_string(),
-            channel_id: 100,
-            sender: tx1,
-        });
+        rt.insert(
+            CF_TENANT_ACME,
+            RtSubscription {
+                id: 1,
+                route_pattern: "acme/*".to_string(),
+                channel_id: 100,
+                sender: tx1,
+            },
+        );
 
-        rt.insert(CF_TENANT_ACME, RtSubscription {
-            id: 2,
-            route_pattern: "acme/prod/*".to_string(),
-            channel_id: 101,
-            sender: tx2,
-        });
+        rt.insert(
+            CF_TENANT_ACME,
+            RtSubscription {
+                id: 2,
+                route_pattern: "acme/prod/*".to_string(),
+                channel_id: 101,
+                sender: tx2,
+            },
+        );
 
         // WIDGETS tenant subscriptions
-        rt.insert(CF_TENANT_WIDGETS, RtSubscription {
-            id: 3,
-            route_pattern: "widgets/*".to_string(),
-            channel_id: 200,
-            sender: tx3,
-        });
+        rt.insert(
+            CF_TENANT_WIDGETS,
+            RtSubscription {
+                id: 3,
+                route_pattern: "widgets/*".to_string(),
+                channel_id: 200,
+                sender: tx3,
+            },
+        );
 
-        rt.insert(CF_TENANT_WIDGETS, RtSubscription {
-            id: 4,
-            route_pattern: "widgets/alerts/*".to_string(),
-            channel_id: 201,
-            sender: tx4,
-        });
+        rt.insert(
+            CF_TENANT_WIDGETS,
+            RtSubscription {
+                id: 4,
+                route_pattern: "widgets/alerts/*".to_string(),
+                channel_id: 201,
+                sender: tx4,
+            },
+        );
 
         // Cross-tenant subscription (both have generic monitoring)
-        rt.insert(CF_TENANT_ACME, RtSubscription {
-            id: 5,
-            route_pattern: "*".to_string(),
-            channel_id: 102,
-            sender: tx5,
-        });
+        rt.insert(
+            CF_TENANT_ACME,
+            RtSubscription {
+                id: 5,
+                route_pattern: "*".to_string(),
+                channel_id: 102,
+                sender: tx5,
+            },
+        );
 
         // Act: Query specific routes for each tenant
         let acme_prod = rt.matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts");
@@ -1528,22 +1616,37 @@ mod tests {
         let widgets_other = rt.matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts");
 
         // Assert: Each tenant gets the right matches
-        assert_eq!(acme_prod.len(), 3, "ACME prod should match 3 patterns (including global)");
+        assert_eq!(
+            acme_prod.len(),
+            3,
+            "ACME prod should match 3 patterns (including global)"
+        );
         let acme_prod_ids: Vec<u64> = acme_prod.iter().map(|s| s.id).collect();
         assert!(acme_prod_ids.contains(&1));
         assert!(acme_prod_ids.contains(&2));
         assert!(acme_prod_ids.contains(&5)); // Global wildcard
 
-        assert_eq!(acme_any.len(), 1, "Any route should only match ACME's global wildcard");
+        assert_eq!(
+            acme_any.len(),
+            1,
+            "Any route should only match ACME's global wildcard"
+        );
         assert_eq!(acme_any[0].id, 5);
 
-        assert_eq!(widgets_alert.len(), 2, "WIDGETS alerts should match 2 patterns");
+        assert_eq!(
+            widgets_alert.len(),
+            2,
+            "WIDGETS alerts should match 2 patterns"
+        );
         let widget_ids: Vec<u64> = widgets_alert.iter().map(|s| s.id).collect();
         assert!(widget_ids.contains(&3));
         assert!(widget_ids.contains(&4));
 
         // WIDGETS tenant should NOT see ACME routes (even though ACME has global wildcard)
-        assert_eq!(widgets_other.len(), 0, "WIDGETS should not see ACME-only routes");
+        assert_eq!(
+            widgets_other.len(),
+            0,
+            "WIDGETS should not see ACME-only routes"
+        );
     }
 }
-

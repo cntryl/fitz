@@ -3,8 +3,7 @@
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
-    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE,
-    TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
+    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -173,36 +172,49 @@ impl Domain for NoticeDomain {
                 Ok(result) => result,
                 Err(e) => {
                     let error_response = self.build_error_response(&e);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response.to_vec(),
+                    ));
                 }
             };
 
             match parse_result.operation {
                 NoticeOp::Subscribe => {
                     // Validate subscription route format
-                    if let Err(e) = crate::protocol::route::validate_notice_subscription(&request.route_str) {
+                    if let Err(e) =
+                        crate::protocol::route::validate_notice_subscription(&request.route_str)
+                    {
                         let error_response = self.build_error_response(e);
-                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
+                        return DomainResponse::Frame(
+                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
+                        );
                     }
 
                     // Subscribe operation - handled by engine via Subscribe command
                     // Domain just acknowledges
                     let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response.to_vec()))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        response.to_vec(),
+                    ))
                 }
 
                 NoticeOp::Unsubscribe => {
                     // Unsubscribe operation - handled by engine via Unsubscribe command
                     // Domain just acknowledges
                     let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response.to_vec()))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        response.to_vec(),
+                    ))
                 }
 
                 NoticeOp::Publish => {
                     // Validate publish route format
-                    if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route) {
+                    if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route)
+                    {
                         let error_response = self.build_error_response(e);
-                        return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
+                        return DomainResponse::Frame(
+                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
+                        );
                     }
 
                     // Extract body from parsed range (avoid second scan)
@@ -211,26 +223,28 @@ impl Domain for NoticeDomain {
                         None => {
                             let error_response =
                                 self.build_error_response("Missing body in publish");
-                            return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()));
+                            return DomainResponse::Frame(
+                                crate::protocol::frame::PooledFrame::from_vec(
+                                    error_response.to_vec(),
+                                ),
+                            );
                         }
                     };
 
                     // Extract msg_id from parsed range (avoid second scan)
-                    let msg_id = parse_result.id_range
-                        .and_then(|(start, len)| {
-                            std::str::from_utf8(&request.payload[start..start + len]).ok()
-                        });
+                    let msg_id = parse_result.id_range.and_then(|(start, len)| {
+                        std::str::from_utf8(&request.payload[start..start + len]).ok()
+                    });
 
                     // Dispatch to subscribers (use read lock for concurrent publish)
                     let mut service = self.service.write().await;
-                    let (_delivered, _failed) =
-                        service.publish(&request.route_str, msg_id, body);
+                    let (_delivered, _failed) = service.publish(&request.route_str, msg_id, body);
 
                     // Build response using SmallVec (stack-allocated for typical <64B frames)
                     let route_bytes = request.route_str.as_bytes();
-                    
+
                     let mut response = ResponseBuf::new();
-                    
+
                     response.push(TAG_ROUTE);
                     response.push(route_bytes.len() as u8);
                     response.extend_from_slice(route_bytes);
@@ -245,7 +259,9 @@ impl Domain for NoticeDomain {
                     response.push(body.len() as u8);
                     response.extend_from_slice(body);
 
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response.to_vec()))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        response.to_vec(),
+                    ))
                 }
             }
         })
@@ -323,7 +339,7 @@ mod tests {
             route_str: "notice://test".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // test uses default route family
+            route_family: 0, // test uses default route family
         };
 
         // Act
@@ -364,14 +380,14 @@ mod tests {
             route_str: "notice://realm1/area1/resource1/alerts".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // test uses default route family
+            route_family: 0, // test uses default route family
         };
 
         // Act
         let response = domain.handle(request).await;
 
         // Assert
-            match response {
+        match response {
             DomainResponse::Frame(frame) => {
                 assert!(!frame.as_ref().is_empty());
             }
@@ -401,7 +417,7 @@ mod tests {
             route_str: "notice://realm1/area1/resource1".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // test uses default route family
+            route_family: 0, // test uses default route family
         };
 
         // Act
@@ -440,7 +456,7 @@ mod tests {
             route_str: "notice://*".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // test uses default route family
+            route_family: 0, // test uses default route family
         };
 
         // Act
@@ -479,7 +495,7 @@ mod tests {
             route_str: "notice://realm1/*".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // test uses default route family
+            route_family: 0, // test uses default route family
         };
 
         // Act

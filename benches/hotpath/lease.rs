@@ -1,4 +1,4 @@
-﻿use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::core::domain::{Domain, DomainResponse};
 use fitz::core::lease::service::LeaseService;
 use fitz::core::lease::LeaseDomain;
@@ -30,7 +30,7 @@ fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContex
         route_str: raw.to_string(),
         payload,
         channel_id: 1,
-        route_family: 0,  // benchmarks use default route family
+        route_family: 0, // benchmarks use default route family
     }
 }
 
@@ -59,7 +59,7 @@ fn bench_acquire_uncontended(c: &mut Criterion) {
                 let grant = svc.acquire(&key, 3).await.unwrap();
                 // release immediately to avoid leaving the lease active and
                 // blocking future iterations that reuse the same key
-                let _ = svc.release(&key, &grant.id, &grant.token).await;
+                let _ = svc.surrender(&key, &grant.id, &grant.token).await;
                 grant
             })
         });
@@ -79,7 +79,7 @@ fn bench_renew(c: &mut Criterion) {
                 let grant = svc.acquire(&key, 3).await.unwrap();
                 let res = svc.renew(&key, &grant.id, &grant.token, 2).await;
                 // clean up so the next iteration is uncontended
-                let _ = svc.release(&key, &grant.id, &grant.token).await;
+                let _ = svc.surrender(&key, &grant.id, &grant.token).await;
                 res
             })
         });
@@ -97,7 +97,7 @@ fn bench_release(c: &mut Criterion) {
             let svc = svc.clone();
             rt().block_on(async move {
                 let grant = svc.acquire(&key, 3).await.unwrap();
-                svc.release(&key, &grant.id, &grant.token).await
+                svc.surrender(&key, &grant.id, &grant.token).await
             })
         });
     });
@@ -114,7 +114,7 @@ fn bench_cycle(c: &mut Criterion) {
             let svc = svc.clone();
             rt().block_on(async move {
                 let grant = svc.acquire(&key, 3).await.unwrap();
-                svc.release(&key, &grant.id, &grant.token).await
+                svc.surrender(&key, &grant.id, &grant.token).await
             })
         });
     });

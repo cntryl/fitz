@@ -17,10 +17,14 @@ pub struct DomainRegistry {
 
 impl DomainRegistry {
     /// Route a request to the appropriate domain handler
-    /// 
+    ///
     /// Returns Ok(response) if domain found and handled successfully
     /// Returns Err if scheme not found or domain returns error
-    pub async fn dispatch(&self, scheme: &str, request: DomainContext) -> Result<DomainResponse, String> {
+    pub async fn dispatch(
+        &self,
+        scheme: &str,
+        request: DomainContext,
+    ) -> Result<DomainResponse, String> {
         match scheme {
             "notice" => Ok(self.notice.handle(request).await),
             "rpc" => Ok(self.rpc.handle(request).await),
@@ -48,8 +52,8 @@ impl DomainRegistry {
     /// Create a new registry with all domains initialized
     pub fn new() -> Self {
         use crate::core::{
-            control::ControlDomain, lease::LeaseDomain, notice::NoticeDomain,
-            queue::QueueDomain, rpc::RpcDomain,
+            control::ControlDomain, lease::LeaseDomain, notice::NoticeDomain, queue::QueueDomain,
+            rpc::RpcDomain,
         };
 
         // Initialize domains
@@ -57,7 +61,7 @@ impl DomainRegistry {
         let rpc = Arc::new(RpcDomain::new());
         let queue = Arc::new(QueueDomain::new());
         let lease = Arc::new(LeaseDomain::new());
-        
+
         // Control shares notice service
         let control = Arc::new(ControlDomain::with_notice_service(notice.get_service()));
 

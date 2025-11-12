@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::types::*;
+use crate::storage::RouteFamilyId;
 use base64::{engine::general_purpose, Engine as _};
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
@@ -11,26 +12,27 @@ use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
 
-// --- Hierarchy: Shard -> Realm -> Area -> Resource(LeaseEntry) ---
+// --- Hierarchy: Shard -> RouteFamilyMap -> Realm -> Area -> Resource(LeaseEntry) ---
+// Leases are now namespaced by route_family (tenant) to prevent cross-tenant access
 
 // aliases moved to `types.rs`
 
 struct Shard {
-    realms: RealmMap, // realm -> areas
+    route_families: DashMap<RouteFamilyId, Arc<RealmMap>>, // rf -> realms
 }
 impl Shard {
     fn new() -> Self {
         Self {
-            realms: DashMap::new(),
+            route_families: DashMap::new(),
         }
     }
 }
 
 pub struct LeaseService {
-    shards: Vec<Arc<Shard>>,      // sharded by realm
-    secret: Arc<Vec<u8>>,         // HMAC key
-    sweep_every: Duration,        // expirer cadence
-    acquire_timeout: Duration,    // max wait time for acquire when lease is busy
+    shards: Vec<Arc<Shard>>,   // sharded by realm
+    secret: Arc<Vec<u8>>,      // HMAC key
+    sweep_every: Duration,     // expirer cadence
+    acquire_timeout: Duration, // max wait time for acquire when lease is busy
 }
 
 // --- Public API ---
@@ -68,7 +70,7 @@ impl LeaseService {
     fn new_with_timeout(spawn_expirer: bool, acquire_timeout: Duration) -> Arc<Self> {
         // Clamp timeout between 0 and 20 seconds
         let clamped_timeout = acquire_timeout.min(Duration::from_secs(20));
-        
+
         let shard_count = std::cmp::max(4, num_cpus::get()); // CPU-scaled, stable
         let svc = Arc::new(Self {
             shards: (0..shard_count).map(|_| Arc::new(Shard::new())).collect(),
@@ -101,7 +103,13 @@ impl LeaseService {
     }
 
     /// Acquire `lease://{realm}/{area}/{resource}` (FIFO if busy).
-    pub async fn acquire(&self, key: &str, ttl_secs: u32) -> Result<LeaseGrant, String> {
+    /// Leases are namespaced by route_family to prevent cross-tenant access.
+    pub async fn acquire(
+        &self,
+        rf: RouteFamilyId,
+        key: &str,
+        ttl_secs: u32,
+    ) -> Result<LeaseGrant, String> {
         if ttl_secs == 0 {
             return Err("invalid_ttl".into());
         }
@@ -113,9 +121,13 @@ impl LeaseService {
         let area_s = area.to_string();
         let resource_s = resource.to_string();
 
-        let shard = self.pick_shard(&realm_s);
-        let area_map = shard
-            .realms
+        let shard = self.pick_shard(rf, &realm_s);
+        let realm_map = shard
+            .route_families
+            .entry(rf)
+            .or_insert_with(|| Arc::new(RealmMap::new()))
+            .clone();
+        let area_map = realm_map
             .entry(realm_s.clone())
             .or_insert_with(|| Arc::new(AreaMap::new()))
             .clone();
@@ -139,7 +151,7 @@ impl LeaseService {
                 responder: tx,
             });
             drop(lock);
-            
+
             match tokio::time::timeout(self.acquire_timeout, rx).await {
                 Ok(Ok(result)) => return result,
                 Ok(Err(_)) => return Err("internal_error".into()),
@@ -167,8 +179,10 @@ impl LeaseService {
     }
 
     /// Extend by `add_secs`; returns remaining seconds.
+    /// Leases are namespaced by route_family to prevent cross-tenant access.
     pub async fn renew(
         &self,
+        rf: RouteFamilyId,
         key: &str,
         id: &str,
         token: &str,
@@ -178,7 +192,7 @@ impl LeaseService {
             return Err("invalid_ttl".into());
         }
         let entry = self
-            .get_entry(key)
+            .get_entry(rf, key)
             .ok_or_else(|| "lease_not_found".to_string())?;
         let mut lock = entry.write().await;
 
@@ -197,11 +211,22 @@ impl LeaseService {
     }
 
     /// Release; FIFO handoff if waiters exist, else clear (and prune maps).
-    pub async fn release(&self, key: &str, id: &str, token: &str) -> Result<(), String> {
+    /// Leases are namespaced by route_family to prevent cross-tenant access.
+    pub async fn surrender(
+        &self,
+        rf: RouteFamilyId,
+        key: &str,
+        id: &str,
+        token: &str,
+    ) -> Result<(), String> {
         let (realm, area, resource) = parse_lease_key(key)?;
-        let shard = self.pick_shard(realm);
+        let shard = self.pick_shard(rf, realm);
 
-        let area_map = match shard.realms.get(realm).map(|v| v.clone()) {
+        let realm_map = match shard.route_families.get(&rf).map(|v| v.clone()) {
+            Some(v) => v,
+            None => return Err("lease_not_found".into()),
+        };
+        let area_map = match realm_map.get(realm).map(|v| v.clone()) {
             Some(v) => v,
             None => return Err("lease_not_found".into()),
         };
@@ -255,7 +280,10 @@ impl LeaseService {
                             area_map.remove(area);
                         }
                         if area_map.is_empty() {
-                            shard.realms.remove(realm);
+                            realm_map.remove(realm);
+                        }
+                        if realm_map.is_empty() {
+                            shard.route_families.remove(&rf);
                         }
                         return Ok(());
                     }
@@ -270,7 +298,10 @@ impl LeaseService {
                 area_map.remove(area);
             }
             if area_map.is_empty() {
-                shard.realms.remove(realm);
+                realm_map.remove(realm);
+            }
+            if realm_map.is_empty() {
+                shard.route_families.remove(&rf);
             }
         }
         Ok(())
@@ -280,10 +311,13 @@ impl LeaseService {
 // --- Internals ---
 impl LeaseService {
     #[inline]
-    fn pick_shard(&self, realm: &str) -> &Arc<Shard> {
+    /// Pick a shard based on route_family and realm for consistent sharding.
+    /// route_family provides tenant isolation, realm provides distribution.
+    fn pick_shard(&self, rf: RouteFamilyId, realm: &str) -> &Arc<Shard> {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hasher;
+        use std::hash::{Hash, Hasher};
         let mut h = DefaultHasher::new();
+        rf.hash(&mut h);
         h.write(realm.as_bytes());
         &self.shards[(h.finish() as usize) % self.shards.len()]
     }
@@ -368,104 +402,119 @@ impl LeaseService {
         general_purpose::STANDARD.encode(mac.finalize().into_bytes())
     }
 
-    fn get_entry(&self, key: &str) -> Option<LeaseLock> {
+    fn get_entry(&self, rf: RouteFamilyId, key: &str) -> Option<LeaseLock> {
         let (realm, area, resource) = parse_lease_key(key).ok()?;
-        let shard = self.pick_shard(realm);
-        let area_map = shard.realms.get(realm)?.clone();
+        let shard = self.pick_shard(rf, realm);
+        let realm_map = shard.route_families.get(&rf)?.clone();
+        let area_map = realm_map.get(realm)?.clone();
         let res_map = area_map.get(area)?.clone();
         let entry = res_map.get(resource)?.clone();
         Some(entry)
     }
 
-    // Per-shard expirer: scans realms/areas/resources, handles expirations & handoffs.
+    // Per-shard expirer: scans route_families/realms/areas/resources, handles expirations & handoffs.
     async fn expirer(self: Arc<Self>, shard: Arc<Shard>) {
         let tick = self.sweep_every;
         loop {
             let now = Instant::now();
 
-            for realm_kv in shard.realms.iter() {
-                let realm = realm_kv.key().clone();
-                let areas = realm_kv.value().clone();
+            // Iterate over all route families
+            for rf_kv in shard.route_families.iter() {
+                let rf = *rf_kv.key();
+                let realms = rf_kv.value().clone();
 
-                for area_kv in areas.iter() {
-                    let area = area_kv.key().clone();
-                    let resources = area_kv.value().clone();
+                for realm_kv in realms.iter() {
+                    let realm = realm_kv.key().clone();
+                    let areas = realm_kv.value().clone();
 
-                    for res_kv in resources.iter() {
-                        let res = res_kv.key().clone();
-                        let entry = res_kv.value().clone();
+                    for area_kv in areas.iter() {
+                        let area = area_kv.key().clone();
+                        let resources = area_kv.value().clone();
 
-                        // Quick read check; skip if locked to avoid blocking acquire/release/extend
-                        let is_expired = {
-                            match entry.try_read() {
-                                Ok(lock) => !lock.is_active(now),
-                                Err(_) => continue, // skip if locked
-                            }
-                        };
+                        for res_kv in resources.iter() {
+                            let res = res_kv.key().clone();
+                            let entry = res_kv.value().clone();
 
-                        if !is_expired {
-                            continue;
-                        }
-
-                        // Expired: handoff or prune (non-blocking to avoid starving acquire calls)
-                        let mut lock = match entry.try_write() {
-                            Ok(l) => l,
-                            Err(_) => continue, // skip if locked by acquire/release/extend
-                        };
-                        if lock.is_active(now) {
-                            continue;
-                        } // raced
-
-                        if let Some(mut p) = lock.waiters.pop_front() {
-                            // Handoff loop: skip waiters that dropped their receiver
-                            loop {
-                                let new_id = self.new_uuid_string();
-                                let new_expiry = now + Duration::from_secs(p.requested_ttl as u64);
-                                // Compute token directly from components to avoid
-                                // allocating a temporary `String` for the full key.
-                                let new_token = self
-                                    .compute_token_parts(&realm, &area, &res, &new_id, new_expiry);
-                                lock.id = new_id.clone();
-                                lock.token = new_token.clone();
-                                lock.expiry = new_expiry;
-
-                                if p.responder
-                                    .send(Ok(LeaseGrant {
-                                        id: new_id.clone(),
-                                        body: lock.body.clone(),
-                                        token: new_token.clone(),
-                                        ttl_secs: p.requested_ttl,
-                                    }))
-                                    .is_ok()
-                                {
-                                    break;
+                            // Quick read check; skip if locked to avoid blocking acquire/release/extend
+                            let is_expired = {
+                                match entry.try_read() {
+                                    Ok(lock) => !lock.is_active(now),
+                                    Err(_) => continue, // skip if locked
                                 }
+                            };
 
-                                match lock.waiters.pop_front() {
-                                    Some(next) => p = next,
-                                    None => {
-                                        *lock = LeaseEntry::free();
-                                        drop(lock);
-                                        resources.remove(&res);
-                                        if resources.is_empty() {
-                                            areas.remove(&area);
-                                        }
-                                        if areas.is_empty() {
-                                            shard.realms.remove(&realm);
-                                        }
+                            if !is_expired {
+                                continue;
+                            }
+
+                            // Expired: handoff or prune (non-blocking to avoid starving acquire calls)
+                            let mut lock = match entry.try_write() {
+                                Ok(l) => l,
+                                Err(_) => continue, // skip if locked by acquire/release/extend
+                            };
+                            if lock.is_active(now) {
+                                continue;
+                            } // raced
+
+                            if let Some(mut p) = lock.waiters.pop_front() {
+                                // Handoff loop: skip waiters that dropped their receiver
+                                loop {
+                                    let new_id = self.new_uuid_string();
+                                    let new_expiry =
+                                        now + Duration::from_secs(p.requested_ttl as u64);
+                                    // Compute token directly from components to avoid
+                                    // allocating a temporary `String` for the full key.
+                                    let new_token = self.compute_token_parts(
+                                        &realm, &area, &res, &new_id, new_expiry,
+                                    );
+                                    lock.id = new_id.clone();
+                                    lock.token = new_token.clone();
+                                    lock.expiry = new_expiry;
+
+                                    if p.responder
+                                        .send(Ok(LeaseGrant {
+                                            id: new_id.clone(),
+                                            body: lock.body.clone(),
+                                            token: new_token.clone(),
+                                            ttl_secs: p.requested_ttl,
+                                        }))
+                                        .is_ok()
+                                    {
                                         break;
                                     }
+
+                                    match lock.waiters.pop_front() {
+                                        Some(next) => p = next,
+                                        None => {
+                                            *lock = LeaseEntry::free();
+                                            drop(lock);
+                                            resources.remove(&res);
+                                            if resources.is_empty() {
+                                                areas.remove(&area);
+                                            }
+                                            if areas.is_empty() {
+                                                realms.remove(&realm);
+                                            }
+                                            if realms.is_empty() {
+                                                shard.route_families.remove(&rf);
+                                            }
+                                            break;
+                                        }
+                                    }
                                 }
-                            }
-                        } else {
-                            *lock = LeaseEntry::free();
-                            drop(lock);
-                            resources.remove(&res);
-                            if resources.is_empty() {
-                                areas.remove(&area);
-                            }
-                            if areas.is_empty() {
-                                shard.realms.remove(&realm);
+                            } else {
+                                *lock = LeaseEntry::free();
+                                drop(lock);
+                                resources.remove(&res);
+                                if resources.is_empty() {
+                                    areas.remove(&area);
+                                }
+                                if areas.is_empty() {
+                                    realms.remove(&realm);
+                                }
+                                if realms.is_empty() {
+                                    shard.route_families.remove(&rf);
+                                }
                             }
                         }
                     }
@@ -500,6 +549,7 @@ fn parse_lease_key(key: &str) -> Result<(&str, &str, &str), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::DEFAULT_RF;
     use tokio::time::{sleep, Duration};
 
     // Override LeaseService::new() in tests to disable background expirer
@@ -549,7 +599,10 @@ mod tests {
         let svc = new_test_service();
 
         // Act
-        let grant = svc.acquire("lease://realm1/area1/res1", 2).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res1", 2)
+            .await
+            .unwrap();
 
         // Assert
         assert!(!grant.id.is_empty());
@@ -564,7 +617,7 @@ mod tests {
         let svc = new_test_service();
 
         // Act
-        let result = svc.acquire("lease://realm1/area1/res", 0).await;
+        let result = svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 0).await;
 
         // Assert
         assert!(result.is_err());
@@ -575,12 +628,21 @@ mod tests {
     async fn should_extend_active_lease() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res2", 2).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res2", 2)
+            .await
+            .unwrap();
 
         // Act
         let added = 10u32;
         let remaining = svc
-            .renew("lease://realm1/area1/res2", &grant.id, &grant.token, added)
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/res2",
+                &grant.id,
+                &grant.token,
+                added,
+            )
             .await
             .unwrap();
 
@@ -595,11 +657,20 @@ mod tests {
     async fn should_reject_extend_with_zero_add_secs() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // Act
         let result = svc
-            .renew("lease://realm1/area1/res", &grant.id, &grant.token, 0)
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                &grant.id,
+                &grant.token,
+                0,
+            )
             .await;
 
         // Assert
@@ -611,11 +682,20 @@ mod tests {
     async fn should_reject_extend_with_wrong_id() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // Act
         let result = svc
-            .renew("lease://realm1/area1/res", "wrong-id", &grant.token, 5)
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                "wrong-id",
+                &grant.token,
+                5,
+            )
             .await;
 
         // Assert
@@ -627,11 +707,20 @@ mod tests {
     async fn should_reject_extend_with_wrong_token() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // Act
         let result = svc
-            .renew("lease://realm1/area1/res", &grant.id, "wrong-token", 5)
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                &grant.id,
+                "wrong-token",
+                5,
+            )
             .await;
 
         // Assert
@@ -646,7 +735,13 @@ mod tests {
 
         // Act
         let result = svc
-            .renew("lease://realm1/area1/no-lease", "fake-id", "fake-token", 5)
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/no-lease",
+                "fake-id",
+                "fake-token",
+                5,
+            )
             .await;
 
         // Assert
@@ -659,7 +754,7 @@ mod tests {
         // Arrange
         let svc = new_test_service();
         let grant = svc
-            .acquire("lease://realm1/area1/res_expired_test", 1)
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res_expired_test", 1)
             .await
             .unwrap();
 
@@ -669,6 +764,7 @@ mod tests {
         // Act
         let result = svc
             .renew(
+                DEFAULT_RF,
                 "lease://realm1/area1/res_expired_test",
                 &grant.id,
                 &grant.token,
@@ -690,11 +786,19 @@ mod tests {
     async fn should_release_lease_successfully() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // Act
         let result = svc
-            .release("lease://realm1/area1/res", &grant.id, &grant.token)
+            .surrender(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                &grant.id,
+                &grant.token,
+            )
             .await;
 
         // Assert
@@ -705,13 +809,21 @@ mod tests {
     async fn should_remove_lease_after_release() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
-        svc.release("lease://realm1/area1/res", &grant.id, &grant.token)
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
             .await
             .unwrap();
+        svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &grant.id,
+            &grant.token,
+        )
+        .await
+        .unwrap();
 
         // Act - try to acquire again
-        let result = svc.acquire("lease://realm1/area1/res", 5).await;
+        let result = svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 5).await;
 
         // Assert - should succeed because lease was removed
         assert!(result.is_ok());
@@ -721,11 +833,19 @@ mod tests {
     async fn should_reject_release_with_wrong_id() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // Act
         let result = svc
-            .release("lease://realm1/area1/res", "wrong-id", &grant.token)
+            .surrender(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                "wrong-id",
+                &grant.token,
+            )
             .await;
 
         // Assert
@@ -737,30 +857,50 @@ mod tests {
     async fn should_not_remove_lease_when_release_fails_with_wrong_id() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
         let _ = svc
-            .release("lease://realm1/area1/res", "wrong-id", &grant.token)
+            .surrender(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                "wrong-id",
+                &grant.token,
+            )
             .await;
 
         // Act - try to acquire again (with timeout since it should block)
         let result = tokio::time::timeout(
             Duration::from_millis(100),
-            svc.acquire("lease://realm1/area1/res", 5)
-        ).await;
+            svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 5),
+        )
+        .await;
 
         // Assert - should timeout because lease still exists
-        assert!(result.is_err(), "acquire should timeout/block because lease is still held");
+        assert!(
+            result.is_err(),
+            "acquire should timeout/block because lease is still held"
+        );
     }
 
     #[tokio::test]
     async fn should_reject_release_with_wrong_token() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // Act
         let result = svc
-            .release("lease://realm1/area1/res", &grant.id, "wrong-token")
+            .surrender(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                &grant.id,
+                "wrong-token",
+            )
             .await;
 
         // Assert
@@ -772,19 +912,31 @@ mod tests {
     async fn should_not_remove_lease_when_release_fails_with_wrong_token() {
         // Arrange
         let svc = new_test_service();
-        let grant = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let grant = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
         let _ = svc
-            .release("lease://realm1/area1/res", &grant.id, "wrong-token")
+            .surrender(
+                DEFAULT_RF,
+                "lease://realm1/area1/res",
+                &grant.id,
+                "wrong-token",
+            )
             .await;
 
         // Act - try to acquire again (with timeout since it should block)
         let result = tokio::time::timeout(
             Duration::from_millis(100),
-            svc.acquire("lease://realm1/area1/res", 5)
-        ).await;
+            svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 5),
+        )
+        .await;
 
         // Assert - should timeout because lease still exists
-        assert!(result.is_err(), "acquire should timeout/block because lease is still held");
+        assert!(
+            result.is_err(),
+            "acquire should timeout/block because lease is still held"
+        );
     }
 
     #[tokio::test]
@@ -794,7 +946,12 @@ mod tests {
 
         // Act
         let result = svc
-            .release("lease://realm1/area1/no-lease", "fake-id", "fake-token")
+            .surrender(
+                DEFAULT_RF,
+                "lease://realm1/area1/no-lease",
+                "fake-id",
+                "fake-token",
+            )
             .await;
 
         // Assert
@@ -806,12 +963,18 @@ mod tests {
     async fn should_enqueue_waiter_when_lease_busy() {
         // Arrange
         let svc = new_test_service();
-        let _holder = svc.acquire("lease://realm1/area1/res", 10).await.unwrap();
+        let _holder = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 10)
+            .await
+            .unwrap();
 
         // spawn a second acquire that should wait
         let svc_clone = svc.clone();
-        let waiter =
-            tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res", 5).await });
+        let waiter = tokio::spawn(async move {
+            svc_clone
+                .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+                .await
+        });
 
         // give waiter time to enqueue
         sleep(Duration::from_millis(50)).await;
@@ -824,20 +987,31 @@ mod tests {
     async fn should_grant_lease_to_waiter_on_release() {
         // Arrange
         let svc = new_test_service();
-        let holder = svc.acquire("lease://realm1/area1/res3", 5).await.unwrap();
+        let holder = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res3", 5)
+            .await
+            .unwrap();
 
         // spawn a waiter that will block until the lease is released
         let svc_clone = svc.clone();
-        let waiter =
-            tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res3", 3).await });
+        let waiter = tokio::spawn(async move {
+            svc_clone
+                .acquire(DEFAULT_RF, "lease://realm1/area1/res3", 3)
+                .await
+        });
 
         // give the waiter a moment to enqueue
         sleep(Duration::from_millis(50)).await;
 
         // Act
-        svc.release("lease://realm1/area1/res3", &holder.id, &holder.token)
-            .await
-            .unwrap();
+        svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res3",
+            &holder.id,
+            &holder.token,
+        )
+        .await
+        .unwrap();
 
         // Assert
         let res = waiter.await.unwrap().unwrap();
@@ -850,25 +1024,37 @@ mod tests {
     async fn should_grant_lease_to_next_waiter_fifo() {
         // Arrange
         let svc = new_test_service();
-        let holder = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let holder = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // spawn two waiters
         let svc1 = svc.clone();
-        let waiter1 =
-            tokio::spawn(async move { svc1.acquire("lease://realm1/area1/res", 2).await });
+        let waiter1 = tokio::spawn(async move {
+            svc1.acquire(DEFAULT_RF, "lease://realm1/area1/res", 2)
+                .await
+        });
 
         sleep(Duration::from_millis(10)).await;
 
         let svc2 = svc.clone();
-        let _waiter2 =
-            tokio::spawn(async move { svc2.acquire("lease://realm1/area1/res", 3).await });
+        let _waiter2 = tokio::spawn(async move {
+            svc2.acquire(DEFAULT_RF, "lease://realm1/area1/res", 3)
+                .await
+        });
 
         sleep(Duration::from_millis(50)).await;
 
         // Act
-        svc.release("lease://realm1/area1/res", &holder.id, &holder.token)
-            .await
-            .unwrap();
+        svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &holder.id,
+            &holder.token,
+        )
+        .await
+        .unwrap();
 
         // Assert
         let grant1 = waiter1.await.unwrap().unwrap();
@@ -879,25 +1065,37 @@ mod tests {
     async fn should_keep_second_waiter_waiting_after_first_granted() {
         // Arrange
         let svc = new_test_service();
-        let holder = svc.acquire("lease://realm1/area1/res", 5).await.unwrap();
+        let holder = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
+            .await
+            .unwrap();
 
         // spawn two waiters
         let svc1 = svc.clone();
-        let _waiter1 =
-            tokio::spawn(async move { svc1.acquire("lease://realm1/area1/res", 2).await });
+        let _waiter1 = tokio::spawn(async move {
+            svc1.acquire(DEFAULT_RF, "lease://realm1/area1/res", 2)
+                .await
+        });
 
         sleep(Duration::from_millis(10)).await;
 
         let svc2 = svc.clone();
-        let _waiter2 =
-            tokio::spawn(async move { svc2.acquire("lease://realm1/area1/res", 3).await });
+        let _waiter2 = tokio::spawn(async move {
+            svc2.acquire(DEFAULT_RF, "lease://realm1/area1/res", 3)
+                .await
+        });
 
         sleep(Duration::from_millis(50)).await;
 
         // Act
-        svc.release("lease://realm1/area1/res", &holder.id, &holder.token)
-            .await
-            .unwrap();
+        svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &holder.id,
+            &holder.token,
+        )
+        .await
+        .unwrap();
 
         sleep(Duration::from_millis(50)).await;
 
@@ -912,12 +1110,18 @@ mod tests {
     async fn should_expire_lease_and_grant_to_waiter() {
         // Arrange
         let svc = LeaseService::new(); // needs expirer for this test
-        let _holder = svc.acquire("lease://realm1/area1/res", 1).await.unwrap();
+        let _holder = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res", 1)
+            .await
+            .unwrap();
 
         // spawn a waiter
         let svc_clone = svc.clone();
-        let waiter =
-            tokio::spawn(async move { svc_clone.acquire("lease://realm1/area1/res", 2).await });
+        let waiter = tokio::spawn(async move {
+            svc_clone
+                .acquire(DEFAULT_RF, "lease://realm1/area1/res", 2)
+                .await
+        });
 
         // Act
         sleep(Duration::from_secs(2)).await;
@@ -934,8 +1138,14 @@ mod tests {
         let svc = new_test_service();
 
         // Act
-        let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
-        let grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
+        let grant1 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key1", 5)
+            .await
+            .unwrap();
+        let grant2 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key2", 5)
+            .await
+            .unwrap();
 
         // Assert
         assert_ne!(grant1.id, grant2.id);
@@ -945,12 +1155,34 @@ mod tests {
     async fn should_acquire_two_independent_leases() {
         // Arrange
         let svc = new_test_service();
-        let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
-        let grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
+        let grant1 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key1", 5)
+            .await
+            .unwrap();
+        let grant2 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key2", 5)
+            .await
+            .unwrap();
 
         // Act - verify by trying to renew each
-        let renew1 = svc.renew("lease://realm1/area1/key1", &grant1.id, &grant1.token, 5).await;
-        let renew2 = svc.renew("lease://realm1/area1/key2", &grant2.id, &grant2.token, 5).await;
+        let renew1 = svc
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/key1",
+                &grant1.id,
+                &grant1.token,
+                5,
+            )
+            .await;
+        let renew2 = svc
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/key2",
+                &grant2.id,
+                &grant2.token,
+                5,
+            )
+            .await;
 
         // Assert
         assert!(renew1.is_ok());
@@ -961,25 +1193,50 @@ mod tests {
     async fn should_release_one_lease_without_affecting_other() {
         // Arrange
         let svc = new_test_service();
-        let grant1 = svc.acquire("lease://realm1/area1/key1", 5).await.unwrap();
-        let grant2 = svc.acquire("lease://realm1/area1/key2", 5).await.unwrap();
-
-        // Act
-        svc.release("lease://realm1/area1/key1", &grant1.id, &grant1.token)
+        let grant1 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key1", 5)
+            .await
+            .unwrap();
+        let grant2 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key2", 5)
             .await
             .unwrap();
 
+        // Act
+        svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/key1",
+            &grant1.id,
+            &grant1.token,
+        )
+        .await
+        .unwrap();
+
         // Assert - key1 can be reacquired, key2 still held (timeout since blocked)
-        let reacquire1 = svc.acquire("lease://realm1/area1/key1", 5).await;
+        let reacquire1 = svc
+            .acquire(DEFAULT_RF, "lease://realm1/area1/key1", 5)
+            .await;
         let try_acquire2 = tokio::time::timeout(
             Duration::from_millis(100),
-            svc.acquire("lease://realm1/area1/key2", 5)
-        ).await;
+            svc.acquire(DEFAULT_RF, "lease://realm1/area1/key2", 5),
+        )
+        .await;
         assert!(reacquire1.is_ok());
-        assert!(try_acquire2.is_err(), "acquire of key2 should timeout because it's still held");
-        
+        assert!(
+            try_acquire2.is_err(),
+            "acquire of key2 should timeout because it's still held"
+        );
+
         // Verify key2 still responds to renew
-        let renew2 = svc.renew("lease://realm1/area1/key2", &grant2.id, &grant2.token, 5).await;
+        let renew2 = svc
+            .renew(
+                DEFAULT_RF,
+                "lease://realm1/area1/key2",
+                &grant2.id,
+                &grant2.token,
+                5,
+            )
+            .await;
         assert!(renew2.is_ok());
     }
 
@@ -988,7 +1245,7 @@ mod tests {
         // Arrange
         let svc = new_test_service();
         let grant1 = svc
-            .acquire("lease://realm1/area1/res_reacquire_test", 1)
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res_reacquire_test", 1)
             .await
             .unwrap();
 
@@ -997,7 +1254,7 @@ mod tests {
 
         // Act
         let grant2 = svc
-            .acquire("lease://realm1/area1/res_reacquire_test", 5)
+            .acquire(DEFAULT_RF, "lease://realm1/area1/res_reacquire_test", 5)
             .await
             .unwrap();
 
@@ -1007,5 +1264,263 @@ mod tests {
             grant1.token, grant2.token,
             "new lease should have different token"
         );
+    }
+
+    // --- Multi-tenant/route-family isolation tests ---
+
+    #[tokio::test]
+    async fn should_isolate_leases_between_different_route_families() {
+        // Arrange
+        let svc = new_test_service();
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+
+        // Act - acquire same resource in different route families
+        let grant1 = svc
+            .acquire(rf1, "lease://realm1/area1/resource1", 10)
+            .await
+            .unwrap();
+        let grant2 = svc
+            .acquire(rf2, "lease://realm1/area1/resource1", 10)
+            .await
+            .unwrap();
+
+        // Assert - different leases
+        assert_ne!(grant1.id, grant2.id);
+        assert_ne!(grant1.token, grant2.token);
+    }
+
+    #[tokio::test]
+    async fn should_prevent_cross_tenant_renew() {
+        // Arrange
+        let svc = new_test_service();
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+        let key = "lease://realm1/area1/resource1";
+
+        let grant = svc.acquire(rf1, key, 10).await.unwrap();
+
+        // Act - try to renew lease from rf1 using rf2
+        let result = svc.renew(rf2, key, &grant.id, &grant.token, 5).await;
+
+        // Assert - should fail (lease not found in rf2)
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "lease_not_found");
+    }
+
+    #[tokio::test]
+    async fn should_prevent_cross_tenant_surrender() {
+        // Arrange
+        let svc = new_test_service();
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+        let key = "lease://realm1/area1/resource1";
+
+        let grant = svc.acquire(rf1, key, 10).await.unwrap();
+
+        // Act - try to surrender lease from rf1 using rf2
+        let result = svc.surrender(rf2, key, &grant.id, &grant.token).await;
+
+        // Assert - should fail (lease not found in rf2)
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "lease_not_found");
+    }
+
+    #[tokio::test]
+    async fn should_allow_same_resource_across_multiple_route_families() {
+        // Arrange
+        let svc = new_test_service();
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+        let rf3: RouteFamilyId = 3;
+        let key = "lease://realm1/area1/database";
+
+        // Act - each tenant acquires same resource independently
+        let grant1 = svc.acquire(rf1, key, 5).await.unwrap();
+        let grant2 = svc.acquire(rf2, key, 5).await.unwrap();
+        let grant3 = svc.acquire(rf3, key, 5).await.unwrap();
+
+        // Assert - all three leases coexist without interference
+        assert_ne!(grant1.id, grant2.id);
+        assert_ne!(grant2.id, grant3.id);
+        assert_ne!(grant1.id, grant3.id);
+
+        // Verify each tenant can renew their own lease
+        let renew1 = svc.renew(rf1, key, &grant1.id, &grant1.token, 2).await;
+        let renew2 = svc.renew(rf2, key, &grant2.id, &grant2.token, 2).await;
+        let renew3 = svc.renew(rf3, key, &grant3.id, &grant3.token, 2).await;
+
+        assert!(renew1.is_ok());
+        assert!(renew2.is_ok());
+        assert!(renew3.is_ok());
+    }
+
+    #[tokio::test]
+    async fn should_not_block_across_route_families() {
+        // Arrange
+        let svc = new_test_service();
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+        let key = "lease://realm1/area1/resource1";
+
+        // Act - tenant 1 acquires resource
+        let grant_rf1 = svc.acquire(rf1, key, 10).await.unwrap();
+
+        // Act - tenant 2 should NOT block (different route family)
+        let result_rf2 = svc.acquire(rf2, key, 5).await;
+
+        // Assert - tenant 2 gets immediate lease (no wait)
+        assert!(result_rf2.is_ok());
+        let grant_rf2 = result_rf2.unwrap();
+        assert_ne!(grant_rf1.id, grant_rf2.id);
+
+        // Cleanup
+        let _ = svc
+            .surrender(rf1, key, &grant_rf1.id, &grant_rf1.token)
+            .await;
+        let _ = svc
+            .surrender(rf2, key, &grant_rf2.id, &grant_rf2.token)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn should_maintain_fifo_per_route_family() {
+        // Arrange
+        let svc = new_test_service();
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+        let key = "lease://realm1/area1/resource1";
+
+        // Act - tenant 1 acquires resource
+        let holder_rf1 = svc.acquire(rf1, key, 20).await.unwrap();
+
+        // Spawn waiter in same tenant
+        let svc_waiter = svc.clone();
+        let waiter_rf1 = tokio::spawn(async move { svc_waiter.acquire(rf1, key, 5).await });
+
+        sleep(Duration::from_millis(50)).await;
+
+        // Acquire in different tenant (should succeed immediately)
+        let grant_rf2 = svc.acquire(rf2, key, 5).await.unwrap();
+
+        // Assert - rf2 tenant got lease immediately (not blocked by rf1 waiter)
+        assert!(grant_rf2.id.len() > 0);
+
+        // Surrender rf1 and verify waiter gets it
+        svc.surrender(rf1, key, &holder_rf1.id, &holder_rf1.token)
+            .await
+            .unwrap();
+
+        let waiter_result = waiter_rf1.await.unwrap().unwrap();
+        assert_eq!(waiter_result.ttl_secs, 5);
+
+        // Cleanup
+        let _ = svc
+            .surrender(rf2, key, &grant_rf2.id, &grant_rf2.token)
+            .await;
+        let _ = svc
+            .surrender(rf1, key, &waiter_result.id, &waiter_result.token)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn should_isolate_expiration_per_route_family() {
+        // Arrange
+        let svc = LeaseService::new(); // need expirer
+        let rf1: RouteFamilyId = 1;
+        let rf2: RouteFamilyId = 2;
+        let key = "lease://realm1/area1/exp_resource";
+
+        // Act - create leases with different TTLs in different tenants
+        let grant1 = svc.acquire(rf1, key, 1).await.unwrap(); // expires at 1s
+        let grant2 = svc.acquire(rf2, key, 10).await.unwrap(); // expires at 10s
+
+        // Wait for rf1 to expire
+        sleep(Duration::from_secs(2)).await;
+
+        // Act - try to renew each
+        let renew1 = svc.renew(rf1, key, &grant1.id, &grant1.token, 5).await;
+        let renew2 = svc.renew(rf2, key, &grant2.id, &grant2.token, 5).await;
+
+        // Assert - rf1 expired, rf2 still active
+        assert!(renew1.is_err());
+        assert!(renew2.is_ok());
+
+        // Cleanup
+        let _ = svc.surrender(rf2, key, &grant2.id, &grant2.token).await;
+    }
+
+    #[tokio::test]
+    async fn should_handle_many_route_families_independently() {
+        // Arrange
+        let svc = new_test_service();
+        let num_tenants = 10;
+        let key = "lease://realm1/area1/shared_resource";
+
+        // Act - acquire lease in many route families
+        let mut grants = Vec::new();
+        for rf in 0..num_tenants {
+            let grant = svc.acquire(rf, key, 30).await.unwrap();
+            grants.push((rf, grant));
+        }
+
+        // Assert - all leases are distinct
+        for i in 0..grants.len() {
+            for j in (i + 1)..grants.len() {
+                assert_ne!(grants[i].1.id, grants[j].1.id);
+                assert_ne!(grants[i].1.token, grants[j].1.token);
+            }
+        }
+
+        // Verify each lease can be renewed independently
+        for (rf, grant) in &grants {
+            let renew = svc.renew(*rf, key, &grant.id, &grant.token, 5).await;
+            assert!(renew.is_ok(), "tenant {} should be able to renew", rf);
+        }
+
+        // Cleanup
+        for (rf, grant) in grants {
+            let _ = svc.surrender(rf, key, &grant.id, &grant.token).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn should_allow_concurrent_operations_across_route_families() {
+        // Arrange
+        let svc = Arc::new(new_test_service());
+        let key = "lease://realm1/area1/concurrent_resource";
+
+        // Act - spawn multiple tenants doing operations concurrently
+        let mut tasks = vec![];
+
+        for rf in 0..5 {
+            let svc_clone = svc.clone();
+            let key_clone = key.to_string();
+            let task = tokio::spawn(async move {
+                // Acquire
+                let grant = svc_clone.acquire(rf, &key_clone, 10).await.unwrap();
+
+                // Renew
+                let remaining = svc_clone
+                    .renew(rf, &key_clone, &grant.id, &grant.token, 5)
+                    .await
+                    .unwrap();
+
+                // Surrender
+                svc_clone
+                    .surrender(rf, &key_clone, &grant.id, &grant.token)
+                    .await
+                    .unwrap();
+
+                (rf, remaining)
+            });
+            tasks.push(task);
+        }
+
+        // Assert - all tasks complete successfully
+        for task in tasks {
+            let result = task.await;
+            assert!(result.is_ok());
+        }
     }
 }

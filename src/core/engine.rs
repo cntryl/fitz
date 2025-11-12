@@ -123,7 +123,7 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                 } => {
                     // Clone registry Arc for spawned task
                     let registry_clone = Arc::clone(&registry);
-                    
+
                     // Spawn domain work as separate task to keep engine loop fast and responsive.
                     // Move values directly into task closure - no per-request allocation overhead.
                     tokio::spawn(async move {
@@ -145,15 +145,17 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                             route_family,
                         };
 
-                        // Dispatch to domain 
-                        let response =
-                            match registry_clone.dispatch(parsed.scheme.as_str(), request).await {
-                                Ok(resp) => resp,
-                                Err(e) => {
-                                    let _ = resp.send(Err(e));
-                                    return;
-                                }
-                            };
+                        // Dispatch to domain
+                        let response = match registry_clone
+                            .dispatch(parsed.scheme.as_str(), request)
+                            .await
+                        {
+                            Ok(resp) => resp,
+                            Err(e) => {
+                                let _ = resp.send(Err(e));
+                                return;
+                            }
+                        };
 
                         // Convert domain response to PooledFrame and send
                         let result = match response {
@@ -173,10 +175,12 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                 } => {
                     // Clone registry Arc for spawned task
                     let registry_clone = Arc::clone(&registry);
-                    
+
                     // Cleanup spawned as separate task (fire-and-forget)
                     tokio::spawn(async move {
-                        registry_clone.cleanup_channel(route_family, channel_id).await;
+                        registry_clone
+                            .cleanup_channel(route_family, channel_id)
+                            .await;
                     });
                 }
             }

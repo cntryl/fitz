@@ -119,7 +119,9 @@ impl Domain for ControlDomain {
                 Some(b) => b,
                 None => {
                     let error_response = self.build_error_response("Missing body in request");
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response,
+                    ));
                 }
             };
 
@@ -128,7 +130,9 @@ impl Domain for ControlDomain {
                 Ok(op) => op,
                 Err(e) => {
                     let error_response = self.build_error_response(&e);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response,
+                    ));
                 }
             };
 
@@ -142,11 +146,8 @@ impl Domain for ControlDomain {
                     let msg_id = msg_id_string.as_deref();
 
                     let mut notice_service = self.notice_service.write().await;
-                    let (_delivered, _failed) = notice_service.publish(
-                        &request.route_str,
-                        msg_id,
-                        &response_body,
-                    );
+                    let (_delivered, _failed) =
+                        notice_service.publish(&request.route_str, msg_id, &response_body);
                     drop(notice_service);
 
                     // Build TLV-encoded response
@@ -157,7 +158,9 @@ impl Domain for ControlDomain {
                 }
                 Err(err) => {
                     let error_response = self.build_error_response(&err);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response))
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response,
+                    ))
                 }
             }
         })
@@ -232,7 +235,7 @@ mod tests {
             route_str: "control://heartbeat".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // tests use default route family
+            route_family: 0, // tests use default route family
         };
 
         // Act
@@ -269,7 +272,7 @@ mod tests {
             route_str: "control://shutdown".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // tests use default route family
+            route_family: 0, // tests use default route family
         };
 
         // Act
@@ -302,7 +305,7 @@ mod tests {
             route_str: "control://heartbeat".to_string(),
             payload,
             channel_id: 1,
-            route_family: 0,  // tests use default route family
+            route_family: 0, // tests use default route family
         };
 
         // Act

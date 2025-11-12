@@ -56,6 +56,7 @@ impl Domain for LeaseDomain {
 impl LeaseDomain {
     async fn process(&self, request: DomainContext) -> DomainResponse {
         let svc = LeaseDomain::svc();
+        let rf = request.route_family;
 
         // Parse operation from route
         let operation = match LeaseOperation::from_route(&request.route) {
@@ -73,7 +74,7 @@ impl LeaseDomain {
             LeaseOperation::Acquire => {
                 // Acquire requires TAG_LEASE (TTL)
                 match LeaseDomain::parse_u32(&payload, TAG_LEASE) {
-                    Some(ttl) => self.handle_acquire(svc, key, ttl).await,
+                    Some(ttl) => self.handle_acquire(svc, rf, key, ttl).await,
                     None => DomainResponse::Error("acquire requires TAG_LEASE (TTL)".to_string()),
                 }
             }
@@ -82,24 +83,26 @@ impl LeaseDomain {
                 let id = LeaseDomain::parse_str(&payload, TAG_ID);
                 let token = LeaseDomain::parse_str(&payload, TAG_DELIVERY_TOKEN);
                 let add = LeaseDomain::parse_u32(&payload, TAG_LEASE);
-                
+
                 match (id, token, add) {
                     (Some(id), Some(token), Some(add)) => {
-                        self.handle_renew(svc, key, id, token, add).await
+                        self.handle_renew(svc, rf, key, id, token, add).await
                     }
-                    _ => DomainResponse::Error("renew requires TAG_ID, TAG_DELIVERY_TOKEN, and TAG_LEASE".to_string()),
+                    _ => DomainResponse::Error(
+                        "renew requires TAG_ID, TAG_DELIVERY_TOKEN, and TAG_LEASE".to_string(),
+                    ),
                 }
             }
             LeaseOperation::Release => {
                 // Release requires TAG_ID and TAG_DELIVERY_TOKEN
                 let id = LeaseDomain::parse_str(&payload, TAG_ID);
                 let token = LeaseDomain::parse_str(&payload, TAG_DELIVERY_TOKEN);
-                
+
                 match (id, token) {
-                    (Some(id), Some(token)) => {
-                        self.handle_release(svc, key, id, token).await
-                    }
-                    _ => DomainResponse::Error("release requires TAG_ID and TAG_DELIVERY_TOKEN".to_string()),
+                    (Some(id), Some(token)) => self.handle_release(svc, rf, key, id, token).await,
+                    _ => DomainResponse::Error(
+                        "release requires TAG_ID and TAG_DELIVERY_TOKEN".to_string(),
+                    ),
                 }
             }
         }
@@ -108,19 +111,20 @@ impl LeaseDomain {
     async fn handle_acquire(
         &self,
         svc: &Arc<LeaseService>,
+        rf: crate::storage::RouteFamilyId,
         key: String,
         ttl: u32,
     ) -> DomainResponse {
-        match svc.acquire(&key, ttl).await {
+        match svc.acquire(rf, &key, ttl).await {
             Ok(grant) => {
                 // pre-allocate output buffer to avoid multiple re-allocations
                 let est = grant.id.len()
                     + grant.token.len()
                     + grant.body.as_ref().map(|b| b.len()).unwrap_or(0)
                     + 16;
-                    let mut out = crate::protocol::frame::take_buf();
-                    out.clear(); // Ensure buffer is empty before use
-                    out.reserve(est);
+                let mut out = crate::protocol::frame::take_buf();
+                out.clear(); // Ensure buffer is empty before use
+                out.reserve(est);
                 build_tlv(TAG_ID, grant.id.as_bytes(), &mut out);
                 if let Some(body) = &grant.body {
                     build_tlv(TAG_BODY, body, &mut out);
@@ -136,17 +140,18 @@ impl LeaseDomain {
     async fn handle_renew(
         &self,
         svc: &Arc<LeaseService>,
+        rf: crate::storage::RouteFamilyId,
         key: String,
         id: &str,
         token: &str,
         add: u32,
     ) -> DomainResponse {
-        match svc.renew(&key, id, token, add).await {
+        match svc.renew(rf, &key, id, token, add).await {
             Ok(remaining) => {
                 // small response; reserve a few bytes to avoid tiny reallocs
-                    let mut out = crate::protocol::frame::take_buf();
-                    out.clear(); // Ensure buffer is empty before use
-                    out.reserve(8);
+                let mut out = crate::protocol::frame::take_buf();
+                out.clear(); // Ensure buffer is empty before use
+                out.reserve(8);
                 build_tlv(TAG_LEASE, &remaining.to_be_bytes(), &mut out);
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(out))
             }
@@ -157,11 +162,12 @@ impl LeaseDomain {
     async fn handle_release(
         &self,
         svc: &Arc<LeaseService>,
+        rf: crate::storage::RouteFamilyId,
         key: String,
         id: &str,
         token: &str,
     ) -> DomainResponse {
-        match svc.release(&key, id, token).await {
+        match svc.surrender(rf, &key, id, token).await {
             Ok(()) => DomainResponse::Ok,
             Err(e) => DomainResponse::Error(e),
         }
@@ -185,7 +191,7 @@ mod tests {
             route_str: raw_s,
             payload,
             channel_id: 1,
-            route_family: 0,  // tests use default route family
+            route_family: 0, // tests use default route family
         }
     }
 

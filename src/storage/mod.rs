@@ -1,7 +1,7 @@
 //! Storage module - integrates Midge as the storage backend
 
-pub mod traits;
 pub mod midge_adapter;
+pub mod traits;
 
 pub use traits::{KvStore, KvTransaction};
 

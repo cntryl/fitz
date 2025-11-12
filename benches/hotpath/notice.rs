@@ -30,7 +30,7 @@ fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContex
         route_str: raw.to_string(),
         payload,
         channel_id: 1,
-        route_family: 0,  // benchmarks use default route family
+        route_family: 0, // benchmarks use default route family
     }
 }
 
@@ -51,7 +51,7 @@ fn shared_domain() -> Arc<NoticeDomain> {
 /// Benchmark: Subscribe to route pattern
 fn bench_service_subscribe(c: &mut Criterion) {
     let svc = shared_service();
-    
+
     c.bench_function("service_subscribe", |b| {
         b.iter(|| {
             let mut svc = svc.lock().unwrap();
@@ -77,7 +77,7 @@ fn bench_service_unsubscribe(c: &mut Criterion) {
 /// Benchmark: Publish with no subscribers
 fn bench_service_publish_no_subscribers(c: &mut Criterion) {
     let svc = shared_service();
-    
+
     c.bench_function("service_publish_no_subscribers", |b| {
         b.iter(|| {
             let mut svc = svc.lock().unwrap();
@@ -98,7 +98,7 @@ fn bench_service_publish_one_subscriber(c: &mut Criterion) {
         let mut svc = svc.lock().unwrap();
         svc.subscribe("notice://bench/hotpath/test/*".to_string(), 1, tx);
     }
-    
+
     c.bench_function("service_publish_one_subscriber", |b| {
         b.iter(|| {
             let mut svc = svc.lock().unwrap();
@@ -114,7 +114,7 @@ fn bench_service_publish_one_subscriber(c: &mut Criterion) {
 /// Benchmark: Publish with 10 subscribers
 fn bench_service_publish_ten_subscribers(c: &mut Criterion) {
     let svc = shared_service();
-    
+
     // Add 10 subscribers with different patterns
     for i in 0..10 {
         let (tx, _rx) = mpsc::channel(1000);
@@ -126,7 +126,7 @@ fn bench_service_publish_ten_subscribers(c: &mut Criterion) {
         };
         svc.subscribe(pattern, i as u32, tx);
     }
-    
+
     c.bench_function("service_publish_ten_subscribers", |b| {
         b.iter(|| {
             let mut svc = svc.lock().unwrap();
@@ -142,7 +142,7 @@ fn bench_service_publish_ten_subscribers(c: &mut Criterion) {
 /// Benchmark: Publish with wildcard matching (5 matching out of 100 total)
 fn bench_service_publish_wildcard_matching(c: &mut Criterion) {
     let svc = shared_service();
-    
+
     // Add 100 subscribers, only 5 will match
     for i in 0..100 {
         let (tx, _rx) = mpsc::channel(1000);
@@ -154,7 +154,7 @@ fn bench_service_publish_wildcard_matching(c: &mut Criterion) {
         };
         svc.subscribe(pattern, i as u32, tx);
     }
-    
+
     c.bench_function("service_publish_wildcard_matching", |b| {
         b.iter(|| {
             let mut svc = svc.lock().unwrap();
@@ -170,7 +170,7 @@ fn bench_service_publish_wildcard_matching(c: &mut Criterion) {
 /// Benchmark: Subscribe, publish, and unsubscribe cycle
 fn bench_service_subscribe_publish_unsubscribe_cycle(c: &mut Criterion) {
     let svc = shared_service();
-    
+
     c.bench_function("service_subscribe_publish_unsubscribe_cycle", |b| {
         b.iter(|| {
             let (tx, _rx) = mpsc::channel(1000);
@@ -193,14 +193,18 @@ fn bench_service_subscribe_publish_unsubscribe_cycle(c: &mut Criterion) {
 /// Benchmark: Subscribe via handler
 fn bench_handler_subscribe(c: &mut Criterion) {
     let domain = shared_domain();
-    
+
     c.bench_function("handler_subscribe", |b| {
         b.iter(|| {
             let domain = domain.clone();
             rt().block_on(async move {
                 let mut payload = Vec::new();
-                build_tlv(TAG_SUBSCRIBE, b"notice://bench/hotpath/test/*", &mut payload);
-                
+                build_tlv(
+                    TAG_SUBSCRIBE,
+                    b"notice://bench/hotpath/test/*",
+                    &mut payload,
+                );
+
                 let req = make_request("notice://bench/hotpath/test/*", payload);
                 (&*domain).handle(req).await
             })
@@ -211,7 +215,7 @@ fn bench_handler_subscribe(c: &mut Criterion) {
 /// Benchmark: Publish via handler (no subscribers)
 fn bench_handler_publish_no_subscribers(c: &mut Criterion) {
     let domain = shared_domain();
-    
+
     c.bench_function("handler_publish_no_subscribers", |b| {
         b.iter(|| {
             let domain = domain.clone();
@@ -219,7 +223,7 @@ fn bench_handler_publish_no_subscribers(c: &mut Criterion) {
                 let mut payload = Vec::new();
                 build_tlv(TAG_BODY, b"benchmark payload", &mut payload);
                 build_tlv(TAG_ID, b"msg-123", &mut payload);
-                
+
                 let req = make_request("notice://bench/hotpath/test/event", payload);
                 (&*domain).handle(req).await
             })
@@ -230,15 +234,19 @@ fn bench_handler_publish_no_subscribers(c: &mut Criterion) {
 /// Benchmark: Publish via handler (with 1 subscriber)
 fn bench_handler_publish_one_subscriber(c: &mut Criterion) {
     let domain = shared_domain();
-    
+
     // Subscribe first
     rt().block_on(async {
         let mut payload = Vec::new();
-        build_tlv(TAG_SUBSCRIBE, b"notice://bench/hotpath/test/*", &mut payload);
+        build_tlv(
+            TAG_SUBSCRIBE,
+            b"notice://bench/hotpath/test/*",
+            &mut payload,
+        );
         let req = make_request("notice://bench/hotpath/test/*", payload);
         let _ = (&*domain).handle(req).await;
     });
-    
+
     c.bench_function("handler_publish_one_subscriber", |b| {
         b.iter(|| {
             let domain = domain.clone();
@@ -246,7 +254,7 @@ fn bench_handler_publish_one_subscriber(c: &mut Criterion) {
                 let mut payload = Vec::new();
                 build_tlv(TAG_BODY, b"benchmark payload", &mut payload);
                 build_tlv(TAG_ID, b"msg-123", &mut payload);
-                
+
                 let req = make_request("notice://bench/hotpath/test/event", payload);
                 (&*domain).handle(req).await
             })
@@ -257,17 +265,21 @@ fn bench_handler_publish_one_subscriber(c: &mut Criterion) {
 /// Benchmark: Subscribe, publish, unsubscribe via handler
 fn bench_handler_subscribe_publish_unsubscribe(c: &mut Criterion) {
     let domain = shared_domain();
-    
+
     c.bench_function("handler_subscribe_publish_unsubscribe", |b| {
         b.iter(|| {
             let domain = domain.clone();
             rt().block_on(async move {
                 // Subscribe
                 let mut sub_payload = Vec::new();
-                build_tlv(TAG_SUBSCRIBE, b"notice://bench/hotpath/test/*", &mut sub_payload);
+                build_tlv(
+                    TAG_SUBSCRIBE,
+                    b"notice://bench/hotpath/test/*",
+                    &mut sub_payload,
+                );
                 let sub_req = make_request("notice://bench/hotpath/test/*", sub_payload);
                 let sub_resp = (&*domain).handle(sub_req).await;
-                
+
                 // Extract subscription ID
                 let sub_id = if let DomainResponse::Frame(frame) = sub_resp {
                     fitz::protocol::frame::find_tlv(frame.as_ref(), TAG_ID)
@@ -276,13 +288,13 @@ fn bench_handler_subscribe_publish_unsubscribe(c: &mut Criterion) {
                 } else {
                     None
                 };
-                
+
                 // Publish
                 let mut pub_payload = Vec::new();
                 build_tlv(TAG_BODY, b"benchmark payload", &mut pub_payload);
                 let pub_req = make_request("notice://bench/hotpath/test/event", pub_payload);
                 let _ = (&*domain).handle(pub_req).await;
-                
+
                 // Unsubscribe
                 if let Some(sub_id) = sub_id {
                     let mut unsub_payload = Vec::new();

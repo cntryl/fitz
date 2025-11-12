@@ -4,8 +4,8 @@
 //! that Fitz uses, we just need to provide helper functions for creating
 //! Midge instances with appropriate configurations.
 
-use cntryl_midge::core::{KvStoreAdapter, MidgeEngine};
 use cntryl_midge::config::ConfigBuilder;
+use cntryl_midge::core::{KvStoreAdapter, MidgeEngine};
 use cntryl_midge::KvStore;
 
 use std::path::Path;

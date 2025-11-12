@@ -103,24 +103,24 @@ impl RpcDomain {
     /// Build TLV response for subscription acknowledgment
     fn build_subscribe_response(&self, route: &str) -> ResponseBuf {
         let mut response = ResponseBuf::new();
-        
+
         // TAG_ROUTE + length + route
         response.push(TAG_ROUTE);
         response.push(route.len() as u8);
         response.extend_from_slice(route.as_bytes());
-        
+
         response
     }
 
     /// Build TLV error response
     fn build_error_response(&self, error_msg: &str) -> ResponseBuf {
         let mut response = ResponseBuf::new();
-        
+
         // TAG_ERR_MSG + length + message
         response.push(TAG_ERR_MSG);
         response.push(error_msg.len() as u8);
         response.extend_from_slice(error_msg.as_bytes());
-        
+
         response
     }
 
@@ -133,32 +133,32 @@ impl RpcDomain {
         body: &[u8],
     ) -> ResponseBuf {
         let service = self.service.read().await;
-        
+
         // Find matching handlers
         let handlers = service.matching_handlers(route);
-        
+
         if handlers.is_empty() {
             return self.build_error_response("No handlers available");
         }
-        
+
         // Use first available handler (simple dispatch)
         // Future enhancement: implement round-robin, least-connections, or weighted load balancing
         let handler = &handlers[0];
-        
+
         // Register active request for inbox authorization
         if let (Some(corr_id), Some(reply)) = (correlation_id, reply_route) {
             drop(service); // Release read lock
             let mut service = self.service.write().await;
             service.register_request(corr_id.to_string(), route.to_string(), reply.to_string());
         }
-        
+
         // Forward request to handler
         match handler.sender.try_send((
             route.to_string(),
             correlation_id.map(|s| s.to_string()),
             body.to_vec(),
             reply_route.map(|s| s.to_string()),
-            None, // seq
+            None,  // seq
             false, // stream_end
         )) {
             Ok(_) => {
@@ -183,7 +183,7 @@ impl RpcDomain {
         is_stream_end: bool,
     ) -> ResponseBuf {
         let service = self.service.read().await;
-        
+
         // Authorization: check if correlation_id allows publishing to this inbox
         if let Some(corr_id) = correlation_id {
             if !service.can_publish_to_inbox(inbox_route, corr_id) {
@@ -192,22 +192,22 @@ impl RpcDomain {
         } else {
             return self.build_error_response("Missing correlation ID for reply");
         }
-        
+
         // Find inbox subscriber
         let subscribers = service.matching_inbox_subscribers(inbox_route);
-        
+
         if subscribers.is_empty() {
             return self.build_error_response("Inbox not found");
         }
-        
+
         let subscriber = &subscribers[0];
-        
+
         // Forward reply to client
         match subscriber.sender.try_send((
             inbox_route.to_string(),
             correlation_id.map(|s| s.to_string()),
             body.to_vec(),
-            None, // reply_to (N/A for replies)
+            None,                  // reply_to (N/A for replies)
             seq.map(|s| s as u32), // Convert u64 to u32 for SubSender
             is_stream_end,
         )) {
@@ -247,13 +247,15 @@ impl Domain for RpcDomain {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             let payload = &request.payload;
-            
+
             // Parse TLV payload
             let parse_result = match self.parse_tlv_single_pass(payload) {
                 Ok(result) => result,
                 Err(error_msg) => {
                     let response_data = self.build_error_response(&error_msg);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response_data.to_vec()));
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        response_data.to_vec(),
+                    ));
                 }
             };
 
@@ -261,13 +263,16 @@ impl Domain for RpcDomain {
             let route = &request.route_str;
 
             // Extract optional fields
-            let correlation_id = parse_result.id_range
+            let correlation_id = parse_result
+                .id_range
                 .and_then(|(start, len)| std::str::from_utf8(&payload[start..start + len]).ok());
-            
-            let reply_route = parse_result.reply_route_range
+
+            let reply_route = parse_result
+                .reply_route_range
                 .and_then(|(start, len)| std::str::from_utf8(&payload[start..start + len]).ok());
-            
-            let body = parse_result.body_range
+
+            let body = parse_result
+                .body_range
                 .map(|(start, len)| &payload[start..start + len])
                 .unwrap_or(&[]);
 
@@ -276,19 +281,23 @@ impl Domain for RpcDomain {
                 // Subscribe operation - actual subscription happens via Domain::subscribe trait method
                 // Handler just acknowledges
                 let response_data = self.build_subscribe_response(route);
-                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response_data.to_vec()));
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    response_data.to_vec(),
+                ));
             }
 
             if parse_result.has_unsubscribe {
                 // Unsubscribe operation - actual unsubscription happens via Domain::unsubscribe trait method
                 // Handler just acknowledges
                 let response_data = self.build_subscribe_response(route);
-                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response_data.to_vec()));
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    response_data.to_vec(),
+                ));
             }
 
             // Determine if this is a request or reply
             let is_reply = route.starts_with("inbox://");
-            
+
             let response_data = if is_reply {
                 // This is a reply from handler to client
                 self.handle_rpc_reply(
@@ -297,18 +306,17 @@ impl Domain for RpcDomain {
                     body,
                     parse_result.seq_value,
                     parse_result.has_stream_end,
-                ).await
+                )
+                .await
             } else {
                 // This is a request from client to handler
-                self.handle_rpc_request(
-                    route,
-                    correlation_id,
-                    reply_route,
-                    body,
-                ).await
+                self.handle_rpc_request(route, correlation_id, reply_route, body)
+                    .await
             };
 
-            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response_data.to_vec()))
+            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                response_data.to_vec(),
+            ))
         })
     }
 

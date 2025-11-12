@@ -66,11 +66,9 @@ fn bench_route_table_match_exact(c: &mut Criterion) {
         };
         rt.insert(DEFAULT_RF, sub);
     }
-    
+
     c.bench_function("route_table_match_exact", |b| {
-        b.iter(|| {
-            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op")
-        });
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op"));
     });
 }
 
@@ -78,7 +76,7 @@ fn bench_route_table_match_exact(c: &mut Criterion) {
 fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
     let (tx, _rx) = mpsc::channel(100);
-    
+
     // Add one global wildcard subscription
     let sub = RtSubscription {
         id: 1,
@@ -87,7 +85,7 @@ fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
         sender: tx.clone(),
     };
     rt.insert(DEFAULT_RF, sub);
-    
+
     // Add many specific subscriptions
     for i in 0..100 {
         let sub = RtSubscription {
@@ -98,11 +96,9 @@ fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
         };
         rt.insert(DEFAULT_RF, sub);
     }
-    
+
     c.bench_function("route_table_match_global_wildcard", |b| {
-        b.iter(|| {
-            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op")
-        });
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op"));
     });
 }
 
@@ -110,7 +106,7 @@ fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
 fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
     let (tx, _rx) = mpsc::channel(100);
-    
+
     // Add trailing wildcard subscriptions at different levels
     for i in 0..20 {
         let sub = RtSubscription {
@@ -121,11 +117,9 @@ fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
         };
         rt.insert(DEFAULT_RF, sub);
     }
-    
+
     c.bench_function("route_table_match_trailing_wildcard", |b| {
-        b.iter(|| {
-            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area10/resource/op")
-        });
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area10/resource/op"));
     });
 }
 
@@ -133,7 +127,7 @@ fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
 fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
     let (tx, _rx) = mpsc::channel(100);
-    
+
     // Add mid-path wildcard subscriptions
     for i in 0..20 {
         let sub = RtSubscription {
@@ -144,11 +138,9 @@ fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
         };
         rt.insert(DEFAULT_RF, sub);
     }
-    
+
     c.bench_function("route_table_match_mid_path_wildcard", |b| {
-        b.iter(|| {
-            rt.matching_subscribers(DEFAULT_RF, "scheme://realm/anyarea/resource10/op")
-        });
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/anyarea/resource10/op"));
     });
 }
 
@@ -156,7 +148,7 @@ fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
 fn bench_route_table_match_none(c: &mut Criterion) {
     let mut rt = RouteTable::new();
     let (tx, _rx) = mpsc::channel(100);
-    
+
     for i in 0..100 {
         let sub = RtSubscription {
             id: i,
@@ -166,11 +158,9 @@ fn bench_route_table_match_none(c: &mut Criterion) {
         };
         rt.insert(DEFAULT_RF, sub);
     }
-    
+
     c.bench_function("route_table_match_none", |b| {
-        b.iter(|| {
-            rt.matching_subscribers(DEFAULT_RF, "scheme://nomatch/area/resource/op")
-        });
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://nomatch/area/resource/op"));
     });
 }
 
@@ -180,7 +170,7 @@ fn bench_route_table_cleanup_channel(c: &mut Criterion) {
         b.iter(|| {
             let mut rt = RouteTable::new();
             let (tx, _rx) = mpsc::channel(100);
-            
+
             // Add subscriptions for multiple channels
             for channel_id in 1..=5 {
                 for i in 0..20 {
@@ -193,7 +183,7 @@ fn bench_route_table_cleanup_channel(c: &mut Criterion) {
                     rt.insert(DEFAULT_RF, sub);
                 }
             }
-            
+
             // Cleanup channel 3
             rt.cleanup_channel(DEFAULT_RF, 3);
             rt
@@ -208,11 +198,11 @@ fn bench_route_table_cleanup_channel(c: &mut Criterion) {
 /// Benchmark: Match exact route at various scales (1K, 10K, 100K subscriptions)
 fn bench_route_table_match_exact_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_match_exact_scaling");
-    
+
     for &n in &[1_000, 10_000, 100_000] {
         let mut rt = RouteTable::new();
         let (tx, _rx) = mpsc::channel(100);
-        
+
         // Insert N unique subscriptions
         for i in 0..n {
             let sub = RtSubscription {
@@ -223,25 +213,28 @@ fn bench_route_table_match_exact_scaling(c: &mut Criterion) {
             };
             rt.insert(DEFAULT_RF, sub);
         }
-        
+
         group.bench_with_input(format!("{}", n), &rt, |b, rt| {
             b.iter(|| {
-                rt.matching_subscribers(DEFAULT_RF, &format!("scheme://realm/area{}/resource/op", n / 2))
+                rt.matching_subscribers(
+                    DEFAULT_RF,
+                    &format!("scheme://realm/area{}/resource/op", n / 2),
+                )
             });
         });
     }
-    
+
     group.finish();
 }
 
 /// Benchmark: Match with wildcards at various scales (1K, 10K, 100K subscriptions)
 fn bench_route_table_match_wildcard_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_match_wildcard_scaling");
-    
+
     for &n in &[1_000, 10_000, 100_000] {
         let mut rt = RouteTable::new();
         let (tx, _rx) = mpsc::channel(100);
-        
+
         // Insert N subscriptions (10% with trailing wildcards)
         for i in 0..n {
             let pattern = if i % 10 == 0 {
@@ -257,14 +250,17 @@ fn bench_route_table_match_wildcard_scaling(c: &mut Criterion) {
             };
             rt.insert(DEFAULT_RF, sub);
         }
-        
+
         group.bench_with_input(format!("{}", n), &rt, |b, rt| {
             b.iter(|| {
-                rt.matching_subscribers(DEFAULT_RF, &format!("scheme://realm/area{}/resource/op", n / 2))
+                rt.matching_subscribers(
+                    DEFAULT_RF,
+                    &format!("scheme://realm/area{}/resource/op", n / 2),
+                )
             });
         });
     }
-    
+
     group.finish();
 }
 
