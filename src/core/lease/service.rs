@@ -1426,7 +1426,7 @@ mod tests {
     #[tokio::test]
     async fn should_isolate_expiration_per_route_family() {
         // Arrange
-        let svc = LeaseService::new(); // need expirer
+        let svc = new_test_service();
         let rf1: RouteFamilyId = 1;
         let rf2: RouteFamilyId = 2;
         let key = "lease://realm1/area1/exp_resource";
