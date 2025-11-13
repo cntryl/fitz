@@ -301,7 +301,7 @@ dependencies = [
 [[package]]
 name = "cntryl-midge"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/midge?branch=main#ccffa0013a011002a152a769dce3bacdefdd3c47"
+source = "git+https://github.com/cntryl/midge?branch=main#d5647682a8afa43251f1b01358093b4c1b1f3d2e"
 dependencies = [
  "anyhow",
  "bincode",

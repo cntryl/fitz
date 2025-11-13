@@ -117,13 +117,13 @@ fn bench_renew(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------
-// Base: release only
+// Base: surrender only
 // ---------------------------------------------------------
-fn bench_release(c: &mut Criterion) {
+fn bench_surrender(c: &mut Criterion) {
     let svc = shared_service();
     let mut counter = 0u64;
 
-    c.bench_function("lease_release_no_waiters", |b| {
+    c.bench_function("lease_surrender_no_waiters", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
             let k = key(counter);
@@ -138,7 +138,7 @@ fn bench_release(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------
-// Base: acquire + release cycle
+// Base: acquire + surrender cycle
 // ---------------------------------------------------------
 fn bench_cycle(c: &mut Criterion) {
     let svc = shared_service();
@@ -159,13 +159,13 @@ fn bench_cycle(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------
-// Handler benches: Acquire + Release
+// Handler benches: Acquire + Surrender
 // ---------------------------------------------------------
-fn bench_acquire_release_handler(c: &mut Criterion) {
+fn bench_acquire_surrender_handler(c: &mut Criterion) {
     let domain = shared_domain();
     let mut counter = 0u64;
 
-    c.bench_function("handler_acquire_release", |b| {
+    c.bench_function("handler_acquire_surrender", |b| {
         b.iter(|| {
             counter = counter.wrapping_add(1);
             let route = key(counter);
@@ -186,7 +186,7 @@ fn bench_acquire_release_handler(c: &mut Criterion) {
                         .map(|b| String::from_utf8_lossy(b).into_owned());
 
                     if let (Some(id), Some(token)) = (id, token) {
-                        // release
+                        // surrender
                         let mut rel = Vec::with_capacity(32);
                         build_tlv(TAG_ID, id.as_bytes(), &mut rel);
                         build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut rel);
@@ -444,9 +444,9 @@ criterion_group! {
     targets =
         bench_acquire_uncontended,
         bench_renew,
-        bench_release,
+        bench_surrender,
         bench_cycle,
-        bench_acquire_release_handler,
+        bench_acquire_surrender_handler,
         bench_renew_handler,
         bench_acquire_multi_tenant_5,
         bench_renew_multi_tenant_5,

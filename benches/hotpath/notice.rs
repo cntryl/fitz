@@ -34,13 +34,13 @@ fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContex
     }
 }
 
-// Shared NoticeService instance
-fn shared_service() -> Arc<std::sync::Mutex<NoticeService>> {
+// Create fresh instances for each benchmark to prevent state pollution
+fn new_service() -> Arc<std::sync::Mutex<NoticeService>> {
     Arc::new(std::sync::Mutex::new(NoticeService::new()))
 }
 
-// Shared NoticeDomain instance
-fn shared_domain() -> Arc<NoticeDomain> {
+// Create fresh domain instance for each benchmark
+fn new_domain() -> Arc<NoticeDomain> {
     Arc::new(NoticeDomain::new())
 }
 
@@ -50,13 +50,12 @@ fn shared_domain() -> Arc<NoticeDomain> {
 
 /// Benchmark: Subscribe to route pattern
 fn bench_service_subscribe(c: &mut Criterion) {
-    let svc = shared_service();
-
     c.bench_function("service_subscribe", |b| {
         b.iter(|| {
+            let svc = new_service();
             let mut svc = svc.lock().unwrap();
             let (tx, _rx) = mpsc::channel(100);
-            svc.subscribe("notice://bench/hotpath/test/*".to_string(), 1, tx)
+            svc.subscribe(0, "notice://bench/hotpath/test/*".to_string(), 1, tx)
         });
     });
 }
@@ -65,23 +64,23 @@ fn bench_service_subscribe(c: &mut Criterion) {
 fn bench_service_unsubscribe(c: &mut Criterion) {
     c.bench_function("service_unsubscribe", |b| {
         b.iter(|| {
-            let svc = shared_service();
+            let svc = new_service();
             let mut svc = svc.lock().unwrap();
             let (tx, _rx) = mpsc::channel(100);
-            let sub_id = svc.subscribe("notice://bench/hotpath/test/*".to_string(), 1, tx);
-            svc.unsubscribe(sub_id)
+            let sub_id = svc.subscribe(0, "notice://bench/hotpath/test/*".to_string(), 1, tx);
+            svc.unsubscribe(0, sub_id)
         });
     });
 }
 
 /// Benchmark: Publish with no subscribers
 fn bench_service_publish_no_subscribers(c: &mut Criterion) {
-    let svc = shared_service();
-
     c.bench_function("service_publish_no_subscribers", |b| {
         b.iter(|| {
+            let svc = new_service();
             let mut svc = svc.lock().unwrap();
             svc.publish(
+                0,
                 "notice://bench/hotpath/test/event",
                 Some("msg-123"),
                 b"benchmark payload",
@@ -92,17 +91,18 @@ fn bench_service_publish_no_subscribers(c: &mut Criterion) {
 
 /// Benchmark: Publish with 1 subscriber
 fn bench_service_publish_one_subscriber(c: &mut Criterion) {
-    let svc = shared_service();
-    let (tx, _rx) = mpsc::channel(1000);
-    {
-        let mut svc = svc.lock().unwrap();
-        svc.subscribe("notice://bench/hotpath/test/*".to_string(), 1, tx);
-    }
-
     c.bench_function("service_publish_one_subscriber", |b| {
         b.iter(|| {
+            let svc = new_service();
+            let (tx, _rx) = mpsc::channel(1000);
+            {
+                let mut svc = svc.lock().unwrap();
+                svc.subscribe(0, "notice://bench/hotpath/test/*".to_string(), 1, tx);
+            }
+
             let mut svc = svc.lock().unwrap();
             svc.publish(
+                0,
                 "notice://bench/hotpath/test/event",
                 Some("msg-123"),
                 b"benchmark payload",
@@ -113,24 +113,25 @@ fn bench_service_publish_one_subscriber(c: &mut Criterion) {
 
 /// Benchmark: Publish with 10 subscribers
 fn bench_service_publish_ten_subscribers(c: &mut Criterion) {
-    let svc = shared_service();
-
-    // Add 10 subscribers with different patterns
-    for i in 0..10 {
-        let (tx, _rx) = mpsc::channel(1000);
-        let mut svc = svc.lock().unwrap();
-        let pattern = if i < 5 {
-            "notice://bench/hotpath/test/*".to_string()
-        } else {
-            format!("notice://bench/hotpath/test/event{}", i)
-        };
-        svc.subscribe(pattern, i as u32, tx);
-    }
-
     c.bench_function("service_publish_ten_subscribers", |b| {
         b.iter(|| {
+            let svc = new_service();
+
+            // Add 10 subscribers with different patterns
+            for i in 0..10 {
+                let (tx, _rx) = mpsc::channel(1000);
+                let mut svc = svc.lock().unwrap();
+                let pattern = if i < 5 {
+                    "notice://bench/hotpath/test/*".to_string()
+                } else {
+                    format!("notice://bench/hotpath/test/event{}", i)
+                };
+                svc.subscribe(0, pattern, i as u32, tx);
+            }
+
             let mut svc = svc.lock().unwrap();
             svc.publish(
+                0,
                 "notice://bench/hotpath/test/event",
                 Some("msg-123"),
                 b"benchmark payload",
@@ -141,24 +142,25 @@ fn bench_service_publish_ten_subscribers(c: &mut Criterion) {
 
 /// Benchmark: Publish with wildcard matching (5 matching out of 100 total)
 fn bench_service_publish_wildcard_matching(c: &mut Criterion) {
-    let svc = shared_service();
-
-    // Add 100 subscribers, only 5 will match
-    for i in 0..100 {
-        let (tx, _rx) = mpsc::channel(1000);
-        let mut svc = svc.lock().unwrap();
-        let pattern = if i < 5 {
-            "notice://bench/hotpath/*".to_string()
-        } else {
-            format!("notice://other/area{}/resource/op", i)
-        };
-        svc.subscribe(pattern, i as u32, tx);
-    }
-
     c.bench_function("service_publish_wildcard_matching", |b| {
         b.iter(|| {
+            let svc = new_service();
+
+            // Add 100 subscribers, only 5 will match
+            for i in 0..100 {
+                let (tx, _rx) = mpsc::channel(1000);
+                let mut svc = svc.lock().unwrap();
+                let pattern = if i < 5 {
+                    "notice://bench/hotpath/*".to_string()
+                } else {
+                    format!("notice://other/area{}/resource/op", i)
+                };
+                svc.subscribe(0, pattern, i as u32, tx);
+            }
+
             let mut svc = svc.lock().unwrap();
             svc.publish(
+                0,
                 "notice://bench/hotpath/test/event",
                 Some("msg-123"),
                 b"benchmark payload",
@@ -169,19 +171,19 @@ fn bench_service_publish_wildcard_matching(c: &mut Criterion) {
 
 /// Benchmark: Subscribe, publish, and unsubscribe cycle
 fn bench_service_subscribe_publish_unsubscribe_cycle(c: &mut Criterion) {
-    let svc = shared_service();
-
     c.bench_function("service_subscribe_publish_unsubscribe_cycle", |b| {
         b.iter(|| {
+            let svc = new_service();
             let (tx, _rx) = mpsc::channel(1000);
             let mut svc = svc.lock().unwrap();
-            let sub_id = svc.subscribe("notice://bench/hotpath/test/*".to_string(), 1, tx);
+            let sub_id = svc.subscribe(0, "notice://bench/hotpath/test/*".to_string(), 1, tx);
             let _ = svc.publish(
+                0,
                 "notice://bench/hotpath/test/event",
                 Some("msg-123"),
                 b"benchmark payload",
             );
-            svc.unsubscribe(sub_id)
+            svc.unsubscribe(0, sub_id)
         });
     });
 }
@@ -192,11 +194,9 @@ fn bench_service_subscribe_publish_unsubscribe_cycle(c: &mut Criterion) {
 
 /// Benchmark: Subscribe via handler
 fn bench_handler_subscribe(c: &mut Criterion) {
-    let domain = shared_domain();
-
     c.bench_function("handler_subscribe", |b| {
         b.iter(|| {
-            let domain = domain.clone();
+            let domain = new_domain();
             rt().block_on(async move {
                 let mut payload = Vec::new();
                 build_tlv(
@@ -214,11 +214,9 @@ fn bench_handler_subscribe(c: &mut Criterion) {
 
 /// Benchmark: Publish via handler (no subscribers)
 fn bench_handler_publish_no_subscribers(c: &mut Criterion) {
-    let domain = shared_domain();
-
     c.bench_function("handler_publish_no_subscribers", |b| {
         b.iter(|| {
-            let domain = domain.clone();
+            let domain = new_domain();
             rt().block_on(async move {
                 let mut payload = Vec::new();
                 build_tlv(TAG_BODY, b"benchmark payload", &mut payload);
@@ -233,30 +231,27 @@ fn bench_handler_publish_no_subscribers(c: &mut Criterion) {
 
 /// Benchmark: Publish via handler (with 1 subscriber)
 fn bench_handler_publish_one_subscriber(c: &mut Criterion) {
-    let domain = shared_domain();
-
-    // Subscribe first
-    rt().block_on(async {
-        let mut payload = Vec::new();
-        build_tlv(
-            TAG_SUBSCRIBE,
-            b"notice://bench/hotpath/test/*",
-            &mut payload,
-        );
-        let req = make_request("notice://bench/hotpath/test/*", payload);
-        let _ = (&*domain).handle(req).await;
-    });
-
     c.bench_function("handler_publish_one_subscriber", |b| {
         b.iter(|| {
-            let domain = domain.clone();
-            rt().block_on(async move {
-                let mut payload = Vec::new();
-                build_tlv(TAG_BODY, b"benchmark payload", &mut payload);
-                build_tlv(TAG_ID, b"msg-123", &mut payload);
+            let domain = new_domain();
+            rt().block_on(async {
+                // Subscribe first
+                let mut sub_payload = Vec::new();
+                build_tlv(
+                    TAG_SUBSCRIBE,
+                    b"notice://bench/hotpath/test/*",
+                    &mut sub_payload,
+                );
+                let sub_req = make_request("notice://bench/hotpath/test/*", sub_payload);
+                let _ = (&*domain).handle(sub_req).await;
 
-                let req = make_request("notice://bench/hotpath/test/event", payload);
-                (&*domain).handle(req).await
+                // Publish
+                let mut pub_payload = Vec::new();
+                build_tlv(TAG_BODY, b"benchmark payload", &mut pub_payload);
+                build_tlv(TAG_ID, b"msg-123", &mut pub_payload);
+
+                let pub_req = make_request("notice://bench/hotpath/test/event", pub_payload);
+                (&*domain).handle(pub_req).await
             })
         });
     });
@@ -264,12 +259,10 @@ fn bench_handler_publish_one_subscriber(c: &mut Criterion) {
 
 /// Benchmark: Subscribe, publish, unsubscribe via handler
 fn bench_handler_subscribe_publish_unsubscribe(c: &mut Criterion) {
-    let domain = shared_domain();
-
     c.bench_function("handler_subscribe_publish_unsubscribe", |b| {
         b.iter(|| {
-            let domain = domain.clone();
-            rt().block_on(async move {
+            let domain = new_domain();
+            rt().block_on(async {
                 // Subscribe
                 let mut sub_payload = Vec::new();
                 build_tlv(
@@ -307,6 +300,205 @@ fn bench_handler_subscribe_publish_unsubscribe(c: &mut Criterion) {
     });
 }
 
+// ============================================================================
+// MULTI-TENANT BENCHMARKS (multiple route families)
+// ============================================================================
+
+/// Benchmark: Subscribe across 5 route families
+fn bench_service_subscribe_multi_tenant_5(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_subscribe_multi_tenant_5rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 5;
+            let svc = new_service();
+            let mut svc = svc.lock().unwrap();
+            let (tx, _rx) = mpsc::channel(100);
+            svc.subscribe(rf, "notice://bench/hotpath/test/*".to_string(), 1, tx)
+        });
+    });
+}
+
+/// Benchmark: Subscribe across 10 route families
+fn bench_service_subscribe_multi_tenant_10(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_subscribe_multi_tenant_10rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 10;
+            let svc = new_service();
+            let mut svc = svc.lock().unwrap();
+            let (tx, _rx) = mpsc::channel(100);
+            svc.subscribe(rf, "notice://bench/hotpath/test/*".to_string(), 1, tx)
+        });
+    });
+}
+
+/// Benchmark: Subscribe across 100 route families
+fn bench_service_subscribe_multi_tenant_100(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_subscribe_multi_tenant_100rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 100;
+            let svc = new_service();
+            let mut svc = svc.lock().unwrap();
+            let (tx, _rx) = mpsc::channel(100);
+            svc.subscribe(rf, "notice://bench/hotpath/test/*".to_string(), 1, tx)
+        });
+    });
+}
+
+/// Benchmark: Publish across 5 route families (no subscribers)
+fn bench_service_publish_multi_tenant_5(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_publish_multi_tenant_5rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 5;
+            let svc = new_service();
+            let mut svc = svc.lock().unwrap();
+            svc.publish(
+                rf,
+                "notice://bench/hotpath/test/event",
+                Some("msg-123"),
+                b"benchmark payload",
+            )
+        });
+    });
+}
+
+/// Benchmark: Publish across 10 route families (no subscribers)
+fn bench_service_publish_multi_tenant_10(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_publish_multi_tenant_10rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 10;
+            let svc = new_service();
+            let mut svc = svc.lock().unwrap();
+            svc.publish(
+                rf,
+                "notice://bench/hotpath/test/event",
+                Some("msg-123"),
+                b"benchmark payload",
+            )
+        });
+    });
+}
+
+/// Benchmark: Publish across 100 route families (no subscribers)
+fn bench_service_publish_multi_tenant_100(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_publish_multi_tenant_100rf", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 100;
+            let svc = new_service();
+            let mut svc = svc.lock().unwrap();
+            svc.publish(
+                rf,
+                "notice://bench/hotpath/test/event",
+                Some("msg-123"),
+                b"benchmark payload",
+            )
+        });
+    });
+}
+
+/// Benchmark: Publish with 1 subscriber per route family across 5 families
+fn bench_service_publish_multi_tenant_5_with_subscribers(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_publish_multi_tenant_5rf_with_subs", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 5;
+            let svc = new_service();
+
+            // Subscribe on this route family
+            let (tx, _rx) = mpsc::channel(1000);
+            {
+                let mut svc = svc.lock().unwrap();
+                svc.subscribe(rf, "notice://bench/hotpath/test/*".to_string(), 1, tx);
+            }
+
+            // Publish on the same route family
+            let mut svc = svc.lock().unwrap();
+            svc.publish(
+                rf,
+                "notice://bench/hotpath/test/event",
+                Some("msg-123"),
+                b"benchmark payload",
+            )
+        });
+    });
+}
+
+/// Benchmark: Publish with 1 subscriber per route family across 10 families
+fn bench_service_publish_multi_tenant_10_with_subscribers(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_publish_multi_tenant_10rf_with_subs", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 10;
+            let svc = new_service();
+
+            // Subscribe on this route family
+            let (tx, _rx) = mpsc::channel(1000);
+            {
+                let mut svc = svc.lock().unwrap();
+                svc.subscribe(rf, "notice://bench/hotpath/test/*".to_string(), 1, tx);
+            }
+
+            // Publish on the same route family
+            let mut svc = svc.lock().unwrap();
+            svc.publish(
+                rf,
+                "notice://bench/hotpath/test/event",
+                Some("msg-123"),
+                b"benchmark payload",
+            )
+        });
+    });
+}
+
+/// Benchmark: Publish with 1 subscriber per route family across 100 families
+fn bench_service_publish_multi_tenant_100_with_subscribers(c: &mut Criterion) {
+    let mut counter = 0u32;
+
+    c.bench_function("service_publish_multi_tenant_100rf_with_subs", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            let rf = counter % 100;
+            let svc = new_service();
+
+            // Subscribe on this route family
+            let (tx, _rx) = mpsc::channel(1000);
+            {
+                let mut svc = svc.lock().unwrap();
+                svc.subscribe(rf, "notice://bench/hotpath/test/*".to_string(), 1, tx);
+            }
+
+            // Publish on the same route family
+            let mut svc = svc.lock().unwrap();
+            svc.publish(
+                rf,
+                "notice://bench/hotpath/test/event",
+                Some("msg-123"),
+                b"benchmark payload",
+            )
+        });
+    });
+}
+
 criterion_group! {
     name = hotpath_notice;
     config = config::criterion_config();
@@ -324,6 +516,18 @@ criterion_group! {
         bench_handler_publish_no_subscribers,
         bench_handler_publish_one_subscriber,
         bench_handler_subscribe_publish_unsubscribe,
+        // Multi-tenant benchmarks (5 route families)
+        bench_service_subscribe_multi_tenant_5,
+        bench_service_publish_multi_tenant_5,
+        bench_service_publish_multi_tenant_5_with_subscribers,
+        // Multi-tenant benchmarks (10 route families)
+        bench_service_subscribe_multi_tenant_10,
+        bench_service_publish_multi_tenant_10,
+        bench_service_publish_multi_tenant_10_with_subscribers,
+        // Multi-tenant benchmarks (100 route families)
+        bench_service_subscribe_multi_tenant_100,
+        bench_service_publish_multi_tenant_100,
+        bench_service_publish_multi_tenant_100_with_subscribers,
 }
 
 criterion_main!(hotpath_notice);
