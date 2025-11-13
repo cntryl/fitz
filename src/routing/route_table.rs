@@ -1,21 +1,27 @@
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use smallvec::SmallVec;
-use std::collections::HashSet;
 
 use crate::core::domain::SubSender;
 
-/// Route Family identifier for tenant/shard isolation
-///
-/// Fitz defines its own RouteFamilyId type (decoupled from midge) to:
-/// - Maintain clear separation between routing logic and storage implementation
-/// - Enable potential RF metadata, validation, or lifecycle management in the future
-/// - Provide flexibility in mapping between Fitz RFs and midge storage backend
+/// Route Family identifier (tenant / shard / CF boundary)
 pub type RouteFamilyId = u32;
 
-/// Default route family when a specific RF is not provided (tests, legacy)
+/// Default route family for tests / legacy callers
 pub const DEFAULT_RF: RouteFamilyId = 0;
 
-/// Internal subscription entry
+/// Number of shards for route table (must be power of 2 for mask)
+/// 16–64 is a good range; 32 is a nice balance for 100M subs.
+const SHARD_COUNT: usize = 32;
+const SHARD_MASK: usize = SHARD_COUNT - 1;
+
+/// Max segments we care about in a route (`scheme://realm/area/resource/op`)
+const MAX_SEGMENTS: usize = 8;
+
+/// Max matches we'll return per lookup without reallocating.
+/// In practice, most routes have < 16 subscribers.
+const MAX_MATCHES: usize = 256;
+
+/// Basic subscription entry
 #[derive(Debug, Clone)]
 pub struct RtSubscription {
     pub id: u64,
@@ -24,337 +30,56 @@ pub struct RtSubscription {
     pub sender: SubSender,
 }
 
-/// A node in the route trie for efficient pattern matching.
-///
-/// Uses SmallVec with inline capacity of 4 for subscription lists,
-/// avoiding heap allocations for the majority of nodes (95%+ have ≤4 subs).
+/// Compact subscription list:
+/// - Inline up to 4 IDs (no heap)
+/// - Spills to heap only when needed (big fan-out tenants)
+#[derive(Debug, Clone, Default)]
+struct SubList {
+    ids: SmallVec<[u64; 4]>,
+}
+
+impl SubList {
+    #[inline]
+    fn insert_if_absent(&mut self, id: u64) {
+        if !self.ids.contains(&id) {
+            self.ids.push(id);
+        }
+    }
+
+    #[inline]
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(u64) -> bool,
+    {
+        self.ids.retain(|id| f(*id));
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    #[inline]
+    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
+        self.ids.iter().copied()
+    }
+}
+
+/// One node in the route trie:
+/// - exact_subs: subscriptions that match this path exactly
+/// - trailing_wildcard_subs: subscriptions like "a/b/*" anchored here
+/// - children: exact segment children
+/// - wildcard_child: matches "*" at this position
 #[derive(Debug, Default)]
 struct TrieNode {
-    /// Subscriptions that match exactly at this path (inline up to 4)
-    exact_subs: SmallVec<[u64; 4]>,
-
-    /// Subscriptions with trailing wildcard at this path (inline up to 4)
-    trailing_wildcard_subs: SmallVec<[u64; 4]>,
-
-    /// Child nodes for exact segment matches (using FxHashMap for speed)
+    exact_subs: SubList,
+    trailing_wildcard_subs: SubList,
     children: FxHashMap<String, TrieNode>,
-
-    /// Child node for mid-path wildcard (e.g., "a/*/c")
     wildcard_child: Option<Box<TrieNode>>,
 }
 
-/// Hierarchical trie for fast route matching
-#[derive(Debug)]
-struct RouteTrie {
-    root: TrieNode,
-    /// Global wildcard subscribers ("*") - inline up to 4
-    global_subs: SmallVec<[u64; 4]>,
-}
-
-impl RouteTrie {
-    fn new() -> Self {
-        Self {
-            root: TrieNode::default(),
-            global_subs: SmallVec::new(),
-        }
-    }
-}
-
-/// In-memory route table for notice subscriptions.
-///
-/// Uses a hierarchical trie for O(depth) matching instead of O(N) linear scan.
-/// Column-family aware: maintains separate tries per CF for tenant isolation.
-///
-/// ## Performance Characteristics
-/// - **Insert**: O(depth) - ~5-10 µs with FxHashMap + SmallVec
-/// - **Remove**: O(depth) - ~5-10 µs with automatic node pruning
-/// - **Match**: O(depth + matches) - ~250-350ns constant time regardless of total subscriptions
-/// - **Memory**: ~300-600 bytes per subscription (SmallVec inline storage reduces overhead by ~40%)
-///
-/// ## Production Optimizations
-/// 1. **FxHashMap**: 1.5x faster than std HashMap for string keys
-/// 2. **SmallVec**: Inline storage for subscription lists (95%+ of nodes have ≤4 subs)
-/// 3. **FxHashSet**: Faster matching_ids collection vs std HashSet
-/// 4. **SmallVec segments**: Inline path parsing for typical depth ≤8
-/// 5. **Duplicate prevention**: Guards against re-insertions
-/// 6. **Node pruning**: Automatically collapses empty nodes on removal
-/// 7. **Per-CF tries**: Separate tries per column family for tenant isolation
-///
-/// ## Scalability
-/// - ✅ Tested at 100K+ subscriptions with <350ns matching
-/// - ✅ Projected to handle millions with constant performance
-/// - ✅ ~3M+ publishes/second single-threaded throughput (post-optimization)
-pub struct RouteTable {
-    /// All subscriptions by ID (authoritative storage)
-    subs: FxHashMap<u64, RtSubscription>,
-
-    /// Legacy index for cleanup (pattern -> subscription IDs)
-    index: FxHashMap<String, HashSet<u64>>,
-
-    /// Per-RF tries for tenant isolation (RF -> Trie)
-    tries: FxHashMap<RouteFamilyId, RouteTrie>,
-}
-
-impl RouteTable {
-    pub fn new() -> Self {
-        Self {
-            subs: FxHashMap::default(),
-            index: FxHashMap::default(),
-            tries: FxHashMap::default(),
-        }
-    }
-
-    pub fn insert(&mut self, rf: RouteFamilyId, sub: RtSubscription) {
-        let id = sub.id;
-        let pattern = sub.route_pattern.clone();
-
-        // Update legacy index
-        self.index.entry(pattern.clone()).or_default().insert(id);
-
-        // Insert into RF-specific trie
-        self.insert_into_trie(rf, &pattern, id);
-
-        // Store subscription
-        self.subs.insert(id, sub);
-    }
-
-    pub fn remove(&mut self, rf: RouteFamilyId, sub_id: u64) -> Option<RtSubscription> {
-        if let Some(sub) = self.subs.remove(&sub_id) {
-            // Update legacy index
-            if let Some(set) = self.index.get_mut(&sub.route_pattern) {
-                set.remove(&sub_id);
-                if set.is_empty() {
-                    self.index.remove(&sub.route_pattern);
-                }
-            }
-
-            // Remove from RF-specific trie
-            self.remove_from_trie(rf, &sub.route_pattern, sub_id);
-
-            return Some(sub);
-        }
-        None
-    }
-
-    /// Insert a subscription ID into the trie based on its pattern and RF
-    fn insert_into_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
-        // Get or create trie for this RF
-        let trie = self.tries.entry(rf).or_insert_with(RouteTrie::new);
-
-        // Handle global wildcard
-        if pattern == "*" {
-            if !trie.global_subs.contains(&sub_id) {
-                trie.global_subs.push(sub_id);
-            }
-            return;
-        }
-
-        // Check for trailing wildcard
-        let has_trailing_wildcard = pattern.ends_with("/*");
-
-        // Split pattern into segments (SmallVec avoids heap for typical depth ≤8)
-        let segments: SmallVec<[&str; 8]> = pattern.split('/').collect();
-
-        let mut current = &mut trie.root;
-
-        // Traverse/create path through trie
-        let segments_to_traverse = if has_trailing_wildcard {
-            &segments[..segments.len() - 1] // Exclude trailing "*"
-        } else {
-            &segments[..]
-        };
-
-        for segment in segments_to_traverse {
-            if *segment == "*" {
-                // Mid-path wildcard
-                current = current
-                    .wildcard_child
-                    .get_or_insert_with(|| Box::new(TrieNode::default()));
-            } else {
-                // Exact segment match
-                current = current.children.entry(segment.to_string()).or_default();
-            }
-        }
-
-        // Add subscription at the appropriate location
-        if has_trailing_wildcard {
-            if !current.trailing_wildcard_subs.contains(&sub_id) {
-                current.trailing_wildcard_subs.push(sub_id);
-            }
-        } else {
-            if !current.exact_subs.contains(&sub_id) {
-                current.exact_subs.push(sub_id);
-            }
-        }
-    }
-
-    /// Remove a subscription ID from the trie for a specific RF
-    fn remove_from_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
-        // Get mutable reference to RF's trie
-        let Some(trie) = self.tries.get_mut(&rf) else {
-            return;
-        };
-
-        // Handle global wildcard
-        if pattern == "*" {
-            trie.global_subs.retain(|id| *id != sub_id);
-            return;
-        }
-
-        let has_trailing_wildcard = pattern.ends_with("/*");
-        let segments: SmallVec<[&str; 8]> = pattern.split('/').collect();
-
-        let segments_to_traverse = if has_trailing_wildcard {
-            &segments[..segments.len() - 1]
-        } else {
-            &segments[..]
-        };
-
-        remove_from_trie_node(
-            &mut trie.root,
-            segments_to_traverse,
-            sub_id,
-            has_trailing_wildcard,
-            0,
-        );
-    }
-
-    pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
-        let mut to_remove = Vec::new();
-        for (id, sub) in &self.subs {
-            if sub.channel_id == channel_id {
-                to_remove.push(*id);
-            }
-        }
-
-        for id in to_remove {
-            let _ = self.remove(rf, id);
-        }
-    }
-
-    /// Return cloned subscriptions that match the provided route for a specific RF.
-    /// Uses trie-based matching for O(depth) complexity instead of O(N).
-    /// Uses FxHashSet for faster hashing during match collection.
-    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
-        let Some(trie) = self.tries.get(&rf) else {
-            return Vec::new();
-        };
-
-        let mut matching_ids = FxHashSet::default();
-
-        // Always include global wildcard subscribers
-        for &id in &trie.global_subs {
-            matching_ids.insert(id);
-        }
-
-        // Parse route into segments (SmallVec avoids heap for typical depth ≤8)
-        let segments: SmallVec<[&str; 8]> = route.split('/').collect();
-
-        // Traverse trie to find matches
-        self.find_matches(&trie.root, &segments, 0, &mut matching_ids);
-
-        // Convert IDs to subscriptions
-        matching_ids
-            .into_iter()
-            .filter_map(|id| self.subs.get(&id).cloned())
-            .collect()
-    }
-
-    /// Recursively find matching subscriptions in the trie
-    fn find_matches(
-        &self,
-        node: &TrieNode,
-        route_segments: &[&str],
-        depth: usize,
-        matching_ids: &mut FxHashSet<u64>,
-    ) {
-        // Collect trailing wildcard subscribers at this node
-        for &id in &node.trailing_wildcard_subs {
-            matching_ids.insert(id);
-        }
-
-        // If we've consumed all route segments
-        if depth == route_segments.len() {
-            // Collect exact matches at this node
-            for &id in &node.exact_subs {
-                matching_ids.insert(id);
-            }
-            return;
-        }
-
-        let segment = route_segments[depth];
-
-        // Try exact segment match
-        if let Some(child) = node.children.get(segment) {
-            self.find_matches(child, route_segments, depth + 1, matching_ids);
-        }
-
-        // Try wildcard child (matches any segment)
-        if let Some(ref child) = node.wildcard_child {
-            self.find_matches(child, route_segments, depth + 1, matching_ids);
-        }
-
-        // For exact matches at this node, check hierarchical prefix matching
-        // Example: pattern "a/b" should match route "a/b/c"
-        if depth < route_segments.len() {
-            for &id in &node.exact_subs {
-                matching_ids.insert(id);
-            }
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.subs.len()
-    }
-}
-
-/// Helper function to remove subscription from trie node recursively
-/// Returns true if the node should be pruned (is empty after removal)
-fn remove_from_trie_node(
-    node: &mut TrieNode,
-    segments: &[&str],
-    sub_id: u64,
-    is_trailing_wildcard: bool,
-    depth: usize,
-) -> bool {
-    if depth == segments.len() {
-        // We've reached the target node
-        if is_trailing_wildcard {
-            node.trailing_wildcard_subs.retain(|id| *id != sub_id);
-        } else {
-            node.exact_subs.retain(|id| *id != sub_id);
-        }
-
-        // Check if this node is now empty and can be pruned
-        return node.is_empty();
-    }
-
-    let segment = segments[depth];
-
-    if segment == "*" {
-        if let Some(ref mut child) = node.wildcard_child {
-            let should_prune =
-                remove_from_trie_node(child, segments, sub_id, is_trailing_wildcard, depth + 1);
-            if should_prune {
-                node.wildcard_child = None;
-            }
-        }
-    } else {
-        if let Some(child) = node.children.get_mut(segment) {
-            let should_prune =
-                remove_from_trie_node(child, segments, sub_id, is_trailing_wildcard, depth + 1);
-            if should_prune {
-                node.children.remove(segment);
-            }
-        }
-    }
-
-    // Return whether this node is now empty
-    node.is_empty()
-}
-
 impl TrieNode {
-    /// Check if this node is completely empty and can be pruned
+    /// Is this node completely empty (used for pruning)
     fn is_empty(&self) -> bool {
         self.exact_subs.is_empty()
             && self.trailing_wildcard_subs.is_empty()
@@ -363,9 +88,319 @@ impl TrieNode {
     }
 }
 
+/// Per-RF trie
+#[derive(Debug)]
+struct RouteTrie {
+    root: TrieNode,
+    global_subs: SubList, // pattern == "*"
+}
+
+impl RouteTrie {
+    fn new() -> Self {
+        Self {
+            root: TrieNode::default(),
+            global_subs: SubList::default(),
+        }
+    }
+}
+
+/// One shard of the route table
+#[derive(Debug, Default)]
+struct RouteTableShard {
+    /// Authoritative subs by ID (for remove / cleanup)
+    subs: FxHashMap<u64, RtSubscription>,
+    /// Route tries per RF
+    tries: FxHashMap<RouteFamilyId, RouteTrie>,
+}
+
+impl RouteTableShard {
+    fn new() -> Self {
+        Self {
+            subs: FxHashMap::default(),
+            tries: FxHashMap::default(),
+        }
+    }
+
+    fn insert(&mut self, rf: RouteFamilyId, sub: RtSubscription) {
+        let id = sub.id;
+        let pattern = sub.route_pattern.clone();
+
+        self.insert_into_trie(rf, &pattern, id);
+        self.subs.insert(id, sub);
+    }
+
+    fn remove(&mut self, rf: RouteFamilyId, id: u64) -> Option<RtSubscription> {
+        let sub = self.subs.remove(&id)?;
+        self.remove_from_trie(rf, &sub.route_pattern, id);
+        Some(sub)
+    }
+
+    fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
+        let mut to_remove = SmallVec::<[u64; 16]>::new();
+        for (id, sub) in &self.subs {
+            if sub.channel_id == channel_id {
+                to_remove.push(*id);
+            }
+        }
+        for id in to_remove {
+            let _ = self.remove(rf, id);
+        }
+    }
+
+    fn insert_into_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
+        let trie = self.tries.entry(rf).or_insert_with(RouteTrie::new);
+
+        if pattern == "*" {
+            trie.global_subs.insert_if_absent(sub_id);
+            return;
+        }
+
+        let has_trailing_wildcard = pattern.ends_with("/*");
+        let segments: SmallVec<[&str; MAX_SEGMENTS]> =
+            pattern.split('/').take(MAX_SEGMENTS).collect();
+
+        let segments_to_traverse = if has_trailing_wildcard && !segments.is_empty() {
+            &segments[..segments.len() - 1]
+        } else {
+            &segments[..]
+        };
+
+        let mut node = &mut trie.root;
+
+        for seg in segments_to_traverse {
+            if *seg == "*" {
+                node = node
+                    .wildcard_child
+                    .get_or_insert_with(|| Box::new(TrieNode::default()));
+            } else {
+                node = node
+                    .children
+                    .entry((*seg).to_string())
+                    .or_insert_with(TrieNode::default);
+            }
+        }
+
+        if has_trailing_wildcard {
+            node.trailing_wildcard_subs.insert_if_absent(sub_id);
+        } else {
+            node.exact_subs.insert_if_absent(sub_id);
+        }
+    }
+
+    fn remove_from_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
+        let Some(trie) = self.tries.get_mut(&rf) else {
+            return;
+        };
+
+        if pattern == "*" {
+            trie.global_subs.retain(|id| id != sub_id);
+            return;
+        }
+
+        let has_trailing_wildcard = pattern.ends_with("/*");
+        let segments: SmallVec<[&str; MAX_SEGMENTS]> =
+            pattern.split('/').take(MAX_SEGMENTS).collect();
+
+        let segments_to_traverse = if has_trailing_wildcard && !segments.is_empty() {
+            &segments[..segments.len() - 1]
+        } else {
+            &segments[..]
+        };
+
+        fn remove_rec(
+            node: &mut TrieNode,
+            segments: &[&str],
+            sub_id: u64,
+            is_trailing: bool,
+            depth: usize,
+        ) -> bool {
+            if depth == segments.len() {
+                if is_trailing {
+                    node.trailing_wildcard_subs.retain(|id| id != sub_id);
+                } else {
+                    node.exact_subs.retain(|id| id != sub_id);
+                }
+                return node.is_empty();
+            }
+
+            let seg = segments[depth];
+
+            if seg == "*" {
+                if let Some(child) = node.wildcard_child.as_mut() {
+                    let prune =
+                        remove_rec(child, segments, sub_id, is_trailing, depth + 1);
+                    if prune {
+                        node.wildcard_child = None;
+                    }
+                }
+            } else if let Some(child) = node.children.get_mut(seg) {
+                let prune =
+                    remove_rec(child, segments, sub_id, is_trailing, depth + 1);
+                if prune {
+                    node.children.remove(seg);
+                }
+            }
+
+            node.is_empty()
+        }
+
+        remove_rec(&mut trie.root, segments_to_traverse, sub_id, has_trailing_wildcard, 0);
+    }
+
+    /// Zero-alloc match inside a shard:
+    /// - `route_segments` lives on caller's stack
+    /// - `scratch_ids` is a fixed stack array for all shards
+    fn matching_ids_into(
+        &self,
+        rf: RouteFamilyId,
+        route_segments: &[&str],
+        scratch_ids: &mut [u64; MAX_MATCHES],
+        count: &mut usize,
+    ) {
+        let Some(trie) = self.tries.get(&rf) else {
+            return;
+        };
+
+        // Global wildcard
+        for id in trie.global_subs.iter() {
+            if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
+                scratch_ids[*count] = id;
+                *count += 1;
+            }
+        }
+
+        fn walk(
+            node: &TrieNode,
+            segs: &[&str],
+            depth: usize,
+            scratch_ids: &mut [u64; MAX_MATCHES],
+            count: &mut usize,
+        ) {
+            if depth == segs.len() {
+                for id in node.exact_subs.iter().chain(node.trailing_wildcard_subs.iter()) {
+                    if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
+                        scratch_ids[*count] = id;
+                        *count += 1;
+                    }
+                }
+                return;
+            }
+
+            let seg = segs[depth];
+
+            if let Some(child) = node.children.get(seg) {
+                walk(child, segs, depth + 1, scratch_ids, count);
+            }
+
+            if let Some(child) = node.wildcard_child.as_ref() {
+                walk(child, segs, depth + 1, scratch_ids, count);
+            }
+
+            // Hierarchical prefix + trailing wildcard match
+            for id in node.exact_subs.iter().chain(node.trailing_wildcard_subs.iter()) {
+                if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
+                    scratch_ids[*count] = id;
+                    *count += 1;
+                }
+            }
+        }
+
+        walk(&trie.root, route_segments, 0, scratch_ids, count);
+    }
+}
+
+/// Sharded route table:
+/// - sharded by RF for locality & future parallelism
+/// - zero-alloc hotpath for matches
+pub struct RouteTable {
+    shards: [RouteTableShard; SHARD_COUNT],
+}
+
+impl RouteTable {
+    pub fn new() -> Self {
+        // Manual init because arrays require Copy/Default trick
+        let mut shards: [RouteTableShard; SHARD_COUNT] = {
+            // SAFETY: we immediately overwrite every element
+            let mut arr: [RouteTableShard; SHARD_COUNT] =
+                unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+            for slot in &mut arr {
+                *slot = RouteTableShard::new();
+            }
+            arr
+        };
+
+        Self { shards }
+    }
+
+    #[inline]
+    fn shard_index(rf: RouteFamilyId) -> usize {
+        (rf as usize) & SHARD_MASK
+    }
+
+    fn shard_mut(&mut self, rf: RouteFamilyId) -> &mut RouteTableShard {
+        &mut self.shards[Self::shard_index(rf)]
+    }
+
+    fn shard_ref(&self, rf: RouteFamilyId) -> &RouteTableShard {
+        &self.shards[Self::shard_index(rf)]
+    }
+
+    pub fn insert(&mut self, rf: RouteFamilyId, sub: RtSubscription) {
+        self.shard_mut(rf).insert(rf, sub);
+    }
+
+    pub fn remove(&mut self, rf: RouteFamilyId, id: u64) -> Option<RtSubscription> {
+        self.shard_mut(rf).remove(rf, id)
+    }
+
+    pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
+        self.shard_mut(rf).cleanup_channel(rf, channel_id);
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.subs.len()).sum()
+    }
+
+    /// Zero-alloc hot path:
+    /// - route split into stack array
+    /// - scratch_ids is stack array
+    /// - no heap allocations until we build the final Vec
+    pub fn matching_subscribers(
+        &self,
+        rf: RouteFamilyId,
+        route: &str,
+    ) -> Vec<RtSubscription> {
+        // Split route once into stack-backed array
+        let mut segs: [&str; MAX_SEGMENTS] = [""; MAX_SEGMENTS];
+        let mut seg_len = 0;
+        for (i, seg) in route.split('/').enumerate().take(MAX_SEGMENTS) {
+            segs[i] = seg;
+            seg_len += 1;
+        }
+        let route_segments = &segs[..seg_len];
+
+        let shard = self.shard_ref(rf);
+
+        // Collect IDs into stack buffer
+        let mut ids_buf: [u64; MAX_MATCHES] = [0; MAX_MATCHES];
+        let mut count = 0usize;
+
+        shard.matching_ids_into(rf, route_segments, &mut ids_buf, &mut count);
+
+        // Single Vec allocation at the very end
+        let mut out = Vec::with_capacity(count);
+        for id in ids_buf[..count].iter().copied() {
+            if let Some(sub) = shard.subs.get(&id) {
+                out.push(sub.clone());
+            }
+        }
+        out
+    }
+}
+
 // ============================================================================
 // Legacy pattern matching function - kept for unit tests
-// Production code uses trie-based matching in find_matches() for O(depth) complexity
+// Production code uses trie-based matching in walk_matches() for O(depth) complexity
 // ============================================================================
 
 /// Zero-allocation route matcher using iterators instead of Vec collections.

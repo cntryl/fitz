@@ -1,50 +1,53 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::routing::{RouteTable, RtSubscription, DEFAULT_RF};
+use fitz::core::domain::SubSender;
 use tokio::sync::mpsc;
 
 #[path = "../config.rs"]
 mod config;
 
-// ============================================================================
-// ROUTE TABLE BENCHMARKS
-// ============================================================================
+// =============================================================================
+// Helpers
+// =============================================================================
 
-/// Benchmark: Insert subscription into route table
+fn make_sub(id: u64, pattern: String, sender: &SubSender) -> RtSubscription {
+    RtSubscription {
+        id,
+        route_pattern: pattern,
+        channel_id: 1,
+        sender: sender.clone(),
+    }
+}
+
+// =============================================================================
+// SIMPLE BENCHES
+// =============================================================================
+
 fn bench_route_table_insert(c: &mut Criterion) {
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+
     c.bench_function("route_table_insert", |b| {
         b.iter(|| {
             let mut rt = RouteTable::new();
-            let (tx, _rx) = mpsc::channel(100);
             for i in 0..10 {
-                let sub = RtSubscription {
-                    id: i,
-                    route_pattern: format!("scheme://realm/area{}/resource/op", i),
-                    channel_id: 1,
-                    sender: tx.clone(),
-                };
-                rt.insert(DEFAULT_RF, sub);
+                let pat = format!("scheme://realm/area{}/resource/op", i);
+                rt.insert(DEFAULT_RF, make_sub(i, pat, &tx));
             }
             rt
         });
     });
 }
 
-/// Benchmark: Remove subscription from route table
 fn bench_route_table_remove(c: &mut Criterion) {
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+
     c.bench_function("route_table_remove", |b| {
         b.iter(|| {
             let mut rt = RouteTable::new();
-            let (tx, _rx) = mpsc::channel(100);
             for i in 0..10 {
-                let sub = RtSubscription {
-                    id: i,
-                    route_pattern: format!("scheme://realm/area{}/resource/op", i),
-                    channel_id: 1,
-                    sender: tx.clone(),
-                };
-                rt.insert(DEFAULT_RF, sub);
+                let pat = format!("scheme://realm/area{}/resource/op", i);
+                rt.insert(DEFAULT_RF, make_sub(i, pat, &tx));
             }
-            // Remove half of them
             for i in 0..5 {
                 rt.remove(DEFAULT_RF, i);
             }
@@ -53,216 +56,179 @@ fn bench_route_table_remove(c: &mut Criterion) {
     });
 }
 
-/// Benchmark: Find matching subscribers - exact match
 fn bench_route_table_match_exact(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+
     for i in 0..100 {
-        let sub = RtSubscription {
-            id: i,
-            route_pattern: format!("scheme://realm/area{}/resource/op", i),
-            channel_id: 1,
-            sender: tx.clone(),
-        };
-        rt.insert(DEFAULT_RF, sub);
+        let pat = format!("scheme://realm/area{}/resource/op", i);
+        rt.insert(DEFAULT_RF, make_sub(i, pat, &tx));
     }
+
+    let target = "scheme://realm/area42/resource/op".to_string();
 
     c.bench_function("route_table_match_exact", |b| {
-        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op"));
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
     });
 }
 
-/// Benchmark: Find matching subscribers - global wildcard
 fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
 
-    // Add one global wildcard subscription
-    let sub = RtSubscription {
-        id: 1,
-        route_pattern: "*".to_string(),
-        channel_id: 1,
-        sender: tx.clone(),
-    };
-    rt.insert(DEFAULT_RF, sub);
+    rt.insert(DEFAULT_RF, make_sub(1, "*".to_string(), &tx));
 
-    // Add many specific subscriptions
     for i in 0..100 {
-        let sub = RtSubscription {
-            id: i + 2,
-            route_pattern: format!("scheme://realm/area{}/resource/op", i),
-            channel_id: 1,
-            sender: tx.clone(),
-        };
-        rt.insert(DEFAULT_RF, sub);
+        let pat = format!("scheme://realm/area{}/resource/op", i);
+        rt.insert(DEFAULT_RF, make_sub(i + 2, pat, &tx));
     }
+
+    let target = "scheme://realm/area42/resource/op".to_string();
 
     c.bench_function("route_table_match_global_wildcard", |b| {
-        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area42/resource/op"));
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
     });
 }
 
-/// Benchmark: Find matching subscribers - trailing wildcard
 fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
 
-    // Add trailing wildcard subscriptions at different levels
     for i in 0..20 {
-        let sub = RtSubscription {
-            id: i,
-            route_pattern: format!("scheme://realm/area{}/*", i),
-            channel_id: 1,
-            sender: tx.clone(),
-        };
-        rt.insert(DEFAULT_RF, sub);
+        let pat = format!("scheme://realm/area{}/*", i);
+        rt.insert(DEFAULT_RF, make_sub(i, pat, &tx));
     }
+
+    let target = "scheme://realm/area10/resource/op".to_string();
 
     c.bench_function("route_table_match_trailing_wildcard", |b| {
-        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/area10/resource/op"));
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
     });
 }
 
-/// Benchmark: Find matching subscribers - mid-path wildcard
 fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
 
-    // Add mid-path wildcard subscriptions
     for i in 0..20 {
-        let sub = RtSubscription {
-            id: i,
-            route_pattern: format!("scheme://realm/*/resource{}/op", i),
-            channel_id: 1,
-            sender: tx.clone(),
-        };
-        rt.insert(DEFAULT_RF, sub);
+        let pat = format!("scheme://realm/*/resource{}/op", i);
+        rt.insert(DEFAULT_RF, make_sub(i, pat, &tx));
     }
+
+    let target = "scheme://realm/anyarea/resource10/op".to_string();
 
     c.bench_function("route_table_match_mid_path_wildcard", |b| {
-        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://realm/anyarea/resource10/op"));
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
     });
 }
 
-/// Benchmark: Find matching subscribers - no matches
 fn bench_route_table_match_none(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
 
     for i in 0..100 {
-        let sub = RtSubscription {
-            id: i,
-            route_pattern: format!("scheme://other/area{}/resource/op", i),
-            channel_id: 1,
-            sender: tx.clone(),
-        };
-        rt.insert(DEFAULT_RF, sub);
+        let pat = format!("scheme://other/area{}/resource/op", i);
+        rt.insert(DEFAULT_RF, make_sub(i, pat, &tx));
     }
 
+    let target = "scheme://nomatch/area/resource/op".to_string();
+
     c.bench_function("route_table_match_none", |b| {
-        b.iter(|| rt.matching_subscribers(DEFAULT_RF, "scheme://nomatch/area/resource/op"));
+        b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
     });
 }
 
-/// Benchmark: Cleanup channel subscriptions
 fn bench_route_table_cleanup_channel(c: &mut Criterion) {
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+
     c.bench_function("route_table_cleanup_channel", |b| {
         b.iter(|| {
             let mut rt = RouteTable::new();
-            let (tx, _rx) = mpsc::channel(100);
 
-            // Add subscriptions for multiple channels
             for channel_id in 1..=5 {
                 for i in 0..20 {
-                    let sub = RtSubscription {
-                        id: (channel_id * 100 + i) as u64,
-                        route_pattern: format!("scheme://realm/area{}/resource/op", i),
-                        channel_id,
-                        sender: tx.clone(),
-                    };
-                    rt.insert(DEFAULT_RF, sub);
+                    let pat = format!("scheme://realm/area{}/resource/op", i);
+                    rt.insert(
+                        DEFAULT_RF,
+                        RtSubscription {
+                            id: (channel_id * 100 + i) as u64,
+                            route_pattern: pat,
+                            channel_id,
+                            sender: tx.clone(),
+                        },
+                    );
                 }
             }
 
-            // Cleanup channel 3
             rt.cleanup_channel(DEFAULT_RF, 3);
             rt
         });
     });
 }
 
-// ============================================================================
-// SCALING BENCHMARKS (Confirm scaling behavior)
-// ============================================================================
+// =============================================================================
+// SCALING
+// =============================================================================
 
-/// Benchmark: Match exact route at various scales (1K, 10K, 100K subscriptions)
 fn bench_route_table_match_exact_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_match_exact_scaling");
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
 
     for &n in &[1_000, 10_000, 100_000] {
         let mut rt = RouteTable::new();
-        let (tx, _rx) = mpsc::channel(100);
 
-        // Insert N unique subscriptions
-        for i in 0..n {
-            let sub = RtSubscription {
-                id: i,
-                route_pattern: format!("scheme://realm/area{}/resource/op", i),
-                channel_id: 1,
-                sender: tx.clone(),
-            };
-            rt.insert(DEFAULT_RF, sub);
+        let patterns: Vec<_> = (0..n)
+            .map(|i| format!("scheme://realm/area{}/resource/op", i))
+            .collect();
+
+        for (i, pat) in patterns.iter().enumerate() {
+            rt.insert(DEFAULT_RF, make_sub(i as u64, pat.clone(), &tx));
         }
 
+        let target = patterns[n / 2].clone();
+
         group.bench_with_input(format!("{}", n), &rt, |b, rt| {
-            b.iter(|| {
-                rt.matching_subscribers(
-                    DEFAULT_RF,
-                    &format!("scheme://realm/area{}/resource/op", n / 2),
-                )
-            });
+            b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
         });
     }
 
     group.finish();
 }
 
-/// Benchmark: Match with wildcards at various scales (1K, 10K, 100K subscriptions)
 fn bench_route_table_match_wildcard_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_match_wildcard_scaling");
+    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
 
     for &n in &[1_000, 10_000, 100_000] {
         let mut rt = RouteTable::new();
-        let (tx, _rx) = mpsc::channel(100);
 
-        // Insert N subscriptions (10% with trailing wildcards)
-        for i in 0..n {
-            let pattern = if i % 10 == 0 {
-                format!("scheme://realm/area{}/*", i)
-            } else {
-                format!("scheme://realm/area{}/resource/op", i)
-            };
-            let sub = RtSubscription {
-                id: i,
-                route_pattern: pattern,
-                channel_id: 1,
-                sender: tx.clone(),
-            };
-            rt.insert(DEFAULT_RF, sub);
+        let patterns: Vec<_> = (0..n)
+            .map(|i| {
+                if i % 10 == 0 {
+                    format!("scheme://realm/area{}/*", i)
+                } else {
+                    format!("scheme://realm/area{}/resource/op", i)
+                }
+            })
+            .collect();
+
+        for (i, pat) in patterns.iter().enumerate() {
+            rt.insert(DEFAULT_RF, make_sub(i as u64, pat.clone(), &tx));
         }
 
+        let target = format!("scheme://realm/area{}/resource/op", n / 2);
+
         group.bench_with_input(format!("{}", n), &rt, |b, rt| {
-            b.iter(|| {
-                rt.matching_subscribers(
-                    DEFAULT_RF,
-                    &format!("scheme://realm/area{}/resource/op", n / 2),
-                )
-            });
+            b.iter(|| rt.matching_subscribers(DEFAULT_RF, &target));
         });
     }
 
     group.finish();
 }
+
+// =============================================================================
+// GROUP
+// =============================================================================
 
 criterion_group! {
     name = hotpath_route_table;
