@@ -5,7 +5,8 @@ use crate::protocol::route::Route;
 /// A stream event with monotonic sequencing.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamEvent {
-    pub resource_seq: u64,     // Client-controlled, 0-indexed monotonic
+    pub sequence: u64,         // Client-controlled, 0-indexed monotonic
+    pub resource: String,      // Resource identifier
     pub area_seq: Option<u64>, // Server-assigned at finalization
     pub body: Vec<u8>,
     pub metadata: Option<Vec<u8>>,

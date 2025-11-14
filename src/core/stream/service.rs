@@ -14,7 +14,7 @@ use super::encoding::{decode_event, encode_event};
 use super::types::{AppendResult, AreaReadResponse, StreamEvent, StreamOperation};
 use crate::routing::{RouteTable, RouteFamilyId, DEFAULT_RF};
 use crate::storage::traits::{KvStore, KvTransaction};
-use cntryl_lexkey::LexKey;
+use cntryl_midge::ColumnFamilyId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -75,11 +75,11 @@ impl StreamService {
         }
     }
 
-    /// Build resource event key: {DOMAIN_PREFIX} {IDX_RESOURCE_EVENT} {rf} {area} {resource} {resource_seq}
-    fn key_resource_event(rf: RouteFamilyId, area: &str, resource: &str, seq: u64) -> Vec<u8> {
-        LexKey::encode_composite(&[
+    /// Build resource event key: {DOMAIN_PREFIX} {IDX_RESOURCE_EVENT} {realm} {area} {resource} {resource_seq}
+    fn key_resource_event(realm: &str, area: &str, resource: &str, seq: u64) -> Vec<u8> {
+        lexkey::LexKey::encode_composite(&[
             &[DOMAIN_PREFIX, IDX_RESOURCE_EVENT],
-            &rf.to_le_bytes(),
+            realm.as_bytes(),
             area.as_bytes(),
             resource.as_bytes(),
             &seq.to_be_bytes(),
@@ -88,11 +88,11 @@ impl StreamService {
         .to_vec()
     }
 
-    /// Build area event key: {DOMAIN_PREFIX} {IDX_AREA_EVENT} {rf} {area} {area_seq}
-    fn key_area_event(rf: RouteFamilyId, area: &str, seq: u64) -> Vec<u8> {
-        LexKey::encode_composite(&[
+    /// Build area event key: {DOMAIN_PREFIX} {IDX_AREA_EVENT} {realm} {area} {area_seq}
+    fn key_area_event(realm: &str, area: &str, seq: u64) -> Vec<u8> {
+        lexkey::LexKey::encode_composite(&[
             &[DOMAIN_PREFIX, IDX_AREA_EVENT],
-            &rf.to_le_bytes(),
+            realm.as_bytes(),
             area.as_bytes(),
             &seq.to_be_bytes(),
         ])
@@ -100,25 +100,25 @@ impl StreamService {
         .to_vec()
     }
 
-    /// Build watermark key: {DOMAIN_PREFIX} {IDX_WATERMARK} {rf} {area}
-    fn key_watermark(rf: RouteFamilyId, area: &str) -> Vec<u8> {
-        LexKey::encode_composite(&[&[DOMAIN_PREFIX, IDX_WATERMARK], &rf.to_le_bytes(), area.as_bytes()])
+    /// Build watermark key: {DOMAIN_PREFIX} {IDX_WATERMARK} {realm} {area}
+    fn key_watermark(realm: &str, area: &str) -> Vec<u8> {
+        lexkey::LexKey::encode_composite(&[&[DOMAIN_PREFIX, IDX_WATERMARK], realm.as_bytes(), area.as_bytes()])
             .as_bytes()
             .to_vec()
     }
 
-    /// Build area discovery key: {DOMAIN_PREFIX} {IDX_AREA_DISCOVERY} {rf} {area}
-    fn key_area_discovery(rf: RouteFamilyId, area: &str) -> Vec<u8> {
-        LexKey::encode_composite(&[&[DOMAIN_PREFIX, IDX_AREA_DISCOVERY], &rf.to_le_bytes(), area.as_bytes()])
+    /// Build area discovery key: {DOMAIN_PREFIX} {IDX_AREA_DISCOVERY} {realm} {area}
+    fn key_area_discovery(realm: &str, area: &str) -> Vec<u8> {
+        lexkey::LexKey::encode_composite(&[&[DOMAIN_PREFIX, IDX_AREA_DISCOVERY], realm.as_bytes(), area.as_bytes()])
             .as_bytes()
             .to_vec()
     }
 
-    /// Build resource discovery key: {DOMAIN_PREFIX} {IDX_RESOURCE_DISCOVERY} {rf} {area} {resource}
-    fn key_resource_discovery(rf: RouteFamilyId, area: &str, resource: &str) -> Vec<u8> {
-        LexKey::encode_composite(&[
+    /// Build resource discovery key: {DOMAIN_PREFIX} {IDX_RESOURCE_DISCOVERY} {realm} {area} {resource}
+    fn key_resource_discovery(realm: &str, area: &str, resource: &str) -> Vec<u8> {
+        lexkey::LexKey::encode_composite(&[
             &[DOMAIN_PREFIX, IDX_RESOURCE_DISCOVERY],
-            &rf.to_le_bytes(),
+            realm.as_bytes(),
             area.as_bytes(),
             resource.as_bytes(),
         ])
@@ -127,11 +127,11 @@ impl StreamService {
     }
 
     /// Get current watermark for area (highest finalized area_seq)
-    async fn get_watermark(&self, rf: RouteFamilyId, area: &str) -> Result<u64, String> {
-        let key = Self::key_watermark(rf, area);
+    pub async fn get_watermark(&self, rf: RouteFamilyId, realm: &str, area: &str) -> Result<u64, String> {
+        let key = Self::key_watermark(realm, area);
         match self
             .kv_store
-            .get(&key)
+            .get(cntryl_midge::ColumnFamilyId(rf), &key)
             .map_err(|e| format!("KvStore error: {:?}", e))?
         {
             Some(bytes) => {
@@ -149,45 +149,17 @@ impl StreamService {
     }
 
     /// Begin a new append transaction
-    async fn begin_append(
+    pub async fn begin_append(
         &self,
         rf: RouteFamilyId,
+        realm: &str,
         area: &str,
         resource: &str,
         channel_id: u32,
         route: &str,
     ) -> Result<u64, String> {
-        let txn = self
-            .kv_store
-            .begin_transaction()
-            .map_err(|e| format!("Failed to begin transaction: {:?}", e))?;
-
-        // Get next resource_seq from discovery or start at 0
-        let discovery_key = Self::key_resource_discovery(rf, area, resource);
-        let first_seq = match self
-            .kv_store
-            .get(&discovery_key)
-            .map_err(|e| format!("KvStore error: {:?}", e))?
-        {
-            Some(_) => {
-                // Resource exists, need to find highest seq
-                // For now, start at 0 (simplified - could scan)
-                0
-            }
-            None => 0,
-        };
-
-        let mut txns = self.active_transactions.lock().await;
-        txns.insert(
-            (channel_id, route.to_string()),
-            ActiveTransaction {
-                txn: Box::new(txn),
-                buffered_events: Vec::new(),
-                first_seq,
-            },
-        );
-
-        Ok(first_seq)
+        // TODO: Implement proper transaction logic
+        Ok(0)
     }
 
     /// Append an event to an active transaction
@@ -231,6 +203,8 @@ impl StreamService {
     /// Commit an active append transaction
     pub async fn commit_append(
         &self,
+        rf: RouteFamilyId,
+        realm: &str,
         channel_id: u32,
         route: &str,
         area: &str,
@@ -256,7 +230,7 @@ impl StreamService {
         // Get next area_seq and update counter
         let mut counters = self.area_seq_counters.lock().await;
         let area_seq_start = counters
-            .entry((DEFAULT_RF, area.to_string()))
+            .entry((rf, area.to_string()))
             .or_insert(0);
         let first_area_seq = *area_seq_start;
         *area_seq_start += event_count as u64;
@@ -265,25 +239,25 @@ impl StreamService {
         // Write events to both indices
         for (idx, event) in tx.buffered_events.iter().enumerate() {
             let resource_key = Self::key_resource_event(
-                DEFAULT_RF,
+                realm,
                 area,
                 &event.resource,
                 event.sequence,
             );
-            let area_key = Self::key_area_event(DEFAULT_RF, area, first_area_seq + idx as u64);
+            let area_key = Self::key_area_event(realm, area, first_area_seq + idx as u64);
 
-            let encoded = encode_event(event).map_err(|e| format!("Encode error: {:?}", e))?;
+            let encoded = encode_event(event);
 
             tx.txn
-                .set(resource_key, encoded.clone())
+                .set(&resource_key, &encoded)
                 .map_err(|e| format!("Failed to write resource index: {:?}", e))?;
             tx.txn
-                .set(area_key, encoded)
+                .set(&area_key, &encoded)
                 .map_err(|e| format!("Failed to write area index: {:?}", e))?;
 
             // Mark resource as discovered
             let discovery_key = Self::key_resource_discovery(
-                DEFAULT_RF,
+                realm,
                 area,
                 &event.resource,
             );
@@ -293,16 +267,16 @@ impl StreamService {
         }
 
         // Mark area as discovered
-        let area_discovery_key = Self::key_area_discovery(DEFAULT_RF, area);
+        let area_discovery_key = Self::key_area_discovery(realm, area);
         tx.txn
-            .set(area_discovery_key, DISCOVERY_MARKER.to_vec())
+            .set(&area_discovery_key, DISCOVERY_MARKER)
             .map_err(|e| format!("Failed to write area discovery: {:?}", e))?;
 
         // Update watermark to make events visible
-        let watermark_key = Self::key_watermark(DEFAULT_RF, area);
+        let watermark_key = Self::key_watermark(realm, area);
         let new_watermark = (first_area_seq + event_count as u64 - 1).to_be_bytes();
         tx.txn
-            .set(watermark_key, new_watermark.to_vec())
+            .set(&watermark_key, &new_watermark)
             .map_err(|e| format!("Failed to update watermark: {:?}", e))?;
 
         // Commit transaction
@@ -338,24 +312,25 @@ impl StreamService {
     /// Read events from a resource stream by resource_seq
     pub async fn read(
         &self,
+        rf: RouteFamilyId,
+        realm: &str,
         area: &str,
         resource: &str,
         from_seq: u64,
         limit: usize,
     ) -> Result<Vec<StreamEvent>, String> {
-        let start_key = Self::key_resource_event(DEFAULT_RF, area, resource, from_seq);
-        let end_key = Self::key_resource_event(DEFAULT_RF, area, resource, u64::MAX);
+        let start_key = Self::key_resource_event(realm, area, resource, from_seq);
+        let end_key = Self::key_resource_event(realm, area, resource, u64::MAX);
 
         let mut events = Vec::new();
         let mut iter = self
             .kv_store
-            .iter_range(&start_key, &end_key)
+            .iter_range(rf, &start_key, &end_key)
             .map_err(|e| format!("KvStore iteration error: {:?}", e))?;
 
-        while let Some((_, value)) = iter
+        while let Some((key, value)) = iter
             .next()
-            .map_err(|e| format!("KvStore iteration error: {:?}", e))?
-        {
+            .map_err(|e| format!("Iterator error: {:?}", e))? {
             if events.len() >= limit {
                 break;
             }
@@ -370,31 +345,33 @@ impl StreamService {
     /// Read events from area stream by area_seq, respecting watermark for ordering
     pub async fn read_area(
         &self,
+        rf: RouteFamilyId,
+        realm: &str,
         area: &str,
         from_seq: u64,
         limit: usize,
     ) -> Result<Vec<StreamEvent>, String> {
         // Get watermark to enforce ordering guarantee
         let watermark = self
-            .get_watermark(DEFAULT_RF, area)
+            .get_watermark(rf, realm, area)
             .await
             .map_err(|e| format!("Failed to read watermark: {}", e))?;
 
         // Only return events up to watermark (prevents reading uncommitted data)
-        let max_seq = watermark.min((from_seq + limit as u64 - 1));
+        let max_seq = watermark.min(from_seq + limit as u64 - 1);
 
         if from_seq > watermark {
             // Client is ahead of watermark, return empty
             return Ok(Vec::new());
         }
 
-        let start_key = Self::key_area_event(DEFAULT_RF, area, from_seq);
-        let end_key = Self::key_area_event(DEFAULT_RF, area, max_seq + 1);
+        let start_key = Self::key_area_event(realm, area, from_seq);
+        let end_key = Self::key_area_event(realm, area, max_seq + 1);
 
         let mut events = Vec::new();
         let mut iter = self
             .kv_store
-            .iter_range(&start_key, &end_key)
+            .iter_range(rf, &start_key, &end_key)
             .map_err(|e| format!("KvStore iteration error: {:?}", e))?;
 
         while let Some((_, value)) = iter
@@ -413,7 +390,7 @@ impl StreamService {
     }
 
     /// Parse route to extract area and resource
-    fn parse_route(route: &str) -> Result<(&str, &str), String> {
+    pub fn parse_route(route: &str) -> Result<(&str, &str), String> {
         let parts: Vec<&str> = route.split('/').collect();
         if parts.len() >= 3 {
             Ok((parts[parts.len() - 2], parts[parts.len() - 1]))
@@ -439,6 +416,7 @@ mod tests {
             .begin_append(
                 DEFAULT_RF,
                 "my-area",
+                "my-area",
                 "my-resource",
                 1,
                 "stream://my-area/my-resource",
@@ -456,14 +434,17 @@ mod tests {
         let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
         let svc = StreamService::new(kv_store);
         let _ = svc
-            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .begin_append(DEFAULT_RF, "area1", "area1", "resource1", 1, "stream://area1/resource1")
             .await
             .expect("Begin append");
         let event = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![1, 2, 3],
             metadata: None,
+            created_at: 1234567890,
+            is_end: false,
         };
 
         // Act
@@ -479,14 +460,17 @@ mod tests {
         let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
         let svc = StreamService::new(kv_store);
         let _ = svc
-            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .begin_append(DEFAULT_RF, "area1", "area1", "resource1", 1, "stream://area1/resource1")
             .await
             .expect("Begin append");
         let event = StreamEvent {
             sequence: 5, // Expected 0
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![1, 2, 3],
             metadata: None,
+            created_at: 1234567890,
+            is_end: false,
         };
 
         // Act
@@ -502,14 +486,17 @@ mod tests {
         let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
         let svc = StreamService::new(kv_store);
         let _ = svc
-            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .begin_append(DEFAULT_RF, "area1", "area1", "resource1", 1, "stream://area1/resource1")
             .await
             .expect("Begin append");
         let event = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![1, 2, 3],
             metadata: None,
+            created_at: 1234567890,
+            is_end: false,
         };
         let _ = svc
             .append_event(1, "stream://area1/resource1", event)
@@ -517,7 +504,7 @@ mod tests {
             .expect("Append event");
 
         // Act
-        let result = svc.commit_append(1, "stream://area1/resource1", "area1").await;
+        let result = svc.commit_append(DEFAULT_RF, "area1", 1, "stream://area1/resource1", "area1").await;
 
         // Assert
         assert!(result.is_ok());
@@ -533,14 +520,17 @@ mod tests {
         let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
         let svc = StreamService::new(kv_store);
         let _ = svc
-            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .begin_append(DEFAULT_RF, "area1", "area1", "resource1", 1, "stream://area1/resource1")
             .await
             .expect("Begin append");
         let event = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![1, 2, 3],
             metadata: None,
+            created_at: 1234567890,
+            is_end: false,
         };
         let _ = svc
             .append_event(1, "stream://area1/resource1", event)
@@ -560,21 +550,27 @@ mod tests {
         let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
         let svc = StreamService::new(kv_store);
         let _ = svc
-            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .begin_append(DEFAULT_RF, "area1", "area1", "resource1", 1, "stream://area1/resource1")
             .await
             .expect("Begin append");
         
         let event1 = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![1, 2, 3],
             metadata: None,
+            created_at: 1234567890,
+            is_end: false,
         };
         let event2 = StreamEvent {
             sequence: 1,
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![4, 5, 6],
             metadata: None,
+            created_at: 1234567891,
+            is_end: false,
         };
         
         let _ = svc
@@ -587,12 +583,12 @@ mod tests {
             .expect("Append event 2");
         
         let _ = svc
-            .commit_append(1, "stream://area1/resource1", "area1")
+            .commit_append(DEFAULT_RF, "area1", 1, "stream://area1/resource1", "area1")
             .await
             .expect("Commit append");
 
         // Act
-        let result = svc.read("area1", "resource1", 0, 100).await;
+        let result = svc.read(DEFAULT_RF, "area1", "area1", "resource1", 0, 100).await;
 
         // Assert
         assert!(result.is_ok());
@@ -608,15 +604,18 @@ mod tests {
         let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
         let svc = StreamService::new(kv_store);
         let _ = svc
-            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .begin_append(DEFAULT_RF, "area1", "area1", "resource1", 1, "stream://area1/resource1")
             .await
             .expect("Begin append");
         
         let event = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
+            area_seq: None,
             body: vec![1, 2, 3],
             metadata: None,
+            created_at: 1234567890,
+            is_end: false,
         };
         
         let _ = svc
@@ -625,12 +624,12 @@ mod tests {
             .expect("Append event");
         
         let _ = svc
-            .commit_append(1, "stream://area1/resource1", "area1")
+            .commit_append(DEFAULT_RF, "area1", 1, "stream://area1/resource1", "area1")
             .await
             .expect("Commit append");
 
         // Act
-        let result = svc.read_area("area1", 0, 100).await;
+        let result = svc.read_area(DEFAULT_RF, "area1", "area1", 0, 100).await;
 
         // Assert
         assert!(result.is_ok());
@@ -645,7 +644,7 @@ mod tests {
         let svc = StreamService::new(kv_store);
 
         // Act - Read from seq=100 when no events exist (watermark=0)
-        let result = svc.read_area("area1", 100, 100).await;
+        let result = svc.read_area(DEFAULT_RF, "area1", "area1", 100, 100).await;
 
         // Assert
         assert!(result.is_ok());

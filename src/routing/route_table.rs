@@ -1423,10 +1423,10 @@ mod tests {
         rt.insert(CF_A, sub_a);
         rt.insert(CF_B, sub_b);
 
-        // Act: Remove from CF_A only
+        // Act
         let removed = rt.remove(CF_A, 1);
 
-        // Assert: Removal successful
+        // Assert
         assert!(removed.is_some());
         assert_eq!(removed.unwrap().id, 1);
 
@@ -1495,10 +1495,10 @@ mod tests {
             },
         );
 
-        // Act: Cleanup CHANNEL_ID in CF_PRIMARY only
+        // Act
         rt.cleanup_channel(CF_PRIMARY, CHANNEL_ID);
 
-        // Assert: CF_PRIMARY should have no subscriptions from CHANNEL_ID
+        // Assert
         assert_eq!(rt.len(), 2, "Should have 2 subscriptions remaining");
 
         // CF_PRIMARY should be empty for that channel
@@ -1535,10 +1535,10 @@ mod tests {
             },
         );
 
-        // Act: Query a CF that has no subscriptions
+        // Act
         let matches = rt.matching_subscribers(CF_MISSING, "test/route");
 
-        // Assert: Should return empty vec, not panic
+        // Assert
         assert_eq!(matches.len(), 0);
     }
 
@@ -1574,11 +1574,11 @@ mod tests {
             },
         );
 
-        // Act: Query both CFs with a route that doesn't match CF_NO_GLOBAL's pattern
+        // Act
         let matches_enabled = rt.matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route");
         let matches_disabled = rt.matching_subscribers(CF_NO_GLOBAL, "any/random/route");
 
-        // Assert: Only global wildcard CF should match
+        // Assert
         assert_eq!(matches_enabled.len(), 1);
         assert_eq!(matches_enabled[0].id, 1);
 
@@ -1587,7 +1587,7 @@ mod tests {
 
     #[test]
     fn should_handle_complex_multi_cf_scenario() {
-        // Arrange: Simulate multi-tenant system with complex routing
+        // Arrange
         let mut rt = RouteTable::new();
         const CF_TENANT_ACME: u32 = 1;
         const CF_TENANT_WIDGETS: u32 = 2;
@@ -1651,13 +1651,13 @@ mod tests {
             },
         );
 
-        // Act: Query specific routes for each tenant
+        // Act
         let acme_prod = rt.matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts");
         let acme_any = rt.matching_subscribers(CF_TENANT_ACME, "anything");
         let widgets_alert = rt.matching_subscribers(CF_TENANT_WIDGETS, "widgets/alerts/critical");
         let widgets_other = rt.matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts");
 
-        // Assert: Each tenant gets the right matches
+        // Assert
         assert_eq!(
             acme_prod.len(),
             3,

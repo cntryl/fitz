@@ -43,7 +43,7 @@ num_cpus = "1.15"
 dashmap = "5"
 smallvec = "1.13"
 cntryl-midge = { git = "https://github.com/cntryl/midge", branch = "main" }
-cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main" }
+cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main", version = "0.1.0" }
 
 [dev-dependencies]
 url = "2"

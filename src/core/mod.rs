@@ -10,7 +10,7 @@ pub mod notice;
 
 pub mod queue;
 
-// pub mod stream;  // TODO: midge integration in progress
+pub mod stream;
 
 pub mod control;
 

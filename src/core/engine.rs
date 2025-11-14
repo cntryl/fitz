@@ -31,7 +31,23 @@ pub enum EngineCommand {
         payload: Vec<u8>,
         channel_id: u32,
         route_family: RouteFamilyId,
+        sender: Option<crate::core::domain::SubSender>,
         resp: oneshot::Sender<Result<crate::protocol::frame::PooledFrame, String>>,
+    },
+
+    /// Subscribe to notifications for a route pattern
+    Subscribe {
+        route_pattern: String,
+        channel_id: u32,
+        route_family: RouteFamilyId,
+        sender: crate::core::domain::SubSender,
+        resp: oneshot::Sender<Result<u64, String>>,
+    },
+
+    /// Unsubscribe from notifications
+    Unsubscribe {
+        subscription_id: u64,
+        resp: oneshot::Sender<Result<bool, String>>,
     },
 
     /// Notify all domains that a channel is closing (connection dropped, client disconnected, etc.)
@@ -63,10 +79,11 @@ impl EngineHandle {
     ) -> Result<Vec<u8>, String> {
         let (tx, rx) = oneshot::channel();
         let cmd = EngineCommand::Dispatch {
-            route,
-            payload,
+            route: route.clone(),
+            payload: payload.clone(),
             channel_id,
             route_family,
+            sender: None,
             resp: tx,
         };
         self.tx
@@ -92,6 +109,43 @@ impl EngineHandle {
             .send(cmd)
             .map_err(|_| "engine stopped".to_string())?;
         Ok(())
+    }
+
+    /// Subscribe to notifications for a route pattern
+    /// Returns subscription ID for later unsubscribe
+    pub async fn subscribe(
+        &self,
+        route_pattern: String,
+        channel_id: u32,
+        route_family: RouteFamilyId,
+        sender: crate::core::domain::SubSender,
+    ) -> Result<u64, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::Subscribe {
+            route_pattern,
+            channel_id,
+            route_family,
+            sender,
+            resp: tx,
+        };
+        self.tx
+            .send(cmd)
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
+    }
+
+    /// Unsubscribe from notifications
+    /// Returns true if subscription was found and removed
+    pub async fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = EngineCommand::Unsubscribe {
+            subscription_id,
+            resp: tx,
+        };
+        self.tx
+            .send(cmd)
+            .map_err(|_| "engine stopped".to_string())?;
+        rx.await.map_err(|_| "no response".to_string())?
     }
 }
 
@@ -119,6 +173,7 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                     payload,
                     channel_id,
                     route_family,
+                    sender,
                     resp,
                 } => {
                     // Clone registry Arc for spawned task
@@ -143,6 +198,7 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                             payload,
                             channel_id,
                             route_family,
+                            sender,
                         };
 
                         // Dispatch to domain
@@ -165,6 +221,39 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
                             DomainResponse::Frame(data) => Ok(data),
                             DomainResponse::Error(e) => Err(e),
                         };
+                        let _ = resp.send(result);
+                    });
+                }
+
+                EngineCommand::Subscribe {
+                    route_pattern,
+                    channel_id,
+                    route_family,
+                    sender,
+                    resp,
+                } => {
+                    // Clone registry Arc for spawned task
+                    let registry_clone = Arc::clone(&registry);
+
+                    // Subscribe spawned as separate task
+                    tokio::spawn(async move {
+                        let result = registry_clone
+                            .subscribe(route_family, route_pattern, channel_id, sender)
+                            .await;
+                        let _ = resp.send(result);
+                    });
+                }
+
+                EngineCommand::Unsubscribe {
+                    subscription_id,
+                    resp,
+                } => {
+                    // Clone registry Arc for spawned task
+                    let registry_clone = Arc::clone(&registry);
+
+                    // Unsubscribe spawned as separate task
+                    tokio::spawn(async move {
+                        let result = registry_clone.unsubscribe(subscription_id).await;
                         let _ = resp.send(result);
                     });
                 }

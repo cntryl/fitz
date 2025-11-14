@@ -1,6 +1,6 @@
 // New DomainRegistry pattern - cleaner orchestration
 
-use crate::core::domain::{Domain, DomainContext, DomainResponse};
+use crate::core::domain::{Domain, DomainContext, DomainResponse, SubSender};
 use std::sync::Arc;
 
 /// A registry that knows how to route to domains without HashMap lookups
@@ -11,8 +11,8 @@ pub struct DomainRegistry {
     queue: Arc<dyn Domain>,
     lease: Arc<dyn Domain>,
     control: Arc<dyn Domain>,
+    stream: Arc<dyn Domain>,
     // kv: Arc<dyn Domain>,      // TODO: uncomment when midge integrated
-    // stream: Arc<dyn Domain>,  // TODO: uncomment when midge integrated
 }
 
 impl DomainRegistry {
@@ -31,8 +31,8 @@ impl DomainRegistry {
             "queue" => Ok(self.queue.handle(request).await),
             "lease" => Ok(self.lease.handle(request).await),
             "control" => Ok(self.control.handle(request).await),
+            "stream" => Ok(self.stream.handle(request).await),
             // "kv" => Ok(self.kv.handle(request).await),
-            // "stream" => Ok(self.stream.handle(request).await),
             _ => Err(format!("unsupported scheme: {}", scheme)),
         }
     }
@@ -45,22 +45,42 @@ impl DomainRegistry {
         self.queue.cleanup_channel(rf, channel_id).await;
         self.lease.cleanup_channel(rf, channel_id).await;
         self.control.cleanup_channel(rf, channel_id).await;
+        self.stream.cleanup_channel(rf, channel_id).await;
         // self.kv.cleanup_channel(rf, channel_id).await;
-        // self.stream.cleanup_channel(rf, channel_id).await;
+    }
+
+    /// Subscribe to notifications for a route pattern
+    /// Returns subscription ID for later unsubscribe
+    pub async fn subscribe(
+        &self,
+        rf: crate::routing::RouteFamilyId,
+        route_pattern: String,
+        channel_id: u32,
+        sender: SubSender,
+    ) -> Result<u64, String> {
+        self.stream.subscribe(rf, route_pattern, channel_id, sender).await
+    }
+
+    /// Unsubscribe from notifications
+    /// Returns true if subscription was found and removed
+    pub async fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
+        self.stream.unsubscribe(subscription_id).await
     }
 
     /// Create a new registry with all domains initialized
     pub fn new() -> Self {
         use crate::core::{
             control::ControlDomain, lease::LeaseDomain, notice::NoticeDomain, queue::QueueDomain,
-            rpc::RpcDomain,
+            rpc::RpcDomain, stream::StreamDomain,
         };
+        use crate::storage::midge_adapter::MidgeAdapter;
 
         // Initialize domains
         let notice = Arc::new(NoticeDomain::new());
         let rpc = Arc::new(RpcDomain::new());
         let queue = Arc::new(QueueDomain::new());
         let lease = Arc::new(LeaseDomain::new());
+        let stream = Arc::new(StreamDomain::new(Arc::new(MidgeAdapter::new())));
 
         // Control shares notice service
         let control = Arc::new(ControlDomain::with_notice_service(notice.get_service()));
@@ -71,6 +91,7 @@ impl DomainRegistry {
             queue,
             lease,
             control,
+            stream,
         }
     }
 }

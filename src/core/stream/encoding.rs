@@ -7,7 +7,7 @@ use crate::protocol::tags::*;
 /// Encode a StreamEvent to TLV format
 ///
 /// Format:
-/// - TAG_SEQ (0x24): resource_seq (u64 BE)
+/// - TAG_SEQ (0x24): sequence (u64 BE)
 /// - TAG_AREA_SEQ (0xB0): area_seq (u64 BE, optional)
 /// - TAG_BODY (0x22): body (bytes)
 /// - TAG_METADATA (0xA3): metadata (bytes, optional)
@@ -16,8 +16,8 @@ use crate::protocol::tags::*;
 pub fn encode_event(event: &StreamEvent) -> Vec<u8> {
     let mut buf = Vec::new();
 
-    // TAG_SEQ: resource_seq
-    build_tlv(TAG_SEQ, &event.resource_seq.to_be_bytes(), &mut buf);
+    // TAG_SEQ: sequence
+    build_tlv(TAG_SEQ, &event.sequence.to_be_bytes(), &mut buf);
 
     // TAG_AREA_SEQ: area_seq (if present)
     if let Some(area_seq) = event.area_seq {
@@ -46,7 +46,7 @@ pub fn encode_event(event: &StreamEvent) -> Vec<u8> {
 /// Decode a StreamEvent from TLV format
 pub fn decode_event(bytes: &[u8]) -> Result<StreamEvent, String> {
     // Parse TAG_SEQ (required)
-    let resource_seq = find_tlv(bytes, TAG_SEQ)
+    let sequence = find_tlv(bytes, TAG_SEQ)
         .and_then(|b| {
             if b.len() == 8 {
                 Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
@@ -87,8 +87,13 @@ pub fn decode_event(bytes: &[u8]) -> Result<StreamEvent, String> {
     // Parse TAG_STREAM_END (optional flag)
     let is_end = find_tlv(bytes, TAG_STREAM_END).is_some();
 
+    // For now, we don't encode resource in TLV, so use empty string
+    // This should be set by the context when decoding
+    let resource = String::new();
+
     Ok(StreamEvent {
-        resource_seq,
+        sequence,
+        resource,
         area_seq,
         body,
         metadata,
@@ -105,7 +110,8 @@ mod tests {
     fn should_encode_and_decode_minimal_event() {
         // Arrange
         let event = StreamEvent {
-            resource_seq: 42,
+            sequence: 42,
+            resource: "test-resource".to_string(),
             area_seq: None,
             body: b"test body".to_vec(),
             metadata: None,
@@ -118,7 +124,9 @@ mod tests {
         let decoded = decode_event(&encoded).unwrap();
 
         // Assert
-        assert_eq!(decoded.resource_seq, event.resource_seq);
+        assert_eq!(decoded.sequence, event.sequence);
+        // Note: resource is not encoded in TLV, set by service context
+        assert_eq!(decoded.resource, ""); // decode_event returns empty resource
         assert_eq!(decoded.area_seq, event.area_seq);
         assert_eq!(decoded.body, event.body);
         assert_eq!(decoded.metadata, event.metadata);
@@ -130,7 +138,8 @@ mod tests {
     fn should_encode_and_decode_full_event() {
         // Arrange
         let event = StreamEvent {
-            resource_seq: 123,
+            sequence: 123,
+            resource: "test-resource".to_string(),
             area_seq: Some(456),
             body: b"full body with metadata".to_vec(),
             metadata: Some(b"metadata".to_vec()),
@@ -143,7 +152,9 @@ mod tests {
         let decoded = decode_event(&encoded).unwrap();
 
         // Assert
-        assert_eq!(decoded.resource_seq, event.resource_seq);
+        assert_eq!(decoded.sequence, event.sequence);
+        // Note: resource is not encoded in TLV, set by service context
+        assert_eq!(decoded.resource, ""); // decode_event returns empty resource
         assert_eq!(decoded.area_seq, event.area_seq);
         assert_eq!(decoded.body, event.body);
         assert_eq!(decoded.metadata, event.metadata);
@@ -155,7 +166,8 @@ mod tests {
     fn should_decode_event_with_stream_end_flag() {
         // Arrange
         let event = StreamEvent {
-            resource_seq: 5,
+            sequence: 5,
+            resource: "test-resource".to_string(),
             area_seq: None,
             body: b"final event".to_vec(),
             metadata: None,
@@ -169,6 +181,9 @@ mod tests {
 
         // Assert
         assert!(decoded.is_end);
+        assert_eq!(decoded.sequence, event.sequence);
+        assert_eq!(decoded.resource, ""); // resource not encoded
+        assert_eq!(decoded.body, event.body);
     }
 
     #[test]

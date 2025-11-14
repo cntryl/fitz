@@ -29,6 +29,8 @@ pub struct DomainContext {
     pub channel_id: u32,
     /// Storage route family (for namespacing/multi-tenant operations)
     pub route_family: RouteFamilyId,
+    /// Optional sender for domains that support subscriptions
+    pub sender: Option<SubSender>,
 }
 
 /// Response from domain operation
@@ -66,5 +68,26 @@ pub trait Domain: Send + Sync {
         _channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {})
+    }
+
+    /// Subscribe to notifications for a route pattern
+    /// Default implementation returns error (not supported)
+    fn subscribe<'a>(
+        &'a self,
+        _route_family: RouteFamilyId,
+        _route_pattern: String,
+        _channel_id: u32,
+        _sender: SubSender,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
+        Box::pin(async move { Err("subscribe not supported".to_string()) })
+    }
+
+    /// Unsubscribe from notifications
+    /// Default implementation returns error (not supported)
+    fn unsubscribe<'a>(
+        &'a self,
+        _subscription_id: u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>> {
+        Box::pin(async move { Err("unsubscribe not supported".to_string()) })
     }
 }
