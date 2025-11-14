@@ -1,4 +1,11 @@
 // RPC domain handler - routes all rpc:// operations
+//
+// Architecture:
+// - Instance-owned RpcService for per-domain isolation
+// - Shared Arc<RwLock<RpcService>> for subscribe/publish operations requiring mutation
+// - Single-pass TLV parsing with detailed error reporting
+// - SmallVec stack allocation for typical <64B control frame responses
+// - Inbox allocation with cryptographic uniqueness and ownership enforcement
 
 use super::service::RpcService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};

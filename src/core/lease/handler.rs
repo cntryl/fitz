@@ -7,18 +7,26 @@ use crate::protocol::frame::{build_tlv, find_tlv};
 use crate::protocol::tags::*;
 use std::sync::Arc;
 
-pub struct LeaseDomain;
+/// Lease domain handler - routes all lease:// operations
+/// 
+/// Architecture:
+/// - Instance-owned LeaseService for per-domain isolation
+/// - Shared Arc<LeaseService> allows multi-tenant access via route_family
+/// - Internal DashMap concurrency in LeaseService (no RwLock wrapper needed)
+pub struct LeaseDomain {
+    service: Arc<LeaseService>,
+}
 
 impl LeaseDomain {
     pub fn new() -> Self {
-        Self
+        Self {
+            service: LeaseService::new(),
+        }
     }
 
-    // Helper: static service instance
-    fn svc() -> &'static Arc<LeaseService> {
-        use once_cell::sync::OnceCell;
-        static SVC: OnceCell<Arc<LeaseService>> = OnceCell::new();
-        SVC.get_or_init(LeaseService::new)
+    /// Get the shared lease service for use by other domains (e.g., control)
+    pub fn get_service(&self) -> Arc<LeaseService> {
+        Arc::clone(&self.service)
     }
 
     // Helper: parse u32 TLV
@@ -55,7 +63,7 @@ impl Domain for LeaseDomain {
 
 impl LeaseDomain {
     async fn process(&self, request: DomainContext) -> DomainResponse {
-        let svc = LeaseDomain::svc();
+        let svc = &self.service;
         let rf = request.route_family;
 
         // Parse operation from route

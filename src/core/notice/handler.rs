@@ -1,4 +1,10 @@
 // Notice domain handler - routes all notice:// operations
+//
+// Architecture:
+// - Instance-owned NoticeService for per-domain isolation
+// - Shared Arc<RwLock<NoticeService>> for publish operations requiring mutation
+// - Single-pass TLV parsing with detailed error reporting
+// - SmallVec stack allocation for typical <64B response frames
 
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};

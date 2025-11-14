@@ -4,6 +4,7 @@ mod encoding;
 mod handler;
 mod service;
 pub mod types;
+mod simple_test;
 
 
 // Re-export public API
