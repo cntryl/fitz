@@ -335,60 +335,81 @@ impl StreamService {
         Ok(())
     }
 
-    /// Handle stream operation
-    pub async fn handle_operation(
+    /// Read events from a resource stream by resource_seq
+    pub async fn read(
         &self,
-        params: StreamOperationParams<'_>,
-    ) -> Result<StreamResponse, String> {
-        let (area, resource) = Self::parse_route(&params.route)?;
+        area: &str,
+        resource: &str,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<StreamEvent>, String> {
+        let start_key = Self::key_resource_event(DEFAULT_RF, area, resource, from_seq);
+        let end_key = Self::key_resource_event(DEFAULT_RF, area, resource, u64::MAX);
 
-        match params.operation {
-            StreamOperation::BeginAppend => {
-                let first_seq = self
-                    .begin_append(
-                        DEFAULT_RF,
-                        area,
-                        resource,
-                        params.channel_id,
-                        params.route,
-                    )
-                    .await?;
-                Ok(StreamResponse::BeginAppendOk { first_seq })
+        let mut events = Vec::new();
+        let mut iter = self
+            .kv_store
+            .iter_range(&start_key, &end_key)
+            .map_err(|e| format!("KvStore iteration error: {:?}", e))?;
+
+        while let Some((_, value)) = iter
+            .next()
+            .map_err(|e| format!("KvStore iteration error: {:?}", e))?
+        {
+            if events.len() >= limit {
+                break;
             }
-            StreamOperation::Append => {
-                Err("Append operation not yet implemented through handler".to_string())
-            }
-            StreamOperation::CommitAppend => {
-                let (first_seq, last_seq, event_count) = self
-                    .commit_append(params.channel_id, params.route, area)
-                    .await?;
-                Ok(StreamResponse::CommitAppendOk {
-                    first_seq,
-                    last_seq,
-                    event_count,
-                })
-            }
-            StreamOperation::RollbackAppend => {
-                self.rollback_append(params.channel_id, params.route)
-                    .await?;
-                Ok(StreamResponse::RollbackAppendOk)
-            }
-            StreamOperation::Read => {
-                Err("Read not yet implemented".to_string())
-            }
-            StreamOperation::ReadArea => {
-                Err("ReadArea not yet implemented".to_string())
-            }
-            StreamOperation::Peek => {
-                Err("Peek not yet implemented".to_string())
-            }
-            StreamOperation::Subscribe => {
-                Err("Subscribe not yet implemented".to_string())
-            }
-            StreamOperation::Unsubscribe => {
-                Err("Unsubscribe not yet implemented".to_string())
-            }
+            let event = decode_event(&value)
+                .map_err(|e| format!("Failed to decode event: {:?}", e))?;
+            events.push(event);
         }
+
+        Ok(events)
+    }
+
+    /// Read events from area stream by area_seq, respecting watermark for ordering
+    pub async fn read_area(
+        &self,
+        area: &str,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<StreamEvent>, String> {
+        // Get watermark to enforce ordering guarantee
+        let watermark = self
+            .get_watermark(DEFAULT_RF, area)
+            .await
+            .map_err(|e| format!("Failed to read watermark: {}", e))?;
+
+        // Only return events up to watermark (prevents reading uncommitted data)
+        let max_seq = watermark.min((from_seq + limit as u64 - 1));
+
+        if from_seq > watermark {
+            // Client is ahead of watermark, return empty
+            return Ok(Vec::new());
+        }
+
+        let start_key = Self::key_area_event(DEFAULT_RF, area, from_seq);
+        let end_key = Self::key_area_event(DEFAULT_RF, area, max_seq + 1);
+
+        let mut events = Vec::new();
+        let mut iter = self
+            .kv_store
+            .iter_range(&start_key, &end_key)
+            .map_err(|e| format!("KvStore iteration error: {:?}", e))?;
+
+        while let Some((_, value)) = iter
+            .next()
+            .map_err(|e| format!("KvStore iteration error: {:?}", e))?
+        {
+            if events.len() >= limit {
+                break;
+            }
+            let event = decode_event(&value)
+                .map_err(|e| format!("Failed to decode event: {:?}", e))?;
+            events.push(event);
+        }
+
+        Ok(events)
     }
 
     /// Parse route to extract area and resource
@@ -400,31 +421,6 @@ impl StreamService {
             Err("Invalid route format".to_string())
         }
     }
-}
-
-/// Stream service response types
-#[derive(Debug)]
-pub enum StreamResponse {
-    AppendResult(AppendResult),
-    Events(Vec<StreamEvent>),
-    AreaRead(AreaReadResponse),
-    Subscription(SubscriptionInfo),
-    BeginAppendOk { first_seq: u64 },
-    AppendOk,
-    CommitAppendOk {
-        first_seq: u64,
-        last_seq: u64,
-        event_count: usize,
-    },
-    RollbackAppendOk,
-}
-
-/// Lightweight subscription info returned to subscribers
-#[derive(Debug)]
-pub struct SubscriptionInfo {
-    pub last_resource_seq: Option<u64>,
-    pub last_area_seq: Option<u64>,
-    pub watermark: Option<u64>,
 }
 
 #[cfg(test)]
@@ -556,5 +552,104 @@ mod tests {
 
         // Assert
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn should_read_events_from_resource_stream() {
+        // Arrange
+        let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
+        let svc = StreamService::new(kv_store);
+        let _ = svc
+            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .await
+            .expect("Begin append");
+        
+        let event1 = StreamEvent {
+            sequence: 0,
+            resource: "resource1".to_string(),
+            body: vec![1, 2, 3],
+            metadata: None,
+        };
+        let event2 = StreamEvent {
+            sequence: 1,
+            resource: "resource1".to_string(),
+            body: vec![4, 5, 6],
+            metadata: None,
+        };
+        
+        let _ = svc
+            .append_event(1, "stream://area1/resource1", event1)
+            .await
+            .expect("Append event 1");
+        let _ = svc
+            .append_event(1, "stream://area1/resource1", event2)
+            .await
+            .expect("Append event 2");
+        
+        let _ = svc
+            .commit_append(1, "stream://area1/resource1", "area1")
+            .await
+            .expect("Commit append");
+
+        // Act
+        let result = svc.read("area1", "resource1", 0, 100).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let events = result.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence, 0);
+        assert_eq!(events[1].sequence, 1);
+    }
+
+    #[tokio::test]
+    async fn should_read_area_respecting_watermark() {
+        // Arrange
+        let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
+        let svc = StreamService::new(kv_store);
+        let _ = svc
+            .begin_append(DEFAULT_RF, "area1", "resource1", 1, "stream://area1/resource1")
+            .await
+            .expect("Begin append");
+        
+        let event = StreamEvent {
+            sequence: 0,
+            resource: "resource1".to_string(),
+            body: vec![1, 2, 3],
+            metadata: None,
+        };
+        
+        let _ = svc
+            .append_event(1, "stream://area1/resource1", event)
+            .await
+            .expect("Append event");
+        
+        let _ = svc
+            .commit_append(1, "stream://area1/resource1", "area1")
+            .await
+            .expect("Commit append");
+
+        // Act
+        let result = svc.read_area("area1", 0, 100).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let events = result.unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn should_return_empty_when_reading_ahead_of_watermark() {
+        // Arrange
+        let kv_store = Arc::new(midge_adapter::create_memory_store().expect("Create store"));
+        let svc = StreamService::new(kv_store);
+
+        // Act - Read from seq=100 when no events exist (watermark=0)
+        let result = svc.read_area("area1", 100, 100).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let events = result.unwrap();
+        assert_eq!(events.len(), 0);
     }
 }

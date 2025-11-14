@@ -1,7 +1,7 @@
 // Stream domain handler - routes all stream:// operations
 
-use super::service::{StreamOperationParams, StreamResponse, StreamService};
-use super::types::StreamOperation;
+use super::service::{StreamOperationParams, StreamService};
+use super::types::{AppendResult, AreaReadResponse, StreamEvent, StreamOperation};
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
     TAG_ASSIGNED_REV, TAG_BODY, TAG_ERR_MSG, TAG_METADATA, TAG_SEQ, TAG_STREAM_END,
@@ -9,6 +9,31 @@ use crate::protocol::tags::{
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Stream handler response types
+#[derive(Debug)]
+pub enum StreamResponse {
+    AppendResult(AppendResult),
+    Events(Vec<StreamEvent>),
+    AreaRead(AreaReadResponse),
+    Subscription(SubscriptionInfo),
+    BeginAppendOk { first_seq: u64 },
+    AppendOk,
+    CommitAppendOk {
+        first_seq: u64,
+        last_seq: u64,
+        event_count: usize,
+    },
+    RollbackAppendOk,
+}
+
+/// Lightweight subscription info returned to subscribers
+#[derive(Debug)]
+pub struct SubscriptionInfo {
+    pub last_resource_seq: Option<u64>,
+    pub last_area_seq: Option<u64>,
+    pub watermark: Option<u64>,
+}
 
 pub struct StreamDomain {
     service: Arc<RwLock<StreamService>>,
