@@ -5,7 +5,10 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription, DEFAULT_RF};
+use crate::routing::{RouteTable, RtSubscription, RouteFamilyId};
+
+#[cfg(test)]
+use crate::routing::DEFAULT_RF;
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
@@ -29,7 +32,7 @@ impl NoticeService {
 
     /// Subscribe to a route pattern for a specific route family (tenant)
     /// Returns subscription ID
-    pub fn subscribe(&mut self, rf: u32, route_pattern: String, channel_id: u32, sender: SubSender) -> u64 {
+    pub fn subscribe(&mut self, rf: RouteFamilyId, route_pattern: String, channel_id: u32, sender: SubSender) -> u64 {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
 
@@ -47,13 +50,13 @@ impl NoticeService {
 
     /// Unsubscribe by subscription ID for a specific route family (tenant)
     /// Returns true if subscription was found and removed
-    pub fn unsubscribe(&mut self, rf: u32, sub_id: u64) -> bool {
+    pub fn unsubscribe(&mut self, rf: RouteFamilyId, sub_id: u64) -> bool {
         let removed = self.route_table.remove(rf, sub_id).is_some();
         removed
     }
 
     /// Cleanup all subscriptions for a channel in a specific route family (tenant)
-    pub fn cleanup_channel(&mut self, rf: u32, channel_id: u32) {
+    pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
         self.route_table.cleanup_channel(rf, channel_id);
     }
 
@@ -64,7 +67,7 @@ impl NoticeService {
     /// - Uses SmallVec for dead_subs (typically 0-2 dead subs per publish)
     /// - Early return for no subscribers
     /// - Optimizes single subscriber case (no pre-allocation needed)
-    pub fn publish(&mut self, rf: u32, route: &str, msg_id: Option<&str>, body: &[u8]) -> (usize, usize) {
+    pub fn publish(&mut self, rf: RouteFamilyId, route: &str, msg_id: Option<&str>, body: &[u8]) -> (usize, usize) {
         let matches = self.route_table.matching_subscribers(rf, route);
 
         // Fast path: no subscribers
@@ -91,7 +94,7 @@ impl NoticeService {
                 Err(mpsc::error::TrySendError::Full(_)) => return (0, 1),
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Subscriber disconnected, remove it
-                    let _ = self.route_table.remove(DEFAULT_RF, sub.id);
+                    let _ = self.route_table.remove(rf, sub.id);
                     return (0, 1);
                 }
             }
@@ -126,7 +129,7 @@ impl NoticeService {
 
         // Cleanup dead subscriptions
         for sub_id in dead_subs {
-            let _ = self.route_table.remove(DEFAULT_RF, sub_id);
+            let _ = self.route_table.remove(rf, sub_id);
         }
 
         (delivered, failed)

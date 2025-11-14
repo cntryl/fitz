@@ -3,7 +3,11 @@
 //! Implements key-value storage with route-based namespacing on top of KvStore trait.
 
 use crate::storage::traits::KvStore;
+use cntryl_midge::ColumnFamilyId;
 use std::sync::Arc;
+
+// Default column family for KV operations
+const DEFAULT_CF: ColumnFamilyId = ColumnFamilyId(0);
 
 // Type alias for batch get result
 type BatchGetResult = Vec<(String, Option<Vec<u8>>)>;
@@ -31,13 +35,15 @@ impl KvStoreAdapter {
     /// Put a key-value pair in a route namespace
     pub fn put(&self, route: &str, key: &str, value: Vec<u8>) -> Result<(), String> {
         let storage_key = Self::build_key(route, key);
-        self.kv.put(&storage_key, &value)
+        self.kv.put(DEFAULT_CF, &value, &storage_key)
+            .map_err(|e| format!("Put error: {:?}", e))
     }
 
     /// Get a value by key
     pub fn get(&self, route: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
         let storage_key = Self::build_key(route, key);
-        match self.kv.get(&storage_key)? {
+        match self.kv.get(DEFAULT_CF, &storage_key)
+            .map_err(|e| format!("Get error: {:?}", e))? {
             Some(bytes) => Ok(Some(bytes.to_vec())),
             None => Ok(None),
         }
@@ -46,7 +52,8 @@ impl KvStoreAdapter {
     /// Delete a key
     pub fn delete(&self, route: &str, key: &str) -> Result<(), String> {
         let storage_key = Self::build_key(route, key);
-        self.kv.delete(&storage_key)
+        self.kv.delete(DEFAULT_CF, &storage_key)
+            .map_err(|e| format!("Delete error: {:?}", e))
     }
 
     /// Scan keys >= start_key up to limit
@@ -65,7 +72,8 @@ impl KvStoreAdapter {
         end_storage_key.push(b'/');
         end_storage_key.push(0xFF); // Max byte to scan entire route namespace
 
-        let results = self.kv.scan(&start_storage_key, &end_storage_key)?;
+        let results = self.kv.scan(DEFAULT_CF, &start_storage_key, &end_storage_key)
+            .map_err(|e| format!("Scan error: {:?}", e))?;
 
         // Extract keys and values, removing the route prefix
         let prefix_len = format!("kv:{}/", route).len();
@@ -85,12 +93,11 @@ impl KvStoreAdapter {
 
     /// Put multiple key-value pairs in a batch
     pub fn put_batch(&self, route: &str, items: Vec<(String, Vec<u8>)>) -> Result<(), String> {
-        let writes: Vec<(Vec<u8>, Vec<u8>)> = items
-            .into_iter()
-            .map(|(k, v)| (Self::build_key(route, &k), v))
-            .collect();
-
-        self.kv.put_batch(writes)
+        // Midge doesn't have put_batch, so iterate
+        for (key, value) in items {
+            self.put(route, &key, value)?;
+        }
+        Ok(())
     }
 
     /// Get multiple values by keys in a batch
@@ -111,14 +118,15 @@ impl KvStoreAdapter {
         let end_storage_key = Self::build_key(route, end_key);
 
         // Get all keys in range
-        let results = self.kv.scan(&start_storage_key, &end_storage_key)?;
+        let results = self.kv.scan(DEFAULT_CF, &start_storage_key, &end_storage_key)
+            .map_err(|e| format!("Scan error: {:?}", e))?;
 
         let count = results.len() as u64;
 
-        // Delete them
-        let keys_to_delete: Vec<Vec<u8>> = results.into_iter().map(|(k, _)| k.to_vec()).collect();
-        if !keys_to_delete.is_empty() {
-            self.kv.delete_batch(keys_to_delete)?;
+        // Delete them one by one (Midge doesn't have delete_batch)
+        for (key_bytes, _) in results {
+            self.kv.delete(DEFAULT_CF, &key_bytes)
+                .map_err(|e| format!("Delete error: {:?}", e))?;
         }
 
         Ok(count)

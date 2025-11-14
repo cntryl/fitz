@@ -306,6 +306,8 @@ impl LeaseService {
         }
         Ok(())
     }
+
+    // `surrender` is the canonical domain term; no alias needed.
 }
 
 // --- Internals ---

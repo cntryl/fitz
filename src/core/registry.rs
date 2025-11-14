@@ -73,14 +73,18 @@ impl DomainRegistry {
             control::ControlDomain, lease::LeaseDomain, notice::NoticeDomain, queue::QueueDomain,
             rpc::RpcDomain, stream::StreamDomain,
         };
-        use crate::storage::midge_adapter::MidgeAdapter;
+        use crate::storage::midge_adapter;
 
         // Initialize domains
         let notice = Arc::new(NoticeDomain::new());
         let rpc = Arc::new(RpcDomain::new());
         let queue = Arc::new(QueueDomain::new());
         let lease = Arc::new(LeaseDomain::new());
-        let stream = Arc::new(StreamDomain::new(Arc::new(MidgeAdapter::new())));
+        
+        // Create storage backend for stream domain
+        let kv_store = midge_adapter::create_memory_store()
+            .expect("Failed to create memory store for stream domain");
+        let stream = Arc::new(StreamDomain::new(kv_store));
 
         // Control shares notice service
         let control = Arc::new(ControlDomain::with_notice_service(notice.get_service()));

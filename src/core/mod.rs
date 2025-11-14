@@ -14,7 +14,7 @@ pub mod stream;
 
 pub mod control;
 
-// pub mod kv;  // TODO: midge integration in progress
+pub mod kv;
 
 pub mod lease;
 

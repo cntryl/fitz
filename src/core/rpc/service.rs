@@ -1,7 +1,7 @@
 //! RPC domain service - handles request/reply coordination and inbox management
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription, DEFAULT_RF};
+use crate::routing::{RouteTable, RtSubscription, RouteFamilyId};
 use fxhash::FxHashMap;
 
 /// Inbox ownership and security context
@@ -78,6 +78,7 @@ impl RpcService {
     /// Returns subscription ID
     pub fn subscribe_handler(
         &mut self,
+        rf: RouteFamilyId,
         route_pattern: String,
         channel_id: u32,
         sender: SubSender,
@@ -92,7 +93,7 @@ impl RpcService {
             sender,
         };
 
-        self.handler_routes.insert(DEFAULT_RF, sub);
+        self.handler_routes.insert(rf, sub);
         id
     }
 
@@ -100,6 +101,7 @@ impl RpcService {
     /// Returns Ok(sub_id) if authorized, Err if not owner
     pub fn subscribe_inbox(
         &mut self,
+        rf: RouteFamilyId,
         inbox_route: String,
         channel_id: u32,
         sender: SubSender,
@@ -117,7 +119,7 @@ impl RpcService {
                     sender,
                 };
 
-                self.inbox_routes.insert(DEFAULT_RF, sub);
+                self.inbox_routes.insert(rf, sub);
                 ctx.subscription_id = Some(id);
 
                 Ok(id)
@@ -128,14 +130,14 @@ impl RpcService {
     }
 
     /// Unsubscribe from handler or inbox
-    pub fn unsubscribe(&mut self, sub_id: u64) -> bool {
+    pub fn unsubscribe(&mut self, rf: RouteFamilyId, sub_id: u64) -> bool {
         // Try handler routes first
-        if self.handler_routes.remove(DEFAULT_RF, sub_id).is_some() {
+        if self.handler_routes.remove(rf, sub_id).is_some() {
             return true;
         }
 
         // Try inbox routes
-        if let Some(sub) = self.inbox_routes.remove(DEFAULT_RF, sub_id) {
+        if let Some(sub) = self.inbox_routes.remove(rf, sub_id) {
             // Clear subscription ID in inbox context
             if let Some(ctx) = self.inboxes.get_mut(&sub.route_pattern) {
                 ctx.subscription_id = None;
@@ -165,15 +167,14 @@ impl RpcService {
     /// Get matching handler subscribers for a route
     /// Hot path: called for every RPC request
     #[inline]
-    pub fn matching_handlers(&self, route: &str) -> Vec<RtSubscription> {
-        self.handler_routes.matching_subscribers(DEFAULT_RF, route)
+    pub fn matching_handlers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
+        self.handler_routes.matching_subscribers(rf, route)
     }
 
     /// Get matching inbox subscribers for a reply route
     #[inline]
-    pub fn matching_inbox_subscribers(&self, inbox_route: &str) -> Vec<RtSubscription> {
-        self.inbox_routes
-            .matching_subscribers(DEFAULT_RF, inbox_route)
+    pub fn matching_inbox_subscribers(&self, rf: RouteFamilyId, inbox_route: &str) -> Vec<RtSubscription> {
+        self.inbox_routes.matching_subscribers(rf, inbox_route)
     }
 
     /// Check if a channel can publish to an inbox (only handlers of active requests)
@@ -189,12 +190,12 @@ impl RpcService {
     }
 
     /// Cleanup all resources for a channel (on disconnect)
-    pub fn cleanup_channel(&mut self, channel_id: u32) {
-        // Remove handler subscriptions
-        self.handler_routes.cleanup_channel(DEFAULT_RF, channel_id);
+    pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
+        // Remove handler subscriptions for the route family
+        self.handler_routes.cleanup_channel(rf, channel_id);
 
-        // Remove inbox subscriptions and deallocate inboxes
-        self.inbox_routes.cleanup_channel(DEFAULT_RF, channel_id);
+        // Remove inbox subscriptions and deallocate inboxes for the route family
+        self.inbox_routes.cleanup_channel(rf, channel_id);
 
         // Remove inboxes owned by this channel
         self.inboxes
@@ -225,6 +226,7 @@ impl Default for RpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::DEFAULT_RF;
     use tokio::sync::mpsc;
 
     #[test]
@@ -250,8 +252,8 @@ mod tests {
         let inbox = service.allocate_inbox(1);
 
         // Act
-        let result1 = service.subscribe_inbox(inbox.clone(), 1, tx.clone());
-        let result2 = service.subscribe_inbox(inbox.clone(), 2, tx.clone());
+        let result1 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1, tx.clone());
+        let result2 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 2, tx.clone());
 
         // Assert
         assert!(result1.is_ok());
@@ -264,12 +266,12 @@ mod tests {
         let mut service = RpcService::new();
         let (tx, _rx) = mpsc::channel(1);
         let inbox = service.allocate_inbox(1);
-        let _ = service.subscribe_inbox(inbox.clone(), 1, tx.clone());
+        let _ = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1, tx.clone());
         let _handler_sub =
-            service.subscribe_handler("rpc://test/svc/op".to_string(), 1, tx.clone());
+            service.subscribe_handler(DEFAULT_RF, "rpc://test/svc/op".to_string(), 1, tx.clone());
 
         // Act
-        service.cleanup_channel(1);
+        service.cleanup_channel(DEFAULT_RF, 1);
 
         // Assert
         assert_eq!(service.inbox_count(), 0);

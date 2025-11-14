@@ -5,7 +5,11 @@
 
 use super::types::KvOperation;
 use crate::storage::traits::KvStore;
+use cntryl_midge::ColumnFamilyId;
 use std::sync::Arc;
+
+// Default column family for KV domain
+const DEFAULT_CF: ColumnFamilyId = ColumnFamilyId(0);
 
 /// KV service handles key-value storage operations
 /// - Put: store key-value pairs
@@ -61,7 +65,7 @@ impl KvService {
 
         let namespaced_key = Self::build_key(route, &key);
         self.store
-            .put(&namespaced_key, &value)
+            .put(DEFAULT_CF, &value, &namespaced_key)
             .map_err(|e| e.to_string())?;
         Ok(None)
     }
@@ -75,7 +79,7 @@ impl KvService {
         let key = key.ok_or_else(|| "GET requires a key".to_string())?;
 
         let namespaced_key = Self::build_key(route, &key);
-        match self.store.get(&namespaced_key).map_err(|e| e.to_string())? {
+        match self.store.get(DEFAULT_CF, &namespaced_key).map_err(|e| e.to_string())? {
             Some(bytes) => Ok(Some(bytes.to_vec())),
             None => Ok(None),
         }
@@ -91,7 +95,7 @@ impl KvService {
 
         let namespaced_key = Self::build_key(route, &key);
         self.store
-            .delete(&namespaced_key)
+            .delete(DEFAULT_CF, &namespaced_key)
             .map_err(|e| e.to_string())?;
         Ok(None)
     }
@@ -113,7 +117,7 @@ impl KvService {
 
         let results = self
             .store
-            .scan(&start_bytes, &end_bytes)
+            .scan(DEFAULT_CF, &start_bytes, &end_bytes)
             .map_err(|e| e.to_string())?;
 
         // Convert results to TLV format, removing route prefix from keys
@@ -157,16 +161,16 @@ impl KvService {
                 ["DELETE", key] => {
                     let namespaced_key = Self::build_key(route, key);
                     self.store
-                        .delete(&namespaced_key)
+                        .delete(DEFAULT_CF, &namespaced_key)
                         .map_err(|e| e.to_string())?;
                 }
                 _ => return Err(format!("Invalid batch operation: {}", line)),
             }
         }
 
-        // Execute puts in batch
-        if !puts.is_empty() {
-            self.store.put_batch(puts).map_err(|e| e.to_string())?;
+        // Execute puts one by one (Midge doesn't have batch API)
+        for (key, value) in puts {
+            self.store.put(DEFAULT_CF, &value, &key).map_err(|e| e.to_string())?;
         }
 
         // Return empty response on success
@@ -191,7 +195,7 @@ impl KvService {
         let mut response = Vec::new();
         for key in keys {
             let namespaced_key = Self::build_key(route, &key);
-            match self.store.get(&namespaced_key).map_err(|e| e.to_string())? {
+            match self.store.get(DEFAULT_CF, &namespaced_key).map_err(|e| e.to_string())? {
                 Some(bytes) => {
                     let value = bytes.to_vec();
                     let len = u32::try_from(value.len())
@@ -230,14 +234,13 @@ impl KvService {
         // Scan the range to get all keys
         let items = self
             .store
-            .scan(&start_key_bytes, &end_key_bytes_full)
+            .scan(DEFAULT_CF, &start_key_bytes, &end_key_bytes_full)
             .map_err(|e| e.to_string())?;
         let keys_to_delete: Vec<Vec<u8>> = items.into_iter().map(|(k, _)| k.to_vec()).collect();
 
-        if !keys_to_delete.is_empty() {
-            self.store
-                .delete_batch(keys_to_delete)
-                .map_err(|e| e.to_string())?;
+        // Delete keys one by one (Midge doesn't have batch API)
+        for key in keys_to_delete {
+            self.store.delete(DEFAULT_CF, &key).map_err(|e| e.to_string())?;
         }
 
         // Return empty response on success

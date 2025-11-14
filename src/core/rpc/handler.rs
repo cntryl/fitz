@@ -134,6 +134,7 @@ impl RpcDomain {
     /// Handle RPC request (client sending request to handler)
     async fn handle_rpc_request(
         &self,
+        rf: crate::routing::RouteFamilyId,
         route: &str,
         correlation_id: Option<&str>,
         reply_route: Option<&str>,
@@ -142,7 +143,7 @@ impl RpcDomain {
         let service = self.service.read().await;
 
         // Find matching handlers
-        let handlers = service.matching_handlers(route);
+        let handlers = service.matching_handlers(rf, route);
 
         if handlers.is_empty() {
             return self.build_error_response("No handlers available");
@@ -183,6 +184,7 @@ impl RpcDomain {
     /// Handle RPC reply (handler sending reply to client inbox)
     async fn handle_rpc_reply(
         &self,
+        rf: crate::routing::RouteFamilyId,
         inbox_route: &str,
         correlation_id: Option<&str>,
         body: &[u8],
@@ -201,7 +203,7 @@ impl RpcDomain {
         }
 
         // Find inbox subscriber
-        let subscribers = service.matching_inbox_subscribers(inbox_route);
+        let subscribers = service.matching_inbox_subscribers(rf, inbox_route);
 
         if subscribers.is_empty() {
             return self.build_error_response("Inbox not found");
@@ -308,6 +310,7 @@ impl Domain for RpcDomain {
             let response_data = if is_reply {
                 // This is a reply from handler to client
                 self.handle_rpc_reply(
+                    request.route_family,
                     route,
                     correlation_id,
                     body,
@@ -317,7 +320,13 @@ impl Domain for RpcDomain {
                 .await
             } else {
                 // This is a request from client to handler
-                self.handle_rpc_request(route, correlation_id, reply_route, body)
+                self.handle_rpc_request(
+                    request.route_family,
+                    route,
+                    correlation_id,
+                    reply_route,
+                    body,
+                )
                     .await
             };
 
@@ -329,13 +338,13 @@ impl Domain for RpcDomain {
 
     fn cleanup_channel<'a>(
         &'a self,
-        _rf: crate::storage::RouteFamilyId,
+        rf: crate::routing::RouteFamilyId,
         channel_id: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         let service = Arc::clone(&self.service);
         Box::pin(async move {
             let mut svc = service.write().await;
-            svc.cleanup_channel(channel_id)
+            svc.cleanup_channel(rf, channel_id)
         })
     }
 }
