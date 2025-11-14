@@ -81,8 +81,8 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                 let mut _permit_owned = permit_opt; // moved into task to drop on completion
 
                 // clone subs per-iteration so inner task takes ownership of a separate Arc
-                let subs_for_spawn = subs.clone();
-                let channel_for_spawn = channel;
+                let _subs_for_spawn = subs.clone();
+                let _channel_for_spawn = channel;
 
                 tokio::spawn(async move {
                     // Optional delay to simulate work and keep inflight occupied

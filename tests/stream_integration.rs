@@ -3,6 +3,8 @@
 use fitz::core::stream::{StreamDomain, StreamEvent};
 use fitz::storage::midge_adapter;
 
+const TEST_RF: u32 = 0;
+
 #[tokio::test]
 async fn should_append_and_read_event() {
     // Arrange
@@ -20,18 +22,23 @@ async fn should_append_and_read_event() {
         is_end: false,
     };
     
-    // Act - Append event
-    let append_result = service.read().await.append_event(0, "test-area", "test-area", event).await;
-    
+    // Act - Begin transaction
+    let svc = service.read().await;
+    let txn = svc.begin_append(TEST_RF, "test-realm", "test-area", "test-resource").await.expect("Begin");
+    svc.append_event(txn, TEST_RF, event).await.expect("Append");
+    let (first_seq, last_seq, count) = svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    drop(svc);
+
     // Assert
-    assert!(append_result.is_ok());
-    let (resource_seq, area_seq) = append_result.unwrap();
-    assert_eq!(resource_seq, 0);
-    assert_eq!(area_seq, 0);
+    assert_eq!(first_seq, 0);
+    assert_eq!(last_seq, 0);
+    assert_eq!(count, 1);
     
     // Act - Read event back
-    let read_result = service.read().await.read(0, "test-area", "test-area", "test-resource", 0, 10).await;
-    
+    let svc = service.read().await;
+    let read_result = svc.read(TEST_RF, "test-realm", "test-area", "test-resource", 0, 10).await;
+    drop(svc);
+
     // Assert
     assert!(read_result.is_ok());
     let events = read_result.unwrap();
@@ -56,11 +63,15 @@ async fn should_respect_watermark_in_area_read() {
         is_end: false,
     };
     
-    // Act - Append event
-    let _ = service.read().await.append_event(0, "area1", "area1", event).await.expect("Append");
+    // Act - Append and commit event
+    let svc = service.read().await;
+    let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
+    svc.append_event(txn, TEST_RF, event).await.expect("Append");
+    svc.commit_append(txn, TEST_RF).await.expect("Commit");
     
     // Act - Read area
-    let read_result = service.read().await.read_area(0, "area1", "area1", 0, 10).await;
+    let read_result = svc.read_area(TEST_RF, "realm1", "area1", 0, 10).await;
+    drop(svc);
     
     // Assert
     assert!(read_result.is_ok());
@@ -68,7 +79,7 @@ async fn should_respect_watermark_in_area_read() {
     assert_eq!(events.len(), 1);
     
     // Act - Try to read ahead of watermark
-    let read_ahead = service.read().await.read_area(0, "area1", "area1", 100, 10).await;
+    let read_ahead = service.read().await.read_area(TEST_RF, "realm1", "area1", 100, 10).await;
     
     // Assert - Should return empty
     assert!(read_ahead.is_ok());
@@ -83,7 +94,9 @@ async fn should_append_multiple_events_and_read_in_sequence() {
     let domain = StreamDomain::new(kv_store);
     let service = domain.get_service();
     
-    // Act - Append 3 events
+    // Act - Append 3 events in single transaction
+    let svc = service.read().await;
+    let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
     for i in 0..3 {
         let event = StreamEvent {
             sequence: i,
@@ -94,11 +107,13 @@ async fn should_append_multiple_events_and_read_in_sequence() {
             created_at: 1234567890 + i,
             is_end: false,
         };
-        let _ = service.read().await.append_event(0, "area1", "area1", event).await.expect("Append");
+        svc.append_event(txn, TEST_RF, event).await.expect("Append");
     }
+    svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    drop(svc);
     
     // Act - Read all events
-    let read_result = service.read().await.read(0, "area1", "area1", "resource1", 0, 10).await;
+    let read_result = service.read().await.read(TEST_RF, "realm1", "area1", "resource1", 0, 10).await;
     
     // Assert
     assert!(read_result.is_ok());
@@ -117,13 +132,14 @@ async fn should_get_correct_watermark() {
     let service = domain.get_service();
     
     // Act - Get watermark before any events
-    let watermark = service.read().await.get_watermark(0, "area1", "area1").await;
+    let watermark = service.read().await.get_watermark(TEST_RF, "realm1", "area1").await;
     
     // Assert
     assert!(watermark.is_ok());
     assert_eq!(watermark.unwrap(), 0);
     
-    // Act - Append event
+    // Act - Append event and commit
+    let svc = service.read().await;
     let event = StreamEvent {
         sequence: 0,
         resource: "resource1".to_string(),
@@ -133,10 +149,13 @@ async fn should_get_correct_watermark() {
         created_at: 1234567890,
         is_end: false,
     };
-    let _ = service.read().await.append_event(0, "area1", "area1", event).await.expect("Append");
+    let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
+    svc.append_event(txn, TEST_RF, event).await.expect("Append");
+    svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    drop(svc);
     
-    // Act - Get watermark after append
-    let watermark = service.read().await.get_watermark(0, "area1", "area1").await;
+    // Act - Get watermark after commit
+    let watermark = service.read().await.get_watermark(TEST_RF, "realm1", "area1").await;
     
     // Assert
     assert!(watermark.is_ok());

@@ -1,12 +1,11 @@
 // Stream domain handler - routes all stream:// operations
 
 use super::service::StreamService;
-use super::types::{AppendResult, AreaReadResponse, StreamEvent, StreamOperation};
+use super::types::{AppendResult, AreaReadResponse, StreamEvent};
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
     TAG_ASSIGNED_REV, TAG_BODY, TAG_ERR_MSG, TAG_METADATA, TAG_SEQ, TAG_STREAM_END,
 };
-use crate::routing::DEFAULT_RF;
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -294,7 +293,7 @@ impl StreamDomain {
 
     /// Build TLV response for rollback-append operation
     fn build_append_ok_response() -> Vec<u8> {
-        let mut buf = Vec::new();
+        let buf = Vec::new();
         // Simple success response with no additional data
         buf
     }
@@ -373,12 +372,29 @@ impl Domain for StreamDomain {
                         is_end,
                     };
                     
-                    match service.append_event(request.route_family, realm, area, event).await {
-                        Ok((resource_seq, area_seq)) => {
-                            let response = Self::build_append_response(resource_seq, Some(area_seq..area_seq+1));
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    // Use transaction API with direct writes
+                    match service.begin_append(request.route_family, realm, area, resource).await {
+                        Ok(txn_id) => {
+                            match service.append_event(txn_id, request.route_family, event).await {
+                                Ok(_) => {
+                                    match service.commit_append(txn_id, request.route_family).await {
+                                        Ok((first_seq, last_seq, _count)) => {
+                                            let response = Self::build_append_response(first_seq, Some(first_seq..last_seq+1));
+                                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                                        }
+                                        Err(e) => {
+                                            let _ = service.rollback_append(txn_id, request.route_family).await;
+                                            DomainResponse::Error(format!("Commit failed: {}", e))
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = service.rollback_append(txn_id, request.route_family).await;
+                                    DomainResponse::Error(format!("Append failed: {}", e))
+                                }
+                            }
                         }
-                        Err(e) => DomainResponse::Error(format!("Append failed: {}", e)),
+                        Err(e) => DomainResponse::Error(format!("Begin transaction failed: {}", e)),
                     }
                 }
                 "read" => {

@@ -1,7 +1,6 @@
 //! Debug scan functionality
 
 use fitz::storage::midge_adapter;
-use fitz::storage::traits::KvStore;
 use cntryl_midge::ColumnFamilyId;
 
 #[tokio::test]
@@ -11,9 +10,9 @@ async fn should_scan_keys() {
     let cf = ColumnFamilyId(0);
     
     // Put some test keys
-    kv_store.put(cf, b"value1", b"key1").expect("Put 1");
-    kv_store.put(cf, b"value2", b"key2").expect("Put 2");
-    kv_store.put(cf, b"value3", b"key3").expect("Put 3");
+    kv_store.put(cf, b"key1", b"value1").expect("Put 1");
+    kv_store.put(cf, b"key2", b"value2").expect("Put 2");
+    kv_store.put(cf, b"key3", b"value3").expect("Put 3");
     
     // Try to get individual keys first
     let val1 = kv_store.get(cf, b"key1").expect("Get 1");
