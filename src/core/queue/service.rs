@@ -8,7 +8,7 @@
 //! - 0x02 0x02 {realm} {area} {resource} {message_id} → Lease info
 //! - 0x02 0x03 {realm} {area} {resource} → Queue configuration
 
-use crate::core::queue::types::QueueConfig;
+use crate::core::queue::types::{QueueConfig, QueueMessage};
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
 use crate::storage::traits::KvStore;
 use cntryl_midge::ColumnFamilyId;
@@ -176,6 +176,305 @@ impl QueueService {
     // Once midge exposes a way to get/create the default column family, re-enable these methods
 
     // All queue operations are disabled until midge KvStore API is updated
+
+    /// Enqueue a message to the specified queue
+    pub async fn enqueue(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        body: Vec<u8>,
+        ttl_secs: Option<u64>,
+        _dedupe_key: Option<&str>,
+    ) -> Result<String, String> {
+        use crate::core::queue::types::QueueMessage;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Generate unique message ID
+        let message_id = format!("msg_{}", uuid::Uuid::new_v4().simple());
+
+        // Create message structure
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {:?}", e))?
+            .as_secs();
+
+        let message = QueueMessage {
+            id: message_id.clone(),
+            route: format!("{}/{}/{}", realm, area, resource),
+            body,
+            lease_expiry: None,
+            lease_owner: None,
+            delivery_count: 0,
+            created_at: now,
+            ttl_secs,
+        };
+
+        // Serialize message
+        let message_data = serde_json::to_vec(&message)
+            .map_err(|e| format!("Serialization error: {:?}", e))?;
+
+        // Build storage key
+        let key = Self::key_message(realm, area, resource, &message_id);
+
+        // Store message
+        self.kv_store
+            .put(DEFAULT_CF, &message_data, &key)
+            .map_err(|e| format!("Storage error: {:?}", e))?;
+
+        Ok(message_id)
+    }
+
+    /// Reserve (lease) messages from the specified queue
+    pub async fn reserve(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        batch_size: usize,
+        lease_secs: u32,
+    ) -> Result<Vec<QueueMessage>, String> {
+        use crate::core::queue::types::QueueMessage;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {:?}", e))?
+            .as_secs();
+
+        let lease_expiry = now + lease_secs as u64;
+        let token = self.generate_delivery_token(realm, area, resource, &format!("batch_{}", now));
+
+        // Scan for available messages (not leased or lease expired)
+        let prefix = Self::key_message(realm, area, resource, "");
+        let results = self
+            .kv_store
+            .scan(DEFAULT_CF, &prefix, &[])
+            .map_err(|e| format!("Scan error: {:?}", e))?;
+
+        let mut available_messages = Vec::new();
+        let mut to_update = Vec::new();
+
+        for (key_bytes, value_bytes) in results {
+            if available_messages.len() >= batch_size {
+                break;
+            }
+
+            // Parse message
+            let message: QueueMessage = serde_json::from_slice(&value_bytes)
+                .map_err(|e| format!("Deserialization error: {:?}", e))?;
+
+            // Check if message is available (no lease or expired lease)
+            let is_available = match message.lease_expiry {
+                Some(expiry) => expiry <= now,
+                None => true,
+            };
+
+            if is_available {
+                // Extract message ID from key for lease key
+                let key_str = String::from_utf8_lossy(&key_bytes);
+                let message_id = key_str
+                    .split(':')
+                    .last()
+                    .ok_or_else(|| "Invalid key format".to_string())?;
+
+                // Update message with lease
+                let mut leased_message = message.clone();
+                leased_message.lease_expiry = Some(lease_expiry);
+                leased_message.lease_owner = Some(token.clone());
+                leased_message.delivery_count += 1;
+
+                available_messages.push(leased_message.clone());
+                to_update.push((key_bytes.clone(), message_id.to_string(), leased_message));
+            }
+        }
+
+        // Update leased messages in storage
+        for (key, message_id, message) in to_update {
+            let message_data = serde_json::to_vec(&message)
+                .map_err(|e| format!("Serialization error: {:?}", e))?;
+
+            self.kv_store
+                .put(DEFAULT_CF, &message_data, &key)
+                .map_err(|e| format!("Storage error: {:?}", e))?;
+
+            // Update in-memory lease tracking
+            let mut leases = self.leases.lock().await;
+            let route_key = format!("{}/{}/{}", realm, area, resource);
+            let route_leases = leases.entry(route_key).or_insert_with(HashMap::new);
+            route_leases.insert(message_id, (lease_expiry, token.clone(), message.delivery_count));
+        }
+
+        Ok(available_messages)
+    }
+
+    /// Complete (acknowledge) a leased message
+    pub async fn complete(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: &str,
+        delivery_token: &str,
+    ) -> Result<(), String> {
+        // Verify token
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)?;
+
+        // Get message
+        let key = Self::key_message(realm, area, resource, message_id);
+        let message_data = self
+            .kv_store
+            .get(DEFAULT_CF, &key)
+            .map_err(|e| format!("Storage error: {:?}", e))?
+            .ok_or_else(|| "Message not found".to_string())?;
+
+        let message: crate::core::queue::types::QueueMessage = serde_json::from_slice(&message_data)
+            .map_err(|e| format!("Deserialization error: {:?}", e))?;
+
+        // Verify lease ownership
+        if message.lease_owner.as_deref() != Some(delivery_token) {
+            return Err("Invalid delivery token".to_string());
+        }
+
+        // Delete message from storage
+        self.kv_store
+            .delete(DEFAULT_CF, &key)
+            .map_err(|e| format!("Storage error: {:?}", e))?;
+
+        // Remove from in-memory lease tracking
+        let mut leases = self.leases.lock().await;
+        let route_key = format!("{}/{}/{}", realm, area, resource);
+        if let Some(route_leases) = leases.get_mut(&route_key) {
+            route_leases.remove(message_id);
+        }
+
+        Ok(())
+    }
+
+    /// Extend the lease on a message
+    pub async fn extend_lease(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: &str,
+        delivery_token: &str,
+        additional_secs: u32,
+    ) -> Result<(), String> {
+        // Verify token
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)?;
+
+        // Get message
+        let key = Self::key_message(realm, area, resource, message_id);
+        let message_data = self
+            .kv_store
+            .get(DEFAULT_CF, &key)
+            .map_err(|e| format!("Storage error: {:?}", e))?
+            .ok_or_else(|| "Message not found".to_string())?;
+
+        let mut message: crate::core::queue::types::QueueMessage = serde_json::from_slice(&message_data)
+            .map_err(|e| format!("Deserialization error: {:?}", e))?;
+
+        // Verify lease ownership
+        if message.lease_owner.as_deref() != Some(delivery_token) {
+            return Err("Invalid delivery token".to_string());
+        }
+
+        // Extend lease
+        let new_expiry = message.lease_expiry
+            .ok_or_else(|| "Message not leased".to_string())? + additional_secs as u64;
+        message.lease_expiry = Some(new_expiry);
+
+        // Update storage
+        let updated_data = serde_json::to_vec(&message)
+            .map_err(|e| format!("Serialization error: {:?}", e))?;
+
+        self.kv_store
+            .put(DEFAULT_CF, &updated_data, &key)
+            .map_err(|e| format!("Storage error: {:?}", e))?;
+
+        // Update in-memory lease tracking
+        let mut leases = self.leases.lock().await;
+        let route_key = format!("{}/{}/{}", realm, area, resource);
+        if let Some(route_leases) = leases.get_mut(&route_key) {
+            if let Some((_, token, _delivery_count)) = route_leases.get_mut(message_id) {
+                *token = delivery_token.to_string();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Peek at the next available message without leasing it
+    pub async fn peek(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::core::queue::types::QueueMessage>, String> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {:?}", e))?
+            .as_secs();
+
+        // Scan for available messages
+        let prefix = Self::key_message(realm, area, resource, "");
+        let results = self
+            .kv_store
+            .scan(DEFAULT_CF, &prefix, &[])
+            .map_err(|e| format!("Scan error: {:?}", e))?;
+
+        for (_key_bytes, value_bytes) in results {
+            let message: crate::core::queue::types::QueueMessage = serde_json::from_slice(&value_bytes)
+                .map_err(|e| format!("Deserialization error: {:?}", e))?;
+
+            // Check if message is available
+            let is_available = match message.lease_expiry {
+                Some(expiry) => expiry <= now,
+                None => true,
+            };
+
+            if is_available {
+                return Ok(Some(message));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Generate a delivery token for a message
+    fn generate_delivery_token(&self, realm: &str, area: &str, resource: &str, nonce: &str) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.token_key)
+            .expect("HMAC can take key of any size");
+        mac.update(realm.as_bytes());
+        mac.update(area.as_bytes());
+        mac.update(resource.as_bytes());
+        mac.update(nonce.as_bytes());
+
+        let result = mac.finalize();
+        hex::encode(result.into_bytes())
+    }
+
+    /// Verify a delivery token
+    fn verify_delivery_token(&self, realm: &str, area: &str, resource: &str, message_id: &str, token: &str) -> Result<(), String> {
+        // For now, just check if the token exists in our in-memory tracking
+        // In a production system, you'd verify the HMAC
+        let leases = self.leases.blocking_lock();
+        let route_key = format!("{}/{}/{}", realm, area, resource);
+        if let Some(route_leases) = leases.get(&route_key) {
+            if let Some((_, stored_token, _)) = route_leases.get(message_id) {
+                if stored_token == token {
+                    return Ok(());
+                }
+            }
+        }
+        Err("Invalid or expired token".to_string())
+    }
 }
 
 #[cfg(test)]

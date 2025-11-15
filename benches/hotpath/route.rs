@@ -5,7 +5,7 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::protocol::route::parse_route;
-use fitz::routing::{RouteFamilyId, RouteTable};
+use fitz::routing::{RouteTable, DEFAULT_RF};
 use std::sync::OnceLock;
 
 #[path = "../config.rs"]
@@ -34,17 +34,47 @@ static ROUTE_TABLE: OnceLock<RouteTable> = OnceLock::new();
 fn route_table() -> &'static RouteTable {
     ROUTE_TABLE.get_or_init(|| {
         let mut table = RouteTable::new();
-        let rf = RouteFamilyId::new();
+        let rf = DEFAULT_RF;
 
         // Subscribe to various patterns
-        for route in test_routes() {
-            table.subscribe(rf, route, 1).unwrap();
+        use tokio::sync::mpsc;
+
+        // Subscribe to various patterns
+        for (idx, route) in test_routes().iter().enumerate() {
+            let (tx, _rx) = mpsc::channel(1);
+            let sub = fitz::routing::RtSubscription {
+                id: idx as u64 + 1,
+                route_pattern: route.clone(),
+                channel_id: 1,
+                sender: tx,
+            };
+            table.insert(rf, sub);
         }
 
         // Add some wildcard subscriptions
-        table.subscribe(rf, "queue://tenant1/orders/*", 2).unwrap();
-        table.subscribe(rf, "stream://tenant1/events/*", 3).unwrap();
-        table.subscribe(rf, "notice://tenant1/*", 4).unwrap();
+        let (tx1, _rx1) = mpsc::channel(1);
+        table.insert(rf, fitz::routing::RtSubscription {
+            id: 10,
+            route_pattern: "queue://tenant1/orders/*".to_string(),
+            channel_id: 2,
+            sender: tx1,
+        });
+
+        let (tx2, _rx2) = mpsc::channel(1);
+        table.insert(rf, fitz::routing::RtSubscription {
+            id: 11,
+            route_pattern: "stream://tenant1/events/*".to_string(),
+            channel_id: 3,
+            sender: tx2,
+        });
+
+        let (tx3, _rx3) = mpsc::channel(1);
+        table.insert(rf, fitz::routing::RtSubscription {
+            id: 12,
+            route_pattern: "notice://tenant1/*".to_string(),
+            channel_id: 4,
+            sender: tx3,
+        });
 
         table
     })
@@ -86,8 +116,16 @@ fn bench_route_table_subscribe(c: &mut Criterion) {
         b.iter_batched(
             || RouteTable::new(),
             |mut table| {
-                let rf = RouteFamilyId::new();
-                table.subscribe(rf, "queue://tenant1/test/route", 1).unwrap();
+                use tokio::sync::mpsc;
+                let rf = DEFAULT_RF;
+                let (tx, _rx) = mpsc::channel(1);
+                let sub = fitz::routing::RtSubscription {
+                    id: 1,
+                    route_pattern: "queue://tenant1/test/route".to_string(),
+                    channel_id: 1,
+                    sender: tx,
+                };
+                table.insert(rf, sub);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -96,11 +134,11 @@ fn bench_route_table_subscribe(c: &mut Criterion) {
 
 fn bench_route_table_match_exact(c: &mut Criterion) {
     let table = route_table();
-    let rf = RouteFamilyId::new();
+    let rf = DEFAULT_RF;
 
     c.bench_function("route_table_match_exact", |b| {
         b.iter(|| {
-            let matches = table.matches(rf, "queue://tenant1/orders/pending");
+            let matches = table.matching_subscribers(rf, "queue://tenant1/orders/pending");
             criterion::black_box(matches);
         })
     });
@@ -108,11 +146,11 @@ fn bench_route_table_match_exact(c: &mut Criterion) {
 
 fn bench_route_table_match_wildcard(c: &mut Criterion) {
     let table = route_table();
-    let rf = RouteFamilyId::new();
+    let rf = DEFAULT_RF;
 
     c.bench_function("route_table_match_wildcard", |b| {
         b.iter(|| {
-            let matches = table.matches(rf, "queue://tenant1/orders/new_order");
+            let matches = table.matching_subscribers(rf, "queue://tenant1/orders/new_order");
             criterion::black_box(matches);
         })
     });
@@ -120,11 +158,11 @@ fn bench_route_table_match_wildcard(c: &mut Criterion) {
 
 fn bench_route_table_match_multiple(c: &mut Criterion) {
     let table = route_table();
-    let rf = RouteFamilyId::new();
+    let rf = DEFAULT_RF;
 
     c.bench_function("route_table_match_multiple", |b| {
         b.iter(|| {
-            let matches = table.matches(rf, "notice://tenant1/alerts/security");
+            let matches = table.matching_subscribers(rf, "notice://tenant1/alerts/security");
             criterion::black_box(matches);
         })
     });
@@ -132,11 +170,11 @@ fn bench_route_table_match_multiple(c: &mut Criterion) {
 
 fn bench_route_table_no_match(c: &mut Criterion) {
     let table = route_table();
-    let rf = RouteFamilyId::new();
+    let rf = DEFAULT_RF;
 
     c.bench_function("route_table_no_match", |b| {
         b.iter(|| {
-            let matches = table.matches(rf, "unknown://route");
+            let matches = table.matching_subscribers(rf, "unknown://route");
             criterion::black_box(matches);
         })
     });
@@ -145,7 +183,7 @@ fn bench_route_table_no_match(c: &mut Criterion) {
 fn bench_route_family_creation(c: &mut Criterion) {
     c.bench_function("route_family_creation", |b| {
         b.iter(|| {
-            let rf = RouteFamilyId::new();
+            let rf: fitz::routing::RouteFamilyId = 42;
             criterion::black_box(rf);
         })
     });

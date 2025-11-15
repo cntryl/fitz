@@ -619,6 +619,7 @@ dependencies = [
  "futures",
  "futures-util",
  "fxhash",
+ "hex",
  "hmac",
  "hyper",
  "hyper-tungstenite",

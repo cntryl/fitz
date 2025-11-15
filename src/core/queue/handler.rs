@@ -130,17 +130,16 @@ impl Domain for QueueDomain {
                     let ttl = ttl_secs.unwrap_or(0);
                     let batch_size = 1; // Default to single message for now, could be extended
 
-                    // TODO: Implement batch enqueue operation
-                    // For now, return a placeholder response with single message ID
-                    let message_ids = vec![format!(
-                        "msg_{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_nanos()
-                    )];
-                    let response = Self::build_enqueue_response(&message_ids);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.enqueue(realm, area, resource, message_body, Some(ttl), None).await {
+                        Ok(message_id) => {
+                            let response = Self::build_enqueue_response(&[message_id]);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "subscribe" => {
                     // TODO: Implement subscribe operation - register for message availability notifications
@@ -158,28 +157,57 @@ impl Domain for QueueDomain {
                     let lease_duration = lease_secs.unwrap_or(30);
                     let batch_size = 10; // Default batch size
 
-                    // TODO: Implement receive batch operation using service.reserve_batch()
-                    // For now, return empty batch
-                    let messages = Vec::new();
-                    let response = Self::build_reserve_response(&messages);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.reserve(realm, area, resource, batch_size, lease_duration).await {
+                        Ok(messages) => {
+                            let message_data: Vec<(String, Vec<u8>, String)> = messages
+                                .into_iter()
+                                .map(|msg| {
+                                    (
+                                        msg.id,
+                                        msg.body,
+                                        msg.lease_owner.unwrap_or_default(),
+                                    )
+                                })
+                                .collect();
+                            let response = Self::build_reserve_response(&message_data);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "extend" => {
-                    let _msg_id = message_id.unwrap_or_default();
-                    let _token = delivery_token.unwrap_or_default();
-                    let _additional_secs = lease_secs.unwrap_or(30);
+                    let msg_id = message_id.unwrap_or_default();
+                    let token = delivery_token.unwrap_or_default();
+                    let additional_secs = lease_secs.unwrap_or(30);
 
-                    // TODO: Implement extend operation using service.extend_lease()
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.extend_lease(realm, area, resource, &msg_id, &token, additional_secs).await {
+                        Ok(()) => {
+                            let response = Self::build_success_response();
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "ack" => {
-                    let _msg_id = message_id.unwrap_or_default();
-                    let _token = delivery_token.unwrap_or_default();
+                    let msg_id = message_id.unwrap_or_default();
+                    let token = delivery_token.unwrap_or_default();
 
-                    // TODO: Implement ack operation using service.consume()
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.complete(realm, area, resource, &msg_id, &token).await {
+                        Ok(()) => {
+                            let response = Self::build_success_response();
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "nack" => {
                     let _msg_id = message_id.unwrap_or_default();

@@ -1,80 +1,45 @@
-//! Hotpath benchmarks for notice service operations
+//! Hotpath benchmarks for notice routing and validation
 //!
-//! These benchmarks test the core notice service primitives that are performance-critical:
-//! publish operations on the NoticeService directly.
+//! These benchmarks exercise notice-specific route validation paths,
+//! which are hit on every publish/subscribe.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::notice::NoticeService;
-use std::sync::OnceLock;
-use tokio::sync::mpsc;
+use fitz::protocol::route::{parse_route, validate_notice_publish, validate_notice_subscription};
 
 #[path = "../config.rs"]
 mod config;
 
-// ---------------------------------------------------------
-// Shared services
-// ---------------------------------------------------------
-fn notice_service() -> NoticeService {
-    NoticeService::new()
-}
-
-static TEST_PAYLOADS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
-fn test_payloads() -> &'static [Vec<u8>] {
-    TEST_PAYLOADS.get_or_init(|| {
-        vec![
-            vec![b'p'; 64],        // 64B payload
-            vec![b'p'; 1024],      // 1KB payload
-            vec![b'p'; 64 * 1024], // 64KB payload
-        ]
-    })
-}
-
-// ---------------------------------------------------------
-// Benchmarks
-// ---------------------------------------------------------
-
-fn bench_notice_publish_no_subscribers(c: &mut Criterion) {
-    let payloads = test_payloads();
-    let mut counter = 0;
-
-    c.bench_function("notice_publish_no_subscribers", |b| {
+fn bench_notice_validate_publish(c: &mut Criterion) {
+    c.bench_function("notice_validate_publish", |b| {
         b.iter(|| {
-            let mut service = notice_service();
-            let payload = &payloads[counter % payloads.len()];
-            counter += 1;
-            let result = service.publish(1, "bench.topic", Some("msg-123"), payload);
-            criterion::black_box(result);
+            let route = parse_route("notice://tenant1/area1/resource1/op1").unwrap();
+            let result = validate_notice_publish(&route);
+            criterion::black_box(result.is_ok());
         })
     });
 }
 
-fn bench_notice_publish_with_subscriber(c: &mut Criterion) {
-    let payloads = test_payloads();
-    let mut counter = 0;
-
-    c.bench_function("notice_publish_with_subscriber", |b| {
+fn bench_notice_validate_subscription_exact(c: &mut Criterion) {
+    c.bench_function("notice_validate_subscription_exact", |b| {
         b.iter(|| {
-            let mut service = notice_service();
-            let payload = &payloads[counter % payloads.len()];
-            counter += 1;
-
-            // Set up one subscriber for this iteration
-            let (tx, _rx) = mpsc::channel(100);
-            let _sub_id = service.subscribe(1, "bench.topic".to_string(), 1, tx);
-
-            let result = service.publish(1, "bench.topic", Some("msg-123"), payload);
-            criterion::black_box(result);
+            let result = validate_notice_subscription("notice://tenant1/area1/resource1/op1");
+            criterion::black_box(result.is_ok());
         })
     });
 }
 
-fn bench_notice_subscribe(c: &mut Criterion) {
-    c.bench_function("notice_subscribe", |b| {
+fn bench_notice_validate_subscription_wildcards(c: &mut Criterion) {
+    c.bench_function("notice_validate_subscription_wildcards", |b| {
         b.iter(|| {
-            let mut service = notice_service();
-            let (tx, _rx) = mpsc::channel(100);
-            let result = service.subscribe(1, "bench.topic".to_string(), 1, tx);
-            criterion::black_box(result);
+            let inputs = [
+                "notice://tenant1/*",
+                "notice://tenant1/area1/*",
+                "notice://tenant1/area1/resource1/*",
+            ];
+            for inp in inputs {
+                let result = validate_notice_subscription(inp);
+                criterion::black_box(result.is_ok());
+            }
         })
     });
 }
@@ -83,9 +48,9 @@ criterion_group!(
     name = hotpath_notice;
     config = config::criterion_config();
     targets =
-        bench_notice_publish_no_subscribers,
-        bench_notice_publish_with_subscriber,
-        bench_notice_subscribe
+        bench_notice_validate_publish,
+        bench_notice_validate_subscription_exact,
+        bench_notice_validate_subscription_wildcards
 );
 
 criterion_main!(hotpath_notice);
