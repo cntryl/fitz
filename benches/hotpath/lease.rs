@@ -3,7 +3,7 @@
 //! These benchmarks test the core lease operations that are performance-critical:
 //! acquire, renew, release, and contention scenarios.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::core::lease::service::LeaseService;
 use fitz::routing::DEFAULT_RF;
 use std::sync::{Arc, OnceLock};
@@ -27,12 +27,12 @@ fn rt() -> &'static Runtime {
 
 static LEASE_SERVICE: OnceLock<Arc<LeaseService>> = OnceLock::new();
 fn lease_service() -> Arc<LeaseService> {
-    LEASE_SERVICE.get_or_init(|| {
-        std::env::set_var("FITZ_LEASE_SPAWN_EXPIRER", "0");
-        rt().block_on(async {
-            LeaseService::new_no_expirer()
+    LEASE_SERVICE
+        .get_or_init(|| {
+            std::env::set_var("FITZ_LEASE_SPAWN_EXPIRER", "0");
+            rt().block_on(async { LeaseService::new_no_expirer() })
         })
-    }).clone()
+        .clone()
 }
 
 // ---------------------------------------------------------
@@ -69,18 +69,18 @@ fn bench_lease_renew(c: &mut Criterion) {
                 // Setup: acquire lease
                 let key = keys[counter % keys.len()].clone();
                 counter += 1;
-                let grant = rt().block_on(async {
-                    service.acquire(rf, &key, 30).await.unwrap()
-                });
+                let grant = rt().block_on(async { service.acquire(rf, &key, 30).await.unwrap() });
                 (key, grant)
             },
             |(resource, grant)| {
                 rt().block_on(async {
-                    let result = service.renew(rf, &resource, &grant.id, &grant.token, 30).await;
+                    let result = service
+                        .renew(rf, &resource, &grant.id, &grant.token, 30)
+                        .await;
                     criterion::black_box(result.ok());
                 });
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }
@@ -97,18 +97,18 @@ fn bench_lease_surrender(c: &mut Criterion) {
                 // Setup: acquire lease
                 let key = keys[counter % keys.len()].clone();
                 counter += 1;
-                let grant = rt().block_on(async {
-                    service.acquire(rf, &key, 30).await.unwrap()
-                });
+                let grant = rt().block_on(async { service.acquire(rf, &key, 30).await.unwrap() });
                 (key, grant)
             },
             |(resource, grant)| {
                 rt().block_on(async {
-                    let result = service.surrender(rf, &resource, &grant.id, &grant.token).await;
+                    let result = service
+                        .surrender(rf, &resource, &grant.id, &grant.token)
+                        .await;
                     criterion::black_box(result.ok());
                 });
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }
@@ -143,8 +143,12 @@ fn bench_lease_multi_tenant_isolation(c: &mut Criterion) {
                 let rf2 = 2u32;
 
                 // Same key in different tenants should not conflict
-                let result1 = service.acquire(rf1, "lease://tenant1/area/shared_key", 30).await;
-                let result2 = service.acquire(rf2, "lease://tenant2/area/shared_key", 30).await;
+                let result1 = service
+                    .acquire(rf1, "lease://tenant1/area/shared_key", 30)
+                    .await;
+                let result2 = service
+                    .acquire(rf2, "lease://tenant2/area/shared_key", 30)
+                    .await;
 
                 criterion::black_box((result1.ok(), result2.ok()));
             });
@@ -191,21 +195,21 @@ fn bench_lease_renew_keep_alive(c: &mut Criterion) {
                 // Setup: acquire a lease
                 let key = keys[counter % keys.len()].clone();
                 counter += 1;
-                let grant = rt().block_on(async {
-                    service.acquire(rf, &key, 30).await.unwrap()
-                });
+                let grant = rt().block_on(async { service.acquire(rf, &key, 30).await.unwrap() });
                 (key, grant)
             },
             |(resource, grant)| {
                 rt().block_on(async {
                     // Simulate keep-alive by renewing multiple times
                     for _ in 0..5 {
-                        let result = service.renew(rf, &resource, &grant.id, &grant.token, 30).await;
+                        let result = service
+                            .renew(rf, &resource, &grant.id, &grant.token, 30)
+                            .await;
                         criterion::black_box(result.ok());
                     }
                 });
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }
@@ -238,11 +242,13 @@ fn bench_lease_expiry_handling(c: &mut Criterion) {
                 rt().block_on(async {
                     // Renew against an already-surrendered lease to exercise
                     // the failure path without time-based expiry.
-                    let result = service.renew(rf, &resource, &grant.id, &grant.token, 30).await;
+                    let result = service
+                        .renew(rf, &resource, &grant.id, &grant.token, 30)
+                        .await;
                     criterion::black_box(result.ok());
                 });
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }
@@ -262,5 +268,3 @@ criterion_group!(
 );
 
 criterion_main!(hotpath_lease);
-
-

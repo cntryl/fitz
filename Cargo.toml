@@ -72,3 +72,8 @@ path = "benches/hotpath/route.rs"
 name = "hotpath_rpc"
 harness = false
 path = "benches/hotpath/rpc.rs"
+
+[[bench]]
+name = "hotpath_permissions"
+harness = false
+path = "benches/hotpath/permissions.rs"

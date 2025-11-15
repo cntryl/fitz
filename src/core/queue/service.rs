@@ -8,7 +8,9 @@
 //! - 0x02 0x02 {realm} {area} {resource} {message_id} → Lease info
 //! - 0x02 0x03 {realm} {area} {resource} → Queue configuration
 
-use crate::core::queue::encoding::{decode_lease_info, decode_stored_queue_message, encode_lease_info, encode_stored_queue_message};
+use crate::core::queue::encoding::{
+    decode_lease_info, decode_stored_queue_message, encode_lease_info, encode_stored_queue_message,
+};
 use crate::core::queue::types::{QueueConfig, QueueMessage};
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
 use crate::storage::traits::KvStore;
@@ -316,7 +318,10 @@ impl QueueService {
             let mut leases = self.leases.lock().await;
             let route_key = format!("{}/{}/{}", realm, area, resource);
             let route_leases = leases.entry(route_key).or_insert_with(HashMap::new);
-            route_leases.insert(message_id, (lease_expiry, token.clone(), lease_info.delivery_count));
+            route_leases.insert(
+                message_id,
+                (lease_expiry, token.clone(), lease_info.delivery_count),
+            );
         }
 
         Ok(available_messages)
@@ -332,7 +337,8 @@ impl QueueService {
         delivery_token: &str,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token).await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
+            .await?;
 
         // Check lease record for ownership
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -379,7 +385,8 @@ impl QueueService {
         additional_secs: u32,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token).await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
+            .await?;
 
         // Get lease record
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -397,8 +404,10 @@ impl QueueService {
         }
 
         // Extend lease
-        let new_expiry = lease_info.lease_expiry
-            .ok_or_else(|| "Message not leased".to_string())? + additional_secs as u64;
+        let new_expiry = lease_info
+            .lease_expiry
+            .ok_or_else(|| "Message not leased".to_string())?
+            + additional_secs as u64;
         lease_info.lease_expiry = Some(new_expiry);
 
         // Update lease record
@@ -464,9 +473,14 @@ impl QueueService {
 
             if is_available {
                 // Return message with lease info populated
-                let (lease_expiry, lease_owner, delivery_count) = if let Some(ref data) = lease_data {
+                let (lease_expiry, lease_owner, delivery_count) = if let Some(ref data) = lease_data
+                {
                     let lease_info: LeaseInfo = decode_lease_info(data)?;
-                    (lease_info.lease_expiry, lease_info.lease_owner, lease_info.delivery_count)
+                    (
+                        lease_info.lease_expiry,
+                        lease_info.lease_owner,
+                        lease_info.delivery_count,
+                    )
                 } else {
                     (None, None, 0)
                 };
@@ -489,12 +503,18 @@ impl QueueService {
     }
 
     /// Generate a delivery token for a message
-    fn generate_delivery_token(&self, realm: &str, area: &str, resource: &str, nonce: &str) -> String {
+    fn generate_delivery_token(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        nonce: &str,
+    ) -> String {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.token_key)
-            .expect("HMAC can take key of any size");
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.token_key).expect("HMAC can take key of any size");
         mac.update(realm.as_bytes());
         mac.update(area.as_bytes());
         mac.update(resource.as_bytes());
@@ -505,7 +525,14 @@ impl QueueService {
     }
 
     /// Verify a delivery token
-    async fn verify_delivery_token(&self, realm: &str, area: &str, resource: &str, message_id: &str, token: &str) -> Result<(), String> {
+    async fn verify_delivery_token(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: &str,
+        token: &str,
+    ) -> Result<(), String> {
         // For now, just check if the token exists in our in-memory tracking
         // In a production system, you'd verify the HMAC
         let leases = self.leases.lock().await;
@@ -530,7 +557,8 @@ impl QueueService {
         delivery_token: &str,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token).await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
+            .await?;
 
         // Get lease record
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -572,7 +600,8 @@ impl QueueService {
         delivery_token: &str,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token).await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
+            .await?;
 
         // Get lease record
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -729,9 +758,12 @@ mod tests {
             .get(DEFAULT_CF, &key)
             .expect("Storage get should succeed")
             .expect("Message should be stored");
-        let stored_message: crate::core::queue::types::StoredQueueMessage = decode_stored_queue_message(&stored_data)
-            .expect("Decode should succeed");
-        assert_eq!(stored_message.id, message_id, "Stored message ID should match");
+        let stored_message: crate::core::queue::types::StoredQueueMessage =
+            decode_stored_queue_message(&stored_data).expect("Decode should succeed");
+        assert_eq!(
+            stored_message.id, message_id,
+            "Stored message ID should match"
+        );
 
         // Act & Assert - Reserve
         let messages = service
@@ -741,9 +773,18 @@ mod tests {
 
         assert_eq!(messages.len(), 1, "Should reserve exactly one message");
         let reserved_message = &messages[0];
-        assert_eq!(reserved_message.id, message_id, "Reserved message ID should match");
-        assert_eq!(reserved_message.body, test_body, "Message body should match");
-        assert!(reserved_message.lease_owner.is_some(), "Message should have lease owner");
+        assert_eq!(
+            reserved_message.id, message_id,
+            "Reserved message ID should match"
+        );
+        assert_eq!(
+            reserved_message.body, test_body,
+            "Message body should match"
+        );
+        assert!(
+            reserved_message.lease_owner.is_some(),
+            "Message should have lease owner"
+        );
 
         let delivery_token = reserved_message.lease_owner.as_ref().unwrap().clone();
 
@@ -759,7 +800,10 @@ mod tests {
             .await
             .expect("Peek should succeed");
 
-        assert!(peek_result.is_none(), "Message should be deleted after completion");
+        assert!(
+            peek_result.is_none(),
+            "Message should be deleted after completion"
+        );
     }
 
     #[tokio::test]
@@ -792,8 +836,8 @@ mod tests {
             .expect("Storage get should succeed")
             .expect("Lease should exist");
 
-        let mut lease_info: crate::core::queue::types::LeaseInfo = decode_lease_info(&lease_data)
-            .expect("Decode should succeed");
+        let mut lease_info: crate::core::queue::types::LeaseInfo =
+            decode_lease_info(&lease_data).expect("Decode should succeed");
 
         // Clear lease to simulate expiry
         lease_info.lease_expiry = None;
@@ -820,7 +864,13 @@ mod tests {
             .expect("Reserve should succeed after lease expiry");
 
         assert_eq!(redelivered_messages.len(), 1);
-        assert_eq!(redelivered_messages[0].id, message_id, "Should get same message");
-        assert_eq!(redelivered_messages[0].delivery_count, 2, "Delivery count should be incremented");
+        assert_eq!(
+            redelivered_messages[0].id, message_id,
+            "Should get same message"
+        );
+        assert_eq!(
+            redelivered_messages[0].delivery_count, 2,
+            "Delivery count should be incremented"
+        );
     }
 }

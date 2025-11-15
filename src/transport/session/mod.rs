@@ -44,7 +44,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
     }
 
     tokio::spawn(async move {
-        use crate::authz::permissions::{self, Action};
+        use crate::authz::permissions;
         use crate::protocol::route as route_mod;
 
         let inflight = state.inflight.clone();
@@ -370,33 +370,11 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
 
                                     // Parse route or allow bare dev routes for notice and rpc reply for backward-compat
                                     let parsed_route = route_mod::parse_route(&route_str);
-                                    if let Ok(r) = parsed_route {
+                                    if let Ok(_r) = parsed_route {
                                         let tenant = tenant_opt.clone().unwrap();
-                                        if !route_mod::realm_matches(&r, &tenant) {
-                                            let _ = send_err_chan(
-                                                mux_task.clone(),
-                                                parsed.header.channel_id,
-                                                1003,
-                                                "realm mismatch",
-                                                None,
-                                            )
-                                            .await;
-                                            ack_sent = true;
-                                            maybe_ack_and_decrement(
-                                                mux_task.clone(),
-                                                needs_ack && !ack_sent,
-                                                parsed.header.channel_id,
-                                                inflight_task.clone(),
-                                            )
-                                            .await;
-                                            return;
-                                        }
-
-                                        // Permission check (baseline permissive under the hood)
-                                        if !permissions::has_permission(
-                                            &tenant,
-                                            &route_str,
-                                            Action::Pub,
+                                        // Simplified: routes carry realm, so just check authorization
+                                        if !permissions::check_route_authorization(
+                                            &tenant, &route_str,
                                         ) {
                                             let _ = send_err_chan(
                                                 mux_task.clone(),
@@ -656,33 +634,11 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         }
 
                                         // Accept either full scheme route or bare dev notice/rpc reply routes
-                                        if let Ok(r) = route_mod::parse_route(&route) {
+                                        if route_mod::parse_route(&route).is_ok() {
                                             let tenant = tenant_opt.clone().unwrap();
-                                            if !route_mod::realm_matches(&r, &tenant) {
-                                                let _ = send_err_chan(
-                                                    mux_task.clone(),
-                                                    parsed.header.channel_id,
-                                                    1003,
-                                                    "realm mismatch",
-                                                    None,
-                                                )
-                                                .await;
-                                                ack_sent = true;
-                                                maybe_ack_and_decrement(
-                                                    mux_task.clone(),
-                                                    needs_ack && !ack_sent,
-                                                    parsed.header.channel_id,
-                                                    inflight_task.clone(),
-                                                )
-                                                .await;
-                                                return;
-                                            }
-
-                                            // Permission check: subscribe implies read
-                                            if !permissions::has_permission(
-                                                &tenant,
-                                                &route,
-                                                Action::Read,
+                                            // Simplified: routes carry realm, check authorization directly
+                                            if !permissions::check_route_authorization(
+                                                &tenant, &route,
                                             ) {
                                                 let _ = send_err_chan(
                                                     mux_task.clone(),
@@ -802,34 +758,10 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                 let route = String::from_utf8_lossy(route_b.unwrap()).to_string();
 
                                 // Realm enforcement for scheme routes only
-                                if let Ok(r) = route_mod::parse_route(&route) {
+                                if route_mod::parse_route(&route).is_ok() {
                                     let tenant = auth_opt.clone().unwrap();
-                                    if !route_mod::realm_matches(&r, &tenant) {
-                                        let _ = send_err_chan(
-                                            mux_task.clone(),
-                                            parsed.header.channel_id,
-                                            1003,
-                                            "realm mismatch",
-                                            req_id.as_deref(),
-                                        )
-                                        .await;
-                                        ack_sent = true;
-                                        maybe_ack_and_decrement(
-                                            mux_task.clone(),
-                                            needs_ack && !ack_sent,
-                                            parsed.header.channel_id,
-                                            inflight_task.clone(),
-                                        )
-                                        .await;
-                                        return;
-                                    }
-
-                                    // Permission check: REQ implies consume/lease operations on queue
-                                    if !permissions::has_permission(
-                                        &tenant,
-                                        &route,
-                                        Action::Consume,
-                                    ) {
+                                    // Simplified: routes carry realm, check authorization directly
+                                    if !permissions::check_route_authorization(&tenant, &route) {
                                         let _ = send_err_chan(
                                             mux_task.clone(),
                                             parsed.header.channel_id,

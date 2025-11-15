@@ -3,7 +3,7 @@
 //! Storage operations are performance-critical, especially for KV and queue operations.
 //! These benchmarks focus on the core storage primitives that are called frequently.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use cntryl_midge::MidgeStore;
 use std::sync::OnceLock;
 use tempfile::TempDir;
@@ -177,7 +177,7 @@ fn bench_midge_batch_put(c: &mut Criterion) {
                     store.put(&key, &value).unwrap();
                 }
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }
@@ -196,7 +196,7 @@ fn bench_midge_delete(c: &mut Criterion) {
             |key| {
                 store.delete(key).unwrap();
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }

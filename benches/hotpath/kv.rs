@@ -3,7 +3,7 @@
 //! These benchmarks test the core KV service primitives that are performance-critical:
 //! put, get, delete, scan operations on the KvService directly.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::core::kv::service::KvService;
 use fitz::storage::traits::KvStore;
 use std::sync::{Arc, OnceLock};
@@ -124,7 +124,7 @@ fn bench_kv_delete(c: &mut Criterion) {
                     criterion::black_box(result.ok());
                 });
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }

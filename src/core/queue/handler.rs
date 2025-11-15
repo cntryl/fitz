@@ -130,14 +130,21 @@ impl Domain for QueueDomain {
                     let ttl = ttl_secs.unwrap_or(0);
                     let batch_size = 1; // Default to single message for now, could be extended
 
-                    match service.enqueue(realm, area, resource, message_body, Some(ttl), None).await {
+                    match service
+                        .enqueue(realm, area, resource, message_body, Some(ttl), None)
+                        .await
+                    {
                         Ok(message_id) => {
                             let response = Self::build_enqueue_response(&[message_id]);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }
@@ -157,24 +164,25 @@ impl Domain for QueueDomain {
                     let lease_duration = lease_secs.unwrap_or(30);
                     let batch_size = 10; // Default batch size
 
-                    match service.reserve(realm, area, resource, batch_size, lease_duration).await {
+                    match service
+                        .reserve(realm, area, resource, batch_size, lease_duration)
+                        .await
+                    {
                         Ok(messages) => {
                             let message_data: Vec<(String, Vec<u8>, String)> = messages
                                 .into_iter()
-                                .map(|msg| {
-                                    (
-                                        msg.id,
-                                        msg.body,
-                                        msg.lease_owner.unwrap_or_default(),
-                                    )
-                                })
+                                .map(|msg| (msg.id, msg.body, msg.lease_owner.unwrap_or_default()))
                                 .collect();
                             let response = Self::build_reserve_response(&message_data);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }
@@ -183,14 +191,21 @@ impl Domain for QueueDomain {
                     let token = delivery_token.unwrap_or_default();
                     let additional_secs = lease_secs.unwrap_or(30);
 
-                    match service.extend_lease(realm, area, resource, &msg_id, &token, additional_secs).await {
+                    match service
+                        .extend_lease(realm, area, resource, &msg_id, &token, additional_secs)
+                        .await
+                    {
                         Ok(()) => {
                             let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }
@@ -198,14 +213,21 @@ impl Domain for QueueDomain {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
 
-                    match service.complete(realm, area, resource, &msg_id, &token).await {
+                    match service
+                        .complete(realm, area, resource, &msg_id, &token)
+                        .await
+                    {
                         Ok(()) => {
                             let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }
@@ -216,11 +238,15 @@ impl Domain for QueueDomain {
                     match service.nack(realm, area, resource, &msg_id, &token).await {
                         Ok(()) => {
                             let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }
@@ -228,14 +254,21 @@ impl Domain for QueueDomain {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
 
-                    match service.requeue(realm, area, resource, &msg_id, &token).await {
+                    match service
+                        .requeue(realm, area, resource, &msg_id, &token)
+                        .await
+                    {
                         Ok(()) => {
                             let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }
@@ -248,16 +281,22 @@ impl Domain for QueueDomain {
                                 String::new(), // No token for peek
                             )];
                             let response = Self::build_reserve_response(&message_data);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Ok(None) => {
                             // No messages available
                             let response = Self::build_reserve_response(&[]);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                         Err(e) => {
                             let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                response,
+                            ))
                         }
                     }
                 }

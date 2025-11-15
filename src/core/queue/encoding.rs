@@ -389,7 +389,8 @@ pub fn decode_lease_info(data: &[u8]) -> Result<LeaseInfo, String> {
             TAG_DELIVERY_TOKEN => {
                 lease_owner = Some(String::from_utf8_lossy(&data[i..i + len]).to_string());
             }
-            0x78 => { // delivery count
+            0x78 => {
+                // delivery count
                 if len == 4 {
                     delivery_count = u32::from_be_bytes(data[i..i + 4].try_into().unwrap());
                 }
@@ -455,13 +456,19 @@ pub fn decode_queue_message(data: &[u8]) -> Result<QueueMessage, String> {
             }
             TAG_TIMESTAMP => {
                 if value.len() == 8 {
-                    let bytes = [value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7]];
+                    let bytes = [
+                        value[0], value[1], value[2], value[3], value[4], value[5], value[6],
+                        value[7],
+                    ];
                     created_at = Some(u64::from_be_bytes(bytes));
                 }
             }
             TAG_LEASE => {
                 if value.len() == 8 {
-                    let bytes = [value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7]];
+                    let bytes = [
+                        value[0], value[1], value[2], value[3], value[4], value[5], value[6],
+                        value[7],
+                    ];
                     lease_expiry = Some(u64::from_be_bytes(bytes));
                 }
             }
@@ -472,11 +479,15 @@ pub fn decode_queue_message(data: &[u8]) -> Result<QueueMessage, String> {
             }
             TAG_TTL_SECS => {
                 if value.len() == 8 {
-                    let bytes = [value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7]];
+                    let bytes = [
+                        value[0], value[1], value[2], value[3], value[4], value[5], value[6],
+                        value[7],
+                    ];
                     ttl_secs = Some(u64::from_be_bytes(bytes));
                 }
             }
-            0x78 => { // delivery_count
+            0x78 => {
+                // delivery_count
                 if value.len() == 4 {
                     let bytes = [value[0], value[1], value[2], value[3]];
                     delivery_count = u32::from_be_bytes(bytes);

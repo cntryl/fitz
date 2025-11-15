@@ -3,7 +3,7 @@
 //! These benchmarks test the core stream service primitives that are performance-critical:
 //! append, read, commit operations on the StreamService directly.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::core::stream::service::StreamService;
 use fitz::storage::traits::KvStore;
 use std::sync::{Arc, OnceLock};
@@ -103,7 +103,7 @@ fn bench_stream_commit(c: &mut Criterion) {
                     criterion::black_box(result.ok());
                 });
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }

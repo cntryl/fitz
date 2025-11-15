@@ -3,7 +3,7 @@
 //! Route operations are called on every message and are critical for performance.
 //! These benchmarks focus on the core route parsing and trie matching logic.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::protocol::route::parse_route;
 use fitz::routing::{RouteTable, DEFAULT_RF};
 use std::sync::OnceLock;
@@ -53,28 +53,37 @@ fn route_table() -> &'static RouteTable {
 
         // Add some wildcard subscriptions
         let (tx1, _rx1) = mpsc::channel(1);
-        table.insert(rf, fitz::routing::RtSubscription {
-            id: 10,
-            route_pattern: "queue://tenant1/orders/*".to_string(),
-            channel_id: 2,
-            sender: tx1,
-        });
+        table.insert(
+            rf,
+            fitz::routing::RtSubscription {
+                id: 10,
+                route_pattern: "queue://tenant1/orders/*".to_string(),
+                channel_id: 2,
+                sender: tx1,
+            },
+        );
 
         let (tx2, _rx2) = mpsc::channel(1);
-        table.insert(rf, fitz::routing::RtSubscription {
-            id: 11,
-            route_pattern: "stream://tenant1/events/*".to_string(),
-            channel_id: 3,
-            sender: tx2,
-        });
+        table.insert(
+            rf,
+            fitz::routing::RtSubscription {
+                id: 11,
+                route_pattern: "stream://tenant1/events/*".to_string(),
+                channel_id: 3,
+                sender: tx2,
+            },
+        );
 
         let (tx3, _rx3) = mpsc::channel(1);
-        table.insert(rf, fitz::routing::RtSubscription {
-            id: 12,
-            route_pattern: "notice://tenant1/*".to_string(),
-            channel_id: 4,
-            sender: tx3,
-        });
+        table.insert(
+            rf,
+            fitz::routing::RtSubscription {
+                id: 12,
+                route_pattern: "notice://tenant1/*".to_string(),
+                channel_id: 4,
+                sender: tx3,
+            },
+        );
 
         table
     })
@@ -127,7 +136,7 @@ fn bench_route_table_subscribe(c: &mut Criterion) {
                 };
                 table.insert(rf, sub);
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
 }
