@@ -3,9 +3,9 @@
 //! Handles parsing of TLV-encoded request payloads and building TLV-encoded responses
 //! for queue operations.
 
-use super::types::QueueConfig;
+use super::types::{LeaseInfo, QueueConfig, QueueMessage, StoredQueueMessage};
 use crate::protocol::tags::{
-    TAG_BODY, TAG_DELIVERY_TOKEN, TAG_ERR_MSG, TAG_ID, TAG_LEASE, TAG_TTL_SECS,
+    TAG_BODY, TAG_DELIVERY_TOKEN, TAG_ERR_MSG, TAG_ID, TAG_LEASE, TAG_TIMESTAMP, TAG_TTL_SECS,
 };
 
 /// Parse TLV payload to extract queue operation parameters
@@ -169,6 +169,337 @@ pub fn build_error_response(error_msg: &str) -> Vec<u8> {
     response.extend_from_slice(msg_bytes);
 
     response
+}
+
+/// Encode a QueueMessage to TLV format for storage
+pub fn encode_queue_message(message: &QueueMessage) -> Vec<u8> {
+    let mut data = Vec::new();
+
+    // TAG_ID - message ID
+    let id_bytes = message.id.as_bytes();
+    data.push(TAG_ID);
+    data.push(id_bytes.len() as u8);
+    data.extend_from_slice(id_bytes);
+
+    // TAG_BODY - message body
+    data.push(TAG_BODY);
+    data.push(message.body.len() as u8);
+    data.extend_from_slice(&message.body);
+
+    // TAG_TIMESTAMP - created_at
+    data.push(TAG_TIMESTAMP);
+    data.push(8); // u64 is 8 bytes
+    data.extend_from_slice(&message.created_at.to_be_bytes());
+
+    // TAG_LEASE - lease_expiry (optional)
+    if let Some(lease_expiry) = message.lease_expiry {
+        data.push(TAG_LEASE);
+        data.push(8); // u64 is 8 bytes
+        data.extend_from_slice(&lease_expiry.to_be_bytes());
+    }
+
+    // TAG_DELIVERY_TOKEN - lease_owner (optional)
+    if let Some(ref lease_owner) = message.lease_owner {
+        let token_bytes = lease_owner.as_bytes();
+        data.push(TAG_DELIVERY_TOKEN);
+        data.push(token_bytes.len() as u8);
+        data.extend_from_slice(token_bytes);
+    }
+
+    // TAG_TTL_SECS - ttl_secs (optional)
+    if let Some(ttl_secs) = message.ttl_secs {
+        data.push(TAG_TTL_SECS);
+        data.push(8); // u64 is 8 bytes
+        data.extend_from_slice(&ttl_secs.to_be_bytes());
+    }
+
+    // For delivery_count, we'll use a custom tag since it's not in the protocol
+    // TAG 0x78 - delivery count (u32)
+    data.push(0x78);
+    data.push(4); // u32 is 4 bytes
+    data.extend_from_slice(&message.delivery_count.to_be_bytes());
+
+    data
+}
+
+/// Encode a StoredQueueMessage to TLV format for storage
+pub fn encode_stored_queue_message(message: &StoredQueueMessage) -> Vec<u8> {
+    let mut data = Vec::new();
+
+    // TAG_ID - message ID
+    let id_bytes = message.id.as_bytes();
+    data.push(TAG_ID);
+    data.push(id_bytes.len() as u8);
+    data.extend_from_slice(id_bytes);
+
+    // TAG_BODY - message body
+    data.push(TAG_BODY);
+    data.push(message.body.len() as u8);
+    data.extend_from_slice(&message.body);
+
+    // TAG_TIMESTAMP - created_at
+    data.push(TAG_TIMESTAMP);
+    data.push(8); // u64 is 8 bytes
+    data.extend_from_slice(&message.created_at.to_be_bytes());
+
+    // TAG_TTL_SECS - ttl_secs (optional)
+    if let Some(ttl_secs) = message.ttl_secs {
+        data.push(TAG_TTL_SECS);
+        data.push(8); // u64 is 8 bytes
+        data.extend_from_slice(&ttl_secs.to_be_bytes());
+    }
+
+    data
+}
+
+/// Encode a LeaseInfo to TLV format for storage
+pub fn encode_lease_info(lease: &LeaseInfo) -> Vec<u8> {
+    let mut data = Vec::new();
+
+    // TAG_LEASE - lease_expiry (optional)
+    if let Some(lease_expiry) = lease.lease_expiry {
+        data.push(TAG_LEASE);
+        data.push(8); // u64 is 8 bytes
+        data.extend_from_slice(&lease_expiry.to_be_bytes());
+    }
+
+    // TAG_DELIVERY_TOKEN - lease_owner (optional)
+    if let Some(ref lease_owner) = lease.lease_owner {
+        let token_bytes = lease_owner.as_bytes();
+        data.push(TAG_DELIVERY_TOKEN);
+        data.push(token_bytes.len() as u8);
+        data.extend_from_slice(token_bytes);
+    }
+
+    // TAG 0x78 - delivery count (u32)
+    data.push(0x78);
+    data.push(4); // u32 is 4 bytes
+    data.extend_from_slice(&lease.delivery_count.to_be_bytes());
+
+    data
+}
+
+/// Decode a StoredQueueMessage from TLV format
+pub fn decode_stored_queue_message(data: &[u8]) -> Result<StoredQueueMessage, String> {
+    let mut id = None;
+    let mut body = None;
+    let mut created_at = None;
+    let mut ttl_secs = None;
+
+    let mut i = 0;
+    while i < data.len() {
+        if i + 2 > data.len() {
+            break;
+        }
+
+        let tag = data[i];
+        let len_byte = data[i + 1];
+        i += 2;
+
+        // Handle extended length encoding
+        let len = if len_byte == 255 {
+            if i + 4 > data.len() {
+                break;
+            }
+            let len_bytes = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+            i += 4;
+            u32::from_be_bytes(len_bytes) as usize
+        } else {
+            len_byte as usize
+        };
+
+        if i + len > data.len() {
+            break;
+        }
+
+        match tag {
+            TAG_ID => {
+                id = Some(String::from_utf8_lossy(&data[i..i + len]).to_string());
+            }
+            TAG_BODY => {
+                body = Some(data[i..i + len].to_vec());
+            }
+            TAG_TIMESTAMP => {
+                if len == 8 {
+                    created_at = Some(u64::from_be_bytes(data[i..i + 8].try_into().unwrap()));
+                }
+            }
+            TAG_TTL_SECS => {
+                if len == 8 {
+                    ttl_secs = Some(u64::from_be_bytes(data[i..i + 8].try_into().unwrap()));
+                }
+            }
+            _ => {} // Ignore unknown tags
+        }
+
+        i += len;
+    }
+
+    let id = id.ok_or_else(|| "Missing message ID".to_string())?;
+    let body = body.ok_or_else(|| "Missing message body".to_string())?;
+    let created_at = created_at.ok_or_else(|| "Missing created_at".to_string())?;
+
+    Ok(StoredQueueMessage {
+        id,
+        route: "".to_string(), // Route is derived from key, not stored
+        body,
+        created_at,
+        ttl_secs,
+    })
+}
+
+/// Decode a LeaseInfo from TLV format
+pub fn decode_lease_info(data: &[u8]) -> Result<LeaseInfo, String> {
+    let mut lease_expiry = None;
+    let mut lease_owner = None;
+    let mut delivery_count = 0u32;
+
+    let mut i = 0;
+    while i < data.len() {
+        if i + 2 > data.len() {
+            break;
+        }
+
+        let tag = data[i];
+        let len_byte = data[i + 1];
+        i += 2;
+
+        // Handle extended length encoding
+        let len = if len_byte == 255 {
+            if i + 4 > data.len() {
+                break;
+            }
+            let len_bytes = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+            i += 4;
+            u32::from_be_bytes(len_bytes) as usize
+        } else {
+            len_byte as usize
+        };
+
+        if i + len > data.len() {
+            break;
+        }
+
+        match tag {
+            TAG_LEASE => {
+                if len == 8 {
+                    lease_expiry = Some(u64::from_be_bytes(data[i..i + 8].try_into().unwrap()));
+                }
+            }
+            TAG_DELIVERY_TOKEN => {
+                lease_owner = Some(String::from_utf8_lossy(&data[i..i + len]).to_string());
+            }
+            0x78 => { // delivery count
+                if len == 4 {
+                    delivery_count = u32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+                }
+            }
+            _ => {} // Ignore unknown tags
+        }
+
+        i += len;
+    }
+
+    Ok(LeaseInfo {
+        lease_expiry,
+        lease_owner,
+        delivery_count,
+    })
+}
+pub fn decode_queue_message(data: &[u8]) -> Result<QueueMessage, String> {
+    let mut id = None;
+    let mut body = None;
+    let mut created_at = None;
+    let mut lease_expiry = None;
+    let mut lease_owner = None;
+    let mut ttl_secs = None;
+    let mut delivery_count = 0u32;
+
+    let mut i = 0;
+    while i < data.len() {
+        if i + 2 > data.len() {
+            break;
+        }
+
+        let tag = data[i];
+        let len_byte = data[i + 1];
+        i += 2;
+
+        // Handle extended length encoding
+        let len = if len_byte == 255 {
+            if i + 4 > data.len() {
+                break;
+            }
+            let len_bytes = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+            i += 4;
+            u32::from_be_bytes(len_bytes) as usize
+        } else {
+            len_byte as usize
+        };
+
+        if i + len > data.len() {
+            break;
+        }
+
+        let value = &data[i..i + len];
+        i += len;
+
+        match tag {
+            TAG_ID => {
+                if let Ok(id_str) = std::str::from_utf8(value) {
+                    id = Some(id_str.to_string());
+                }
+            }
+            TAG_BODY => {
+                body = Some(value.to_vec());
+            }
+            TAG_TIMESTAMP => {
+                if value.len() == 8 {
+                    let bytes = [value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7]];
+                    created_at = Some(u64::from_be_bytes(bytes));
+                }
+            }
+            TAG_LEASE => {
+                if value.len() == 8 {
+                    let bytes = [value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7]];
+                    lease_expiry = Some(u64::from_be_bytes(bytes));
+                }
+            }
+            TAG_DELIVERY_TOKEN => {
+                if let Ok(token_str) = std::str::from_utf8(value) {
+                    lease_owner = Some(token_str.to_string());
+                }
+            }
+            TAG_TTL_SECS => {
+                if value.len() == 8 {
+                    let bytes = [value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7]];
+                    ttl_secs = Some(u64::from_be_bytes(bytes));
+                }
+            }
+            0x78 => { // delivery_count
+                if value.len() == 4 {
+                    let bytes = [value[0], value[1], value[2], value[3]];
+                    delivery_count = u32::from_be_bytes(bytes);
+                }
+            }
+            _ => {} // Ignore unknown tags
+        }
+    }
+
+    let id = id.ok_or_else(|| "Missing message ID".to_string())?;
+    let body = body.ok_or_else(|| "Missing message body".to_string())?;
+    let created_at = created_at.ok_or_else(|| "Missing created_at timestamp".to_string())?;
+
+    Ok(QueueMessage {
+        id,
+        route: String::new(), // This will be set from the key when loading
+        body,
+        lease_expiry,
+        lease_owner,
+        delivery_count,
+        created_at,
+        ttl_secs,
+    })
 }
 
 #[cfg(test)]

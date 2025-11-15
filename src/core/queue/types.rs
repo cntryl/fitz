@@ -18,6 +18,24 @@ pub struct QueueMessage {
     pub ttl_secs: Option<u64>,
 }
 
+/// Stored version of queue message (immutable, without lease info)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredQueueMessage {
+    pub id: String,
+    pub route: String,
+    pub body: Vec<u8>,
+    pub created_at: u64,
+    pub ttl_secs: Option<u64>,
+}
+
+/// Lease information for a message (mutable metadata)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LeaseInfo {
+    pub lease_expiry: Option<u64>,
+    pub lease_owner: Option<String>,
+    pub delivery_count: u32,
+}
+
 /// Queue configuration controlling DLQ, visibility, and TTL policies.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct QueueConfig {

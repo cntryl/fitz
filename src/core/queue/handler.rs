@@ -210,27 +210,56 @@ impl Domain for QueueDomain {
                     }
                 }
                 "nack" => {
-                    let _msg_id = message_id.unwrap_or_default();
-                    let _token = delivery_token.unwrap_or_default();
+                    let msg_id = message_id.unwrap_or_default();
+                    let token = delivery_token.unwrap_or_default();
 
-                    // TODO: Implement nack operation using service.nack()
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.nack(realm, area, resource, &msg_id, &token).await {
+                        Ok(()) => {
+                            let response = Self::build_success_response();
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "requeue" => {
-                    let _msg_id = message_id.unwrap_or_default();
-                    let _token = delivery_token.unwrap_or_default();
+                    let msg_id = message_id.unwrap_or_default();
+                    let token = delivery_token.unwrap_or_default();
 
-                    // TODO: Implement requeue operation using service.requeue()
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.requeue(realm, area, resource, &msg_id, &token).await {
+                        Ok(()) => {
+                            let response = Self::build_success_response();
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "get" => {
-                    // Get config for specific queue
-                    let route = format!("{}/{}/{}", realm, area, resource);
-                    // TODO: Implement get config operation
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                    match service.peek(realm, area, resource).await {
+                        Ok(Some(message)) => {
+                            let message_data: Vec<(String, Vec<u8>, String)> = vec![(
+                                message.id,
+                                message.body,
+                                String::new(), // No token for peek
+                            )];
+                            let response = Self::build_reserve_response(&message_data);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Ok(None) => {
+                            // No messages available
+                            let response = Self::build_reserve_response(&[]);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                        Err(e) => {
+                            let response = Self::build_error_response(&e);
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        }
+                    }
                 }
                 "list" => {
                     // Handle different list patterns:
