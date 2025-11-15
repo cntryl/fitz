@@ -107,7 +107,7 @@ impl PooledFrame {
 
     /// Borrow the frame as a byte slice
     pub fn as_slice(&self) -> &[u8] {
-        self.buf.as_ref().map(|b| b.as_slice()).unwrap_or(&[])
+        self.buf.as_deref().unwrap_or(&[])
     }
 }
 
@@ -124,7 +124,6 @@ impl Drop for PooledFrame {
             if b.capacity() <= 8 * 1024 {
                 if let Ok(mut pool) = BUF_POOL.lock() {
                     pool.push(b);
-                    return;
                 }
             }
             // drop otherwise

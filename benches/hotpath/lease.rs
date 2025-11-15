@@ -68,6 +68,7 @@ fn make_request(raw: &str, payload: Vec<u8>) -> fitz::core::domain::DomainContex
         payload,
         channel_id: 1,
         route_family: 0,
+        sender: None,
     }
 }
 

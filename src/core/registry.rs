@@ -12,7 +12,13 @@ pub struct DomainRegistry {
     lease: Arc<dyn Domain>,
     control: Arc<dyn Domain>,
     stream: Arc<dyn Domain>,
-    // kv: Arc<dyn Domain>,      // TODO: uncomment when midge integrated
+    kv: Arc<dyn Domain>,
+}
+
+impl Default for DomainRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DomainRegistry {
@@ -32,7 +38,7 @@ impl DomainRegistry {
             "lease" => Ok(self.lease.handle(request).await),
             "control" => Ok(self.control.handle(request).await),
             "stream" => Ok(self.stream.handle(request).await),
-            // "kv" => Ok(self.kv.handle(request).await),
+            "kv" => Ok(self.kv.handle(request).await),
             _ => Err(format!("unsupported scheme: {}", scheme)),
         }
     }
@@ -46,7 +52,7 @@ impl DomainRegistry {
         self.lease.cleanup_channel(rf, channel_id).await;
         self.control.cleanup_channel(rf, channel_id).await;
         self.stream.cleanup_channel(rf, channel_id).await;
-        // self.kv.cleanup_channel(rf, channel_id).await;
+        self.kv.cleanup_channel(rf, channel_id).await;
     }
 
     /// Subscribe to notifications for a route pattern
@@ -72,7 +78,7 @@ impl DomainRegistry {
     /// Create a new registry with all domains initialized
     pub fn new() -> Self {
         use crate::core::{
-            control::ControlDomain, lease::LeaseDomain, notice::NoticeDomain, queue::QueueDomain,
+            control::ControlDomain, kv::KvDomain, lease::LeaseDomain, notice::NoticeDomain, queue::QueueDomain,
             rpc::RpcDomain, stream::StreamDomain,
         };
         use crate::storage::midge_adapter;
@@ -80,13 +86,14 @@ impl DomainRegistry {
         // Initialize domains
         let notice = Arc::new(NoticeDomain::new());
         let rpc = Arc::new(RpcDomain::new());
-        let queue = Arc::new(QueueDomain::new());
         let lease = Arc::new(LeaseDomain::new());
 
-        // Create storage backend for stream domain
+        // Create storage backend for stream, queue, and kv domains
         let kv_store = midge_adapter::create_memory_store()
-            .expect("Failed to create memory store for stream domain");
-        let stream = Arc::new(StreamDomain::new(kv_store));
+            .expect("Failed to create memory store for domains");
+        let stream = Arc::new(StreamDomain::new(Arc::clone(&kv_store)));
+        let queue = Arc::new(QueueDomain::new(Arc::clone(&kv_store)));
+        let kv = Arc::new(KvDomain::new(kv_store));
 
         // Control shares notice service
         let control = Arc::new(ControlDomain::with_notice_service(notice.get_service()));
@@ -98,6 +105,7 @@ impl DomainRegistry {
             lease,
             control,
             stream,
+            kv,
         }
     }
 }

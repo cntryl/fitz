@@ -71,6 +71,7 @@ fn bench_domain_parse_tlv_minimal(c: &mut Criterion) {
         payload: payload.clone(),
         channel_id: 1,
         route_family: 0,
+        sender: None,
     };
 
     c.bench_function("domain_parse_tlv_minimal", |b| {
@@ -123,6 +124,7 @@ fn bench_domain_parse_tlv_full(c: &mut Criterion) {
         payload: payload.clone(),
         channel_id: 1,
         route_family: 0,
+        sender: None,
     };
 
     c.bench_function("domain_parse_tlv_full", |b| {
@@ -178,6 +180,7 @@ fn bench_domain_parse_tlv_streaming(c: &mut Criterion) {
         payload: payload.clone(),
         channel_id: 1,
         route_family: 0,
+        sender: None,
     };
 
     c.bench_function("domain_parse_tlv_streaming", |b| {
@@ -212,6 +215,7 @@ fn bench_domain_build_subscribe_response(c: &mut Criterion) {
         payload: payload.clone(),
         channel_id: 1,
         route_family: 0,
+        sender: None,
     };
 
     c.bench_function("domain_build_subscribe_response", |b| {
@@ -240,6 +244,7 @@ fn bench_domain_build_error_response(c: &mut Criterion) {
         payload,
         channel_id: 1,
         route_family: 0,
+        sender: None,
     };
 
     c.bench_function("domain_build_error_response", |b| {

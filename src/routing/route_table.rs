@@ -176,7 +176,7 @@ impl RouteTableShard {
                 node = node
                     .children
                     .entry((*seg).to_string())
-                    .or_insert_with(TrieNode::default);
+                    .or_default();
             }
         }
 
@@ -397,12 +397,18 @@ impl RouteTable {
 
         // Single Vec allocation at the very end
         let mut out = Vec::with_capacity(count);
-        for id in ids_buf[..count].iter().copied() {
-            if let Some(sub) = shard.subs.get(&id) {
+        for id in ids_buf[..count].iter() {
+            if let Some(sub) = shard.subs.get(id) {
                 out.push(sub.clone());
             }
         }
         out
+    }
+}
+
+impl Default for RouteTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

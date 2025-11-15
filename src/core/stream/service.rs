@@ -41,7 +41,7 @@ enum ReservationStatus {
 }
 
 /// Area stream state tracking for watermark management
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct AreaStreamState {
     /// Next area_seq to allocate
     next_seq: u64,
@@ -49,16 +49,6 @@ struct AreaStreamState {
     watermark: u64,
     /// Reserved ranges tracking (seq -> status)
     reserved_ranges: BTreeMap<u64, ReservationStatus>,
-}
-
-impl Default for AreaStreamState {
-    fn default() -> Self {
-        Self {
-            next_seq: 0,
-            watermark: 0,
-            reserved_ranges: BTreeMap::new(),
-        }
-    }
 }
 
 /// Active append transaction state - single resource per transaction

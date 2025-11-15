@@ -181,9 +181,8 @@ pub fn validate_notice_publish(route: &Route) -> Result<(), &'static str> {
 /// - notice://{realm}/{area}/{resource}/{operation}
 pub fn validate_notice_subscription(route_str: &str) -> Result<(), &'static str> {
     // Check for wildcard patterns
-    if route_str.ends_with("/*") {
+    if let Some(prefix) = route_str.strip_suffix("/*") {
         // Strip the /* and parse the prefix
-        let prefix = &route_str[..route_str.len() - 2];
         let route = parse_route(prefix)?;
         if route.scheme != Scheme::Notice {
             return Err("subscription must be notice:// scheme");

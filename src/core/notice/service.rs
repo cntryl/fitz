@@ -57,8 +57,7 @@ impl NoticeService {
     /// Unsubscribe by subscription ID for a specific route family (tenant)
     /// Returns true if subscription was found and removed
     pub fn unsubscribe(&mut self, rf: RouteFamilyId, sub_id: u64) -> bool {
-        let removed = self.route_table.remove(rf, sub_id).is_some();
-        removed
+        self.route_table.remove(rf, sub_id).is_some()
     }
 
     /// Cleanup all subscriptions for a channel in a specific route family (tenant)

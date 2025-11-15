@@ -1,9 +1,8 @@
-// Lease domain handler - routes all lease:// operations
-
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
+use crate::core::parsing::tlv;
 use crate::core::lease::service::LeaseService;
 use crate::core::lease::types::LeaseOperation;
-use crate::protocol::frame::{build_tlv, find_tlv};
+use crate::protocol::frame::build_tlv;
 use crate::protocol::tags::*;
 use std::sync::Arc;
 
@@ -27,22 +26,6 @@ impl LeaseDomain {
     /// Get the shared lease service for use by other domains (e.g., control)
     pub fn get_service(&self) -> Arc<LeaseService> {
         Arc::clone(&self.service)
-    }
-
-    // Helper: parse u32 TLV
-    fn parse_u32(payload: &[u8], tag: u8) -> Option<u32> {
-        find_tlv(payload, tag).and_then(|b| {
-            if b.len() == 4 {
-                Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
-            } else {
-                None
-            }
-        })
-    }
-
-    // Helper: parse string TLV as borrowed &str (avoids allocation)
-    fn parse_str(payload: &[u8], tag: u8) -> Option<&str> {
-        find_tlv(payload, tag).and_then(|b| std::str::from_utf8(b).ok())
     }
 }
 
@@ -81,16 +64,16 @@ impl LeaseDomain {
         match operation {
             LeaseOperation::Acquire => {
                 // Acquire requires TAG_LEASE (TTL)
-                match LeaseDomain::parse_u32(&payload, TAG_LEASE) {
+                match tlv::parse_u32(&payload, TAG_LEASE) {
                     Some(ttl) => self.handle_acquire(svc, rf, key, ttl).await,
                     None => DomainResponse::Error("acquire requires TAG_LEASE (TTL)".to_string()),
                 }
             }
             LeaseOperation::Renew => {
                 // Renew requires TAG_ID, TAG_DELIVERY_TOKEN, TAG_LEASE (additional time)
-                let id = LeaseDomain::parse_str(&payload, TAG_ID);
-                let token = LeaseDomain::parse_str(&payload, TAG_DELIVERY_TOKEN);
-                let add = LeaseDomain::parse_u32(&payload, TAG_LEASE);
+                let id = tlv::parse_string(&payload, TAG_ID);
+                let token = tlv::parse_string(&payload, TAG_DELIVERY_TOKEN);
+                let add = tlv::parse_u32(&payload, TAG_LEASE);
 
                 match (id, token, add) {
                     (Some(id), Some(token), Some(add)) => {
@@ -103,8 +86,8 @@ impl LeaseDomain {
             }
             LeaseOperation::Release => {
                 // Release requires TAG_ID and TAG_DELIVERY_TOKEN
-                let id = LeaseDomain::parse_str(&payload, TAG_ID);
-                let token = LeaseDomain::parse_str(&payload, TAG_DELIVERY_TOKEN);
+                let id = tlv::parse_string(&payload, TAG_ID);
+                let token = tlv::parse_string(&payload, TAG_DELIVERY_TOKEN);
 
                 match (id, token) {
                     (Some(id), Some(token)) => self.handle_release(svc, rf, key, id, token).await,

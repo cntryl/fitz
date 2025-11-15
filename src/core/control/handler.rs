@@ -3,6 +3,7 @@
 use super::service::ControlService;
 use super::types::ControlOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
+use crate::core::parsing::{response, tlv};
 use crate::core::notice::NoticeService;
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
@@ -34,32 +35,6 @@ impl ControlDomain {
             service: ControlService::new("default-node".to_string()),
             notice_service,
         }
-    }
-
-    /// Parse TLV-encoded payload to extract body
-    fn parse_tlv_body(&self, payload: &[u8]) -> Option<Vec<u8>> {
-        self.find_tlv(payload, TAG_BODY)
-    }
-
-    /// Extract TLV value by tag
-    fn find_tlv(&self, payload: &[u8], tag: u8) -> Option<Vec<u8>> {
-        let mut offset = 0;
-        while offset + 2 <= payload.len() {
-            let t = payload[offset];
-            let length = payload[offset + 1] as usize;
-            offset += 2;
-
-            if offset + length > payload.len() {
-                break;
-            }
-
-            if t == tag {
-                return Some(payload[offset..offset + length].to_vec());
-            }
-
-            offset += length;
-        }
-        None
     }
 
     /// Build TLV-encoded response
@@ -115,10 +90,10 @@ impl Domain for ControlDomain {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Parse body from TLV payload
-            let body = match self.parse_tlv_body(&request.payload) {
+            let body = match tlv::parse_bytes(&request.payload, TAG_BODY) {
                 Some(b) => b,
                 None => {
-                    let error_response = self.build_error_response("Missing body in request");
+                    let error_response = response::error("Missing body in request");
                     return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                         error_response,
                     ));
@@ -129,7 +104,7 @@ impl Domain for ControlDomain {
             let operation = match ControlOperation::from_route(&request.route_str) {
                 Ok(op) => op,
                 Err(e) => {
-                    let error_response = self.build_error_response(&e);
+                    let error_response = response::error(&e);
                     return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                         error_response,
                     ));
@@ -140,9 +115,8 @@ impl Domain for ControlDomain {
             match self.service.handle_operation(operation, &body).await {
                 Ok(response_body) => {
                     // Dispatch to subscribers (pub/sub pattern)
-                    let msg_id_string = self
-                        .find_tlv(&request.payload, TAG_ID)
-                        .and_then(|b| std::str::from_utf8(&b).ok().map(|s| s.to_string()));
+                    let msg_id_string = tlv::parse_string(&request.payload, TAG_ID)
+                        .map(|s| s.to_string());
                     let msg_id = msg_id_string.as_deref();
 
                     let mut notice_service = self.notice_service.write().await;
@@ -161,7 +135,7 @@ impl Domain for ControlDomain {
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 Err(err) => {
-                    let error_response = self.build_error_response(&err);
+                    let error_response = response::error(&err);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                         error_response,
                     ))
@@ -191,14 +165,11 @@ mod tests {
     #[test]
     fn should_parse_tlv_body_correctly() {
         // Arrange
-        let domain = ControlDomain::new();
         let mut payload = Vec::new();
-        payload.push(TAG_BODY);
-        payload.push(5); // length
-        payload.extend_from_slice(b"hello");
+        crate::protocol::frame::build_tlv(TAG_BODY, b"hello", &mut payload);
 
         // Act
-        let result = domain.parse_tlv_body(&payload);
+        let result = tlv::parse_bytes(&payload, TAG_BODY);
 
         // Assert
         assert_eq!(result, Some(b"hello".to_vec()));

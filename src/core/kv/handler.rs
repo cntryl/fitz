@@ -177,8 +177,23 @@ impl Domain for KvDomain {
             // Parse TLV body for key and value
             let (key, value) = Self::parse_tlv_body(&request.payload);
 
-            // Use route_str for namespacing
-            let route_str = &request.route_str;
+            // Parse realm and area from route
+            let realm = match request.route.realm.as_deref() {
+                Some(r) => r,
+                None => {
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        Self::build_tlv_response(Err("Missing realm in route".to_string())),
+                    ));
+                }
+            };
+            let area = match request.route.area.as_deref() {
+                Some(a) => a,
+                None => {
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        Self::build_tlv_response(Err("Missing area in route".to_string())),
+                    ));
+                }
+            };
 
             // Use self.kv_store (clone the Arc for service)
             let kv_store = Arc::clone(&self.kv_store);
@@ -188,7 +203,7 @@ impl Domain for KvDomain {
 
             // Handle the operation
             let result = service
-                .handle_operation(operation, route_str, key, value)
+                .handle_operation(operation, &request.route_str, key, value)
                 .await;
 
             // Build and return response

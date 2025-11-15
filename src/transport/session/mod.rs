@@ -470,7 +470,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                 &mut req_payload,
                                             );
                                         }
-                                        fr::build_tlv(fr::TAG_BODY, &pubref.body, &mut req_payload);
+                                        fr::build_tlv(fr::TAG_BODY, pubref.body, &mut req_payload);
 
                                         match engine_task
                                             .dispatch(
@@ -554,7 +554,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                             pubref.id.as_bytes(),
                                             &mut req_payload,
                                         );
-                                        fr::build_tlv(fr::TAG_BODY, &pubref.body, &mut req_payload);
+                                        fr::build_tlv(fr::TAG_BODY, pubref.body, &mut req_payload);
 
                                         if let Some(reply) = &reply_to {
                                             fr::build_tlv(

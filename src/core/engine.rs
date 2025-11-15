@@ -91,7 +91,7 @@ impl EngineHandle {
             .map_err(|_| "engine stopped".to_string())?;
 
         let pooled = rx.await.map_err(|_| "no response".to_string())?;
-        pooled.map(|pf| pf.into_vec()).map_err(|e| e)
+        pooled.map(|pf| pf.into_vec())
     }
 
     /// Notify domains that a channel is closing (connection dropped, client disconnected, etc.)

@@ -19,7 +19,16 @@ pub mod stream {
 /// Discovery marker value written to KvStore for stream domain
 pub const STREAM_DISCOVERY_MARKER: &[u8] = &[0x01];
 
+/// Queue domain prefix marker
+pub const QUEUE_DOMAIN_PREFIX: u8 = 0x02;
+
+/// Queue domain index type markers (second byte after domain prefix)
+pub mod queue {
+    pub const MESSAGE: u8 = 0x01;
+    pub const LEASE: u8 = 0x02;
+    pub const CONFIG: u8 = 0x03;
+}
+
 // Future domains can be added here:
-// pub const QUEUE_DOMAIN_PREFIX: u8 = 0x02;
 // pub const KV_DOMAIN_PREFIX: u8 = 0x03;
 // etc.

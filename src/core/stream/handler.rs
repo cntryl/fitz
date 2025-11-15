@@ -296,9 +296,8 @@ impl StreamDomain {
 
     /// Build TLV response for rollback-append operation
     fn build_append_ok_response() -> Vec<u8> {
-        let buf = Vec::new();
         // Simple success response with no additional data
-        buf
+        Vec::new()
     }
 }
 

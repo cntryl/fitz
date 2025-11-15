@@ -1,5 +1,6 @@
 pub mod domain;
 pub mod engine;
+pub mod parsing;
 pub mod registry;
 
 pub mod router;
