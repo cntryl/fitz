@@ -43,7 +43,15 @@ impl Grant {
 
     /// Create a wildcard grant for all operations within a realm
     fn wildcard_for_realm(realm: &str, scheme: Option<&'static str>) -> Self {
-        Self::new(None, None, scheme, Some(realm.to_string()), None, None, true)
+        Self::new(
+            None,
+            None,
+            scheme,
+            Some(realm.to_string()),
+            None,
+            None,
+            true,
+        )
     }
 
     fn matches(&self, route: &crate::protocol::route::Route) -> bool {
@@ -213,7 +221,9 @@ pub async fn install_claim_grants(tenant: &str, claims: &crate::authz::mock_jwks
                     // If realm not specified in permission scope, use tenant's default realm
                     // Note: tenant (authorization context) and realm (route namespace) are separate concepts
                     let realm = realm.or_else(|| Some(tenant.to_string()));
-                    grants.push(Grant::new(intent, None, scheme, realm, area, resource, wildcard));
+                    grants.push(Grant::new(
+                        intent, None, scheme, realm, area, resource, wildcard,
+                    ));
                 }
             }
         }
@@ -231,7 +241,7 @@ pub fn has_permission(tenant: &str, route_str: &str) -> bool {
 /// Simplified authorization check that works directly with route strings.
 /// Routes carry the realm information, so we can do basic authorization without
 /// complex parsing for the common case.
-/// 
+///
 /// Note: tenant (user's authorization context) and realm (route namespace) are separate concepts,
 /// but this function assumes tenant-scoped access to matching realms for baseline security.
 pub fn check_route_authorization(tenant: &str, route_str: &str) -> bool {
@@ -313,7 +323,9 @@ mod tests {
         // Helper: parse multiple permission strings into grants
         fn parse_permission_to_grants(permission: &str) -> Vec<Grant> {
             let (intent, scheme, realm, area, resource, wildcard) = parse_route_scope(permission);
-            vec![Grant::new(intent, None, scheme, realm, area, resource, wildcard)]
+            vec![Grant::new(
+                intent, None, scheme, realm, area, resource, wildcard,
+            )]
         }
 
         fn gvec(list: &[&str]) -> Vec<Grant> {
@@ -327,7 +339,7 @@ mod tests {
             // 🔶 Full Realm: all intents on all domains within this realm
             //
             "FullRealm" => gvec(&[
-                "*::*://acme/*",  // Single wildcard entry for full realm access
+                "*::*://acme/*", // Single wildcard entry for full realm access
             ]),
 
             //

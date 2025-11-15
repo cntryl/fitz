@@ -5,8 +5,8 @@
 //! grant matching, and permission validation.
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use fitz::authz::permissions::{check_route_authorization, has_permission, install_claim_grants};
 use fitz::authz::mock_jwks::Claims;
+use fitz::authz::permissions::{check_route_authorization, has_permission, install_claim_grants};
 use std::sync::OnceLock;
 
 #[path = "../config.rs"]
