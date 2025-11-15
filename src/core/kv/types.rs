@@ -110,6 +110,7 @@ mod tests {
 
     #[test]
     fn should_parse_put_operation() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -118,11 +119,17 @@ mod tests {
             operation: Some("put".to_string()),
             raw: "kv://test/config/key1/put".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::Put)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::Put)));
     }
 
     #[test]
     fn should_parse_get_operation() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -131,11 +138,17 @@ mod tests {
             operation: Some("get".to_string()),
             raw: "kv://test/config/key1/get".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::Get)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::Get)));
     }
 
     #[test]
     fn should_parse_delete_operation() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -144,11 +157,17 @@ mod tests {
             operation: Some("delete".to_string()),
             raw: "kv://test/config/key1/delete".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::Delete)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::Delete)));
     }
 
     #[test]
     fn should_parse_delete_range_operation_with_wildcard() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -157,11 +176,17 @@ mod tests {
             operation: Some("delete".to_string()),
             raw: "kv://test/config/*/delete".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::DeleteRange)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::DeleteRange)));
     }
 
     #[test]
     fn should_parse_scan_operation() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -170,11 +195,17 @@ mod tests {
             operation: Some("scan".to_string()),
             raw: "kv://test/config/*/scan".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::Scan)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::Scan)));
     }
 
     #[test]
     fn should_parse_batch_operation_with_wildcard() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -183,11 +214,17 @@ mod tests {
             operation: Some("batch".to_string()),
             raw: "kv://test/config/*/batch".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::Batch)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::Batch)));
     }
 
     #[test]
     fn should_reject_batch_operation_without_wildcard() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -196,11 +233,17 @@ mod tests {
             operation: Some("batch".to_string()),
             raw: "kv://test/config/key1/batch".to_string(),
         };
-        assert!(KvOperation::from_route(&route).is_err());
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]
     fn should_parse_get_many_operation_with_wildcard() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -209,11 +252,17 @@ mod tests {
             operation: Some("get-many".to_string()),
             raw: "kv://test/config/*/get-many".to_string(),
         };
-        assert!(matches!(KvOperation::from_route(&route), Ok(KvOperation::GetMany)));
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(matches!(result, Ok(KvOperation::GetMany)));
     }
 
     #[test]
     fn should_reject_get_many_operation_without_wildcard() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -222,18 +271,25 @@ mod tests {
             operation: Some("get-many".to_string()),
             raw: "kv://test/config/key1/get-many".to_string(),
         };
-        assert!(KvOperation::from_route(&route).is_err());
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]
     fn should_parse_transaction_operations() {
-        let operations = vec![
+        // Arrange
+        let test_cases = vec![
             ("begin_transaction", KvOperation::BeginTransaction),
             ("commit_transaction", KvOperation::CommitTransaction),
             ("rollback_transaction", KvOperation::RollbackTransaction),
         ];
 
-        for (op_name, expected_op) in operations {
+        // Act
+        for (op_name, expected_op) in test_cases {
             let route = Route {
                 scheme: Scheme::Kv,
                 realm: Some("test".to_string()),
@@ -243,18 +299,21 @@ mod tests {
                 raw: format!("kv://test/config/*/{op_name}"),
             };
             let result = KvOperation::from_route(&route);
-            assert!(result.is_ok());
+
+            // Assert
+            assert!(result.is_ok(), "Failed to parse operation: {}", op_name);
             match result.unwrap() {
                 KvOperation::BeginTransaction if matches!(expected_op, KvOperation::BeginTransaction) => {},
                 KvOperation::CommitTransaction if matches!(expected_op, KvOperation::CommitTransaction) => {},
                 KvOperation::RollbackTransaction if matches!(expected_op, KvOperation::RollbackTransaction) => {},
-                _ => panic!("Unexpected operation"),
+                actual => panic!("Operation {} parsed as {:?}, expected {:?}", op_name, actual, expected_op),
             }
         }
     }
 
     #[test]
     fn should_reject_route_without_area() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -263,11 +322,17 @@ mod tests {
             operation: Some("get".to_string()),
             raw: "kv://test//key1/get".to_string(),
         };
-        assert!(KvOperation::from_route(&route).is_err());
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]
     fn should_reject_route_with_wildcard_area() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -276,11 +341,17 @@ mod tests {
             operation: Some("get".to_string()),
             raw: "kv://test/*/key1/get".to_string(),
         };
-        assert!(KvOperation::from_route(&route).is_err());
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]
     fn should_reject_unknown_operation() {
+        // Arrange
         let route = Route {
             scheme: Scheme::Kv,
             realm: Some("test".to_string()),
@@ -289,6 +360,11 @@ mod tests {
             operation: Some("unknown".to_string()),
             raw: "kv://test/config/key1/unknown".to_string(),
         };
-        assert!(KvOperation::from_route(&route).is_err());
+
+        // Act
+        let result = KvOperation::from_route(&route);
+
+        // Assert
+        assert!(result.is_err());
     }
 }

@@ -161,36 +161,52 @@ mod tests {
 
     #[test]
     fn should_parse_string_from_tlv() {
+        // Arrange
         let mut payload = vec![];
         build_tlv(TAG_ID, b"test-id", &mut payload);
 
+        // Act
         let result = tlv::parse_string(&payload, TAG_ID);
+
+        // Assert
         assert_eq!(result, Some("test-id"));
     }
 
     #[test]
     fn should_parse_u32_from_tlv() {
+        // Arrange
         let mut payload = vec![];
         build_tlv(TAG_LEASE, &123u32.to_be_bytes(), &mut payload);
 
+        // Act
         let result = tlv::parse_u32(&payload, TAG_LEASE);
+
+        // Assert
         assert_eq!(result, Some(123));
     }
 
     #[test]
     fn should_build_success_response() {
+        // Arrange
         let body = b"test body";
+
+        // Act
         let response = response::success(Some(body));
 
+        // Assert
         let parsed = tlv::parse_bytes(&response, TAG_BODY);
         assert_eq!(parsed, Some(body.to_vec()));
     }
 
     #[test]
     fn should_build_error_response() {
+        // Arrange
         let message = "test error";
+
+        // Act
         let response = response::error(message);
 
+        // Assert
         let parsed = tlv::parse_string(&response, TAG_ERR_MSG);
         assert_eq!(parsed, Some(message));
     }
