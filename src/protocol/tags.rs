@@ -93,6 +93,9 @@ pub const TAG_AREA_SEQ: u8 = 0xB0;
 /// Timestamp for stream events (u64 BE, epoch seconds).
 pub const TAG_TIMESTAMP: u8 = 0xB1;
 
+/// Current area watermark for stream reads (u64 BE).
+pub const TAG_WATERMARK: u8 = 0x12;
+
 // ---------------------------------------------------------------------------
 // Control / error / auth TLVs
 // ---------------------------------------------------------------------------

@@ -35,15 +35,19 @@ impl KvStoreAdapter {
     /// Put a key-value pair in a route namespace
     pub fn put(&self, route: &str, key: &str, value: Vec<u8>) -> Result<(), String> {
         let storage_key = Self::build_key(route, key);
-        self.kv.put(DEFAULT_CF, &value, &storage_key)
+        self.kv
+            .put(DEFAULT_CF, &value, &storage_key)
             .map_err(|e| format!("Put error: {:?}", e))
     }
 
     /// Get a value by key
     pub fn get(&self, route: &str, key: &str) -> Result<Option<Vec<u8>>, String> {
         let storage_key = Self::build_key(route, key);
-        match self.kv.get(DEFAULT_CF, &storage_key)
-            .map_err(|e| format!("Get error: {:?}", e))? {
+        match self
+            .kv
+            .get(DEFAULT_CF, &storage_key)
+            .map_err(|e| format!("Get error: {:?}", e))?
+        {
             Some(bytes) => Ok(Some(bytes.to_vec())),
             None => Ok(None),
         }
@@ -52,7 +56,8 @@ impl KvStoreAdapter {
     /// Delete a key
     pub fn delete(&self, route: &str, key: &str) -> Result<(), String> {
         let storage_key = Self::build_key(route, key);
-        self.kv.delete(DEFAULT_CF, &storage_key)
+        self.kv
+            .delete(DEFAULT_CF, &storage_key)
             .map_err(|e| format!("Delete error: {:?}", e))
     }
 
@@ -72,7 +77,9 @@ impl KvStoreAdapter {
         end_storage_key.push(b'/');
         end_storage_key.push(0xFF); // Max byte to scan entire route namespace
 
-        let results = self.kv.scan(DEFAULT_CF, &start_storage_key, &end_storage_key)
+        let results = self
+            .kv
+            .scan(DEFAULT_CF, &start_storage_key, &end_storage_key)
             .map_err(|e| format!("Scan error: {:?}", e))?;
 
         // Extract keys and values, removing the route prefix
@@ -118,14 +125,17 @@ impl KvStoreAdapter {
         let end_storage_key = Self::build_key(route, end_key);
 
         // Get all keys in range
-        let results = self.kv.scan(DEFAULT_CF, &start_storage_key, &end_storage_key)
+        let results = self
+            .kv
+            .scan(DEFAULT_CF, &start_storage_key, &end_storage_key)
             .map_err(|e| format!("Scan error: {:?}", e))?;
 
         let count = results.len() as u64;
 
         // Delete them one by one (Midge doesn't have delete_batch)
         for (key_bytes, _) in results {
-            self.kv.delete(DEFAULT_CF, &key_bytes)
+            self.kv
+                .delete(DEFAULT_CF, &key_bytes)
                 .map_err(|e| format!("Delete error: {:?}", e))?;
         }
 

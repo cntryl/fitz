@@ -4,7 +4,7 @@
 //! we provide helper functions for creating Midge instances with
 //! appropriate configurations using Midge's factory methods.
 
-use cntryl_midge::{MidgeEngine, MidgeOptions, StorageMode, KvStore};
+use cntryl_midge::{KvStore, MidgeEngine, MidgeOptions, StorageMode};
 
 use std::path::Path;
 use std::sync::Arc;
@@ -16,8 +16,7 @@ pub fn create_memory_store() -> Result<Arc<dyn KvStore>, String> {
         ..Default::default()
     };
     let engine = Arc::new(
-        MidgeEngine::open(opts)
-            .map_err(|e| format!("Failed to create memory store: {:?}", e))?
+        MidgeEngine::open(opts).map_err(|e| format!("Failed to create memory store: {:?}", e))?,
     );
     Ok(Arc::new(engine.as_kv_store()) as Arc<dyn KvStore>)
 }
@@ -32,7 +31,7 @@ pub fn create_local_store<P: AsRef<Path>>(path: P) -> Result<Arc<dyn KvStore>, S
     };
     let engine = Arc::new(
         MidgeEngine::open(opts)
-            .map_err(|e| format!("Failed to create local disk store: {:?}", e))?
+            .map_err(|e| format!("Failed to create local disk store: {:?}", e))?,
     );
     Ok(Arc::new(engine.as_kv_store()) as Arc<dyn KvStore>)
 }
@@ -42,7 +41,6 @@ pub fn create_cloud_store(_cloud_config: &str) -> Result<Arc<dyn KvStore>, Strin
     // TODO: Implement cloud storage configuration once midge supports it
     Err("Cloud storage not yet supported".to_string())
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -227,15 +227,13 @@ impl RouteTableShard {
 
             if seg == "*" {
                 if let Some(child) = node.wildcard_child.as_mut() {
-                    let prune =
-                        remove_rec(child, segments, sub_id, is_trailing, depth + 1);
+                    let prune = remove_rec(child, segments, sub_id, is_trailing, depth + 1);
                     if prune {
                         node.wildcard_child = None;
                     }
                 }
             } else if let Some(child) = node.children.get_mut(seg) {
-                let prune =
-                    remove_rec(child, segments, sub_id, is_trailing, depth + 1);
+                let prune = remove_rec(child, segments, sub_id, is_trailing, depth + 1);
                 if prune {
                     node.children.remove(seg);
                 }
@@ -244,7 +242,13 @@ impl RouteTableShard {
             node.is_empty()
         }
 
-        remove_rec(&mut trie.root, segments_to_traverse, sub_id, has_trailing_wildcard, 0);
+        remove_rec(
+            &mut trie.root,
+            segments_to_traverse,
+            sub_id,
+            has_trailing_wildcard,
+            0,
+        );
     }
 
     /// Zero-alloc match inside a shard:
@@ -277,7 +281,11 @@ impl RouteTableShard {
             count: &mut usize,
         ) {
             if depth == segs.len() {
-                for id in node.exact_subs.iter().chain(node.trailing_wildcard_subs.iter()) {
+                for id in node
+                    .exact_subs
+                    .iter()
+                    .chain(node.trailing_wildcard_subs.iter())
+                {
                     if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
                         scratch_ids[*count] = id;
                         *count += 1;
@@ -297,7 +305,11 @@ impl RouteTableShard {
             }
 
             // Hierarchical prefix + trailing wildcard match
-            for id in node.exact_subs.iter().chain(node.trailing_wildcard_subs.iter()) {
+            for id in node
+                .exact_subs
+                .iter()
+                .chain(node.trailing_wildcard_subs.iter())
+            {
                 if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
                     scratch_ids[*count] = id;
                     *count += 1;
@@ -365,11 +377,7 @@ impl RouteTable {
     /// - route split into stack array
     /// - scratch_ids is stack array
     /// - no heap allocations until we build the final Vec
-    pub fn matching_subscribers(
-        &self,
-        rf: RouteFamilyId,
-        route: &str,
-    ) -> Vec<RtSubscription> {
+    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
         // Split route once into stack-backed array
         let mut segs: [&str; MAX_SEGMENTS] = [""; MAX_SEGMENTS];
         let mut seg_len = 0;

@@ -58,7 +58,9 @@ impl DomainRegistry {
         channel_id: u32,
         sender: SubSender,
     ) -> Result<u64, String> {
-        self.stream.subscribe(rf, route_pattern, channel_id, sender).await
+        self.stream
+            .subscribe(rf, route_pattern, channel_id, sender)
+            .await
     }
 
     /// Unsubscribe from notifications
@@ -80,7 +82,7 @@ impl DomainRegistry {
         let rpc = Arc::new(RpcDomain::new());
         let queue = Arc::new(QueueDomain::new());
         let lease = Arc::new(LeaseDomain::new());
-        
+
         // Create storage backend for stream domain
         let kv_store = midge_adapter::create_memory_store()
             .expect("Failed to create memory store for stream domain");

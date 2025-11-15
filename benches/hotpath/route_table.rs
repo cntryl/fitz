@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::routing::{RouteTable, RtSubscription, DEFAULT_RF};
 use fitz::core::domain::SubSender;
+use fitz::routing::{RouteTable, RtSubscription, DEFAULT_RF};
 use tokio::sync::mpsc;
 
 #[path = "../config.rs"]
@@ -24,7 +24,14 @@ fn make_sub(id: u64, pattern: String, sender: &SubSender) -> RtSubscription {
 // =============================================================================
 
 fn bench_route_table_insert(c: &mut Criterion) {
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     c.bench_function("route_table_insert", |b| {
         b.iter(|| {
@@ -39,7 +46,14 @@ fn bench_route_table_insert(c: &mut Criterion) {
 }
 
 fn bench_route_table_remove(c: &mut Criterion) {
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     c.bench_function("route_table_remove", |b| {
         b.iter(|| {
@@ -58,7 +72,14 @@ fn bench_route_table_remove(c: &mut Criterion) {
 
 fn bench_route_table_match_exact(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     for i in 0..100 {
         let pat = format!("scheme://realm/area{}/resource/op", i);
@@ -74,7 +95,14 @@ fn bench_route_table_match_exact(c: &mut Criterion) {
 
 fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     rt.insert(DEFAULT_RF, make_sub(1, "*".to_string(), &tx));
 
@@ -92,7 +120,14 @@ fn bench_route_table_match_global_wildcard(c: &mut Criterion) {
 
 fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     for i in 0..20 {
         let pat = format!("scheme://realm/area{}/*", i);
@@ -108,7 +143,14 @@ fn bench_route_table_match_trailing_wildcard(c: &mut Criterion) {
 
 fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     for i in 0..20 {
         let pat = format!("scheme://realm/*/resource{}/op", i);
@@ -124,7 +166,14 @@ fn bench_route_table_match_mid_path_wildcard(c: &mut Criterion) {
 
 fn bench_route_table_match_none(c: &mut Criterion) {
     let mut rt = RouteTable::new();
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     for i in 0..100 {
         let pat = format!("scheme://other/area{}/resource/op", i);
@@ -139,7 +188,14 @@ fn bench_route_table_match_none(c: &mut Criterion) {
 }
 
 fn bench_route_table_cleanup_channel(c: &mut Criterion) {
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     c.bench_function("route_table_cleanup_channel", |b| {
         b.iter(|| {
@@ -172,7 +228,14 @@ fn bench_route_table_cleanup_channel(c: &mut Criterion) {
 
 fn bench_route_table_match_exact_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_match_exact_scaling");
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     for &n in &[1_000, 10_000, 100_000] {
         let mut rt = RouteTable::new();
@@ -197,7 +260,14 @@ fn bench_route_table_match_exact_scaling(c: &mut Criterion) {
 
 fn bench_route_table_match_wildcard_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_match_wildcard_scaling");
-    let (tx, _rx) = mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(100);
+    let (tx, _rx) = mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(100);
 
     for &n in &[1_000, 10_000, 100_000] {
         let mut rt = RouteTable::new();

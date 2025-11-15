@@ -5,7 +5,6 @@ mod handler;
 mod service;
 pub mod types;
 
-
 // Re-export public API
 pub use handler::StreamDomain;
 pub use service::StreamService;

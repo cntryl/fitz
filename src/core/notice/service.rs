@@ -5,7 +5,7 @@
 //! from crate::core::domain.
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription, RouteFamilyId};
+use crate::routing::{RouteFamilyId, RouteTable, RtSubscription};
 
 #[cfg(test)]
 use crate::routing::DEFAULT_RF;
@@ -32,7 +32,13 @@ impl NoticeService {
 
     /// Subscribe to a route pattern for a specific route family (tenant)
     /// Returns subscription ID
-    pub fn subscribe(&mut self, rf: RouteFamilyId, route_pattern: String, channel_id: u32, sender: SubSender) -> u64 {
+    pub fn subscribe(
+        &mut self,
+        rf: RouteFamilyId,
+        route_pattern: String,
+        channel_id: u32,
+        sender: SubSender,
+    ) -> u64 {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
 
@@ -67,7 +73,13 @@ impl NoticeService {
     /// - Uses SmallVec for dead_subs (typically 0-2 dead subs per publish)
     /// - Early return for no subscribers
     /// - Optimizes single subscriber case (no pre-allocation needed)
-    pub fn publish(&mut self, rf: RouteFamilyId, route: &str, msg_id: Option<&str>, body: &[u8]) -> (usize, usize) {
+    pub fn publish(
+        &mut self,
+        rf: RouteFamilyId,
+        route: &str,
+        msg_id: Option<&str>,
+        body: &[u8],
+    ) -> (usize, usize) {
         let matches = self.route_table.matching_subscribers(rf, route);
 
         // Fast path: no subscribers
@@ -159,7 +171,8 @@ mod tests {
 
         // Act
         let _sub_id = service.subscribe(DEFAULT_RF, "test/route".to_string(), 1, tx);
-        let (delivered, failed) = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
+        let (delivered, failed) =
+            service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
 
         // Assert
         assert_eq!(delivered, 1);
@@ -355,7 +368,12 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         let (tx, mut rx) = mpsc::channel(10);
-        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/critical".to_string(), 1, tx);
+        service.subscribe(
+            DEFAULT_RF,
+            "notice://acme/prod/syslog/critical".to_string(),
+            1,
+            tx,
+        );
 
         // Act & Assert
         let matching_routes = vec![
@@ -428,7 +446,12 @@ mod tests {
         service.subscribe(DEFAULT_RF, "*".to_string(), 1, tx1); // Global
         service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 2, tx2); // Realm
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 3, tx3); // Area
-        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/error".to_string(), 4, tx4); // Exact
+        service.subscribe(
+            DEFAULT_RF,
+            "notice://acme/prod/syslog/error".to_string(),
+            4,
+            tx4,
+        ); // Exact
 
         // Act
         let route = "notice://acme/prod/syslog/error";
@@ -485,7 +508,8 @@ mod tests {
         service.subscribe(DEFAULT_RF, "test/*".to_string(), 1, tx);
 
         // Act
-        let (delivered, failed) = service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
+        let (delivered, failed) =
+            service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
 
         // Assert
         assert_eq!(delivered, 1);
@@ -508,8 +532,12 @@ mod tests {
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1, tx);
 
         // Act - publish to non-matching route
-        let (delivered, failed) =
-            service.publish(DEFAULT_RF, "notice://other/staging/app/info", None, b"orphan message");
+        let (delivered, failed) = service.publish(
+            DEFAULT_RF,
+            "notice://other/staging/app/info",
+            None,
+            b"orphan message",
+        );
 
         // Assert - no deliveries
         assert_eq!(delivered, 0);

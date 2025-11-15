@@ -1,7 +1,7 @@
 //! RPC domain service - handles request/reply coordination and inbox management
 
 use crate::core::domain::SubSender;
-use crate::routing::{RouteTable, RtSubscription, RouteFamilyId};
+use crate::routing::{RouteFamilyId, RouteTable, RtSubscription};
 use fxhash::FxHashMap;
 
 /// Inbox ownership and security context
@@ -173,7 +173,11 @@ impl RpcService {
 
     /// Get matching inbox subscribers for a reply route
     #[inline]
-    pub fn matching_inbox_subscribers(&self, rf: RouteFamilyId, inbox_route: &str) -> Vec<RtSubscription> {
+    pub fn matching_inbox_subscribers(
+        &self,
+        rf: RouteFamilyId,
+        inbox_route: &str,
+    ) -> Vec<RtSubscription> {
         self.inbox_routes.matching_subscribers(rf, inbox_route)
     }
 

@@ -327,7 +327,7 @@ impl Domain for RpcDomain {
                     reply_route,
                     body,
                 )
-                    .await
+                .await
             };
 
             DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(

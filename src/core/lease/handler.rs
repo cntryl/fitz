@@ -8,7 +8,7 @@ use crate::protocol::tags::*;
 use std::sync::Arc;
 
 /// Lease domain handler - routes all lease:// operations
-/// 
+///
 /// Architecture:
 /// - Instance-owned LeaseService for per-domain isolation
 /// - Shared Arc<LeaseService> allows multi-tenant access via route_family

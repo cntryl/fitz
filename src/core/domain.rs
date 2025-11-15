@@ -87,7 +87,8 @@ pub trait Domain: Send + Sync {
     fn unsubscribe<'a>(
         &'a self,
         _subscription_id: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
+    {
         Box::pin(async move { Err("unsubscribe not supported".to_string()) })
     }
 }

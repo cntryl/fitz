@@ -146,8 +146,12 @@ impl Domain for ControlDomain {
                     let msg_id = msg_id_string.as_deref();
 
                     let mut notice_service = self.notice_service.write().await;
-                    let (_delivered, _failed) =
-                        notice_service.publish(request.route_family, &request.route_str, msg_id, &response_body);
+                    let (_delivered, _failed) = notice_service.publish(
+                        request.route_family,
+                        &request.route_str,
+                        msg_id,
+                        &response_body,
+                    );
                     drop(notice_service);
 
                     // Build TLV-encoded response

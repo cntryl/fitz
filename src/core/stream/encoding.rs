@@ -49,7 +49,9 @@ pub fn decode_event(bytes: &[u8]) -> Result<StreamEvent, String> {
     let sequence = find_tlv(bytes, TAG_SEQ)
         .and_then(|b| {
             if b.len() == 8 {
-                Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                Some(u64::from_be_bytes([
+                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                ]))
             } else {
                 None
             }
@@ -59,7 +61,9 @@ pub fn decode_event(bytes: &[u8]) -> Result<StreamEvent, String> {
     // Parse TAG_AREA_SEQ (optional)
     let area_seq = find_tlv(bytes, TAG_AREA_SEQ).and_then(|b| {
         if b.len() == 8 {
-            Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+            Some(u64::from_be_bytes([
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+            ]))
         } else {
             None
         }
@@ -77,7 +81,9 @@ pub fn decode_event(bytes: &[u8]) -> Result<StreamEvent, String> {
     let created_at = find_tlv(bytes, TAG_TIMESTAMP)
         .and_then(|b| {
             if b.len() == 8 {
-                Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                Some(u64::from_be_bytes([
+                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                ]))
             } else {
                 None
             }

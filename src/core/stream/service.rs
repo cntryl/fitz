@@ -10,9 +10,13 @@
 //! - 0x01 0x04 {rf} {area} → Area discovery marker
 //! - 0x01 0x05 {rf} {area} {resource} → Resource discovery marker
 
+use super::encoding::{decode_event, encode_event};
 use super::types::StreamEvent;
 use crate::core::router::Router;
 use crate::routing::RouteFamilyId;
+use crate::storage::markers::{
+    stream as stream_prefixes, STREAM_DISCOVERY_MARKER, STREAM_DOMAIN_PREFIX,
+};
 use crate::storage::traits::KvStore;
 use cntryl_midge::ColumnFamilyId;
 use std::collections::{BTreeMap, HashMap};
@@ -20,23 +24,20 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Stream domain prefix marker
-const DOMAIN_PREFIX: u8 = 0x01;
+const DOMAIN_PREFIX: u8 = STREAM_DOMAIN_PREFIX;
 
 /// Index type markers (second byte after domain prefix)
-const IDX_RESOURCE_EVENT: u8 = 0x01;
-const IDX_AREA_EVENT: u8 = 0x02;
-const IDX_WATERMARK: u8 = 0x03;
-const IDX_AREA_DISCOVERY: u8 = 0x04;
-const IDX_RESOURCE_DISCOVERY: u8 = 0x05;
-
-/// Discovery marker value written to KvStore
-const DISCOVERY_MARKER: &[u8] = &[0x01];
+const IDX_RESOURCE_EVENT: u8 = stream_prefixes::RESOURCE_EVENT;
+const IDX_AREA_EVENT: u8 = stream_prefixes::AREA_EVENT;
+const IDX_WATERMARK: u8 = stream_prefixes::WATERMARK;
+const IDX_AREA_DISCOVERY: u8 = stream_prefixes::AREA_DISCOVERY;
+const IDX_RESOURCE_DISCOVERY: u8 = stream_prefixes::RESOURCE_DISCOVERY;
 
 /// Reservation status for area_seq ranges
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReservationStatus {
-    Reserved,   // Reserved but not yet committed
-    Committed,  // Committed and visible
+    Reserved,  // Reserved but not yet committed
+    Committed, // Committed and visible
 }
 
 /// Area stream state tracking for watermark management
@@ -146,23 +147,110 @@ impl StreamService {
             .get_mut(&txn_id)
             .ok_or("Transaction not found or already committed".to_string())?;
 
+        // Validate client-provided sequence
+        let cf = ColumnFamilyId(rf);
+
+        // Check for sequence gaps (sequences must be contiguous)
+        let start_key = Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, 0);
+        let end_key = Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, u64::MAX);
+        let existing_sequences: std::collections::BTreeSet<u64> = self
+            .kv_store
+            .scan(cf, &start_key, &end_key)
+            .map_err(|e| format!("KvStore error checking sequence gaps: {:?}", e))?
+            .into_iter()
+            .filter_map(|(_, value)| decode_event(&value).ok().map(|e| e.sequence))
+            .collect();
+
+        if !existing_sequences.is_empty() && !existing_sequences.contains(&event.sequence) {
+            // If there are existing events and this sequence doesn't exist yet,
+            // it must be exactly max + 1
+            let max_seq = existing_sequences.iter().max().unwrap();
+            if event.sequence != max_seq + 1 {
+                return Err(format!(
+                    "Sequence gap detected: expected {}, got {}",
+                    max_seq + 1,
+                    event.sequence
+                ));
+            }
+        }
+        // If sequence already exists or no existing events, allow it (check conflicts below)
+
+        // Check if stream is already closed (has is_end=true event)
+        let start_key = Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, 0);
+        let end_key = Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, u64::MAX);
+        let existing_events = self
+            .kv_store
+            .scan(cf, &start_key, &end_key)
+            .map_err(|e| format!("KvStore error checking stream closure: {:?}", e))?;
+
+        for (_, value) in existing_events {
+            let existing_event = decode_event(&value).map_err(|e| {
+                format!("Failed to decode existing event for closure check: {:?}", e)
+            })?;
+            if existing_event.is_end {
+                return Err("Cannot append to closed stream".to_string());
+            }
+        }
+
+        // Check for sequence conflicts (same sequence, different body)
+        let resource_key =
+            Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, event.sequence);
+        if let Some(existing_data) = self
+            .kv_store
+            .get(cf, &resource_key)
+            .map_err(|e| format!("KvStore error checking for conflicts: {:?}", e))?
+        {
+            // Decode existing event to compare
+            let existing_event = decode_event(&existing_data)
+                .map_err(|e| format!("Failed to decode existing event: {:?}", e))?;
+
+            // If same sequence exists with different body, it's a conflict
+            if existing_event.body != event.body {
+                return Err(format!(
+                    "Sequence conflict: sequence {} already exists with different body",
+                    event.sequence
+                ));
+            }
+            // If same sequence with same body, it's idempotent - allow it
+        }
+
+        // Check if stream is already closed (has is_end=true event)
+        if event.is_end {
+            // Check if any existing event in this resource has is_end=true
+            let start_key = Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, 0);
+            let end_key = Self::key_resource_event(&txn.realm, &txn.area, &txn.resource, u64::MAX);
+            let existing_events = self
+                .kv_store
+                .scan(cf, &start_key, &end_key)
+                .map_err(|e| format!("KvStore error checking stream closure: {:?}", e))?;
+
+            for (_, value) in existing_events {
+                let existing_event = decode_event(&value).map_err(|e| {
+                    format!("Failed to decode existing event for closure check: {:?}", e)
+                })?;
+                if existing_event.is_end {
+                    return Err("Cannot append to closed stream".to_string());
+                }
+            }
+        }
+
         let current_area_seq = txn.first_area_seq + txn.event_count as u64;
         let realm = txn.realm.clone();
         let area = txn.area.clone();
-        let resource = txn.resource.clone();
-        
+
         // Reserve area_seq for this event
         drop(transactions);
         let mut area_states = self.area_states.lock().await;
         let area_state = area_states.entry((rf, area.clone())).or_default();
-        area_state.reserved_ranges.insert(current_area_seq, ReservationStatus::Reserved);
+        area_state
+            .reserved_ranges
+            .insert(current_area_seq, ReservationStatus::Reserved);
         area_state.next_seq = current_area_seq + 1;
         drop(area_states);
-        
+
         // Write event immediately to both indices
         let encoded = encode_event(&event);
-        let cf = ColumnFamilyId(rf);
-        
+
         // Write to area event index (server-assigned sequence)
         let area_key = Self::key_area_event(&realm, &area, current_area_seq);
         self.kv_store
@@ -170,14 +258,14 @@ impl StreamService {
             .map_err(|e| format!("Failed to write area event: {:?}", e))?;
 
         // Write to resource event index (client-assigned sequence)
-        let resource_key = Self::key_resource_event(&realm, &area, &resource, event.sequence);
         self.kv_store
             .put(cf, &resource_key, &encoded)
             .map_err(|e| format!("Failed to write resource event: {:?}", e))?;
 
         // Increment event count
         let mut transactions = self.active_transactions.lock().await;
-        let txn = transactions.get_mut(&txn_id)
+        let txn = transactions
+            .get_mut(&txn_id)
             .ok_or("Transaction not found".to_string())?;
         txn.event_count += 1;
 
@@ -207,7 +295,7 @@ impl StreamService {
         // Mark area as discovered
         let area_discovery_key = Self::key_area_discovery(&txn.realm, &txn.area);
         self.kv_store
-            .put(cf, &area_discovery_key, DISCOVERY_MARKER)
+            .put(cf, &area_discovery_key, STREAM_DISCOVERY_MARKER)
             .map_err(|e| format!("Failed to write area discovery: {:?}", e))?;
 
         // Mark all reserved sequences as committed
@@ -215,31 +303,31 @@ impl StreamService {
         let realm = txn.realm.clone();
         let area = txn.area.clone();
         let first_seq = txn.first_area_seq;
-        
+
         drop(transactions);
-        
+
         let mut area_states = self.area_states.lock().await;
         let area_state = area_states.entry((rf, area.clone())).or_default();
-        
+
         // Mark all sequences in this transaction as Committed
         for seq in first_seq..=final_area_seq {
             if let Some(status) = area_state.reserved_ranges.get_mut(&seq) {
                 *status = ReservationStatus::Committed;
             }
         }
-        
+
         // Advance watermark to highest contiguous committed sequence
         // Watermark starts at 0 and represents the highest committed area_seq
         // Scan from current watermark, advancing while sequences are Committed
         let mut scan_seq = area_state.watermark;
         let mut highest_committed = area_state.watermark;
-        
+
         // Special case: if watermark is 0 and we're committing from 0, we need to check seq 0
         if area_state.watermark == 0 && first_seq == 0 {
             scan_seq = 0;
             highest_committed = 0;
         }
-        
+
         loop {
             if let Some(status) = area_state.reserved_ranges.get(&scan_seq) {
                 if matches!(status, ReservationStatus::Committed) {
@@ -256,15 +344,15 @@ impl StreamService {
                 break;
             }
         }
-        
+
         // Update in-memory watermark to highest contiguous committed
         area_state.watermark = highest_committed;
-        
+
         // Persist watermark to KvStore
         let watermark_key = Self::key_watermark(&realm, &area);
         let watermark_bytes = highest_committed.to_be_bytes();
         drop(area_states);
-        
+
         self.kv_store
             .put(cf, &watermark_key, &watermark_bytes)
             .map_err(|e| format!("Failed to update watermark: {:?}", e))?;
@@ -279,12 +367,12 @@ impl StreamService {
         let txn = transactions
             .remove(&txn_id)
             .ok_or("Transaction not found".to_string())?;
-        
+
         // Clear reserved sequences so watermark can advance past them
         if txn.event_count > 0 {
             let final_area_seq = txn.first_area_seq + (txn.event_count - 1) as u64;
             drop(transactions);
-            
+
             let mut area_states = self.area_states.lock().await;
             if let Some(area_state) = area_states.get_mut(&(rf, txn.area.clone())) {
                 for seq in txn.first_area_seq..=final_area_seq {
@@ -292,7 +380,7 @@ impl StreamService {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -323,16 +411,24 @@ impl StreamService {
 
     /// Build watermark key: {DOMAIN_PREFIX} {IDX_WATERMARK} {realm} {area}
     fn key_watermark(realm: &str, area: &str) -> Vec<u8> {
-        lexkey::LexKey::encode_composite(&[&[DOMAIN_PREFIX, IDX_WATERMARK], realm.as_bytes(), area.as_bytes()])
-            .as_bytes()
-            .to_vec()
+        lexkey::LexKey::encode_composite(&[
+            &[DOMAIN_PREFIX, IDX_WATERMARK],
+            realm.as_bytes(),
+            area.as_bytes(),
+        ])
+        .as_bytes()
+        .to_vec()
     }
 
     /// Build area discovery key: {DOMAIN_PREFIX} {IDX_AREA_DISCOVERY} {realm} {area}
     fn key_area_discovery(realm: &str, area: &str) -> Vec<u8> {
-        lexkey::LexKey::encode_composite(&[&[DOMAIN_PREFIX, IDX_AREA_DISCOVERY], realm.as_bytes(), area.as_bytes()])
-            .as_bytes()
-            .to_vec()
+        lexkey::LexKey::encode_composite(&[
+            &[DOMAIN_PREFIX, IDX_AREA_DISCOVERY],
+            realm.as_bytes(),
+            area.as_bytes(),
+        ])
+        .as_bytes()
+        .to_vec()
     }
 
     /// Build resource discovery key: {DOMAIN_PREFIX} {IDX_RESOURCE_DISCOVERY} {realm} {area} {resource}
@@ -348,7 +444,12 @@ impl StreamService {
     }
 
     /// Get current watermark for area (highest finalized area_seq)
-    pub async fn get_watermark(&self, rf: RouteFamilyId, realm: &str, area: &str) -> Result<u64, String> {
+    pub async fn get_watermark(
+        &self,
+        rf: RouteFamilyId,
+        realm: &str,
+        area: &str,
+    ) -> Result<u64, String> {
         let key = Self::key_watermark(realm, area);
         let cf = ColumnFamilyId(rf);
         match self
@@ -391,8 +492,8 @@ impl StreamService {
 
         let mut events = Vec::new();
         for (_, value) in results.into_iter().take(limit) {
-            let event = decode_event(&value)
-                .map_err(|e| format!("Failed to decode event: {:?}", e))?;
+            let event =
+                decode_event(&value).map_err(|e| format!("Failed to decode event: {:?}", e))?;
             events.push(event);
         }
 
@@ -433,8 +534,8 @@ impl StreamService {
 
         let mut events = Vec::new();
         for (_, value) in results.into_iter().take(limit) {
-            let event = decode_event(&value)
-                .map_err(|e| format!("Failed to decode event: {:?}", e))?;
+            let event =
+                decode_event(&value).map_err(|e| format!("Failed to decode event: {:?}", e))?;
             events.push(event);
         }
 
@@ -460,7 +561,8 @@ impl StreamService {
         channel_id: u32,
         sender: crate::core::domain::SubSender,
     ) -> u64 {
-        self.subscriptions.subscribe(route_pattern, channel_id, sender)
+        self.subscriptions
+            .subscribe(route_pattern, channel_id, sender)
     }
 
     /// Unsubscribe from stream notifications
@@ -473,16 +575,6 @@ impl StreamService {
     pub fn cleanup_channel(&mut self, _rf: RouteFamilyId, channel_id: u32) {
         self.subscriptions.cleanup_channel(channel_id);
     }
-}
-
-/// Encode event to bytes (simple JSON for now)
-fn encode_event(event: &StreamEvent) -> Vec<u8> {
-    serde_json::to_vec(event).expect("Failed to encode event")
-}
-
-/// Decode event from bytes
-fn decode_event(bytes: &[u8]) -> Result<StreamEvent, String> {
-    serde_json::from_slice(bytes).map_err(|e| format!("Failed to decode event: {:?}", e))
 }
 
 #[cfg(test)]
@@ -508,9 +600,15 @@ mod tests {
         };
 
         // Act
-        let txn_id = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
-        svc.append_event(txn_id, TEST_RF, event).await.expect("Append");
-        let (first_seq, last_seq, count) = svc.commit_append(txn_id, TEST_RF).await.expect("Commit");
+        let txn_id = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin");
+        svc.append_event(txn_id, TEST_RF, event)
+            .await
+            .expect("Append");
+        let (first_seq, last_seq, count) =
+            svc.commit_append(txn_id, TEST_RF).await.expect("Commit");
 
         // Assert
         assert_eq!(first_seq, 0);
@@ -523,7 +621,7 @@ mod tests {
         // Arrange
         let kv_store = midge_adapter::create_memory_store().expect("Create store");
         let svc = StreamService::new(kv_store);
-        
+
         let event1 = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
@@ -544,13 +642,23 @@ mod tests {
         };
 
         // Act - First transaction
-        let txn1 = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin 1");
-        svc.append_event(txn1, TEST_RF, event1).await.expect("Append 1");
+        let txn1 = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin 1");
+        svc.append_event(txn1, TEST_RF, event1)
+            .await
+            .expect("Append 1");
         let (first1, last1, _) = svc.commit_append(txn1, TEST_RF).await.expect("Commit 1");
 
         // Act - Second transaction
-        let txn2 = svc.begin_append(TEST_RF, "realm1", "area1", "resource2").await.expect("Begin 2");
-        svc.append_event(txn2, TEST_RF, event2).await.expect("Append 2");
+        let txn2 = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource2")
+            .await
+            .expect("Begin 2");
+        svc.append_event(txn2, TEST_RF, event2)
+            .await
+            .expect("Append 2");
         let (first2, last2, _) = svc.commit_append(txn2, TEST_RF).await.expect("Commit 2");
 
         // Assert
@@ -565,7 +673,7 @@ mod tests {
         // Arrange
         let kv_store = midge_adapter::create_memory_store().expect("Create store");
         let svc = StreamService::new(kv_store);
-        
+
         let event1 = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
@@ -584,14 +692,23 @@ mod tests {
             created_at: 1234567891,
             is_end: false,
         };
-        
-        let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
-        svc.append_event(txn, TEST_RF, event1).await.expect("Append 1");
-        svc.append_event(txn, TEST_RF, event2).await.expect("Append 2");
+
+        let txn = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin");
+        svc.append_event(txn, TEST_RF, event1)
+            .await
+            .expect("Append 1");
+        svc.append_event(txn, TEST_RF, event2)
+            .await
+            .expect("Append 2");
         svc.commit_append(txn, TEST_RF).await.expect("Commit");
 
         // Act
-        let result = svc.read(TEST_RF, "realm1", "area1", "resource1", 0, 100).await;
+        let result = svc
+            .read(TEST_RF, "realm1", "area1", "resource1", 0, 100)
+            .await;
 
         // Assert
         assert!(result.is_ok());
@@ -606,8 +723,11 @@ mod tests {
         // Arrange
         let kv_store = midge_adapter::create_memory_store().expect("Create store");
         let svc = StreamService::new(kv_store);
-        
-        let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
+
+        let txn = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin");
         for i in 0..5 {
             let event = StreamEvent {
                 sequence: i,
@@ -623,7 +743,9 @@ mod tests {
         svc.commit_append(txn, TEST_RF).await.expect("Commit");
 
         // Act
-        let result = svc.read(TEST_RF, "realm1", "area1", "resource1", 0, 2).await;
+        let result = svc
+            .read(TEST_RF, "realm1", "area1", "resource1", 0, 2)
+            .await;
 
         // Assert
         assert!(result.is_ok());
@@ -647,10 +769,16 @@ mod tests {
         };
 
         // Act
-        let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
+        let txn = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin");
         svc.append_event(txn, TEST_RF, event).await.expect("Append");
         svc.commit_append(txn, TEST_RF).await.expect("Commit");
-        let watermark = svc.get_watermark(TEST_RF, "realm1", "area1").await.expect("Get watermark");
+        let watermark = svc
+            .get_watermark(TEST_RF, "realm1", "area1")
+            .await
+            .expect("Get watermark");
 
         // Assert
         assert_eq!(watermark, 0);
@@ -663,7 +791,10 @@ mod tests {
         let svc = StreamService::new(kv_store);
 
         // Act
-        let watermark = svc.get_watermark(TEST_RF, "realm1", "area1").await.expect("Get watermark");
+        let watermark = svc
+            .get_watermark(TEST_RF, "realm1", "area1")
+            .await
+            .expect("Get watermark");
 
         // Assert
         assert_eq!(watermark, 0);
@@ -674,7 +805,7 @@ mod tests {
         // Arrange
         let kv_store = midge_adapter::create_memory_store().expect("Create store");
         let svc = StreamService::new(kv_store);
-        
+
         let event1 = StreamEvent {
             sequence: 0,
             resource: "resource1".to_string(),
@@ -693,11 +824,18 @@ mod tests {
             created_at: 1234567891,
             is_end: false,
         };
-        
+
         // Events must be committed to be readable
-        let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
-        svc.append_event(txn, TEST_RF, event1).await.expect("Append 1");
-        svc.append_event(txn, TEST_RF, event2).await.expect("Append 2");
+        let txn = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin");
+        svc.append_event(txn, TEST_RF, event1)
+            .await
+            .expect("Append 1");
+        svc.append_event(txn, TEST_RF, event2)
+            .await
+            .expect("Append 2");
         svc.commit_append(txn, TEST_RF).await.expect("Commit");
 
         // Act
@@ -742,13 +880,19 @@ mod tests {
         };
 
         // Act
-        let txn = svc.begin_append(TEST_RF, "realm1", "area1", "resource1").await.expect("Begin");
+        let txn = svc
+            .begin_append(TEST_RF, "realm1", "area1", "resource1")
+            .await
+            .expect("Begin");
         svc.append_event(txn, TEST_RF, event).await.expect("Append");
         let rollback_result = svc.rollback_append(txn, TEST_RF).await;
 
         // Assert
         assert!(rollback_result.is_ok());
-        let watermark = svc.get_watermark(TEST_RF, "realm1", "area1").await.expect("Get watermark");
+        let watermark = svc
+            .get_watermark(TEST_RF, "realm1", "area1")
+            .await
+            .expect("Get watermark");
         assert_eq!(watermark, 0); // Watermark not updated, events remain but "uncommitted"
     }
 
@@ -799,5 +943,216 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn should_reject_sequence_gaps() {
+        // Arrange
+        let kv_store = midge_adapter::create_memory_store().expect("Create store");
+        let service = StreamService::new(kv_store);
+        let txn = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+
+        let event1 = StreamEvent {
+            sequence: 0,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"first".to_vec(),
+            metadata: None,
+            created_at: 1234567890,
+            is_end: false,
+        };
+        let event2 = StreamEvent {
+            sequence: 2, // Gap! Skips sequence 1
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"third".to_vec(),
+            metadata: None,
+            created_at: 1234567891,
+            is_end: false,
+        };
+
+        // Act
+        service.append_event(txn, TEST_RF, event1).await.unwrap();
+        let result = service.append_event(txn, TEST_RF, event2).await;
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Sequence gap"));
+    }
+
+    #[tokio::test]
+    async fn should_reject_sequence_conflicts() {
+        // Arrange
+        let kv_store = midge_adapter::create_memory_store().expect("Create store");
+        let service = StreamService::new(kv_store);
+        let txn1 = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+        let txn2 = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+
+        let event1 = StreamEvent {
+            sequence: 0,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"first".to_vec(),
+            metadata: None,
+            created_at: 1234567890,
+            is_end: false,
+        };
+        let event2 = StreamEvent {
+            sequence: 0, // Same sequence
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"different".to_vec(), // Different body
+            metadata: None,
+            created_at: 1234567891,
+            is_end: false,
+        };
+
+        // Act
+        service.append_event(txn1, TEST_RF, event1).await.unwrap();
+        service.commit_append(txn1, TEST_RF).await.unwrap(); // Commit first event
+
+        let result = service.append_event(txn2, TEST_RF, event2).await;
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Sequence conflict"));
+    }
+
+    #[tokio::test]
+    async fn should_allow_sequence_idempotency() {
+        // Arrange
+        let kv_store = midge_adapter::create_memory_store().expect("Create store");
+        let service = StreamService::new(kv_store);
+        let txn1 = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+        let txn2 = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+
+        let event1 = StreamEvent {
+            sequence: 0,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"same".to_vec(),
+            metadata: None,
+            created_at: 1234567890,
+            is_end: false,
+        };
+        let event2 = StreamEvent {
+            sequence: 0, // Same sequence
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"same".to_vec(), // Same body
+            metadata: None,
+            created_at: 1234567891,
+            is_end: false,
+        };
+
+        // Act
+        service.append_event(txn1, TEST_RF, event1).await.unwrap();
+        service.commit_append(txn1, TEST_RF).await.unwrap(); // Commit first event
+
+        let result = service.append_event(txn2, TEST_RF, event2).await;
+
+        // Assert
+        assert!(result.is_ok()); // Should allow idempotent append
+    }
+
+    #[tokio::test]
+    async fn should_reject_appends_to_closed_stream() {
+        // Arrange
+        let kv_store = midge_adapter::create_memory_store().expect("Create store");
+        let service = StreamService::new(kv_store);
+        let txn1 = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+        let txn2 = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+
+        let closing_event = StreamEvent {
+            sequence: 0,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"closing".to_vec(),
+            metadata: None,
+            created_at: 1234567890,
+            is_end: true, // This closes the stream
+        };
+        let after_close_event = StreamEvent {
+            sequence: 1,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"after".to_vec(),
+            metadata: None,
+            created_at: 1234567891,
+            is_end: false,
+        };
+
+        // Act
+        service
+            .append_event(txn1, TEST_RF, closing_event)
+            .await
+            .unwrap();
+        service.commit_append(txn1, TEST_RF).await.unwrap(); // Commit to make it visible
+
+        let result = service.append_event(txn2, TEST_RF, after_close_event).await;
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Cannot append to closed stream"));
+    }
+
+    #[tokio::test]
+    async fn should_allow_appending_closing_event_to_open_stream() {
+        // Arrange
+        let kv_store = midge_adapter::create_memory_store().expect("Create store");
+        let service = StreamService::new(kv_store);
+        let txn = service
+            .begin_append(TEST_RF, "realm", "area", "resource")
+            .await
+            .unwrap();
+
+        let event1 = StreamEvent {
+            sequence: 0,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"first".to_vec(),
+            metadata: None,
+            created_at: 1234567890,
+            is_end: false,
+        };
+        let closing_event = StreamEvent {
+            sequence: 1,
+            resource: "resource".to_string(),
+            area_seq: None,
+            body: b"closing".to_vec(),
+            metadata: None,
+            created_at: 1234567891,
+            is_end: true,
+        };
+
+        // Act
+        service.append_event(txn, TEST_RF, event1).await.unwrap();
+        let result = service.append_event(txn, TEST_RF, closing_event).await;
+
+        // Assert
+        assert!(result.is_ok()); // Should allow closing an open stream
     }
 }
