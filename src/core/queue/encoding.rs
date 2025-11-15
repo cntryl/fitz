@@ -12,12 +12,12 @@ use crate::protocol::tags::{
 pub fn parse_tlv_payload(
     payload: &[u8],
 ) -> (
-    Option<String>,        // message_id
-    Option<Vec<u8>>,       // body
-    Option<u32>,           // lease_secs
-    Option<String>,        // delivery_token
-    Option<u64>,           // ttl_secs
-    Option<QueueConfig>,   // config
+    Option<String>,      // message_id
+    Option<Vec<u8>>,     // body
+    Option<u32>,         // lease_secs
+    Option<String>,      // delivery_token
+    Option<u64>,         // ttl_secs
+    Option<QueueConfig>, // config
 ) {
     let mut message_id = None;
     let mut body = None;
@@ -87,7 +87,14 @@ pub fn parse_tlv_payload(
         }
     }
 
-    (message_id, body, lease_secs, delivery_token, ttl_secs, config)
+    (
+        message_id,
+        body,
+        lease_secs,
+        delivery_token,
+        ttl_secs,
+        config,
+    )
 }
 
 /// Build TLV response for enqueue operation

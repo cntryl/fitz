@@ -78,8 +78,8 @@ impl DomainRegistry {
     /// Create a new registry with all domains initialized
     pub fn new() -> Self {
         use crate::core::{
-            control::ControlDomain, kv::KvDomain, lease::LeaseDomain, notice::NoticeDomain, queue::QueueDomain,
-            rpc::RpcDomain, stream::StreamDomain,
+            control::ControlDomain, kv::KvDomain, lease::LeaseDomain, notice::NoticeDomain,
+            queue::QueueDomain, rpc::RpcDomain, stream::StreamDomain,
         };
         use crate::storage::midge_adapter;
 

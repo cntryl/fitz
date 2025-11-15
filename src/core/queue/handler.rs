@@ -58,12 +58,12 @@ impl QueueDomain {
     fn parse_tlv_payload(
         payload: &[u8],
     ) -> (
-        Option<String>,        // message_id
-        Option<Vec<u8>>,       // body
-        Option<u32>,           // lease_secs
-        Option<String>,        // delivery_token
-        Option<u64>,           // ttl_secs
-        Option<QueueConfig>,   // config
+        Option<String>,      // message_id
+        Option<Vec<u8>>,     // body
+        Option<u32>,         // lease_secs
+        Option<String>,      // delivery_token
+        Option<u64>,         // ttl_secs
+        Option<QueueConfig>, // config
     ) {
         parse_tlv_payload(payload)
     }
@@ -132,10 +132,13 @@ impl Domain for QueueDomain {
 
                     // TODO: Implement batch enqueue operation
                     // For now, return a placeholder response with single message ID
-                    let message_ids = vec![format!("msg_{}", std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos())];
+                    let message_ids = vec![format!(
+                        "msg_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_nanos()
+                    )];
                     let response = Self::build_enqueue_response(&message_ids);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
@@ -207,22 +210,32 @@ impl Domain for QueueDomain {
                     // queue://realm/*/*/list -> list all queues in realm
                     if resource == "*" && area != "*" {
                         // List all queues in this realm/area scope
-                        let queues = service.list_queues_in_scope(realm, area).await
+                        let queues = service
+                            .list_queues_in_scope(realm, area)
+                            .await
                             .unwrap_or_else(|_| Vec::new());
                         let response = Self::build_list_response(&queues);
-                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
                     } else if resource == "*" && area == "*" {
                         // List all queues in this realm (realm/*/*/list)
-                        let queues = service.list_queues_in_realm(realm).await
+                        let queues = service
+                            .list_queues_in_realm(realm)
+                            .await
                             .unwrap_or_else(|_| Vec::new());
                         let response = Self::build_list_response(&queues);
-                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
                     } else {
                         // List specific queue route
                         let route = format!("{}/{}/{}", realm, area, resource);
                         let queues = vec![route];
                         let response = Self::build_list_response(&queues);
-                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
                     }
                 }
                 "config" => {
@@ -231,8 +244,13 @@ impl Domain for QueueDomain {
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 _ => {
-                    let error_response = Self::build_error_response(&format!("Unknown queue operation: {}", operation));
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(error_response))
+                    let error_response = Self::build_error_response(&format!(
+                        "Unknown queue operation: {}",
+                        operation
+                    ));
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response,
+                    ))
                 }
             }
         })
@@ -297,7 +315,8 @@ mod tests {
         // Arrange
         let handler = create_test_handler().await;
         let payload = vec![0x01, 0x04, b'b', b'o', b'd', b'y']; // TAG_BODY with "body"
-        let context = create_test_context("queue://test_realm/test_area/resource1/enqueue", payload);
+        let context =
+            create_test_context("queue://test_realm/test_area/resource1/enqueue", payload);
 
         // Act
         let result = handler.handle(context).await;
@@ -405,7 +424,8 @@ mod tests {
     async fn should_reject_missing_area() {
         // Arrange
         let handler = create_test_handler().await;
-        let mut context = create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
+        let mut context =
+            create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
         context.route.area = None;
 
         // Act
@@ -422,7 +442,8 @@ mod tests {
     async fn should_reject_missing_resource() {
         // Arrange
         let handler = create_test_handler().await;
-        let mut context = create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
+        let mut context =
+            create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
         context.route.resource = None;
 
         // Act
@@ -439,7 +460,8 @@ mod tests {
     async fn should_reject_invalid_resource_path_format() {
         // Arrange
         let handler = create_test_handler().await;
-        let context = create_test_context("queue://test_realm/test_area/invalid/path/format", vec![]);
+        let context =
+            create_test_context("queue://test_realm/test_area/invalid/path/format", vec![]);
 
         // Act
         let result = handler.handle(context).await;

@@ -303,10 +303,16 @@ mod tests {
             // Assert
             assert!(result.is_ok(), "Failed to parse operation: {}", op_name);
             match result.unwrap() {
-                KvOperation::BeginTransaction if matches!(expected_op, KvOperation::BeginTransaction) => {},
-                KvOperation::CommitTransaction if matches!(expected_op, KvOperation::CommitTransaction) => {},
-                KvOperation::RollbackTransaction if matches!(expected_op, KvOperation::RollbackTransaction) => {},
-                actual => panic!("Operation {} parsed as {:?}, expected {:?}", op_name, actual, expected_op),
+                KvOperation::BeginTransaction
+                    if matches!(expected_op, KvOperation::BeginTransaction) => {}
+                KvOperation::CommitTransaction
+                    if matches!(expected_op, KvOperation::CommitTransaction) => {}
+                KvOperation::RollbackTransaction
+                    if matches!(expected_op, KvOperation::RollbackTransaction) => {}
+                actual => panic!(
+                    "Operation {} parsed as {:?}, expected {:?}",
+                    op_name, actual, expected_op
+                ),
             }
         }
     }

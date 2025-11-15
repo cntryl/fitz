@@ -72,7 +72,9 @@ impl KvService {
         value: Option<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>, String> {
         // Parse realm and area from route
-        let parts: Vec<&str> = route.split("://").nth(1)
+        let parts: Vec<&str> = route
+            .split("://")
+            .nth(1)
             .ok_or_else(|| "Invalid route format".to_string())?
             .split('/')
             .collect();
@@ -159,7 +161,7 @@ impl KvService {
         let body = body.ok_or_else(|| "Scan requires body with range parameters".to_string())?;
         let params = String::from_utf8(body).map_err(|_| "Scan body must be UTF-8".to_string())?;
         let lines: Vec<&str> = params.lines().collect();
-        
+
         let start_key = lines.first().map(|s| s.to_string()).unwrap_or_default();
         let end_key = lines.get(1).map(|s| s.to_string());
 
@@ -304,12 +306,18 @@ impl KvService {
         _key: Option<String>, // Not used for delete_range
         body: Option<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>, String> {
-        let body = body.ok_or_else(|| "DeleteRange requires body with range parameters".to_string())?;
-        let params = String::from_utf8(body).map_err(|_| "DeleteRange body must be UTF-8".to_string())?;
+        let body =
+            body.ok_or_else(|| "DeleteRange requires body with range parameters".to_string())?;
+        let params =
+            String::from_utf8(body).map_err(|_| "DeleteRange body must be UTF-8".to_string())?;
         let lines: Vec<&str> = params.lines().collect();
-        
-        let start = lines.first().ok_or_else(|| "DeleteRange requires start key as first line".to_string())?;
-        let end = lines.get(1).ok_or_else(|| "DeleteRange requires end key as second line".to_string())?;
+
+        let start = lines
+            .first()
+            .ok_or_else(|| "DeleteRange requires start key as first line".to_string())?;
+        let end = lines
+            .get(1)
+            .ok_or_else(|| "DeleteRange requires end key as second line".to_string())?;
 
         let start_key_bytes = Self::build_key(realm, area, start);
         let end_key_bytes_full = Self::build_key(realm, area, end);
@@ -347,7 +355,8 @@ impl KvService {
         };
 
         // Begin transaction
-        let transaction = self.store
+        let transaction = self
+            .store
             .begin_transaction(DEFAULT_CF)
             .map_err(|e| format!("Failed to begin transaction: {:?}", e))?;
 

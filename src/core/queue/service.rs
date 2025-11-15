@@ -73,22 +73,39 @@ impl QueueService {
 
     /// Build message key: {DOMAIN_PREFIX} {IDX_MESSAGE} {realm} {area} {resource} {message_id}
     fn key_message(realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_MESSAGE, realm, area, resource, message_id).as_bytes().to_vec()
+        encode_composite!(
+            DOMAIN_PREFIX,
+            IDX_MESSAGE,
+            realm,
+            area,
+            resource,
+            message_id
+        )
+        .as_bytes()
+        .to_vec()
     }
 
     /// Build lease key: {DOMAIN_PREFIX} {IDX_LEASE} {realm} {area} {resource} {message_id}
     fn key_lease(realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_LEASE, realm, area, resource, message_id).as_bytes().to_vec()
+        encode_composite!(DOMAIN_PREFIX, IDX_LEASE, realm, area, resource, message_id)
+            .as_bytes()
+            .to_vec()
     }
 
     /// Build config key: {DOMAIN_PREFIX} {IDX_CONFIG} {realm} {area} {resource}
     fn key_config(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_CONFIG, realm, area, resource).as_bytes().to_vec()
+        encode_composite!(DOMAIN_PREFIX, IDX_CONFIG, realm, area, resource)
+            .as_bytes()
+            .to_vec()
     }
 
     /// List queues within a specific realm/area scope
     /// Returns queues that match the pattern: queue:{realm}/{area}/*
-    pub async fn list_queues_in_scope(&self, realm: &str, area: &str) -> Result<Vec<String>, String> {
+    pub async fn list_queues_in_scope(
+        &self,
+        realm: &str,
+        area: &str,
+    ) -> Result<Vec<String>, String> {
         use std::collections::HashSet;
 
         // Scan for queue keys in this scope: queue:{realm}/{area}/
@@ -188,9 +205,9 @@ mod tests {
         // Since encoding format changed, just verify the key is properly formed
         // and contains the expected values
         assert!(key.len() > 16); // Should be longer than just the prefix encoding
-        // The domain prefix should appear in the encoding
+                                 // The domain prefix should appear in the encoding
         assert!(key.contains(&DOMAIN_PREFIX));
-        // The message index should appear in the encoding  
+        // The message index should appear in the encoding
         assert!(key.contains(&IDX_MESSAGE));
     }
 

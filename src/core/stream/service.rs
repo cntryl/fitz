@@ -377,27 +377,44 @@ impl StreamService {
 
     /// Build resource event key: {DOMAIN_PREFIX} {IDX_RESOURCE_EVENT} {realm} {area} {resource} {resource_seq}
     fn key_resource_event(realm: &str, area: &str, resource: &str, seq: u64) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_RESOURCE_EVENT, realm, area, resource, seq).as_bytes().to_vec()
+        encode_composite!(
+            DOMAIN_PREFIX,
+            IDX_RESOURCE_EVENT,
+            realm,
+            area,
+            resource,
+            seq
+        )
+        .as_bytes()
+        .to_vec()
     }
 
     /// Build area event key: {DOMAIN_PREFIX} {IDX_AREA_EVENT} {realm} {area} {area_seq}
     fn key_area_event(realm: &str, area: &str, seq: u64) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_AREA_EVENT, realm, area, seq).as_bytes().to_vec()
+        encode_composite!(DOMAIN_PREFIX, IDX_AREA_EVENT, realm, area, seq)
+            .as_bytes()
+            .to_vec()
     }
 
     /// Build watermark key: {DOMAIN_PREFIX} {IDX_WATERMARK} {realm} {area}
     fn key_watermark(realm: &str, area: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_WATERMARK, realm, area).as_bytes().to_vec()
+        encode_composite!(DOMAIN_PREFIX, IDX_WATERMARK, realm, area)
+            .as_bytes()
+            .to_vec()
     }
 
     /// Build area discovery key: {DOMAIN_PREFIX} {IDX_AREA_DISCOVERY} {realm} {area}
     fn key_area_discovery(realm: &str, area: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_AREA_DISCOVERY, realm, area).as_bytes().to_vec()
+        encode_composite!(DOMAIN_PREFIX, IDX_AREA_DISCOVERY, realm, area)
+            .as_bytes()
+            .to_vec()
     }
 
     /// Build resource discovery key: {DOMAIN_PREFIX} {IDX_RESOURCE_DISCOVERY} {realm} {area} {resource}
     fn key_resource_discovery(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_RESOURCE_DISCOVERY, realm, area, resource).as_bytes().to_vec()
+        encode_composite!(DOMAIN_PREFIX, IDX_RESOURCE_DISCOVERY, realm, area, resource)
+            .as_bytes()
+            .to_vec()
     }
 
     /// Get current watermark for area (highest finalized area_seq)

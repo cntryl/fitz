@@ -160,7 +160,9 @@ mod tests {
         let realm = "test_realm".to_string();
 
         // Act
-        let scope = QueueScope::Realm { realm: realm.clone() };
+        let scope = QueueScope::Realm {
+            realm: realm.clone(),
+        };
 
         // Assert
         match scope {

@@ -3,8 +3,8 @@
 use super::service::ControlService;
 use super::types::ControlOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
-use crate::core::parsing::{response, tlv};
 use crate::core::notice::NoticeService;
+use crate::core::parsing::{response, tlv};
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -115,8 +115,8 @@ impl Domain for ControlDomain {
             match self.service.handle_operation(operation, &body).await {
                 Ok(response_body) => {
                     // Dispatch to subscribers (pub/sub pattern)
-                    let msg_id_string = tlv::parse_string(&request.payload, TAG_ID)
-                        .map(|s| s.to_string());
+                    let msg_id_string =
+                        tlv::parse_string(&request.payload, TAG_ID).map(|s| s.to_string());
                     let msg_id = msg_id_string.as_deref();
 
                     let mut notice_service = self.notice_service.write().await;

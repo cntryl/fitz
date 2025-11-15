@@ -173,10 +173,7 @@ impl RouteTableShard {
                     .wildcard_child
                     .get_or_insert_with(|| Box::new(TrieNode::default()));
             } else {
-                node = node
-                    .children
-                    .entry((*seg).to_string())
-                    .or_default();
+                node = node.children.entry((*seg).to_string()).or_default();
             }
         }
 
