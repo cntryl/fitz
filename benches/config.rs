@@ -13,8 +13,3 @@ pub fn criterion_config() -> Criterion {
         .nresamples(50_000)
         .without_plots()
 }
-
-/// Get benchmark configuration description for logging
-pub fn config_description() -> &'static str {
-    "QUICK (10 samples, 500ms)"
-}
