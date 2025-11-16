@@ -1,5 +1,6 @@
 // KV domain handler - routes all kv:// operations
 
+use super::service::KvService;
 use super::types::KvOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID};
@@ -14,12 +15,19 @@ pub struct TlvKeyValue {
 }
 
 pub struct KvDomain {
-    kv_store: Arc<dyn KvStore>,
+    service: Arc<KvService>,
 }
 
 impl KvDomain {
     pub fn new(kv_store: Arc<dyn KvStore>) -> Self {
-        Self { kv_store }
+        Self {
+            service: Arc::new(KvService::new(kv_store)),
+        }
+    }
+
+    /// Expose shared service for direct benching without TLV overhead
+    pub fn get_service(&self) -> Arc<KvService> {
+        Arc::clone(&self.service)
     }
 
     /// Parse TLV body to extract key (TAG_ID) and value (TAG_BODY)
@@ -206,11 +214,8 @@ impl Domain for KvDomain {
                 }
             };
 
-            // Use self.kv_store (clone the Arc for service)
-            let kv_store = Arc::clone(&self.kv_store);
-
-            // Create service with the KV store
-            let service = super::service::KvService::new(kv_store);
+            // Use shared service instance (bench- and cache-friendly)
+            let service = Arc::clone(&self.service);
 
             // Handle the operation
             let result = service

@@ -4,11 +4,12 @@
 //! including handler processing, storage interactions, and domain logic.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::domain::{Domain, DomainContext, DomainResponse};
-use fitz::core::queue::{QueueDomain, QueueService};
+use fitz::core::domain::DomainContext;
+use fitz::core::queue::QueueDomain;
 use fitz::protocol::frame::{build_tlv, PooledFrame};
 use fitz::protocol::tags::*;
 use fitz::routing::RouteFamilyId;
+use fitz::protocol::route::parse_route;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -25,11 +26,15 @@ fn rt() -> &'static Runtime {
 
 static QUEUE_DOMAIN: OnceLock<Arc<QueueDomain>> = OnceLock::new();
 fn queue_domain() -> Arc<QueueDomain> {
-    QUEUE_DOMAIN.get_or_init(|| {
-        rt().block_on(async {
-            Arc::new(QueueDomain::new().await)
+    QUEUE_DOMAIN
+        .get_or_init(|| {
+            rt().block_on(async {
+                let store = fitz::storage::midge_adapter::create_memory_store()
+                    .expect("create memory store");
+                Arc::new(QueueDomain::new(store))
+            })
         })
-    })
+        .clone()
 }
 
 // ---------------------------------------------------------
@@ -37,25 +42,19 @@ fn queue_domain() -> Arc<QueueDomain> {
 // ---------------------------------------------------------
 
 fn create_enqueue_frame(realm: &str, area: &str, resource: &str, body: &[u8]) -> PooledFrame {
-    let route = format!("queue://{}/{}/{}/enqueue", realm, area, resource);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_BODY, body, &mut payload);
     PooledFrame::from_vec(payload)
 }
 
 fn create_reserve_frame(realm: &str, area: &str, resource: &str) -> PooledFrame {
-    let route = format!("queue://{}/{}/{}/reserve", realm, area, resource);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_LEASE_SECS, 30u32, &mut payload);
     PooledFrame::from_vec(payload)
 }
 
 fn create_complete_frame(realm: &str, area: &str, resource: &str, token: &str) -> PooledFrame {
-    let route = format!("queue://{}/{}/{}/complete", realm, area, resource);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_DELIVERY_TOKEN, token.as_bytes(), &mut payload);
     PooledFrame::from_vec(payload)
 }
@@ -70,10 +69,15 @@ fn bench_queue_enqueue_small(c: &mut Criterion) {
 
     c.bench_function("queue_enqueue_small", |b| {
         b.iter(|| {
+            let route_str = "queue://test/orders/pending/enqueue".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "queue://test/orders/pending/enqueue".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -91,10 +95,15 @@ fn bench_queue_enqueue_large(c: &mut Criterion) {
 
     c.bench_function("queue_enqueue_large", |b| {
         b.iter(|| {
+            let route_str = "queue://test/orders/pending/enqueue".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "queue://test/orders/pending/enqueue".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -111,10 +120,15 @@ fn bench_queue_reserve_empty(c: &mut Criterion) {
 
     c.bench_function("queue_reserve_empty", |b| {
         b.iter(|| {
+            let route_str = "queue://test/orders/empty/reserve".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "queue://test/orders/empty/reserve".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -133,10 +147,15 @@ fn bench_queue_round_trip(c: &mut Criterion) {
             || {
                 // Setup: enqueue a message
                 let enqueue_frame = create_enqueue_frame("test", "roundtrip", "queue", b"test message");
+                let route_str = "queue://test/roundtrip/queue/enqueue".to_string();
+                let route = parse_route(&route_str).expect("parse route");
                 let ctx = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "queue://test/roundtrip/queue/enqueue".to_string(),
+                    route,
+                    route_str,
                     payload: enqueue_frame.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
                 rt().block_on(async {
                     let _ = domain.handle(ctx).await;
@@ -146,21 +165,34 @@ fn bench_queue_round_trip(c: &mut Criterion) {
                 rt().block_on(async {
                     // Reserve the message
                     let reserve_frame = create_reserve_frame("test", "roundtrip", "queue");
+                    let reserve_route_str = "queue://test/roundtrip/queue/reserve".to_string();
+                    let reserve_route = parse_route(&reserve_route_str).expect("parse route");
                     let reserve_ctx = DomainContext {
-                        route_family: RouteFamilyId::new(),
-                        route_str: "queue://test/roundtrip/queue/reserve".to_string(),
+                        route: reserve_route,
+                        route_str: reserve_route_str,
                         payload: reserve_frame.payload(),
+                        channel_id: 1,
+                        route_family: RouteFamilyId::new(),
+                        sender: None,
                     };
 
                     if let DomainResponse::Frame(frame) = domain.handle(reserve_ctx).await {
                         // Extract delivery token and complete
                         if let Some(token_bytes) = fitz::protocol::frame::parse_bytes(frame.payload(), TAG_DELIVERY_TOKEN) {
                             if let Ok(token) = std::str::from_utf8(&token_bytes) {
-                                let complete_frame = create_complete_frame("test", "roundtrip", "queue", token);
+                                let complete_frame =
+                                    create_complete_frame("test", "roundtrip", "queue", token);
+                                let complete_route_str =
+                                    "queue://test/roundtrip/queue/complete".to_string();
+                                let complete_route =
+                                    parse_route(&complete_route_str).expect("parse route");
                                 let complete_ctx = DomainContext {
-                                    route_family: RouteFamilyId::new(),
-                                    route_str: "queue://test/roundtrip/queue/complete".to_string(),
+                                    route: complete_route,
+                                    route_str: complete_route_str,
                                     payload: complete_frame.payload(),
+                                    channel_id: 1,
+                                    route_family: RouteFamilyId::new(),
+                                    sender: None,
                                 };
                                 let _ = domain.handle(complete_ctx).await;
                             }
@@ -196,10 +228,15 @@ fn bench_queue_list_messages(c: &mut Criterion) {
             build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
             let frame = PooledFrame::from_vec(payload);
 
+            let route_str = route.to_string();
+            let parsed = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: route.to_string(),
+                route: parsed,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -217,18 +254,30 @@ fn bench_queue_multi_tenant_isolation(c: &mut Criterion) {
         b.iter(|| {
             rt().block_on(async {
                 // Enqueue to different tenants simultaneously
-                let frame1 = create_enqueue_frame("tenant1", "orders", "pending", b"tenant1 message");
+                let frame1 =
+                    create_enqueue_frame("tenant1", "orders", "pending", b"tenant1 message");
+                let route1_str = "queue://tenant1/orders/pending/enqueue".to_string();
+                let route1 = parse_route(&route1_str).expect("parse route");
                 let ctx1 = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "queue://tenant1/orders/pending/enqueue".to_string(),
+                    route: route1,
+                    route_str: route1_str,
                     payload: frame1.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
 
-                let frame2 = create_enqueue_frame("tenant2", "orders", "pending", b"tenant2 message");
+                let frame2 =
+                    create_enqueue_frame("tenant2", "orders", "pending", b"tenant2 message");
+                let route2_str = "queue://tenant2/orders/pending/enqueue".to_string();
+                let route2 = parse_route(&route2_str).expect("parse route");
                 let ctx2 = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "queue://tenant2/orders/pending/enqueue".to_string(),
+                    route: route2,
+                    route_str: route2_str,
                     payload: frame2.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
 
                 let (result1, result2) = tokio::join!(

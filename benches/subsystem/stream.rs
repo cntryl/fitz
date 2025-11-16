@@ -4,11 +4,12 @@
 //! including handler processing, transaction semantics, and domain logic.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::domain::{Domain, DomainContext, DomainResponse};
-use fitz::core::stream::{StreamDomain, StreamService};
+use fitz::core::domain::DomainContext;
+use fitz::core::stream::StreamDomain;
 use fitz::protocol::frame::{build_tlv, PooledFrame};
 use fitz::protocol::tags::*;
 use fitz::routing::RouteFamilyId;
+use fitz::protocol::route::parse_route;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -25,11 +26,15 @@ fn rt() -> &'static Runtime {
 
 static STREAM_DOMAIN: OnceLock<Arc<StreamDomain>> = OnceLock::new();
 fn stream_domain() -> Arc<StreamDomain> {
-    STREAM_DOMAIN.get_or_init(|| {
-        rt().block_on(async {
-            Arc::new(StreamDomain::new().await)
+    STREAM_DOMAIN
+        .get_or_init(|| {
+            rt().block_on(async {
+                let store = fitz::storage::midge_adapter::create_memory_store()
+                    .expect("create memory store");
+                Arc::new(StreamDomain::new(store))
+            })
         })
-    })
+        .clone()
 }
 
 // ---------------------------------------------------------
@@ -37,11 +42,9 @@ fn stream_domain() -> Arc<StreamDomain> {
 // ---------------------------------------------------------
 
 fn create_stream_frame(operation: &str, realm: &str, stream: &str, partition: u32, offset: Option<u64>, data: Option<&[u8]>) -> PooledFrame {
-    let route = format!("stream://{}/{}/{}/{}", realm, stream, partition, operation);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     if let Some(off) = offset {
-        build_tlv(TAG_OFFSET, &off.to_le_bytes(), &mut payload);
+        build_tlv(TAG_SEQ, &off.to_be_bytes(), &mut payload);
     }
     if let Some(d) = data {
         build_tlv(TAG_BODY, d, &mut payload);
@@ -50,20 +53,11 @@ fn create_stream_frame(operation: &str, realm: &str, stream: &str, partition: u3
 }
 
 fn create_stream_batch_frame(realm: &str, stream: &str, partition: u32, records: &[(&[u8], Option<u64>)]) -> PooledFrame {
-    let route = format!("stream://{}/{}/{}/append_batch", realm, stream, partition);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
-
-    // Create batch body as concatenated records
-    let mut batch_body = Vec::new();
-    for (data, offset) in records {
-        if let Some(off) = offset {
-            batch_body.extend_from_slice(&off.to_le_bytes());
-        }
-        batch_body.extend_from_slice(data);
-        batch_body.push(b'\n'); // Record separator
+    // Encode records as individual TAG_BODY entries (simple append semantics)
+    for (data, _offset) in records {
+        build_tlv(TAG_BODY, data, &mut payload);
     }
-    build_tlv(TAG_BODY, &batch_body, &mut payload);
     PooledFrame::from_vec(payload)
 }
 
@@ -78,10 +72,15 @@ fn bench_stream_append_small(c: &mut Criterion) {
 
     c.bench_function("stream_append_small", |b| {
         b.iter(|| {
+            let route_str = "stream://test/events/0/append".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "stream://test/events/0/append".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -99,10 +98,15 @@ fn bench_stream_append_large(c: &mut Criterion) {
 
     c.bench_function("stream_append_large", |b| {
         b.iter(|| {
+            let route_str = "stream://test/events/0/append".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "stream://test/events/0/append".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -120,10 +124,15 @@ fn bench_stream_read_single(c: &mut Criterion) {
     for i in 0..10 {
         let data = format!("record {}", i).into_bytes();
         let frame = create_stream_frame("append", "test", "events", 0, None, Some(&data));
+        let route_str = "stream://test/events/0/append".to_string();
+        let route = parse_route(&route_str).expect("parse route");
         let ctx = DomainContext {
-            route_family: RouteFamilyId::new(),
-            route_str: "stream://test/events/0/append".to_string(),
+            route,
+            route_str,
             payload: frame.payload(),
+            channel_id: 1,
+            route_family: RouteFamilyId::new(),
+            sender: None,
         };
         rt().block_on(async {
             let _ = domain.handle(ctx).await;
@@ -133,10 +142,15 @@ fn bench_stream_read_single(c: &mut Criterion) {
     c.bench_function("stream_read_single", |b| {
         b.iter(|| {
             let frame = create_stream_frame("read", "test", "events", 0, Some(5), None);
+            let route_str = "stream://test/events/0/read".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "stream://test/events/0/read".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -154,10 +168,15 @@ fn bench_stream_read_range(c: &mut Criterion) {
     for i in 0..100 {
         let data = format!("record {}", i).into_bytes();
         let frame = create_stream_frame("append", "test", "events", 0, None, Some(&data));
+        let route_str = "stream://test/events/0/append".to_string();
+        let route = parse_route(&route_str).expect("parse route");
         let ctx = DomainContext {
-            route_family: RouteFamilyId::new(),
-            route_str: "stream://test/events/0/append".to_string(),
+            route,
+            route_str,
             payload: frame.payload(),
+            channel_id: 1,
+            route_family: RouteFamilyId::new(),
+            sender: None,
         };
         rt().block_on(async {
             let _ = domain.handle(ctx).await;
@@ -173,10 +192,15 @@ fn bench_stream_read_range(c: &mut Criterion) {
             build_tlv(TAG_LIMIT, &20u32.to_le_bytes(), &mut payload);
             let frame = PooledFrame::from_vec(payload);
 
+            let route_str = route.to_string();
+            let parsed = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: route.to_string(),
+                route: parsed,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -193,10 +217,15 @@ fn bench_stream_commit_offset(c: &mut Criterion) {
     c.bench_function("stream_commit_offset", |b| {
         b.iter(|| {
             let frame = create_stream_frame("commit", "test", "events", 0, Some(42), None);
+            let route_str = "stream://test/events/0/commit".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "stream://test/events/0/commit".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -223,10 +252,15 @@ fn bench_stream_append_batch(c: &mut Criterion) {
             },
             |records| {
                 let frame = create_stream_batch_frame("test", "events", 0, &records);
+                let route_str = "stream://test/events/0/append_batch".to_string();
+                let route = parse_route(&route_str).expect("parse route");
                 let ctx = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "stream://test/events/0/append_batch".to_string(),
+                    route,
+                    route_str,
                     payload: frame.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
 
                 rt().block_on(async {
@@ -251,10 +285,15 @@ fn bench_stream_multi_partition_append(c: &mut Criterion) {
                 for partition in 0..4 {
                     let data = format!("partition {} data", partition).into_bytes();
                     let frame = create_stream_frame("append", "test", "events", partition, None, Some(&data));
+                    let route_str = format!("stream://test/events/{}/append", partition);
+                    let route = parse_route(&route_str).expect("parse route");
                     let ctx = DomainContext {
-                        route_family: RouteFamilyId::new(),
-                        route_str: format!("stream://test/events/{}/append", partition),
+                        route,
+                        route_str,
                         payload: frame.payload(),
+                        channel_id: 1,
+                        route_family: RouteFamilyId::new(),
+                        sender: None,
                     };
 
                     let domain_clone = Arc::clone(&domain);

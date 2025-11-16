@@ -4,11 +4,12 @@
 //! including handler processing, request/response correlation, and domain logic.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::domain::{Domain, DomainContext, DomainResponse};
-use fitz::core::rpc::{RpcDomain, RpcService};
+use fitz::core::domain::DomainContext;
+use fitz::core::rpc::RpcDomain;
 use fitz::protocol::frame::{build_tlv, PooledFrame};
 use fitz::protocol::tags::*;
 use fitz::routing::RouteFamilyId;
+use fitz::protocol::route::parse_route;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -25,11 +26,11 @@ fn rt() -> &'static Runtime {
 
 static RPC_DOMAIN: OnceLock<Arc<RpcDomain>> = OnceLock::new();
 fn rpc_domain() -> Arc<RpcDomain> {
-    RPC_DOMAIN.get_or_init(|| {
-        rt().block_on(async {
-            Arc::new(RpcDomain::new().await)
+    RPC_DOMAIN
+        .get_or_init(|| {
+            rt().block_on(async { Arc::new(RpcDomain::new()) })
         })
-    })
+        .clone()
 }
 
 // ---------------------------------------------------------
@@ -37,9 +38,7 @@ fn rpc_domain() -> Arc<RpcDomain> {
 // ---------------------------------------------------------
 
 fn create_rpc_request_frame(service: &str, method: &str, correlation_id: &str, data: Option<&[u8]>) -> PooledFrame {
-    let route = format!("rpc://{}/{}", service, method);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_CORRELATION_ID, correlation_id.as_bytes(), &mut payload);
     if let Some(d) = data {
         build_tlv(TAG_BODY, d, &mut payload);
@@ -48,9 +47,7 @@ fn create_rpc_request_frame(service: &str, method: &str, correlation_id: &str, d
 }
 
 fn create_rpc_response_frame(service: &str, method: &str, correlation_id: &str, data: &[u8]) -> PooledFrame {
-    let route = format!("rpc://{}/{}/response", service, method);
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_CORRELATION_ID, correlation_id.as_bytes(), &mut payload);
     build_tlv(TAG_BODY, data, &mut payload);
     PooledFrame::from_vec(payload)
@@ -68,10 +65,15 @@ fn bench_rpc_request_small(c: &mut Criterion) {
 
     c.bench_function("rpc_request_small", |b| {
         b.iter(|| {
+            let route_str = "rpc://user_service/get_profile".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "rpc://user_service/get_profile".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -90,10 +92,15 @@ fn bench_rpc_request_large(c: &mut Criterion) {
 
     c.bench_function("rpc_request_large", |b| {
         b.iter(|| {
+            let route_str = "rpc://user_service/process_data".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "rpc://user_service/process_data".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -112,10 +119,15 @@ fn bench_rpc_response_small(c: &mut Criterion) {
 
     c.bench_function("rpc_response_small", |b| {
         b.iter(|| {
+            let route_str = "rpc://user_service/get_profile/response".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "rpc://user_service/get_profile/response".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -134,10 +146,15 @@ fn bench_rpc_response_large(c: &mut Criterion) {
 
     c.bench_function("rpc_response_large", |b| {
         b.iter(|| {
+            let route_str = "rpc://user_service/process_data/response".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "rpc://user_service/process_data/response".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -159,20 +176,30 @@ fn bench_rpc_request_response_roundtrip(c: &mut Criterion) {
                     // Send request
                     let req_data = b"request data";
                     let req_frame = create_rpc_request_frame("order_service", "place_order", &correlation_id, Some(req_data));
+                    let req_route_str = "rpc://order_service/place_order".to_string();
+                    let req_route = parse_route(&req_route_str).expect("parse route");
                     let req_ctx = DomainContext {
-                        route_family: RouteFamilyId::new(),
-                        route_str: "rpc://order_service/place_order".to_string(),
+                        route: req_route,
+                        route_str: req_route_str,
                         payload: req_frame.payload(),
+                        channel_id: 1,
+                        route_family: RouteFamilyId::new(),
+                        sender: None,
                     };
                     let req_result = domain.handle(req_ctx).await;
 
                     // Send response
                     let resp_data = b"order placed successfully";
                     let resp_frame = create_rpc_response_frame("order_service", "place_order", &correlation_id, resp_data);
+                    let resp_route_str = "rpc://order_service/place_order/response".to_string();
+                    let resp_route = parse_route(&resp_route_str).expect("parse route");
                     let resp_ctx = DomainContext {
-                        route_family: RouteFamilyId::new(),
-                        route_str: "rpc://order_service/place_order/response".to_string(),
+                        route: resp_route,
+                        route_str: resp_route_str,
                         payload: resp_frame.payload(),
+                        channel_id: 1,
+                        route_family: RouteFamilyId::new(),
+                        sender: None,
                     };
                     let resp_result = domain.handle(resp_ctx).await;
 
@@ -197,10 +224,15 @@ fn bench_rpc_concurrent_requests(c: &mut Criterion) {
                     let correlation_id = format!("concurrent_{}", i);
                     let data = format!("request {}", i).into_bytes();
                     let frame = create_rpc_request_frame("calc_service", "add", &correlation_id, Some(&data));
+                    let route_str = "rpc://calc_service/add".to_string();
+                    let route = parse_route(&route_str).expect("parse route");
                     let ctx = DomainContext {
-                        route_family: RouteFamilyId::new(),
-                        route_str: "rpc://calc_service/add".to_string(),
+                        route,
+                        route_str,
                         payload: frame.payload(),
+                        channel_id: 1,
+                        route_family: RouteFamilyId::new(),
+                        sender: None,
                     };
 
                     let domain_clone = Arc::clone(&domain);
@@ -225,7 +257,6 @@ fn bench_rpc_batch_requests(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut batch_payload = Vec::new();
-                build_tlv(TAG_ROUTE, b"rpc://batch_service/process_batch", &mut batch_payload);
 
                 // Create batch of 5 requests
                 let mut batch_body = Vec::new();
@@ -242,10 +273,15 @@ fn bench_rpc_batch_requests(c: &mut Criterion) {
                 PooledFrame::from_vec(batch_payload)
             },
             |frame| {
+                let route_str = "rpc://batch_service/process_batch".to_string();
+                let route = parse_route(&route_str).expect("parse route");
                 let ctx = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "rpc://batch_service/process_batch".to_string(),
+                    route,
+                    route_str,
                     payload: frame.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
 
                 rt().block_on(async {

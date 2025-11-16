@@ -7,4 +7,4 @@ mod types;
 // Re-export public API
 pub use handler::NoticeDomain;
 pub use service::NoticeService;
-pub use types::*;
+pub use types::NoticeOperation;

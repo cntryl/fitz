@@ -4,11 +4,12 @@
 //! including handler processing, storage interactions, and domain logic.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::domain::{Domain, DomainContext, DomainResponse};
-use fitz::core::kv::{KvDomain, KvService};
+use fitz::core::domain::DomainContext;
+use fitz::core::kv::KvDomain;
 use fitz::protocol::frame::{build_tlv, PooledFrame};
 use fitz::protocol::tags::*;
 use fitz::routing::RouteFamilyId;
+use fitz::protocol::route::parse_route;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
@@ -25,21 +26,30 @@ fn rt() -> &'static Runtime {
 
 static KV_DOMAIN: OnceLock<Arc<KvDomain>> = OnceLock::new();
 fn kv_domain() -> Arc<KvDomain> {
-    KV_DOMAIN.get_or_init(|| {
-        rt().block_on(async {
-            Arc::new(KvDomain::new().await)
+    KV_DOMAIN
+        .get_or_init(|| {
+            rt().block_on(async {
+                let store = fitz::storage::midge_adapter::create_memory_store()
+                    .expect("create memory store");
+                Arc::new(KvDomain::new(store))
+            })
         })
-    })
+        .clone()
 }
 
 // ---------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------
 
-fn create_kv_frame(operation: &str, realm: &str, area: &str, resource: &str, key: &str, value: Option<&[u8]>) -> PooledFrame {
-    let route = format!("kv://{}/{}/{}/{}", realm, area, resource, operation);
+fn create_kv_frame(
+    _operation: &str,
+    _realm: &str,
+    _area: &str,
+    _resource: &str,
+    key: &str,
+    value: Option<&[u8]>,
+) -> PooledFrame {
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_ID, key.as_bytes(), &mut payload);
     if let Some(val) = value {
         build_tlv(TAG_BODY, val, &mut payload);
@@ -47,20 +57,31 @@ fn create_kv_frame(operation: &str, realm: &str, area: &str, resource: &str, key
     PooledFrame::from_vec(payload)
 }
 
-fn create_kv_batch_frame(realm: &str, area: &str, operations: &[(&str, &str, Option<&[u8]>)]) -> PooledFrame {
-    let route = format!("kv://{}/{}/*/batch", realm, area);
+fn create_kv_batch_frame(_realm: &str, _area: &str, operations: &[(&str, &str, Option<&[u8]>)]) -> PooledFrame {
     let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
 
-    // Create batch body as JSON-like structure
+    // Body format expected by KvService::handle_batch: newline-separated
+    // "PUT key value" and "DELETE key" operations
     let mut batch_body = Vec::new();
     for (op, key, value) in operations {
-        batch_body.extend_from_slice(format!("{}:{}:", op, key).as_bytes());
-        if let Some(val) = value {
-            batch_body.extend_from_slice(val);
+        match *op {
+            "put" | "PUT" => {
+                batch_body.extend_from_slice(b"PUT ");
+                batch_body.extend_from_slice(key.as_bytes());
+                batch_body.push(b' ');
+                if let Some(val) = value {
+                    batch_body.extend_from_slice(val);
+                }
+            }
+            "delete" | "DELETE" => {
+                batch_body.extend_from_slice(b"DELETE ");
+                batch_body.extend_from_slice(key.as_bytes());
+            }
+            _ => continue,
         }
-        batch_body.push(b';');
+        batch_body.push(b'\n');
     }
+
     build_tlv(TAG_BODY, &batch_body, &mut payload);
     PooledFrame::from_vec(payload)
 }
@@ -75,10 +96,15 @@ fn bench_kv_put_small(c: &mut Criterion) {
 
     c.bench_function("kv_put_small", |b| {
         b.iter(|| {
+            let route_str = "kv://test/config/app/put".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "kv://test/config/app/put".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -96,10 +122,15 @@ fn bench_kv_put_large(c: &mut Criterion) {
 
     c.bench_function("kv_put_large", |b| {
         b.iter(|| {
+            let route_str = "kv://test/config/app/put".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "kv://test/config/app/put".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -128,10 +159,15 @@ fn bench_kv_get_hit(c: &mut Criterion) {
 
     c.bench_function("kv_get_hit", |b| {
         b.iter(|| {
+            let route_str = "kv://test/config/app/get".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "kv://test/config/app/get".to_string(),
+                route,
+                route_str,
                 payload: get_frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -148,10 +184,15 @@ fn bench_kv_get_miss(c: &mut Criterion) {
 
     c.bench_function("kv_get_miss", |b| {
         b.iter(|| {
+            let route_str = "kv://test/config/app/get".to_string();
+            let route = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: "kv://test/config/app/get".to_string(),
+                route,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -170,21 +211,32 @@ fn bench_kv_delete(c: &mut Criterion) {
             || {
                 // Setup: put a value
                 let put_frame = create_kv_frame("put", "test", "config", "app", "delete_test", Some(b"value"));
+                let route_str = "kv://test/config/app/put".to_string();
+                let route = parse_route(&route_str).expect("parse route");
                 let put_ctx = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "kv://test/config/app/put".to_string(),
+                    route,
+                    route_str,
                     payload: put_frame.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
                 rt().block_on(async {
                     let _ = domain.handle(put_ctx).await;
                 });
             },
             |_| {
-                let delete_frame = create_kv_frame("delete", "test", "config", "app", "delete_test", None);
+                let delete_frame =
+                    create_kv_frame("delete", "test", "config", "app", "delete_test", None);
+                let route_str = "kv://test/config/app/delete".to_string();
+                let route = parse_route(&route_str).expect("parse route");
                 let ctx = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "kv://test/config/app/delete".to_string(),
+                    route,
+                    route_str,
                     payload: delete_frame.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
 
                 rt().block_on(async {
@@ -203,10 +255,15 @@ fn bench_kv_scan_small(c: &mut Criterion) {
     // Setup: put some values with similar keys
     for i in 0..10 {
         let put_frame = create_kv_frame("put", "test", "config", "app", &format!("scan_key_{:02}", i), Some(b"value"));
+        let route_str = "kv://test/config/app/put".to_string();
+        let route = parse_route(&route_str).expect("parse route");
         let put_ctx = DomainContext {
-            route_family: RouteFamilyId::new(),
-            route_str: "kv://test/config/app/put".to_string(),
+            route,
+            route_str,
             payload: put_frame.payload(),
+            channel_id: 1,
+            route_family: RouteFamilyId::new(),
+            sender: None,
         };
         rt().block_on(async {
             let _ = domain.handle(put_ctx).await;
@@ -221,10 +278,15 @@ fn bench_kv_scan_small(c: &mut Criterion) {
             build_tlv(TAG_BODY, b"scan_key_00\nscan_key_99", &mut payload);
             let frame = PooledFrame::from_vec(payload);
 
+            let route_str = route.to_string();
+            let parsed = parse_route(&route_str).expect("parse route");
             let ctx = DomainContext {
-                route_family: RouteFamilyId::new(),
-                route_str: route.to_string(),
+                route: parsed,
+                route_str,
                 payload: frame.payload(),
+                channel_id: 1,
+                route_family: RouteFamilyId::new(),
+                sender: None,
             };
 
             rt().block_on(async {
@@ -250,10 +312,15 @@ fn bench_kv_batch_operations(c: &mut Criterion) {
             },
             |operations| {
                 let frame = create_kv_batch_frame("test", "config", &operations);
+                let route_str = "kv://test/config/*/batch".to_string();
+                let route = parse_route(&route_str).expect("parse route");
                 let ctx = DomainContext {
-                    route_family: RouteFamilyId::new(),
-                    route_str: "kv://test/config/*/batch".to_string(),
+                    route,
+                    route_str,
                     payload: frame.payload(),
+                    channel_id: 1,
+                    route_family: RouteFamilyId::new(),
+                    sender: None,
                 };
 
                 rt().block_on(async {
