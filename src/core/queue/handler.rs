@@ -90,7 +90,20 @@ impl Domain for QueueDomain {
             // Determine queue operation
             let queue_operation = match QueueOperation::from_route(&request.route) {
                 Ok(op) => op,
-                Err(e) => return DomainResponse::Error(e),
+                Err(e) => {
+                    // For malformed or unknown operations return a TLV error frame so
+                    // the engine and client receive an encoded error (consistent with
+                    // other domains like `notice` which return error frames).
+                    // If the operation is missing entirely, return a DomainResponse::Error
+                    // so callers can inspect that condition explicitly (tests expect this)
+                    if e.contains("Missing operation") {
+                        return DomainResponse::Error(e);
+                    }
+                    let response = Self::build_error_response(&e);
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        response,
+                    ));
+                }
             };
 
             let service = self.service.read().await;

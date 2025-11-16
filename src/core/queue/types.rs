@@ -119,7 +119,7 @@ impl QueueOperation {
             Some("get") => Ok(QueueOperation::Get),
             Some("subscribe") => Ok(QueueOperation::Subscribe),
             Some("unsubscribe") => Ok(QueueOperation::Unsubscribe),
-            None => Err("Queue operation required".to_string()),
+            None => Err("Missing operation".to_string()),
             Some(op) => Err(format!("Unknown queue operation: {}", op)),
         }
     }

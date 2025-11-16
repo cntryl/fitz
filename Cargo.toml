@@ -55,25 +55,47 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 criterion = { version = "0.4", features = ["async_futures"] }
 
-[[bench]]
-name = "hotpath_lease"
-harness = false
-path = "benches/hotpath/lease.rs"
 
 [[bench]]
-name = "hotpath_notice"
+name = "hotpath_lease_core"
 harness = false
-path = "benches/hotpath/notice.rs"
+path = "benches/hotpath/lease_core.rs"
 
 [[bench]]
-name = "hotpath_route_table"
+name = "subsystem_lease_service"
 harness = false
-path = "benches/hotpath/route.rs"
+path = "benches/subsystem/lease_service.rs"
+
 
 [[bench]]
-name = "hotpath_rpc"
+name = "hotpath_route_core"
 harness = false
-path = "benches/hotpath/rpc.rs"
+path = "benches/hotpath/route_core.rs"
+
+[[bench]]
+name = "hotpath_tlv_core"
+harness = false
+path = "benches/hotpath/tlv_core.rs"
+
+[[bench]]
+name = "hotpath_kv_core"
+harness = false
+path = "benches/hotpath/kv_core.rs"
+
+[[bench]]
+name = "hotpath_queue_core"
+harness = false
+path = "benches/hotpath/queue_core.rs"
+
+[[bench]]
+name = "hotpath_stream_core"
+harness = false
+path = "benches/hotpath/stream_core.rs"
+
+[[bench]]
+name = "hotpath_rpc_core"
+harness = false
+path = "benches/hotpath/rpc_core.rs"
 
 [[bench]]
 name = "hotpath_permissions"
