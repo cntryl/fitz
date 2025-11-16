@@ -102,28 +102,6 @@ impl NoticeDomain {
         })
     }
 
-    /// Extract TLV value by tag (legacy - kept for compatibility)
-    #[allow(dead_code)]
-    fn find_tlv<'a>(&self, payload: &'a [u8], tag: u8) -> Option<&'a [u8]> {
-        let mut offset = 0;
-        while offset + 2 <= payload.len() {
-            let t = payload[offset];
-            let length = payload[offset + 1] as usize;
-            offset += 2;
-
-            if offset + length > payload.len() {
-                break;
-            }
-
-            if t == tag {
-                return Some(&payload[offset..offset + length]);
-            }
-
-            offset += length;
-        }
-        None
-    }
-
     /// Build TLV-encoded response using SmallVec for stack allocation
     fn build_tlv_response(&self, route: &str) -> ResponseBuf {
         let route_bytes = route.as_bytes();

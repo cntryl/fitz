@@ -12,14 +12,12 @@ use super::types::ControlOperation;
 /// - Config: configuration updates from control plane
 #[derive(Debug, Clone)]
 pub struct ControlService {
-    #[allow(dead_code)]
-    node_id: String,
 }
 
 impl ControlService {
     /// Create a new control service with the given node ID
-    pub fn new(node_id: String) -> Self {
-        Self { node_id }
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Process a control operation with raw body bytes
@@ -85,6 +83,12 @@ impl ControlService {
     }
 }
 
+impl Default for ControlService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,7 +96,7 @@ mod tests {
     #[tokio::test]
     async fn should_handle_heartbeat_with_raw_bytes() {
         // Arrange
-        let service = ControlService::new("test-node".to_string());
+        let service = ControlService::new();
         let body = b"{\"nodeId\":\"test-node\",\"timestamp\":1234567890}";
 
         // Act
@@ -108,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn should_handle_shutdown_with_raw_bytes() {
         // Arrange
-        let service = ControlService::new("test-node".to_string());
+        let service = ControlService::new();
         let body = b"{\"nodeId\":\"test-node\",\"reason\":\"maintenance\"}";
 
         // Act
@@ -124,7 +128,7 @@ mod tests {
     #[tokio::test]
     async fn should_handle_metrics_with_raw_bytes() {
         // Arrange
-        let service = ControlService::new("test-node".to_string());
+        let service = ControlService::new();
         let body = b"{\"nodeId\":\"test-node\",\"active_connections\":42}";
 
         // Act
@@ -139,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn should_handle_config_with_raw_bytes() {
         // Arrange
-        let service = ControlService::new("test-node".to_string());
+        let service = ControlService::new();
         let body = b"{\"ack_window\":100}";
 
         // Act

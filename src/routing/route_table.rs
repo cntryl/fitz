@@ -541,661 +541,549 @@ mod tests {
         assert_eq!(rt.len(), 0);
     }
 
-    // ========================================================================
-    // COMPREHENSIVE ROUTE MATCHING TESTS
-    // ========================================================================
-
     #[test]
-    fn should_match_exact_routes() {
+    fn should_verify_route_matching_matrix() {
         // Arrange
-        let test_cases = vec![
-            (
-                "scheme://realm/area/resource/op",
-                "scheme://realm/area/resource/op",
-                true,
-            ),
-            (
-                "scheme://realm/area/resource",
-                "scheme://realm/area/resource",
-                true,
-            ),
-            ("scheme://realm/area", "scheme://realm/area", true),
-            ("scheme://realm", "scheme://realm", true),
-            ("a/b/c/d", "a/b/c/d", true),
-            // Note: patterns match hierarchically, so "a/b/c" matches "a/b/c/d"
-            ("a/b/c", "a/b/c/d", true),
-            ("a/b/c/d", "a/b/c", false), // Parent route doesn't match child pattern
-            ("scheme://realm1/area", "scheme://realm2/area", false),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
+        struct Case<'a> {
+            pattern: &'a str,
+            route: &'a str,
+            expected: bool,
         }
-    }
 
-    #[test]
-    fn should_match_global_wildcard() {
-        // Arrange
-        let test_cases = vec![
-            ("*", "anything", true),
-            ("*", "scheme://realm/area/resource/op", true),
-            ("*", "a/b/c/d/e/f", true),
-            ("*", "", true),
-            ("*", "single", true),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_trailing_wildcard_at_realm() {
-        // Arrange
-        let test_cases = vec![
-            ("scheme://realm/*", "scheme://realm/area", true),
-            ("scheme://realm/*", "scheme://realm/area/resource", true),
-            ("scheme://realm/*", "scheme://realm/area/resource/op", true),
-            ("scheme://realm/*", "scheme://realm", true), // Exact match to prefix
-            ("scheme://realm/*", "scheme://realm2/area", false),
-            ("scheme://realm/*", "scheme://other/area", false),
-            ("scheme://realm/*", "different://realm/area", false),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_trailing_wildcard_at_area() {
-        // Arrange
-        let test_cases = vec![
-            (
-                "scheme://realm/area/*",
-                "scheme://realm/area/resource",
-                true,
-            ),
-            (
-                "scheme://realm/area/*",
-                "scheme://realm/area/resource/op",
-                true,
-            ),
-            ("scheme://realm/area/*", "scheme://realm/area", true), // Exact match to prefix
-            ("scheme://realm/area/*", "scheme://realm", false),
-            ("scheme://realm/area/*", "scheme://realm/other", false),
-            (
-                "scheme://realm/area/*",
-                "scheme://realm/area2/resource",
-                false,
-            ),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_trailing_wildcard_at_resource() {
-        // Arrange
-        let test_cases = vec![
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area/resource/op",
-                true,
-            ),
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area/resource/op1",
-                true,
-            ),
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area/resource/op/sub",
-                true,
-            ),
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area/resource",
-                true,
-            ), // Exact match to prefix
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area",
-                false,
-            ),
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area/other",
-                false,
-            ),
-            (
-                "scheme://realm/area/resource/*",
-                "scheme://realm/area/resource2/op",
-                false,
-            ),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_hierarchical_prefix_without_wildcard() {
-        // Arrange
-        let test_cases = vec![
-            // Pattern "a/b" should match "a/b/c", "a/b/c/d", etc.
-            ("a/b", "a/b/c", true),
-            ("a/b", "a/b/c/d", true),
-            ("a/b", "a/b/c/d/e", true),
-            ("a/b", "a/b", true), // Exact match
-            ("a/b", "a/c", false),
-            ("a/b", "a", false),
-            ("a/b", "a/bc", false), // Not a path separator boundary
-            // Multi-level patterns
-            ("scheme://realm/area", "scheme://realm/area/resource", true),
-            (
-                "scheme://realm/area",
-                "scheme://realm/area/resource/op",
-                true,
-            ),
-            ("scheme://realm/area", "scheme://realm/area", true),
-            ("scheme://realm/area", "scheme://realm/other", false),
-            ("scheme://realm/area", "scheme://realm", false),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_not_match_partial_segments() {
-        // Arrange
-        let test_cases = vec![
-            ("scheme://realm", "scheme://realm123", false),
-            ("scheme://realm", "scheme://realm-prod", false),
-            ("scheme://rea", "scheme://realm", false),
-            ("a/b", "a/bc", false),
-            ("a/b", "a/b-test", false),
-            ("abc", "abcd", false),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_handle_edge_cases() {
-        // Arrange
-        let test_cases = vec![
-            // Empty strings
-            ("", "", true), // Exact match
-            ("", "a", false),
-            ("a", "", false),
-            // Single segments
-            ("a", "a", true),
-            ("a", "b", false),
-            ("a", "a/b", true), // Hierarchical match
-            // Note: Trailing slashes in patterns don't work as wildcards
-            // The pattern "a/b/" will be normalized during matching
-            ("a/b", "a/b/c", true), // Hierarchical match works
-            // Wildcard patterns
-            ("*", "*", true),
-            ("a/*", "a/*", true),   // Literal match
-            ("a/*", "a/b/*", true), // Trailing wildcard matches hierarchically
-            ("a/*", "a/b/c", true), // Trailing wildcard matches children
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_complex_real_world_patterns() {
-        // Arrange
-        let test_cases = vec![
-            // Realm-wide alerts
-            ("scheme://acme/*", "scheme://acme/prod/syslog/error", true),
-            ("scheme://acme/*", "scheme://acme/dev/app/warning", true),
-            ("scheme://acme/*", "scheme://acme/staging/db/critical", true),
-            ("scheme://acme/*", "scheme://other/prod/syslog/error", false),
-            // Environment-specific
-            (
-                "scheme://acme/prod/*",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            ("scheme://acme/prod/*", "scheme://acme/prod/app/info", true),
-            (
-                "scheme://acme/prod/*",
-                "scheme://acme/dev/syslog/error",
-                false,
-            ),
-            // Service-specific
-            (
-                "scheme://acme/prod/syslog/*",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/prod/syslog/*",
-                "scheme://acme/prod/syslog/warning",
-                true,
-            ),
-            (
-                "scheme://acme/prod/syslog/*",
-                "scheme://acme/prod/app/error",
-                false,
-            ),
-            // Exact operation subscription
-            (
-                "scheme://acme/prod/syslog/critical",
-                "scheme://acme/prod/syslog/critical",
-                true,
-            ),
-            (
-                "scheme://acme/prod/syslog/critical",
-                "scheme://acme/prod/syslog/error",
-                false,
-            ),
-            // Hierarchical without explicit wildcard
-            (
-                "scheme://acme/prod/syslog",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/prod/syslog",
-                "scheme://acme/prod/syslog/warning",
-                true,
-            ),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_multiple_subscribers_to_same_route() {
-        // Arrange
-        let mut rt = RouteTable::new();
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
-        let (tx3, _rx3) = mpsc::channel(10);
-
-        rt.insert(
-            DEFAULT_RF,
-            RtSubscription {
-                id: 1,
-                route_pattern: "scheme://acme/*".to_string(),
-                channel_id: 1,
-                sender: tx1,
+        let cases = [
+            // Exact routes
+            Case {
+                pattern: "scheme://realm/area/resource/op",
+                route: "scheme://realm/area/resource/op",
+                expected: true,
             },
-        );
-        rt.insert(
-            DEFAULT_RF,
-            RtSubscription {
-                id: 2,
-                route_pattern: "scheme://acme/prod/*".to_string(),
-                channel_id: 2,
-                sender: tx2,
+            Case {
+                pattern: "scheme://realm/area/resource",
+                route: "scheme://realm/area/resource",
+                expected: true,
             },
-        );
-        rt.insert(
-            DEFAULT_RF,
-            RtSubscription {
-                id: 3,
-                route_pattern: "scheme://acme/prod/syslog/error".to_string(),
-                channel_id: 3,
-                sender: tx3,
+            Case {
+                pattern: "scheme://realm/area",
+                route: "scheme://realm/area",
+                expected: true,
             },
-        );
+            Case {
+                pattern: "scheme://realm",
+                route: "scheme://realm",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b/c/d",
+                route: "a/b/c/d",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b/c",
+                route: "a/b/c/d",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b/c/d",
+                route: "a/b/c",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm1/area",
+                route: "scheme://realm2/area",
+                expected: false,
+            },
+            // Global wildcard
+            Case {
+                pattern: "*",
+                route: "anything",
+                expected: true,
+            },
+            Case {
+                pattern: "*",
+                route: "scheme://realm/area/resource/op",
+                expected: true,
+            },
+            Case {
+                pattern: "*",
+                route: "a/b/c/d/e/f",
+                expected: true,
+            },
+            Case {
+                pattern: "*",
+                route: "",
+                expected: true,
+            },
+            Case {
+                pattern: "*",
+                route: "single",
+                expected: true,
+            },
+            // Trailing wildcard at realm
+            Case {
+                pattern: "scheme://realm/*",
+                route: "scheme://realm/area",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/*",
+                route: "scheme://realm/area/resource",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/*",
+                route: "scheme://realm/area/resource/op",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/*",
+                route: "scheme://realm",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/*",
+                route: "scheme://realm2/area",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/*",
+                route: "scheme://other/area",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/*",
+                route: "different://realm/area",
+                expected: false,
+            },
+            // Trailing wildcard at area
+            Case {
+                pattern: "scheme://realm/area/*",
+                route: "scheme://realm/area/resource",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/*",
+                route: "scheme://realm/area/resource/op",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/*",
+                route: "scheme://realm/area",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/*",
+                route: "scheme://realm",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/area/*",
+                route: "scheme://realm/other",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/area/*",
+                route: "scheme://realm/area2/resource",
+                expected: false,
+            },
+            // Trailing wildcard at resource
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area/resource/op",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area/resource/op1",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area/resource/op/sub",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area/resource",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area/other",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/area/resource/*",
+                route: "scheme://realm/area/resource2/op",
+                expected: false,
+            },
+            // Hierarchical prefix without wildcard
+            Case {
+                pattern: "a/b",
+                route: "a/b/c",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b/c/d",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b/c/d/e",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/c",
+                expected: false,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a",
+                expected: false,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/bc",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/area",
+                route: "scheme://realm/area/resource",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area",
+                route: "scheme://realm/area/resource/op",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area",
+                route: "scheme://realm/area",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://realm/area",
+                route: "scheme://realm/other",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm/area",
+                route: "scheme://realm",
+                expected: false,
+            },
+            // Partial segments
+            Case {
+                pattern: "scheme://realm",
+                route: "scheme://realm123",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://realm",
+                route: "scheme://realm-prod",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://rea",
+                route: "scheme://realm",
+                expected: false,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/bc",
+                expected: false,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b-test",
+                expected: false,
+            },
+            Case {
+                pattern: "abc",
+                route: "abcd",
+                expected: false,
+            },
+            // Edge cases
+            Case {
+                pattern: "",
+                route: "",
+                expected: true,
+            },
+            Case {
+                pattern: "",
+                route: "a",
+                expected: false,
+            },
+            Case {
+                pattern: "a",
+                route: "",
+                expected: false,
+            },
+            Case {
+                pattern: "a",
+                route: "a",
+                expected: true,
+            },
+            Case {
+                pattern: "a",
+                route: "a/b",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b/c",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b/c",
+                expected: true,
+            },
+            Case {
+                pattern: "a/b",
+                route: "a/b/c/d",
+                expected: true,
+            },
+            Case {
+                pattern: "*",
+                route: "*",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*",
+                route: "a/*",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*",
+                route: "a/b/*",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*",
+                route: "a/b/c",
+                expected: true,
+            },
+            // Single mid-path wildcard
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://acme/prod/syslog/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://acme/dev/syslog/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://acme/staging/syslog/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://acme/prod/app/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://other/prod/syslog/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://acme/syslog/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/error",
+                route: "scheme://acme/prod/dev/syslog/error",
+                expected: false,
+            },
+            Case {
+                pattern: "a/*/c",
+                route: "a/b/c",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*/c",
+                route: "a/x/c",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*/c",
+                route: "a/b/d",
+                expected: false,
+            },
+            Case {
+                pattern: "a/*/c",
+                route: "a/c",
+                expected: false,
+            },
+            Case {
+                pattern: "a/*/c",
+                route: "a/b/c/d",
+                expected: false,
+            },
+            // Multiple mid-path wildcards
+            Case {
+                pattern: "scheme://acme/*/*/error",
+                route: "scheme://acme/prod/syslog/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/*/error",
+                route: "scheme://acme/dev/app/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/*/error",
+                route: "scheme://acme/staging/database/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/*/error",
+                route: "scheme://other/prod/syslog/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://acme/*/*/error",
+                route: "scheme://acme/prod/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://acme/*/*/error",
+                route: "scheme://acme/prod/syslog/app/error",
+                expected: false,
+            },
+            Case {
+                pattern: "a/*/*/*/e",
+                route: "a/b/c/d/e",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*/*/*/e",
+                route: "a/x/y/z/e",
+                expected: true,
+            },
+            Case {
+                pattern: "a/*/*/*/e",
+                route: "a/b/c/e",
+                expected: false,
+            },
+            Case {
+                pattern: "a/*/*/*/e",
+                route: "a/b/c/d/f",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://*/prod/*/error",
+                route: "scheme://acme/prod/syslog/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://*/prod/*/error",
+                route: "scheme://other/prod/app/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://*/prod/*/error",
+                route: "scheme://acme/dev/syslog/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://*/prod/*/error",
+                route: "scheme://acme/prod/error",
+                expected: false,
+            },
+            // Mid-path wildcard with trailing wildcard
+            Case {
+                pattern: "scheme://acme/*/syslog/*",
+                route: "scheme://acme/prod/syslog/error",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/*",
+                route: "scheme://acme/prod/syslog/warning",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/*",
+                route: "scheme://acme/dev/syslog/critical",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/*",
+                route: "scheme://acme/prod/syslog/error/detail",
+                expected: true,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/*",
+                route: "scheme://acme/prod/app/error",
+                expected: false,
+            },
+            Case {
+                pattern: "scheme://acme/*/syslog/*",
+                route: "scheme://other/prod/syslog/error",
+                expected: false,
+            },
+            // Edge cases with wildcards
+            Case {
+                pattern: "*/b/c",
+                route: "a/b/c",
+                expected: true,
+            },
+            Case {
+                pattern: "*/b/c",
+                route: "x/b/c",
+                expected: true,
+            },
+            Case {
+                pattern: "*/b/c",
+                route: "a/x/c",
+                expected: false,
+            },
+            Case {
+                pattern: "*/*/*/d",
+                route: "a/b/c/d",
+                expected: true,
+            },
+            Case {
+                pattern: "*/*/*/d",
+                route: "x/y/z/d",
+                expected: true,
+            },
+            Case {
+                pattern: "*/*/*/d",
+                route: "a/b/d",
+                expected: false,
+            },
+            Case {
+                pattern: "*",
+                route: "anything",
+                expected: true,
+            },
+        ];
 
         // Act
-        let matches = rt.matching_subscribers(DEFAULT_RF, "scheme://acme/prod/syslog/error");
-
-        // Assert
-        assert_eq!(matches.len(), 3);
-    }
-
-    #[test]
-    fn should_not_match_when_no_patterns_fit() {
-        // Arrange
-        let mut rt = RouteTable::new();
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
-
-        rt.insert(
-            DEFAULT_RF,
-            RtSubscription {
-                id: 1,
-                route_pattern: "scheme://acme/prod/*".to_string(),
-                channel_id: 1,
-                sender: tx1,
-            },
-        );
-        rt.insert(
-            DEFAULT_RF,
-            RtSubscription {
-                id: 2,
-                route_pattern: "scheme://acme/staging/*".to_string(),
-                channel_id: 2,
-                sender: tx2,
-            },
-        );
-
-        // Act
-        let matches = rt.matching_subscribers(DEFAULT_RF, "scheme://other/prod/syslog/error");
-
-        // Assert
-        assert_eq!(matches.len(), 0);
-    }
-
-    #[test]
-    fn should_match_single_mid_path_wildcard() {
-        // Arrange
-        let test_cases = vec![
-            // Single wildcard in middle
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://acme/dev/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://acme/staging/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://acme/prod/app/error",
-                false,
-            ),
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://other/prod/syslog/error",
-                false,
-            ),
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://acme/syslog/error",
-                false,
-            ), // Too few segments
-            (
-                "scheme://acme/*/syslog/error",
-                "scheme://acme/prod/dev/syslog/error",
-                false,
-            ), // Too many segments
-            // Different positions
-            ("a/*/c", "a/b/c", true),
-            ("a/*/c", "a/x/c", true),
-            ("a/*/c", "a/b/d", false),
-            ("a/*/c", "a/c", false),
-            ("a/*/c", "a/b/c/d", false),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
+        for c in cases {
+            let result = route_matches(DEFAULT_RF, c.pattern, c.route);
 
             // Assert
             assert_eq!(
-                result, expected,
+                result, c.expected,
                 "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_multiple_mid_path_wildcards() {
-        // Arrange
-        let test_cases = vec![
-            // Double wildcard
-            (
-                "scheme://acme/*/*/error",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/*/error",
-                "scheme://acme/dev/app/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/*/error",
-                "scheme://acme/staging/database/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/*/error",
-                "scheme://other/prod/syslog/error",
-                false,
-            ),
-            ("scheme://acme/*/*/error", "scheme://acme/prod/error", false), // Too few segments
-            (
-                "scheme://acme/*/*/error",
-                "scheme://acme/prod/syslog/app/error",
-                false,
-            ), // Too many segments
-            // Triple wildcard
-            ("a/*/*/*/e", "a/b/c/d/e", true),
-            ("a/*/*/*/e", "a/x/y/z/e", true),
-            ("a/*/*/*/e", "a/b/c/e", false),
-            ("a/*/*/*/e", "a/b/c/d/f", false),
-            // Mixed with exact segments
-            (
-                "scheme://*/prod/*/error",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            (
-                "scheme://*/prod/*/error",
-                "scheme://other/prod/app/error",
-                true,
-            ),
-            (
-                "scheme://*/prod/*/error",
-                "scheme://acme/dev/syslog/error",
-                false,
-            ),
-            ("scheme://*/prod/*/error", "scheme://acme/prod/error", false),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_match_mid_path_wildcard_with_trailing_wildcard() {
-        // Arrange
-        let test_cases = vec![
-            // Mid-path wildcard + trailing wildcard
-            (
-                "scheme://acme/*/syslog/*",
-                "scheme://acme/prod/syslog/error",
-                true,
-            ),
-            (
-                "scheme://acme/*/syslog/*",
-                "scheme://acme/prod/syslog/warning",
-                true,
-            ),
-            (
-                "scheme://acme/*/syslog/*",
-                "scheme://acme/dev/syslog/critical",
-                true,
-            ),
-            (
-                "scheme://acme/*/syslog/*",
-                "scheme://acme/prod/syslog/error/detail",
-                true,
-            ), // Hierarchical match
-            (
-                "scheme://acme/*/syslog/*",
-                "scheme://acme/prod/app/error",
-                false,
-            ),
-            (
-                "scheme://acme/*/syslog/*",
-                "scheme://other/prod/syslog/error",
-                false,
-            ),
-            // Multiple mid-path + trailing
-            (
-                "scheme://*/prod/*/log/*",
-                "scheme://acme/prod/app/log/info",
-                true,
-            ),
-            (
-                "scheme://*/prod/*/log/*",
-                "scheme://other/prod/db/log/error",
-                true,
-            ),
-            (
-                "scheme://*/prod/*/log/*",
-                "scheme://acme/prod/app/log/info/detail",
-                true,
-            ),
-            (
-                "scheme://*/prod/*/log/*",
-                "scheme://acme/dev/app/log/info",
-                false,
-            ),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
-            );
-        }
-    }
-
-    #[test]
-    fn should_handle_edge_cases_with_wildcards() {
-        // Arrange
-        let test_cases = vec![
-            // Wildcard at start
-            ("*/b/c", "a/b/c", true),
-            ("*/b/c", "x/b/c", true),
-            ("*/b/c", "a/x/c", false),
-            // All wildcards except last
-            ("*/*/*/d", "a/b/c/d", true),
-            ("*/*/*/d", "x/y/z/d", true),
-            ("*/*/*/d", "a/b/d", false),
-            // Exact match still works
-            ("a/*/c", "a/*/c", true),
-            // Single segment with wildcard (not meaningful but should work)
-            ("*", "anything", true),
-        ];
-
-        for (pattern, route, expected) in test_cases {
-            // Act
-            let result = route_matches(DEFAULT_RF, pattern, route);
-
-            // Assert
-            assert_eq!(
-                result, expected,
-                "Pattern '{}' vs route '{}' should be {}",
-                pattern, route, expected
+                c.pattern, c.route, c.expected
             );
         }
     }

@@ -18,21 +18,14 @@ pub struct ControlDomain {
 impl ControlDomain {
     pub fn new() -> Self {
         Self {
-            service: ControlService::new("default-node".to_string()),
-            notice_service: Arc::new(RwLock::new(NoticeService::new())),
-        }
-    }
-
-    pub fn with_node_id(node_id: String) -> Self {
-        Self {
-            service: ControlService::new(node_id),
+            service: ControlService::new(),
             notice_service: Arc::new(RwLock::new(NoticeService::new())),
         }
     }
 
     pub fn with_notice_service(notice_service: Arc<RwLock<NoticeService>>) -> Self {
         Self {
-            service: ControlService::new("default-node".to_string()),
+            service: ControlService::new(),
             notice_service,
         }
     }
