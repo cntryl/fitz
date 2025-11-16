@@ -152,8 +152,7 @@ impl NoticeService {
             let _ = self.route_table.remove(rf, sub_id);
         }
 
-            let r = PublishResult { delivered, failed };
-            r
+        PublishResult { delivered, failed }
     }
 
     /// Get count of active subscriptions

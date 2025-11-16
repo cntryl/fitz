@@ -156,7 +156,13 @@ pub fn start_engine() -> EngineHandle {
 }
 
 /// Start the engine and return handle + join handle
-pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
+/// Result of starting the engine: join handle for background task and EngineHandle for control
+pub struct EngineStartup {
+    pub join_handle: JoinHandle<()>,
+    pub handle: EngineHandle,
+}
+
+pub fn start_engine_with_join() -> EngineStartup {
     // Use unbounded channel to prevent backpressure on high-throughput scenarios
     // Engine spawns work concurrently, so channel never blocks
     let (tx, mut rx) = mpsc::unbounded_channel::<EngineCommand>();
@@ -276,5 +282,5 @@ pub fn start_engine_with_join() -> (JoinHandle<()>, EngineHandle) {
         }
     });
 
-    (jh, handle)
+    EngineStartup { join_handle: jh, handle }
 }
