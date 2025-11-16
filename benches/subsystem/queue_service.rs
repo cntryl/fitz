@@ -41,7 +41,7 @@ fn bench_queue_enqueue_reserve(c: &mut Criterion) {
                             .expect("enqueue");
 
                         let _ = svc
-                            .recieve("realm1", "area1", "resource1", 1, 60)
+                            .receive("realm1", "area1", "resource1", 1, 60)
                             .await
                             .expect("reserve");
                     }
