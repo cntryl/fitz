@@ -43,21 +43,27 @@ impl WsTransport {
                         Ok(tls_stream) => match accept_async(tls_stream).await {
                             Ok(ws) => {
                                 if let Err(e) = process_ws_stream(ws, engine_for_task).await {
-                                    eprintln!("ws session error: {}", e);
+                                    tracing::error!("ws session error: {}", e);
                                 }
                             }
-                            Err(e) => eprintln!("ws accept error: {}", e),
+                            Err(e) => {
+                                tracing::error!("ws accept error: {}", e);
+                            }
                         },
-                        Err(e) => eprintln!("tls accept error: {}", e),
+                        Err(e) => {
+                            tracing::error!("tls accept error: {}", e);
+                        }
                     }
                 } else {
                     match accept_async(stream).await {
                         Ok(ws) => {
                             if let Err(e) = process_ws_stream(ws, engine_for_task).await {
-                                eprintln!("ws session error: {}", e);
+                                tracing::error!("ws session error: {}", e);
                             }
                         }
-                        Err(e) => eprintln!("ws accept error: {}", e),
+                        Err(e) => {
+                            tracing::error!("ws accept error: {}", e);
+                        }
                     }
                 }
             });

@@ -5,6 +5,11 @@ use hyper::{Body, Request, Response, Server};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     // Initialize subsystems
     fitz::authz::init();
     fitz::storage::init();

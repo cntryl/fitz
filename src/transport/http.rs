@@ -129,16 +129,19 @@ pub async fn handle_request(
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => match tokio_tungstenite::accept_async(upgraded).await {
                         Ok(ws_stream) => {
-                            if let Err(e) =
-                                crate::transport::ws::process_ws_stream(ws_stream, engine_for_task)
-                                    .await
+                            if let Err(e) = crate::transport::ws::process_ws_stream(ws_stream, engine_for_task)
+                                .await
                             {
-                                eprintln!("ws session error (upgraded): {}", e);
+                                tracing::error!("ws session error (upgraded): {}", e);
                             }
                         }
-                        Err(e) => eprintln!("accept_async failed: {}", e),
+                        Err(e) => {
+                            tracing::error!("accept_async failed: {}", e);
+                        }
                     },
-                    Err(e) => eprintln!("upgrade failed: {}", e),
+                    Err(e) => {
+                        tracing::error!("upgrade failed: {}", e);
+                    }
                 }
             };
             tokio::spawn(fut);

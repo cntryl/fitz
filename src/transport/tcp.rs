@@ -153,7 +153,9 @@ impl TcpTransport {
                         }
                         // Cleanup handled at session layer with proper channel_id and route_family context
                     }
-                    Err(e) => eprintln!("tls accept failed: {}", e),
+                    Err(e) => {
+                        tracing::error!("tls accept failed: {}", e);
+                    }
                 }
             });
         }
