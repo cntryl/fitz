@@ -83,6 +83,17 @@ impl QueueService {
             .to_vec()
     }
 
+    /// Compute end key for a given prefix range scan.
+    ///
+    /// This returns the smallest byte sequence that is greater than all
+    /// possible extensions of the given prefix, suitable as an exclusive
+    /// upper bound in lexicographic scans.
+    pub fn prefix_end(prefix: &[u8]) -> Vec<u8> {
+        let mut v = prefix.to_vec();
+        v.push(0xFF);
+        v
+    }
+
     /// Derive the message key from a lease key by rewriting the index byte.
     pub fn derive_message_key_from_lease(lease_key: &[u8]) -> Option<Vec<u8>> {
         if lease_key.len() < 2 {
@@ -239,11 +250,12 @@ impl QueueService {
             .map_err(|e| format!("Time error: {:?}", e))?
             .as_secs();
         let lease_prefix = Self::lease_prefix(realm, area, resource);
+        let end_key = Self::prefix_end(&lease_prefix);
 
         // Phase 1: scan lease rows to find available messages
         let scan_results = self
             .kv_store
-            .scan(DEFAULT_CF, &lease_prefix, &[])
+            .scan(DEFAULT_CF, &lease_prefix, end_key.as_slice())
             .map_err(|e| format!("Scan error: {:?}", e))?;
 
         let mut message_keys: Vec<Vec<u8>> = Vec::new();

@@ -149,7 +149,7 @@ impl Domain for QueueDomain {
                     let batch_size = 10; // Default batch size
 
                     match service
-                        .recieve(realm, area, resource, batch_size, lease_duration)
+                        .receive(realm, area, resource, batch_size, lease_duration)
                         .await
                     {
                         Ok(messages) => {
@@ -257,32 +257,9 @@ impl Domain for QueueDomain {
                     }
                 }
                 QueueOperation::Get => {
-                    match service.peek(realm, area, resource).await {
-                        Ok(Some(message)) => {
-                            let message_data: Vec<(String, Vec<u8>, String)> = vec![(
-                                message.id,
-                                message.body,
-                                String::new(), // No token for peek
-                            )];
-                            let response = Self::build_reserve_response(&message_data);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Ok(None) => {
-                            // No messages available
-                            let response = Self::build_reserve_response(&[]);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
+                    // Get operation not supported in no-peek design
+                    let response = Self::build_error_response("Get operation not supported");
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
                 QueueOperation::List => {
                     // Handle different list patterns:
