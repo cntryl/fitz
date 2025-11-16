@@ -5,7 +5,7 @@ use super::encoding::{
     build_success_response, parse_tlv_payload,
 };
 use super::service::QueueService;
-use super::types::{QueueConfig, QueueStats};
+use super::types::QueueStats;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
@@ -55,16 +55,7 @@ impl QueueDomain {
     }
 
     /// Parse TLV payload to extract queue operation parameters
-    fn parse_tlv_payload(
-        payload: &[u8],
-    ) -> (
-        Option<String>,      // message_id
-        Option<Vec<u8>>,     // body
-        Option<u32>,         // lease_secs
-        Option<String>,      // delivery_token
-        Option<u64>,         // ttl_secs
-        Option<QueueConfig>, // config
-    ) {
+    fn parse_tlv_payload(payload: &[u8]) -> super::encoding::QueueTlvPayload {
         parse_tlv_payload(payload)
     }
 
@@ -101,8 +92,13 @@ impl Domain for QueueDomain {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
         Box::pin(async move {
             // Parse TLV payload
-            let (message_id, body, lease_secs, delivery_token, ttl_secs, _config) =
-                Self::parse_tlv_payload(&request.payload);
+            let parsed = Self::parse_tlv_payload(&request.payload);
+            let message_id = parsed.message_id.clone();
+            let body = parsed.body.clone();
+            let lease_secs = parsed.lease_secs;
+            let delivery_token = parsed.delivery_token.clone();
+            let ttl_secs = parsed.ttl_secs;
+            let _config = parsed.config;
 
             // Extract realm, area, resource, and operation from Route
             let realm = match &request.route.realm {
@@ -593,8 +589,13 @@ mod tests {
         let payload = vec![];
 
         // Act
-        let (message_id, body, lease_secs, delivery_token, ttl_secs, config) =
-            QueueDomain::parse_tlv_payload(&payload);
+        let parsed = QueueDomain::parse_tlv_payload(&payload);
+        let message_id = parsed.message_id;
+        let body = parsed.body;
+        let lease_secs = parsed.lease_secs;
+        let delivery_token = parsed.delivery_token;
+        let ttl_secs = parsed.ttl_secs;
+        let config = parsed.config;
 
         // Assert
         assert!(message_id.is_none());

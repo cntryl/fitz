@@ -21,6 +21,13 @@ pub struct NoticeService {
     route_table: RouteTable,
 }
 
+/// Result of a publish operation: delivered and failed counts
+#[derive(Debug, Clone)]
+pub struct PublishResult {
+    pub delivered: usize,
+    pub failed: usize,
+}
+
 impl NoticeService {
     /// Create a new notice service
     pub fn new() -> Self {
@@ -66,7 +73,7 @@ impl NoticeService {
     }
 
     /// Publish a notification to all matching subscribers in a specific route family (tenant)
-    /// Returns (delivered_count, failed_count)
+    /// Returns `PublishResult` containing delivered and failed counts
     ///
     /// Optimizations:
     /// - Uses SmallVec for dead_subs (typically 0-2 dead subs per publish)
@@ -78,12 +85,12 @@ impl NoticeService {
         route: &str,
         msg_id: Option<&str>,
         body: &[u8],
-    ) -> (usize, usize) {
+    ) -> PublishResult {
         let matches = self.route_table.matching_subscribers(rf, route);
 
         // Fast path: no subscribers
         if matches.is_empty() {
-            return (0, 0);
+            return PublishResult { delivered: 0, failed: 0 };
         }
 
         let mut delivered = 0usize;
@@ -101,12 +108,14 @@ impl NoticeService {
                 None,  // Notices never have seq
                 false, // Notices never have end flag
             )) {
-                Ok(_) => return (1, 0),
-                Err(mpsc::error::TrySendError::Full(_)) => return (0, 1),
+                            Ok(_) => return PublishResult { delivered: 1, failed: 0 },
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    return PublishResult { delivered: 0, failed: 1 }
+                }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Subscriber disconnected, remove it
                     let _ = self.route_table.remove(rf, sub.id);
-                    return (0, 1);
+                    return PublishResult { delivered: 0, failed: 1 };
                 }
             }
         }
@@ -143,7 +152,7 @@ impl NoticeService {
             let _ = self.route_table.remove(rf, sub_id);
         }
 
-        (delivered, failed)
+        PublishResult { delivered, failed }
     }
 
     /// Get count of active subscriptions

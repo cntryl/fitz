@@ -8,17 +8,21 @@ use crate::protocol::tags::{
     TAG_BODY, TAG_DELIVERY_TOKEN, TAG_ERR_MSG, TAG_ID, TAG_LEASE, TAG_TIMESTAMP, TAG_TTL_SECS,
 };
 
+/// Parsed TLV payload for queue operations
+#[derive(Debug, Clone)]
+pub struct QueueTlvPayload {
+    pub message_id: Option<String>,
+    pub body: Option<Vec<u8>>,
+    pub lease_secs: Option<u32>,
+    pub delivery_token: Option<String>,
+    pub ttl_secs: Option<u64>,
+    pub config: Option<QueueConfig>,
+}
+
 /// Parse TLV payload to extract queue operation parameters
 pub fn parse_tlv_payload(
     payload: &[u8],
-) -> (
-    Option<String>,      // message_id
-    Option<Vec<u8>>,     // body
-    Option<u32>,         // lease_secs
-    Option<String>,      // delivery_token
-    Option<u64>,         // ttl_secs
-    Option<QueueConfig>, // config
-) {
+)-> QueueTlvPayload {
     let mut message_id = None;
     let mut body = None;
     let mut lease_secs = None;
@@ -87,14 +91,14 @@ pub fn parse_tlv_payload(
         }
     }
 
-    (
+    QueueTlvPayload {
         message_id,
         body,
         lease_secs,
         delivery_token,
         ttl_secs,
         config,
-    )
+    }
 }
 
 /// Build TLV response for enqueue operation
@@ -524,8 +528,13 @@ mod tests {
         let payload = vec![];
 
         // Act
-        let (message_id, body, lease_secs, delivery_token, ttl_secs, config) =
-            parse_tlv_payload(&payload);
+        let parsed = parse_tlv_payload(&payload);
+        let message_id = parsed.message_id;
+        let body = parsed.body;
+        let lease_secs = parsed.lease_secs;
+        let delivery_token = parsed.delivery_token;
+        let ttl_secs = parsed.ttl_secs;
+        let config = parsed.config;
 
         // Assert
         assert!(message_id.is_none());
@@ -545,8 +554,13 @@ mod tests {
         payload.extend_from_slice(b"hello");
 
         // Act
-        let (message_id, body, lease_secs, delivery_token, ttl_secs, config) =
-            parse_tlv_payload(&payload);
+        let parsed = parse_tlv_payload(&payload);
+        let message_id = parsed.message_id;
+        let body = parsed.body;
+        let lease_secs = parsed.lease_secs;
+        let delivery_token = parsed.delivery_token;
+        let ttl_secs = parsed.ttl_secs;
+        let config = parsed.config;
 
         // Assert
         assert!(message_id.is_none());
@@ -573,8 +587,13 @@ mod tests {
         payload.extend_from_slice(&30u32.to_be_bytes());
 
         // Act
-        let (message_id, body, lease_secs, delivery_token, ttl_secs, config) =
-            parse_tlv_payload(&payload);
+        let parsed = parse_tlv_payload(&payload);
+        let message_id = parsed.message_id;
+        let body = parsed.body;
+        let lease_secs = parsed.lease_secs;
+        let delivery_token = parsed.delivery_token;
+        let ttl_secs = parsed.ttl_secs;
+        let config = parsed.config;
 
         // Assert
         assert_eq!(message_id, Some("msg1".to_string()));
@@ -601,8 +620,13 @@ mod tests {
         payload.extend_from_slice(&3600u64.to_be_bytes());
 
         // Act
-        let (message_id, body, lease_secs, delivery_token, ttl_secs, config) =
-            parse_tlv_payload(&payload);
+        let parsed = parse_tlv_payload(&payload);
+        let message_id = parsed.message_id;
+        let body = parsed.body;
+        let lease_secs = parsed.lease_secs;
+        let delivery_token = parsed.delivery_token;
+        let ttl_secs = parsed.ttl_secs;
+        let config = parsed.config;
 
         // Assert
         assert!(message_id.is_none());

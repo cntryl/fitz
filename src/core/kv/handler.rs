@@ -6,6 +6,13 @@ use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID};
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 
+/// Simple struct to hold parsed `TAG_ID`/`TAG_BODY` for KV operations
+#[derive(Debug, Clone)]
+pub struct TlvKeyValue {
+    pub key: Option<String>,
+    pub value: Option<Vec<u8>>,
+}
+
 pub struct KvDomain {
     kv_store: Arc<dyn KvStore>,
 }
@@ -17,7 +24,10 @@ impl KvDomain {
 
     /// Parse TLV body to extract key (TAG_ID) and value (TAG_BODY)
     /// Supports extended length encoding (255 = 4-byte length follows)
-    fn parse_tlv_body(body: &[u8]) -> (Option<String>, Option<Vec<u8>>) {
+    /// Parse TLV body to extract key (TAG_ID) and value (TAG_BODY)
+    /// Supports extended length encoding (255 = 4-byte length follows)
+
+    fn parse_tlv_body(body: &[u8]) -> TlvKeyValue {
         let mut key = None;
         let mut value = None;
         let mut i = 0;
@@ -64,7 +74,7 @@ impl KvDomain {
             }
         }
 
-        (key, value)
+        TlvKeyValue { key, value }
     }
 
     /// Build TLV response with body or error
@@ -175,7 +185,9 @@ impl Domain for KvDomain {
             };
 
             // Parse TLV body for key and value
-            let (key, value) = Self::parse_tlv_body(&request.payload);
+            let kv = Self::parse_tlv_body(&request.payload);
+            let key = kv.key;
+            let value = kv.value;
 
             // Parse realm and area from route
             let _realm = match request.route.realm.as_deref() {

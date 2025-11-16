@@ -11,11 +11,11 @@
 #[derive(Debug, Clone)]
 struct Grant {
     intent: Option<String>,    // read, write, * for any intent
-    operation: Option<String>, // specific operation, None means any operation within intent
     scheme: Option<&'static str>,
     realm: Option<String>,
     area: Option<String>,
     resource: Option<String>,
+    operation: Option<String>, // specific operation, None means any operation within intent
     wildcard: bool, // when true, descendants under resource are allowed
 }
 
@@ -151,6 +151,17 @@ fn registry() -> &'static Mutex<HashMap<String, Vec<Grant>>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Result of parsing a route scope expression in policy strings
+#[derive(Debug, Clone)]
+pub struct RouteScope {
+    pub intent: Option<String>,
+    pub scheme: Option<&'static str>,
+    pub realm: Option<String>,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub wildcard: bool,
+}
+
 fn action_from_str(_s: &str) -> bool {
     // With additive, route-shaped permissions we no longer distinguish
     // between different actions in the grant itself.
@@ -159,14 +170,7 @@ fn action_from_str(_s: &str) -> bool {
 
 fn parse_route_scope(
     scope: &str,
-) -> (
-    Option<String>,
-    Option<&'static str>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    bool,
-) {
+)-> RouteScope {
     // Expect intent::scheme://realm[/area[/resource]] with optional trailing /* wildcard
     // intent can be "read", "write", "*" or omitted (defaults to None for any)
     let mut wildcard = false;
@@ -205,9 +209,23 @@ fn parse_route_scope(
         let realm = parts.next().map(|x| x.to_string());
         let area = parts.next().map(|x| x.to_string());
         let resource = parts.next().map(|x| x.to_string());
-        return (intent, sc, realm, area, resource, wildcard);
+        return RouteScope {
+            intent,
+            scheme: sc,
+            realm,
+            area,
+            resource,
+            wildcard,
+        };
     }
-    (intent, None, None, None, None, wildcard)
+    RouteScope {
+        intent,
+        scheme: None,
+        realm: None,
+        area: None,
+        resource: None,
+        wildcard,
+    }
 }
 
 pub async fn install_claim_grants(tenant: &str, claims: &crate::authz::mock_jwks::Claims) {
@@ -216,8 +234,13 @@ pub async fn install_claim_grants(tenant: &str, claims: &crate::authz::mock_jwks
         for p in perms {
             if let Some((act_s, scope)) = p.split_once(':') {
                 if action_from_str(act_s) {
-                    let (intent, scheme, realm, area, resource, wildcard) =
-                        parse_route_scope(scope);
+                    let parsed = parse_route_scope(scope);
+                    let intent = parsed.intent;
+                    let scheme = parsed.scheme;
+                    let realm = parsed.realm;
+                    let area = parsed.area;
+                    let resource = parsed.resource;
+                    let wildcard = parsed.wildcard;
                     // If realm not specified in permission scope, use tenant's default realm
                     // Note: tenant (authorization context) and realm (route namespace) are separate concepts
                     let realm = realm.or_else(|| Some(tenant.to_string()));
@@ -322,7 +345,13 @@ mod tests {
     fn profile(name: &str) -> Vec<Grant> {
         // Helper: parse multiple permission strings into grants
         fn parse_permission_to_grants(permission: &str) -> Vec<Grant> {
-            let (intent, scheme, realm, area, resource, wildcard) = parse_route_scope(permission);
+            let parsed = parse_route_scope(permission);
+            let intent = parsed.intent;
+            let scheme = parsed.scheme;
+            let realm = parsed.realm;
+            let area = parsed.area;
+            let resource = parsed.resource;
+            let wildcard = parsed.wildcard;
             vec![Grant::new(
                 intent, None, scheme, realm, area, resource, wildcard,
             )]

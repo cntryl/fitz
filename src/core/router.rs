@@ -22,6 +22,13 @@ pub struct Router {
     rpc_round_robin: HashMap<String, usize>,
 }
 
+/// Result of Router::dispatch: delivered count and list of removed subscription IDs
+#[derive(Debug, Clone)]
+pub struct DispatchResult {
+    pub delivered: usize,
+    pub removed: Vec<u64>,
+}
+
 impl Router {
     pub fn new() -> Self {
         Self {
@@ -61,7 +68,7 @@ impl Router {
     /// Dispatch a notification to all matching subscribers. Uses try_send to avoid blocking.
     /// For RPC routes (rpc://*), uses round-robin to deliver to only one subscriber.
     /// For other routes, broadcasts to all matching subscribers.
-    /// Returns (delivered_count, removed_dead_subs)
+    /// Returns `DispatchResult` containing delivered count and removed dead subscriptions
     pub fn dispatch(
         &mut self,
         route: &str,
@@ -70,7 +77,7 @@ impl Router {
         reply_to: Option<&str>,
         seq: Option<u32>,
         end: bool,
-    ) -> (usize, Vec<u64>) {
+    ) -> DispatchResult {
         let is_rpc = route.starts_with("rpc://");
 
         if is_rpc {
@@ -91,7 +98,7 @@ impl Router {
         reply_to: Option<&str>,
         seq: Option<u32>,
         end: bool,
-    ) -> (usize, Vec<u64>) {
+    ) -> DispatchResult {
         let mut delivered = 0usize;
         let mut to_remove = Vec::new();
         for (sub_id, sub) in self.subs.iter() {
@@ -119,7 +126,10 @@ impl Router {
                 self.subs.remove(id);
             }
         }
-        (delivered, to_remove)
+        DispatchResult {
+            delivered,
+            removed: to_remove,
+        }
     }
 
     /// Round-robin delivery to single subscriber for RPC routes
@@ -131,7 +141,7 @@ impl Router {
         reply_to: Option<&str>,
         seq: Option<u32>,
         end: bool,
-    ) -> (usize, Vec<u64>) {
+    ) -> DispatchResult {
         // Collect matching subscribers
         let mut matching_subs: Vec<(&u64, &SubEntry)> = self
             .subs
@@ -140,7 +150,7 @@ impl Router {
             .collect();
 
         if matching_subs.is_empty() {
-            return (0, vec![]);
+            return DispatchResult { delivered: 0, removed: vec![] };
         }
 
         // Sort for deterministic round-robin
@@ -182,7 +192,10 @@ impl Router {
             }
         }
 
-        (delivered, to_remove)
+        DispatchResult {
+            delivered,
+            removed: to_remove,
+        }
     }
 
     /// Return a snapshot count of current subscriptions
@@ -324,7 +337,9 @@ mod tests {
         let _id = r.subscribe("route/a".to_string(), 1, tx);
 
         // Act
-        let (delivered, removed) = r.dispatch("route/a", Some("mid"), b"hi", None, Some(1), false);
+        let res = r.dispatch("route/a", Some("mid"), b"hi", None, Some(1), false);
+        let delivered = res.delivered;
+        let removed = res.removed;
 
         // Assert
         assert_eq!(delivered, 1);
@@ -353,7 +368,9 @@ mod tests {
 
         // Act
         let _id = r.subscribe("x".to_string(), 1, tx);
-        let (delivered, removed) = r.dispatch("x", None, b"v", None, None, false);
+        let res = r.dispatch("x", None, b"v", None, None, false);
+        let delivered = res.delivered;
+        let removed = res.removed;
 
         // Assert
         // Full should not count as delivered and should not remove
@@ -364,7 +381,8 @@ mod tests {
         // drain the prefill so we don't leak
         let _ = rx.try_recv();
         // now a subsequent dispatch should succeed
-        let (delivered2, _) = r.dispatch("x", None, b"v2", None, None, false);
+        let r = r.dispatch("x", None, b"v2", None, None, false);
+        let delivered2 = r.delivered;
         assert_eq!(delivered2, 1);
     }
 
@@ -378,7 +396,9 @@ mod tests {
         // Act
         // drop receiver to close
         drop(rx);
-        let (delivered, removed) = r.dispatch("rm", None, b"x", None, None, false);
+        let res = r.dispatch("rm", None, b"x", None, None, false);
+        let delivered = res.delivered;
+        let removed = res.removed;
 
         // Assert
         assert_eq!(delivered, 0);

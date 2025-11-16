@@ -38,6 +38,16 @@ pub struct SubscriptionInfo {
     pub watermark: Option<u64>,
 }
 
+/// Parsed TLV payload for stream operations
+#[derive(Debug, Clone)]
+pub struct StreamTlvPayload {
+    pub body: Option<Vec<u8>>,
+    pub metadata: Option<Vec<u8>>,
+    pub is_end: bool,
+    pub from_seq: Option<u64>,
+    pub limit: Option<usize>,
+}
+
 pub struct StreamDomain {
     service: Arc<RwLock<StreamService>>,
 }
@@ -78,15 +88,7 @@ impl StreamDomain {
     /// Note: For append operations the server will assign `resource_seq` and `created_at`.
     /// Clients may still include TAG_SEQ for read/seek purposes; TAG_SEQ in append
     /// payloads will be ignored.
-    fn parse_tlv_payload(
-        payload: &[u8],
-    ) -> (
-        Option<Vec<u8>>, // body
-        Option<Vec<u8>>, // metadata
-        bool,            // is_end
-        Option<u64>,     // from_seq
-        Option<usize>,   // limit
-    ) {
+    fn parse_tlv_payload(payload: &[u8]) -> StreamTlvPayload {
         let mut body = None;
         let mut metadata = None;
         let mut is_end = false;
@@ -147,7 +149,13 @@ impl StreamDomain {
             }
         }
 
-        (body, metadata, is_end, from_seq, limit)
+        StreamTlvPayload {
+            body,
+            metadata,
+            is_end,
+            from_seq,
+            limit,
+        }
     }
 
     /// Build TLV response for append result
@@ -344,8 +352,12 @@ impl Domain for StreamDomain {
             let service = self.service.read().await;
 
             // Parse operation from route and TLV payload
-            let (body, metadata, is_end, from_seq, limit) =
-                Self::parse_tlv_payload(&request.payload);
+            let parsed = Self::parse_tlv_payload(&request.payload);
+            let body = parsed.body;
+            let metadata = parsed.metadata;
+            let is_end = parsed.is_end;
+            let from_seq = parsed.from_seq;
+            let limit = parsed.limit;
 
             // Extract area and resource from Route
             let area = match &request.route.area {
@@ -484,7 +496,12 @@ mod tests {
         let payload = vec![];
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert!(body.is_none());
@@ -504,7 +521,12 @@ mod tests {
         payload.extend_from_slice(body_data);
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert_eq!(body, Some(body_data.to_vec()));
@@ -522,7 +544,12 @@ mod tests {
         payload.extend_from_slice(metadata_data);
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert!(body.is_none());
@@ -538,7 +565,12 @@ mod tests {
         let payload = vec![TAG_STREAM_END, 0]; // Empty TLV
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert!(body.is_none());
@@ -558,7 +590,12 @@ mod tests {
         payload.extend_from_slice(&seq.to_be_bytes());
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert!(body.is_none());
@@ -596,7 +633,12 @@ mod tests {
         payload.push(0);
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert_eq!(body, Some(body_data.to_vec()));
@@ -618,7 +660,12 @@ mod tests {
         payload.extend_from_slice(&large_body);
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert_eq!(body, Some(large_body));
@@ -802,7 +849,12 @@ mod tests {
         payload.extend_from_slice(body_data);
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert_eq!(body, Some(body_data.to_vec()));
@@ -818,7 +870,12 @@ mod tests {
         let payload = vec![TAG_BODY, 10]; // Tag + length but no data
 
         // Act
-        let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);
+        let parsed = StreamDomain::parse_tlv_payload(&payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
         // Assert
         assert!(body.is_none());
