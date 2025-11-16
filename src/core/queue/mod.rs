@@ -12,4 +12,4 @@ pub use encoding::{
 };
 pub use handler::QueueDomain;
 pub use service::QueueService;
-pub use types::{QueueConfig, QueueMessage, QueueScope, QueueStats};
+pub use types::{QueueConfig, QueueMessage, QueueScope, QueueStats, QueueOperation};

@@ -77,6 +77,54 @@ pub struct QueueStats {
     pub in_flight_count: u32,
 }
 
+/// Queue operation types based on route operation segment.
+#[derive(Debug, Clone)]
+pub enum QueueOperation {
+    /// Enqueue - add message to queue
+    Enqueue,
+    /// Reserve - reserve messages for processing
+    Reserve,
+    /// List - list queues or messages
+    List,
+    /// Consume - acknowledge and remove message
+    Consume,
+    /// ExtendLease - extend lease on reserved message
+    ExtendLease,
+    /// Config - get or set queue configuration
+    Config,
+    /// Nack - negative acknowledge, release lease
+    Nack,
+    /// Requeue - requeue message
+    Requeue,
+    /// Get - get message by ID
+    Get,
+    /// Subscribe - subscribe to queue notifications
+    Subscribe,
+    /// Unsubscribe - unsubscribe from queue notifications
+    Unsubscribe,
+}
+
+impl QueueOperation {
+    /// Determine operation from route
+    pub fn from_route(route: &crate::protocol::route::Route) -> Result<Self, String> {
+        match route.operation.as_deref() {
+            Some("enqueue") => Ok(QueueOperation::Enqueue),
+            Some("reserve") | Some("receive") => Ok(QueueOperation::Reserve),
+            Some("list") => Ok(QueueOperation::List),
+            Some("consume") | Some("ack") => Ok(QueueOperation::Consume),
+            Some("extend-lease") | Some("extend") => Ok(QueueOperation::ExtendLease),
+            Some("config") => Ok(QueueOperation::Config),
+            Some("nack") => Ok(QueueOperation::Nack),
+            Some("requeue") => Ok(QueueOperation::Requeue),
+            Some("get") => Ok(QueueOperation::Get),
+            Some("subscribe") => Ok(QueueOperation::Subscribe),
+            Some("unsubscribe") => Ok(QueueOperation::Unsubscribe),
+            None => Err("Queue operation required".to_string()),
+            Some(op) => Err(format!("Unknown queue operation: {}", op)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,6 +5,7 @@ use super::encoding::{
     build_success_response, parse_tlv_payload,
 };
 use super::service::QueueService;
+use super::types::QueueOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
@@ -85,15 +86,17 @@ impl Domain for QueueDomain {
                 Some(r) => r.as_str(),
                 None => return DomainResponse::Error("Missing resource in route".to_string()),
             };
-            let operation = match &request.route.operation {
-                Some(o) => o.as_str(),
-                None => return DomainResponse::Error("Missing operation in route".to_string()),
+
+            // Determine queue operation
+            let queue_operation = match QueueOperation::from_route(&request.route) {
+                Ok(op) => op,
+                Err(e) => return DomainResponse::Error(e),
             };
 
             let service = self.service.read().await;
 
-            match operation {
-                "enqueue" => {
+            match queue_operation {
+                QueueOperation::Enqueue => {
                     let message_body = body.unwrap_or_default();
                     let ttl = ttl_secs.unwrap_or(0);
                     let _batch_size = 1; // Default to single message for now, could be extended
@@ -116,19 +119,19 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "subscribe" => {
+                QueueOperation::Subscribe => {
                     // TODO: Implement subscribe operation - register for message availability notifications
                     // For now, just return success
                     let response = Self::build_success_response();
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
-                "unsubscribe" => {
+                QueueOperation::Unsubscribe => {
                     // TODO: Implement unsubscribe operation - remove message availability notifications
                     // For now, just return success
                     let response = Self::build_success_response();
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
-                "receive" => {
+                QueueOperation::Reserve => {
                     let lease_duration = lease_secs.unwrap_or(30);
                     let batch_size = 10; // Default batch size
 
@@ -154,7 +157,7 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "extend" => {
+                QueueOperation::ExtendLease => {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
                     let additional_secs = lease_secs.unwrap_or(30);
@@ -177,7 +180,7 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "ack" => {
+                QueueOperation::Consume => {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
 
@@ -199,7 +202,7 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "nack" => {
+                QueueOperation::Nack => {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
 
@@ -218,7 +221,7 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "requeue" => {
+                QueueOperation::Requeue => {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
 
@@ -240,7 +243,7 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "get" => {
+                QueueOperation::Get => {
                     match service.peek(realm, area, resource).await {
                         Ok(Some(message)) => {
                             let message_data: Vec<(String, Vec<u8>, String)> = vec![(
@@ -268,7 +271,7 @@ impl Domain for QueueDomain {
                         }
                     }
                 }
-                "list" => {
+                QueueOperation::List => {
                     // Handle different list patterns:
                     // queue://realm/area/*/list -> list all queues in realm/area
                     // queue://realm/*/*/list -> list all queues in realm
@@ -302,19 +305,10 @@ impl Domain for QueueDomain {
                         ))
                     }
                 }
-                "config" => {
+                QueueOperation::Config => {
                     // TODO: Implement config operation
                     let response = Self::build_success_response();
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
-                }
-                _ => {
-                    let error_response = Self::build_error_response(&format!(
-                        "Unknown queue operation: {}",
-                        operation
-                    ));
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        error_response,
-                    ))
                 }
             }
         })
