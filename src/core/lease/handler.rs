@@ -36,16 +36,7 @@ impl Default for LeaseDomain {
 }
 
 impl Domain for LeaseDomain {
-    fn handle<'a>(
-        &'a self,
-        _request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(self.process(_request))
-    }
-}
-
-impl LeaseDomain {
-    async fn process(&self, request: DomainContext) -> DomainResponse {
+    fn handle(&self, request: DomainContext) -> DomainResponse {
         let svc = &self.service;
         let rf = request.route_family;
 
@@ -65,7 +56,7 @@ impl LeaseDomain {
             LeaseOperation::Acquire => {
                 // Acquire requires TAG_LEASE (TTL)
                 match tlv::parse_u32(&payload, TAG_LEASE) {
-                    Some(ttl) => self.handle_acquire(svc, rf, key, ttl).await,
+                    Some(ttl) => self.handle_acquire(svc, rf, key, ttl),
                     None => DomainResponse::Error("acquire requires TAG_LEASE (TTL)".to_string()),
                 }
             }
@@ -77,7 +68,7 @@ impl LeaseDomain {
 
                 match (id, token, add) {
                     (Some(id), Some(token), Some(add)) => {
-                        self.handle_renew(svc, rf, key, id, token, add).await
+                        self.handle_renew(svc, rf, key, id, token, add)
                     }
                     _ => DomainResponse::Error(
                         "renew requires TAG_ID, TAG_DELIVERY_TOKEN, and TAG_LEASE".to_string(),
@@ -90,7 +81,7 @@ impl LeaseDomain {
                 let token = tlv::parse_string(&payload, TAG_DELIVERY_TOKEN);
 
                 match (id, token) {
-                    (Some(id), Some(token)) => self.handle_surrender(svc, rf, key, id, token).await,
+                    (Some(id), Some(token)) => self.handle_surrender(svc, rf, key, id, token),
                     _ => DomainResponse::Error(
                         "surrender requires TAG_ID and TAG_DELIVERY_TOKEN".to_string(),
                     ),
@@ -99,14 +90,14 @@ impl LeaseDomain {
         }
     }
 
-    async fn handle_acquire(
+    fn handle_acquire(
         &self,
         svc: &Arc<LeaseService>,
         rf: crate::storage::RouteFamilyId,
         key: String,
         ttl: u32,
     ) -> DomainResponse {
-        match svc.acquire(rf, &key, ttl).await {
+        match svc.acquire(rf, &key, ttl) {
             Ok(grant) => {
                 // pre-allocate output buffer to avoid multiple re-allocations
                 let est = grant.id.len()
@@ -128,7 +119,7 @@ impl LeaseDomain {
         }
     }
 
-    async fn handle_renew(
+    fn handle_renew(
         &self,
         svc: &Arc<LeaseService>,
         rf: crate::storage::RouteFamilyId,
@@ -137,7 +128,7 @@ impl LeaseDomain {
         token: &str,
         add: u32,
     ) -> DomainResponse {
-        match svc.renew(rf, &key, id, token, add).await {
+        match svc.renew(rf, &key, id, token, add) {
             Ok(remaining) => {
                 // small response; reserve a few bytes to avoid tiny reallocs
                 let mut out = crate::protocol::frame::take_buf();
@@ -150,7 +141,7 @@ impl LeaseDomain {
         }
     }
 
-    async fn handle_surrender(
+    fn handle_surrender(
         &self,
         svc: &Arc<LeaseService>,
         rf: crate::storage::RouteFamilyId,
@@ -158,7 +149,7 @@ impl LeaseDomain {
         id: &str,
         token: &str,
     ) -> DomainResponse {
-        match svc.surrender(rf, &key, id, token).await {
+        match svc.surrender(rf, &key, id, token) {
             Ok(()) => DomainResponse::Ok,
             Err(e) => DomainResponse::Error(e),
         }
@@ -253,8 +244,8 @@ mod tests {
         assert!(op.unwrap_err().contains("Unknown lease operation"));
     }
 
-    #[tokio::test]
-    async fn should_build_tlv_response_for_acquire() {
+    #[test]
+    fn should_build_tlv_response_for_acquire() {
         // Arrange
         let domain = LeaseDomain::new();
         let mut payload = Vec::new();
@@ -262,7 +253,7 @@ mod tests {
         let req = make_request("lease://realm1/area1/test/acquire", payload);
 
         // Act
-        let resp = domain.handle(req).await;
+        let resp = domain.handle(req);
 
         // Assert
         match resp {
@@ -281,15 +272,15 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_return_error_when_missing_required_tlv_for_acquire() {
+    #[test]
+    fn should_return_error_when_missing_required_tlv_for_acquire() {
         // Arrange
         let domain = LeaseDomain::new();
         let payload = Vec::new(); // missing TAG_LEASE
         let req = make_request("lease://realm1/area1/test/acquire", payload);
 
         // Act
-        let resp = domain.handle(req).await;
+        let resp = domain.handle(req);
 
         // Assert
         match resp {
@@ -300,8 +291,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_return_error_for_unknown_route_operation() {
+    #[test]
+    fn should_return_error_for_unknown_route_operation() {
         // Arrange
         let domain = LeaseDomain::new();
         let mut payload = Vec::new();
@@ -309,7 +300,7 @@ mod tests {
         let req = make_request("lease://realm1/area1/test/invalid", payload);
 
         // Act
-        let resp = domain.handle(req).await;
+        let resp = domain.handle(req);
 
         // Assert
         match resp {

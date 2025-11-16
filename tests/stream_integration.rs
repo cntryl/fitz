@@ -26,10 +26,9 @@ async fn should_append_and_read_event() {
     let svc = service.read().await;
     let txn = svc
         .begin_append(TEST_RF, "test-realm", "test-area", "test-resource")
-        .await
         .expect("Begin");
-    svc.append_event(txn, TEST_RF, event).await.expect("Append");
-    let (first_seq, last_seq, count) = svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    svc.append_event(txn, TEST_RF, event).expect("Append");
+    let (first_seq, last_seq, count) = svc.commit_append(txn, TEST_RF).expect("Commit");
     drop(svc);
 
     // Assert
@@ -40,8 +39,7 @@ async fn should_append_and_read_event() {
     // Act - Read event back
     let svc = service.read().await;
     let read_result = svc
-        .read(TEST_RF, "test-realm", "test-area", "test-resource", 0, 10)
-        .await;
+        .read(TEST_RF, "test-realm", "test-area", "test-resource", 0, 10);
     drop(svc);
 
     // Assert
@@ -72,13 +70,12 @@ async fn should_respect_watermark_in_area_read() {
     let svc = service.read().await;
     let txn = svc
         .begin_append(TEST_RF, "realm1", "area1", "resource1")
-        .await
         .expect("Begin");
-    svc.append_event(txn, TEST_RF, event).await.expect("Append");
-    svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    svc.append_event(txn, TEST_RF, event).expect("Append");
+    svc.commit_append(txn, TEST_RF).expect("Commit");
 
     // Act - Read area
-    let read_result = svc.read_area(TEST_RF, "realm1", "area1", 0, 10).await;
+    let read_result = svc.read_area(TEST_RF, "realm1", "area1", 0, 10);
     drop(svc);
 
     // Assert
@@ -90,8 +87,7 @@ async fn should_respect_watermark_in_area_read() {
     let read_ahead = service
         .read()
         .await
-        .read_area(TEST_RF, "realm1", "area1", 100, 10)
-        .await;
+        .read_area(TEST_RF, "realm1", "area1", 100, 10);
 
     // Assert - Should return empty
     assert!(read_ahead.is_ok());
@@ -110,7 +106,6 @@ async fn should_append_multiple_events_and_read_in_sequence() {
     let svc = service.read().await;
     let txn = svc
         .begin_append(TEST_RF, "realm1", "area1", "resource1")
-        .await
         .expect("Begin");
     for i in 0..3 {
         let event = StreamEvent {
@@ -122,17 +117,16 @@ async fn should_append_multiple_events_and_read_in_sequence() {
             created_at: 1234567890 + i,
             is_end: false,
         };
-        svc.append_event(txn, TEST_RF, event).await.expect("Append");
+        svc.append_event(txn, TEST_RF, event).expect("Append");
     }
-    svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    svc.commit_append(txn, TEST_RF).expect("Commit");
     drop(svc);
 
     // Act - Read all events
     let read_result = service
         .read()
         .await
-        .read(TEST_RF, "realm1", "area1", "resource1", 0, 10)
-        .await;
+        .read(TEST_RF, "realm1", "area1", "resource1", 0, 10);
 
     // Assert
     assert!(read_result.is_ok());
@@ -154,8 +148,7 @@ async fn should_get_correct_watermark() {
     let watermark = service
         .read()
         .await
-        .get_watermark(TEST_RF, "realm1", "area1")
-        .await;
+        .get_watermark(TEST_RF, "realm1", "area1");
 
     // Assert
     assert!(watermark.is_ok());
@@ -174,18 +167,16 @@ async fn should_get_correct_watermark() {
     };
     let txn = svc
         .begin_append(TEST_RF, "realm1", "area1", "resource1")
-        .await
         .expect("Begin");
-    svc.append_event(txn, TEST_RF, event).await.expect("Append");
-    svc.commit_append(txn, TEST_RF).await.expect("Commit");
+    svc.append_event(txn, TEST_RF, event).expect("Append");
+    svc.commit_append(txn, TEST_RF).expect("Commit");
     drop(svc);
 
     // Act - Get watermark after commit
     let watermark = service
         .read()
         .await
-        .get_watermark(TEST_RF, "realm1", "area1")
-        .await;
+        .get_watermark(TEST_RF, "realm1", "area1");
 
     // Assert
     assert!(watermark.is_ok());

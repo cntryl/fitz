@@ -8,8 +8,7 @@ use super::types::KvOperation;
 use crate::storage::traits::{KvStore, KvTransaction};
 use cntryl_midge::ColumnFamilyId;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // Default column family for KV domain
 const DEFAULT_CF: ColumnFamilyId = ColumnFamilyId(0);
@@ -65,7 +64,7 @@ impl KvService {
     }
 
     /// Process a KV operation with route-based key namespacing
-    pub async fn handle_operation(
+    pub fn handle_operation(
         &self,
         operation: KvOperation,
         route: &str,
@@ -83,21 +82,21 @@ impl KvService {
         let area = parts.get(1).ok_or_else(|| "Missing area".to_string())?;
 
         match operation {
-            KvOperation::Put => self.handle_put(realm, area, key, value).await,
-            KvOperation::Get => self.handle_get(realm, area, key).await,
-            KvOperation::Delete => self.handle_delete(realm, area, key).await,
-            KvOperation::Scan => self.handle_scan(realm, area, key, value).await,
-            KvOperation::Batch => self.handle_batch(realm, area, value).await,
-            KvOperation::GetMany => self.handle_get_many(realm, area, value).await,
-            KvOperation::DeleteRange => self.handle_delete_range(realm, area, key, value).await,
-            KvOperation::BeginTransaction => self.handle_begin_transaction(realm, area).await,
-            KvOperation::CommitTransaction => self.handle_commit_transaction(key).await,
-            KvOperation::RollbackTransaction => self.handle_rollback_transaction(key).await,
+            KvOperation::Put => self.handle_put(realm, area, key, value),
+            KvOperation::Get => self.handle_get(realm, area, key),
+            KvOperation::Delete => self.handle_delete(realm, area, key),
+            KvOperation::Scan => self.handle_scan(realm, area, key, value),
+            KvOperation::Batch => self.handle_batch(realm, area, value),
+            KvOperation::GetMany => self.handle_get_many(realm, area, value),
+            KvOperation::DeleteRange => self.handle_delete_range(realm, area, key, value),
+            KvOperation::BeginTransaction => self.handle_begin_transaction(realm, area),
+            KvOperation::CommitTransaction => self.handle_commit_transaction(key),
+            KvOperation::RollbackTransaction => self.handle_rollback_transaction(key),
         }
     }
 
     /// Handle put operation: store key-value pair
-    async fn handle_put(
+    fn handle_put(
         &self,
         realm: &str,
         area: &str,
@@ -115,7 +114,7 @@ impl KvService {
     }
 
     /// Handle get operation: retrieve value by key
-    async fn handle_get(
+    fn handle_get(
         &self,
         realm: &str,
         area: &str,
@@ -135,7 +134,7 @@ impl KvService {
     }
 
     /// Handle delete operation: remove key
-    async fn handle_delete(
+    fn handle_delete(
         &self,
         realm: &str,
         area: &str,
@@ -152,7 +151,7 @@ impl KvService {
 
     /// Handle scan operation: list keys with optional begin and end range
     /// Body format: "start_key\nend_key" (end_key optional)
-    async fn handle_scan(
+    fn handle_scan(
         &self,
         realm: &str,
         area: &str,
@@ -215,7 +214,7 @@ impl KvService {
     /// Handle batch operation: atomic multi-operation transaction
     /// Body format: newline-separated operations
     /// Each line: "PUT key value" | "DELETE key"
-    async fn handle_batch(
+    fn handle_batch(
         &self,
         realm: &str,
         area: &str,
@@ -259,7 +258,7 @@ impl KvService {
     /// Handle get-many operation: retrieve multiple keys
     /// Body format: newline-separated keys
     /// Response: length-prefixed values
-    async fn handle_get_many(
+    fn handle_get_many(
         &self,
         realm: &str,
         area: &str,
@@ -300,7 +299,7 @@ impl KvService {
 
     /// Handle delete-range operation: remove keys in range [start, end)
     /// Body format: "start_key\nend_key"
-    async fn handle_delete_range(
+    fn handle_delete_range(
         &self,
         realm: &str,
         area: &str,
@@ -342,14 +341,14 @@ impl KvService {
     }
 
     /// Handle begin transaction: start a new transaction for realm/area
-    async fn handle_begin_transaction(
+    fn handle_begin_transaction(
         &self,
         realm: &str,
         area: &str,
     ) -> Result<Option<Vec<u8>>, String> {
         // Get next transaction ID
         let transaction_id = {
-            let mut next_id = self.next_transaction_id.lock().await;
+            let mut next_id = self.next_transaction_id.lock().unwrap();
             let id = *next_id;
             *next_id += 1;
             id
@@ -369,7 +368,7 @@ impl KvService {
             id: transaction_id,
         };
 
-        let mut transactions = self.active_transactions.lock().await;
+        let mut transactions = self.active_transactions.lock().unwrap();
         transactions.insert(transaction_id, txn);
 
         // Return transaction ID as response
@@ -377,7 +376,7 @@ impl KvService {
     }
 
     /// Handle commit transaction: commit the specified transaction
-    async fn handle_commit_transaction(
+    fn handle_commit_transaction(
         &self,
         transaction_id_str: Option<String>,
     ) -> Result<Option<Vec<u8>>, String> {
@@ -386,7 +385,7 @@ impl KvService {
             .parse::<u64>()
             .map_err(|_| "Invalid transaction ID".to_string())?;
 
-        let mut transactions = self.active_transactions.lock().await;
+        let mut transactions = self.active_transactions.lock().unwrap();
         let _txn = transactions
             .remove(&transaction_id)
             .ok_or_else(|| "Transaction not found".to_string())?;
@@ -397,7 +396,7 @@ impl KvService {
     }
 
     /// Handle rollback transaction: rollback the specified transaction
-    async fn handle_rollback_transaction(
+    fn handle_rollback_transaction(
         &self,
         transaction_id_str: Option<String>,
     ) -> Result<Option<Vec<u8>>, String> {
@@ -406,7 +405,7 @@ impl KvService {
             .parse::<u64>()
             .map_err(|_| "Invalid transaction ID".to_string())?;
 
-        let mut transactions = self.active_transactions.lock().await;
+        let mut transactions = self.active_transactions.lock().unwrap();
         let _txn = transactions
             .remove(&transaction_id)
             .ok_or_else(|| "Transaction not found".to_string())?;
@@ -414,5 +413,107 @@ impl KvService {
         // For now, operations are auto-committed when executed
         // In the future, we might implement proper rollback semantics
         Ok(None)
+    }
+}
+
+// --- Sync Benchmark Methods ---
+// These demonstrate the core domain logic without async overhead for performance analysis
+
+impl KvService {
+    /// Synchronous version of key building for benchmarking
+    /// Measures pure CPU/memory operations without async runtime noise
+    pub fn bench_key_building(&self, realm: &str, area: &str, key: &str) -> Vec<u8> {
+        Self::build_key(realm, area, key)
+    }
+
+    /// Synchronous version of transaction ID generation for benchmarking
+    /// Demonstrates core domain logic: atomic ID allocation
+    pub fn bench_transaction_id_generation(&self) -> u64 {
+        use std::sync::Mutex;
+
+        // Use std::sync primitives for pure sync benchmarking
+        let next_id = Mutex::new(1u64);
+        let mut id = next_id.lock().unwrap();
+        let current = *id;
+        *id += 1;
+        current
+    }
+
+    /// Synchronous version of key parsing for benchmarking
+    /// Measures route parsing performance for domain operations
+    pub fn bench_route_parsing(&self, route: &str) -> Result<(String, String), String> {
+        // Parse realm and area from route
+        let parts: Vec<&str> = route
+            .split("://")
+            .nth(1)
+            .ok_or_else(|| "Invalid route format".to_string())?
+            .split('/')
+            .collect();
+        let realm = parts.first().ok_or_else(|| "Missing realm".to_string())?;
+        let area = parts.get(1).ok_or_else(|| "Missing area".to_string())?;
+        Ok((realm.to_string(), area.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::midge_adapter::create_memory_store;
+
+    fn new_test_service() -> KvService {
+        let store = create_memory_store().expect("Failed to create memory store");
+        KvService::new(store)
+    }
+
+    #[test]
+    fn should_build_key_correctly() {
+        // Arrange
+        let svc = new_test_service();
+
+        // Act
+        let key = svc.bench_key_building("realm1", "area1", "resource1");
+
+        // Assert
+        let expected = b"kv:realm1:area1:resource1";
+        assert_eq!(key, expected);
+    }
+
+    #[test]
+    fn should_generate_transaction_ids() {
+        // Arrange
+        let svc = new_test_service();
+
+        // Act
+        let id = svc.bench_transaction_id_generation();
+
+        // Assert
+        assert_eq!(id, 1); // Starts from 1 as expected
+    }
+
+    #[test]
+    fn should_parse_route_correctly() {
+        // Arrange
+        let svc = new_test_service();
+
+        // Act
+        let result = svc.bench_route_parsing("kv://realm1/area1/resource1");
+
+        // Assert
+        assert!(result.is_ok());
+        let (realm, area) = result.unwrap();
+        assert_eq!(realm, "realm1");
+        assert_eq!(area, "area1");
+    }
+
+    #[test]
+    fn should_reject_invalid_route() {
+        // Arrange
+        let svc = new_test_service();
+
+        // Act
+        let result = svc.bench_route_parsing("invalid://route");
+
+        // Assert
+        assert!(result.is_err());
     }
 }

@@ -129,7 +129,7 @@ impl QueueService {
 
     /// List queues within a specific realm/area scope
     /// Returns queues that match the pattern: queue:{realm}/{area}/*
-    pub async fn list_queues_in_scope(
+    pub fn list_queues_in_scope(
         &self,
         realm: &str,
         area: &str,
@@ -166,7 +166,7 @@ impl QueueService {
 
     /// List all queues within a specific realm
     /// Returns queues that match the pattern: queue:{realm}/*/*
-    pub async fn list_queues_in_realm(&self, realm: &str) -> Result<Vec<String>, String> {
+    pub fn list_queues_in_realm(&self, realm: &str) -> Result<Vec<String>, String> {
         use std::collections::HashSet;
 
         // Scan for queue keys in this realm: queue:{realm}/
@@ -200,7 +200,7 @@ impl QueueService {
     }
 
     /// Enqueue a message to the specified queue
-    pub async fn enqueue(
+    pub fn enqueue(
         &self,
         realm: &str,
         area: &str,
@@ -258,7 +258,7 @@ impl QueueService {
     }
 
     /// Reserve (lease) messages from the specified queue
-    pub async fn receive(
+    pub fn receive(
         &self,
         realm: &str,
         area: &str,
@@ -433,7 +433,7 @@ impl QueueService {
     }
 
     /// Complete (acknowledge) a leased message
-    pub async fn complete(
+    pub fn complete(
         &self,
         realm: &str,
         area: &str,
@@ -474,7 +474,7 @@ impl QueueService {
     }
 
     /// Extend the lease on a message
-    pub async fn extend_lease(
+    pub fn extend_lease(
         &self,
         realm: &str,
         area: &str,
@@ -583,7 +583,7 @@ impl QueueService {
     }
 
     /// Nack (negative acknowledge) a leased message - release lease without completing
-    pub async fn nack(
+    pub fn nack(
         &self,
         realm: &str,
         area: &str,
@@ -619,7 +619,7 @@ impl QueueService {
     }
 
     /// Requeue a message - reset delivery count and make immediately available
-    pub async fn requeue(
+    pub fn requeue(
         &self,
         realm: &str,
         area: &str,
@@ -663,12 +663,43 @@ impl QueueService {
     }
 }
 
+// --- Sync Benchmark Methods ---
+// These demonstrate the core domain logic without async overhead for performance analysis
+
+impl QueueService {
+    /// Synchronous version of message ID generation for benchmarking
+    /// Measures pure CPU/memory operations without async runtime noise
+    pub fn bench_message_id_generation(&self) -> String {
+        format!("msg_{}", uuid::Uuid::new_v4().simple())
+    }
+
+    /// Synchronous version of delivery token generation for benchmarking
+    /// Demonstrates core domain logic: HMAC token creation for lease security
+    pub fn bench_delivery_token_generation(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: &str,
+        lease_expiry: u64,
+        delivery_count: u32,
+    ) -> String {
+        self.generate_delivery_token(realm, area, resource, message_id, lease_expiry, delivery_count)
+    }
+
+    /// Synchronous version of key building for benchmarking
+    /// Measures key encoding performance for domain operations
+    pub fn bench_key_building(&self, realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
+        Self::key_message(realm, area, resource, message_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::midge_adapter::create_memory_store;
 
-    async fn create_test_service() -> QueueService {
+    fn create_test_service() -> QueueService {
         let kv_store = create_memory_store().expect("Failed to create memory store");
         QueueService::new(kv_store)
     }
@@ -728,13 +759,13 @@ mod tests {
         assert_eq!(service.token_key.len(), 16); // UUID bytes
     }
 
-    #[tokio::test]
-    async fn should_list_queues_in_scope_with_no_queues() {
+    #[test]
+    fn should_list_queues_in_scope_with_no_queues() {
         // Arrange
-        let service = create_test_service().await;
+        let service = create_test_service();
 
         // Act
-        let result = service.list_queues_in_scope("realm1", "area1").await;
+        let result = service.list_queues_in_scope("realm1", "area1");
 
         // Assert
         assert!(result.is_ok());
@@ -742,16 +773,15 @@ mod tests {
         assert!(queues.is_empty());
     }
 
-    #[tokio::test]
-    async fn should_enqueue_reserve_and_complete_message() {
+    #[test]
+    fn should_enqueue_reserve_and_complete_message() {
         // Arrange
-        let service = create_test_service().await;
+        let service = create_test_service();
         let test_body = b"test message body".to_vec();
 
         // Act & Assert - Enqueue
         let message_id = service
             .enqueue("test", "realm", "queue", test_body.clone(), None, None)
-            .await
             .expect("Enqueue should succeed");
 
         // Debug: Check if message is stored
@@ -771,7 +801,6 @@ mod tests {
         // Act & Assert - Receive
         let messages = service
             .receive("test", "realm", "queue", 1, 30)
-            .await
             .expect("Reserve should succeed");
 
         assert_eq!(messages.len(), 1, "Should reserve exactly one message");
@@ -794,7 +823,6 @@ mod tests {
         // Act & Assert - Complete
         service
             .complete("test", "realm", "queue", &message_id, &delivery_token)
-            .await
             .expect("Complete should succeed");
 
         // Verify message is gone: direct KV lookup
@@ -806,22 +834,20 @@ mod tests {
         assert!(stored.is_none(), "Message should be deleted after completion");
     }
 
-    #[tokio::test]
-    async fn should_handle_lease_expiry_and_redelivery() {
+    #[test]
+    fn should_handle_lease_expiry_and_redelivery() {
         // Arrange
-        let service = create_test_service().await;
+        let service = create_test_service();
         let test_body = b"test message".to_vec();
 
         // Enqueue a message
         let message_id = service
             .enqueue("test", "realm", "queue", test_body.clone(), None, None)
-            .await
             .expect("Enqueue should succeed");
 
         // Reserve with very short lease (1 second)
         let messages = service
             .receive("test", "realm", "queue", 1, 1)
-            .await
             .expect("Reserve should succeed");
 
         assert_eq!(messages.len(), 1);
@@ -851,7 +877,6 @@ mod tests {
         // Act - Reserve again (should get the same message)
         let redelivered_messages = service
             .receive("test", "realm", "queue", 1, 30)
-            .await
             .expect("Reserve should succeed after lease expiry");
 
         assert_eq!(redelivered_messages.len(), 1);
@@ -863,5 +888,60 @@ mod tests {
             redelivered_messages[0].delivery_count, 2,
             "Delivery count should be incremented"
         );
+    }
+
+    #[test]
+    fn should_generate_message_id() {
+        // Arrange
+        let store = crate::storage::midge_adapter::create_memory_store().expect("Failed to create memory store");
+        let svc = QueueService::new(store);
+
+        // Act
+        let id = svc.bench_message_id_generation();
+
+        // Assert
+        assert!(id.starts_with("msg_"));
+        assert_eq!(id.len(), "msg_".len() + 32); // UUID simple format is 32 chars
+    }
+
+    #[test]
+    fn should_generate_delivery_token() {
+        // Arrange
+        let store = crate::storage::midge_adapter::create_memory_store().expect("Failed to create memory store");
+        let svc = QueueService::new(store);
+
+        // Act
+        let token = svc.bench_delivery_token_generation(
+            "realm1",
+            "area1", 
+            "resource1",
+            "msg_123",
+            1234567890,
+            5
+        );
+
+        // Assert
+        assert!(!token.is_empty());
+        // Token should be hex-encoded
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn should_build_queue_key() {
+        // Arrange
+        let store = crate::storage::midge_adapter::create_memory_store().expect("Failed to create memory store");
+        let svc = QueueService::new(store);
+
+        // Act
+        let key = svc.bench_key_building("realm1", "area1", "resource1", "msg_123");
+
+        // Assert
+        assert!(!key.is_empty());
+        // Key should contain the components
+        let key_str = String::from_utf8_lossy(&key);
+        assert!(key_str.contains("realm1"));
+        assert!(key_str.contains("area1"));
+        assert!(key_str.contains("resource1"));
+        assert!(key_str.contains("msg_123"));
     }
 }

@@ -274,15 +274,15 @@ impl Domain for StreamDomain {
                     // Use transaction API with direct writes
                     match service
                         .begin_append(request.route_family, realm, area, resource)
-                        .await
+                        
                     {
                         Ok(txn_id) => {
                             match service
                                 .append_event(txn_id, request.route_family, event)
-                                .await
+                                
                             {
                                 Ok(_) => {
-                                    match service.commit_append(txn_id, request.route_family).await
+                                    match service.commit_append(txn_id, request.route_family)
                                     {
                                         Ok((first_seq, last_seq, _count)) => {
                                             let response = Self::build_append_response(
@@ -298,14 +298,14 @@ impl Domain for StreamDomain {
                                         Err(e) => {
                                             let _ = service
                                                 .rollback_append(txn_id, request.route_family)
-                                                .await;
+                                                ;
                                             DomainResponse::Error(format!("Commit failed: {}", e))
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     let _ =
-                                        service.rollback_append(txn_id, request.route_family).await;
+                                        service.rollback_append(txn_id, request.route_family);
                                     DomainResponse::Error(format!("Append failed: {}", e))
                                 }
                             }
@@ -319,7 +319,7 @@ impl Domain for StreamDomain {
 
                     match service
                         .read(request.route_family, realm, area, resource, from, lim)
-                        .await
+                        
                     {
                         Ok(events) => {
                             let response = Self::build_events_response(events);
@@ -336,13 +336,13 @@ impl Domain for StreamDomain {
 
                     match service
                         .read_area(request.route_family, realm, area, from, lim)
-                        .await
+                        
                     {
                         Ok(events) => {
                             // Get watermark for response
                             let watermark = service
                                 .get_watermark(request.route_family, realm, area)
-                                .await
+                                
                                 .unwrap_or(0);
                             let response = Self::build_area_response(events, watermark);
                             DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(

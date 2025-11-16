@@ -1,10 +1,9 @@
 //! Lease domain types
 
 use dashmap::DashMap;
-use std::collections::VecDeque;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{oneshot, RwLock};
 
 use crate::protocol::route::Route;
 
@@ -48,11 +47,7 @@ pub struct LeaseGrant {
     pub ttl_secs: u32,
 }
 
-#[derive(Debug)]
-pub(crate) struct Pending {
-    pub(crate) requested_ttl: u32,
-    pub(crate) responder: oneshot::Sender<Result<LeaseGrant, String>>,
-}
+// Pending waiters removed - sync model uses immediate return with error for busy leases
 
 #[derive(Debug)]
 pub(crate) struct LeaseEntry {
@@ -60,7 +55,7 @@ pub(crate) struct LeaseEntry {
     pub(crate) token: String,
     pub(crate) expiry: Instant,
     pub(crate) body: Option<Vec<u8>>,
-    pub(crate) waiters: VecDeque<Pending>, // FIFO within the resource
+    // Sync model: no waiters queue. Busy leases return error immediately.
 }
 impl LeaseEntry {
     pub(crate) fn free() -> Self {
@@ -69,7 +64,6 @@ impl LeaseEntry {
             token: String::new(),
             expiry: Instant::now(),
             body: None,
-            waiters: VecDeque::new(),
         }
     }
     #[inline]

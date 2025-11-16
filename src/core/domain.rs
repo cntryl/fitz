@@ -48,47 +48,36 @@ pub enum DomainResponse {
 }
 
 /// Domain trait - each domain implements this to handle its operations
+/// All domain operations are SYNCHRONOUS - no async, no .await, no tokio primitives
 pub trait Domain: Send + Sync {
-    /// Handle a request for this domain
+    /// Handle a request for this domain (SYNCHRONOUS)
     /// Domain parses TLV tags from context.payload to extract operation details
     /// Returns DomainResponse with TLV-encoded response or error
     ///
     /// Domains that need persistent storage should manage their own KvStore instance
-    fn handle<'a>(
-        &'a self,
-        context: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>>;
+    /// Must NOT use async, .await, tokio::spawn, or async locks
+    fn handle(&self, context: DomainContext) -> DomainResponse;
 
-    /// Cleanup all subscriptions and resources for a channel
+    /// Cleanup all subscriptions and resources for a channel (SYNCHRONOUS)
     /// Called when a channel closes or session ends
     /// Default implementation does nothing
-    fn cleanup_channel<'a>(
-        &'a self,
-        _route_family: RouteFamilyId,
-        _channel_id: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {})
-    }
+    fn cleanup_channel(&self, _route_family: RouteFamilyId, _channel_id: u32) {}
 
-    /// Subscribe to notifications for a route pattern
+    /// Subscribe to notifications for a route pattern (SYNCHRONOUS)
     /// Default implementation returns error (not supported)
-    fn subscribe<'a>(
-        &'a self,
+    fn subscribe(
+        &self,
         _route_family: RouteFamilyId,
         _route_pattern: String,
         _channel_id: u32,
         _sender: SubSender,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send + 'a>> {
-        Box::pin(async move { Err("subscribe not supported".to_string()) })
+    ) -> Result<u64, String> {
+        Err("subscribe not supported".to_string())
     }
 
-    /// Unsubscribe from notifications
+    /// Unsubscribe from notifications (SYNCHRONOUS)
     /// Default implementation returns error (not supported)
-    fn unsubscribe<'a>(
-        &'a self,
-        _subscription_id: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
-    {
-        Box::pin(async move { Err("unsubscribe not supported".to_string()) })
+    fn unsubscribe(&self, _subscription_id: u64) -> Result<bool, String> {
+        Err("unsubscribe not supported".to_string())
     }
 }

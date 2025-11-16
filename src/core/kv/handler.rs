@@ -219,8 +219,7 @@ impl Domain for KvDomain {
 
             // Handle the operation
             let result = service
-                .handle_operation(operation, &request.route_str, key, value)
-                .await;
+                .handle_operation(operation, &request.route_str, key, value);
 
             // Build and return response
             DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(

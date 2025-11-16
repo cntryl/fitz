@@ -310,3 +310,284 @@ See these files for excellent examples:
 ---
 
 **REMEMBER: When in doubt, create MORE smaller tests rather than fewer large tests!**
+
+---
+
+## Fitz Domain Layer Architecture - Sync-Only Rules
+
+> **CRITICAL FOR COPILOT:**
+> Domain handlers and services are 100% synchronous.
+> Never use `async fn`, `.await`, `tokio::spawn`, `oneshot`, or `tokio::sync` types in domain code.
+
+**Fitz Domain Layer — Authoritative Rules for Copilot**
+
+Fitz uses a **strict async-at-transport, sync-in-domain** model.
+Copilot must follow these rules when generating domain code:
+
+### 1. Domain handlers are 100% synchronous
+
+Domain functions:
+
+* **MUST NOT be async**
+* **MUST NOT return futures**
+* **MUST NOT use `.await`**
+* **MUST NOT use tokio types** (`tokio::spawn`, `oneshot`, `tokio::sync::Mutex`, `tokio::sync::RwLock`, etc.)
+* **MUST NOT perform async I/O**
+
+A domain handler signature must look like:
+
+```rust
+fn handle(&self, req: DomainContext) -> DomainResponse
+```
+
+All work is synchronous and returns immediately.
+
+### 2. Async boundaries are *before* domain handlers
+
+WebSocket tasks do:
+
+* framing
+* read/write
+* correlation
+* passing bytes into the engine
+
+The engine does:
+
+* parsing
+* route lookup
+* **calls the domain handler synchronously**
+* returns a `DomainResponse` immediately
+
+The domain itself does **zero async** work.
+
+### 3. Long-running or waiting operations must use synchronous primitives
+
+If a domain needs to:
+
+* block
+* wait for a lease
+* contest ownership
+* coordinate state
+
+…then it must use **synchronous concurrency primitives**:
+
+* `std::sync::Mutex` / `RwLock`
+* `parking_lot::Mutex` / `RwLock`
+* `DashMap`
+* `std::sync::Condvar`
+* lock-free structures
+* sharded state
+
+**Not tokio waits, not timers, not async sleepers.**
+
+### 4. DomainContext arrives fully parsed and ready
+
+Transport + engine provide:
+
+* parsed route
+* borrowed payload slice
+* channel ID
+* route family
+* possibly a sender for publish-style operations
+
+Domains never parse HTTP, never deal with WebSocket framing, never work with async readers/writers.
+
+### 5. DomainResponse is always produced synchronously
+
+Copilot must implement:
+
+```rust
+DomainResponse::Frame(PooledFrame)
+DomainResponse::Error(String)
+DomainResponse::Ok
+```
+
+with no async.
+
+Building TLV, validating tags, constructing responses—everything is sync, using pre-allocated buffers where possible.
+
+### 6. Example of correct domain structure
+
+Copilot should follow this pattern:
+
+```rust
+impl Domain for LeaseDomain {
+    fn handle(&self, req: DomainContext) -> DomainResponse {
+        let op = LeaseOperation::from_route(&req.route)?;
+        match op {
+            LeaseOperation::Acquire => self.handle_acquire(&req),
+            LeaseOperation::Renew   => self.handle_renew(&req),
+            LeaseOperation::Surrender => self.handle_surrender(&req),
+        }
+    }
+}
+
+impl LeaseDomain {
+    fn handle_acquire(&self, req: &DomainContext) -> DomainResponse {
+        let ttl = parse_ttl(req.payload)?;
+        let grant = self.service.acquire_sync(req.route_family, req.route_str, ttl);
+        build_tlv_response(grant)
+    }
+
+    // etc.
+}
+```
+
+Where `acquire_sync` is a synchronous function using only sync primitives.
+
+### 7. Never reintroduce the old async pattern
+
+Copilot must **not** generate:
+
+```rust
+async fn process(...)
+impl Domain for X {
+    fn handle(...) -> Pin<Box<dyn Future>>
+}
+tokio::spawn(...)
+oneshot::channel()
+tokio::time::sleep(...)
+tokio::sync::RwLock
+```
+
+These are **forbidden** in domain code.
+
+### 8. The only async code in Fitz lives in:
+
+* HTTP transport
+* WebSocket transport
+* TLS upgrade
+* async file/network ops for *external* systems (never internal operations)
+
+Everything else is deterministic synchronous Rust.
+
+---
+
+## Fitz System Architecture - Async/Sync Boundary Rules
+
+> **NOTE FOR COPILOT:**
+> Fitz uses async only in WebSocket/HTTP transport.
+> All engine and domain code must be synchronous.
+> Never introduce `.await`, `tokio::spawn`, `oneshot`, or async locks inside the engine.
+
+**Fitz System Architecture (Authoritative Instruction for Copilot)**
+
+Fitz uses a **strict async-at-the-edges, sync-in-the-core** design.
+Copilot must generate code that follows these rules:
+
+### 1. Transport layers are async
+
+* HTTP (Hyper)
+* WebSockets (tokio-tungstenite)
+* TLS upgrades
+* Socket I/O
+
+These layers are responsible only for:
+* accepting connections
+* reading frames
+* writing frames
+* performing upgrades
+* lightweight routing to the engine boundary
+
+**No domain logic may run inside async tasks.**
+
+### 2. Engine is 100% synchronous
+
+* The core engine is a **single-threaded or sharded deterministic loop**
+* No async, no `.await`, no tokio tasks, no oneshot channels
+* All domain logic (routing, RPC, queues, leases, streams, KV, WAL interaction) occurs synchronously
+* The engine is driven by an event queue (`EngineEvent`)
+* Domain handlers are synchronous functions returning results immediately
+
+### 3. Async ↔ Sync boundary
+
+* WebSocket tasks forward inbound frames to the engine via a **crossbeam or SPSC queue**
+* The engine pushes outbound frames via a per-connection **Sender<Vec<u8>>**
+* Async tasks must not hold or call any engine domain types directly
+* The boundary is always:
+  ```
+  WS frame → engine.on_frame(conn_id, bytes)
+  engine → outbound_tx.send(binary_frame)
+  ```
+
+### 4. No "spawn per request" patterns
+
+* The previous async spawn-per-dispatch model is removed
+* Domain operations must *never* spawn tokio tasks
+* Domain concurrency must only come from engine sharding (realm/tenant partitioning), not async tasks
+
+### 5. Data flow summary
+
+```
+[WS/HTTP async]
+       ↓
+(frame bytes)
+       ↓
+[Engine.sync.handle_frame()]
+       ↓
+(domain work sync)
+       ↓
+(outbound bytes)
+       ↓
+[WS async writer]
+```
+
+### 6. Performance intent
+
+* Minimize jitter and remove async scheduling from hot paths
+* Maintain strong ordering, deterministic processing, and predictable latency
+* Avoid tokio locks; prefer parking_lot and lock-free structures
+* No async IO inside engine code
+
+### 7. What Copilot should produce
+
+Copilot must:
+
+* Keep transport async but extremely thin
+* Keep all engine and domain logic synchronous
+* Use crossbeam channels or SPSC ring buffers for engine event queues
+* Avoid introducing any async constructs inside engine code
+* Prefer small, deterministic synchronous functions
+* Assume thousands of WS connections but only a handful of engine threads/shards
+
+**Examples of CORRECT patterns:**
+
+```rust
+// ✅ CORRECT - Sync domain handler
+pub fn handle_kv_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), String> {
+    self.kv_store.put(key, value)?;
+    Ok(())
+}
+
+// ✅ CORRECT - Async transport wrapper
+async fn handle_websocket(socket: WebSocket, engine_tx: Sender<EngineEvent>) {
+    while let Some(msg) = socket.next().await {
+        let frame = msg?;
+        engine_tx.send(EngineEvent::Frame(conn_id, frame.into_data()))?;
+    }
+}
+```
+
+**Examples of FORBIDDEN patterns:**
+
+```rust
+// ❌ WRONG - Async in domain logic
+pub async fn handle_kv_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), String> {
+    self.kv_store.put(key, value).await?;  // ❌ .await in engine
+    Ok(())
+}
+
+// ❌ WRONG - Spawning in domain logic
+pub fn handle_request(&mut self, req: Request) -> Result<(), String> {
+    tokio::spawn(async move {  // ❌ spawn in engine
+        // process request
+    });
+    Ok(())
+}
+
+// ❌ WRONG - Async locks in engine
+pub fn get_value(&self, key: &[u8]) -> Result<Vec<u8>, String> {
+    let guard = self.data.lock().await?;  // ❌ async lock
+    Ok(guard.get(key).cloned())
+}
+```
