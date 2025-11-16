@@ -32,7 +32,6 @@ const IDX_RESOURCE_EVENT: u8 = stream_prefixes::RESOURCE_EVENT;
 const IDX_AREA_EVENT: u8 = stream_prefixes::AREA_EVENT;
 const IDX_WATERMARK: u8 = stream_prefixes::WATERMARK;
 const IDX_AREA_DISCOVERY: u8 = stream_prefixes::AREA_DISCOVERY;
-const IDX_RESOURCE_DISCOVERY: u8 = stream_prefixes::RESOURCE_DISCOVERY;
 
 /// Reservation status for area_seq ranges
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,13 +396,6 @@ impl StreamService {
     /// Build area discovery key: {DOMAIN_PREFIX} {IDX_AREA_DISCOVERY} {realm} {area}
     fn key_area_discovery(realm: &str, area: &str) -> Vec<u8> {
         encode_composite!(DOMAIN_PREFIX, IDX_AREA_DISCOVERY, realm, area)
-            .as_bytes()
-            .to_vec()
-    }
-
-    /// Build resource discovery key: {DOMAIN_PREFIX} {IDX_RESOURCE_DISCOVERY} {realm} {area} {resource}
-    fn key_resource_discovery(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_RESOURCE_DISCOVERY, realm, area, resource)
             .as_bytes()
             .to_vec()
     }

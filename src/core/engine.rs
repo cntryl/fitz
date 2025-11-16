@@ -151,8 +151,8 @@ impl EngineHandle {
 
 /// Start the engine
 pub fn start_engine() -> EngineHandle {
-    let (_jh, handle) = start_engine_with_join();
-    handle
+    let startup = start_engine_with_join();
+    startup.handle
 }
 
 /// Start the engine and return handle + join handle

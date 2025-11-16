@@ -19,6 +19,7 @@ const KV_DOMAIN_PREFIX: &str = "kv";
 
 /// Active KV transaction state
 /// Tracks transaction metadata and realm/area scope
+#[allow(dead_code)]
 struct ActiveTransaction {
     /// Transaction handle
     transaction: Box<dyn KvTransaction>,

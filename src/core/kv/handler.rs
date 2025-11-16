@@ -26,7 +26,6 @@ impl KvDomain {
     /// Supports extended length encoding (255 = 4-byte length follows)
     /// Parse TLV body to extract key (TAG_ID) and value (TAG_BODY)
     /// Supports extended length encoding (255 = 4-byte length follows)
-
     fn parse_tlv_body(body: &[u8]) -> TlvKeyValue {
         let mut key = None;
         let mut value = None;

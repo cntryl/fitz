@@ -1,42 +1,15 @@
 // Stream domain handler - routes all stream:// operations
 
 use super::service::StreamService;
-use super::types::{AppendResult, AreaReadResponse, StreamEvent};
+use super::types::{StreamEvent};
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
-    TAG_ASSIGNED_REV, TAG_BODY, TAG_ERR_MSG, TAG_METADATA, TAG_NOTIFICATION, TAG_SEQ,
+    TAG_ASSIGNED_REV, TAG_BODY, TAG_METADATA, TAG_NOTIFICATION, TAG_SEQ,
     TAG_STREAM_END, TAG_WATERMARK,
 };
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-/// Stream handler response types
-#[derive(Debug)]
-pub enum StreamResponse {
-    AppendResult(AppendResult),
-    Events(Vec<StreamEvent>),
-    AreaRead(AreaReadResponse),
-    Subscription(SubscriptionInfo),
-    BeginAppendOk {
-        first_seq: u64,
-    },
-    AppendOk,
-    CommitAppendOk {
-        first_seq: u64,
-        last_seq: u64,
-        event_count: usize,
-    },
-    RollbackAppendOk,
-}
-
-/// Lightweight subscription info returned to subscribers
-#[derive(Debug)]
-pub struct SubscriptionInfo {
-    pub last_resource_seq: Option<u64>,
-    pub last_area_seq: Option<u64>,
-    pub watermark: Option<u64>,
-}
 
 /// Parsed TLV payload for stream operations
 #[derive(Debug, Clone)]
@@ -217,95 +190,6 @@ impl StreamDomain {
         }
 
         response
-    }
-
-    /// Build TLV error response
-    fn build_error_response(error: String) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        response.push(TAG_ERR_MSG);
-        let err_bytes = error.as_bytes();
-        if err_bytes.len() <= 255 {
-            response.push(err_bytes.len() as u8);
-            response.extend_from_slice(err_bytes);
-        } else {
-            response.push(255);
-            response.extend_from_slice(&err_bytes[..255]);
-        }
-
-        response
-    }
-
-    /// Build TLV subscription response with sequence info
-    fn build_subscription_response(
-        last_resource_seq: Option<u64>,
-        last_area_seq: Option<u64>,
-        watermark: Option<u64>,
-    ) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_SEQ for last_resource_seq
-        if let Some(seq) = last_resource_seq {
-            response.push(TAG_SEQ);
-            response.push(8);
-            response.extend_from_slice(&seq.to_be_bytes());
-        }
-
-        // TAG_AREA_SEQ for last_area_seq (using 0xB0)
-        if let Some(area_seq) = last_area_seq {
-            response.push(0xB0); // TAG_AREA_SEQ
-            response.push(8);
-            response.extend_from_slice(&area_seq.to_be_bytes());
-        }
-
-        // TAG_METADATA for watermark (reuse metadata tag for watermark)
-        if let Some(wm) = watermark {
-            response.push(TAG_METADATA);
-            response.push(8);
-            response.extend_from_slice(&wm.to_be_bytes());
-        }
-
-        response
-    }
-
-    /// Build TLV response for begin-append operation
-    fn build_begin_append_response(first_seq: u64) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_SEQ for first sequence that will be assigned
-        response.push(TAG_SEQ);
-        response.push(8);
-        response.extend_from_slice(&first_seq.to_be_bytes());
-
-        response
-    }
-
-    /// Build TLV response for commit-append operation
-    fn build_commit_append_response(first_seq: u64, last_seq: u64, event_count: usize) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_SEQ for first_seq
-        response.push(TAG_SEQ);
-        response.push(8);
-        response.extend_from_slice(&first_seq.to_be_bytes());
-
-        // TAG_ASSIGNED_REV for last_seq
-        response.push(TAG_ASSIGNED_REV);
-        response.push(8);
-        response.extend_from_slice(&last_seq.to_be_bytes());
-
-        // TAG_METADATA for event_count (using u64 encoding)
-        response.push(TAG_METADATA);
-        response.push(8);
-        response.extend_from_slice(&(event_count as u64).to_be_bytes());
-
-        response
-    }
-
-    /// Build TLV response for rollback-append operation
-    fn build_append_ok_response() -> Vec<u8> {
-        // Simple success response with no additional data
-        Vec::new()
     }
 }
 
@@ -754,82 +638,6 @@ mod tests {
         let parsed_event = crate::core::stream::encoding::decode_event(tlv_data).unwrap();
         assert_eq!(parsed_event.sequence, events[0].sequence);
         assert_eq!(parsed_event.body, events[0].body);
-    }
-
-    #[test]
-    fn should_build_error_response() {
-        // Arrange
-        let error_msg = "Test error message";
-
-        // Act
-        let response = StreamDomain::build_error_response(error_msg.to_string());
-
-        // Assert
-        assert_eq!(response[0], TAG_ERR_MSG);
-        let msg_start = if response[1] == 255 { 6 } else { 2 };
-        let msg_data = &response[msg_start..];
-        assert_eq!(std::str::from_utf8(msg_data).unwrap(), error_msg);
-    }
-
-    #[test]
-    fn should_build_subscription_response() {
-        // Arrange
-        let last_resource_seq = Some(42u64);
-        let last_area_seq = Some(100u64);
-        let watermark = Some(150u64);
-
-        // Act
-        let response =
-            StreamDomain::build_subscription_response(last_resource_seq, last_area_seq, watermark);
-
-        // Assert
-        // Should contain TAG_SEQ, TAG_AREA_SEQ (0xB0), and TAG_METADATA
-        assert!(response.contains(&TAG_SEQ));
-        assert!(response.contains(&0xB0)); // TAG_AREA_SEQ
-        assert!(response.contains(&TAG_METADATA));
-    }
-
-    #[test]
-    fn should_build_begin_append_response() {
-        // Arrange
-        let first_seq = 42u64;
-
-        // Act
-        let response = StreamDomain::build_begin_append_response(first_seq);
-
-        // Assert
-        assert_eq!(response[0], TAG_SEQ);
-        assert_eq!(response[1], 8);
-        let seq_bytes = &response[2..10];
-        assert_eq!(u64::from_be_bytes(seq_bytes.try_into().unwrap()), first_seq);
-    }
-
-    #[test]
-    fn should_build_commit_append_response() {
-        // Arrange
-        let first_seq = 10u64;
-        let last_seq = 15u64;
-        let event_count = 6;
-
-        // Act
-        let response = StreamDomain::build_commit_append_response(first_seq, last_seq, event_count);
-
-        // Assert
-        // Should contain TAG_SEQ, TAG_ASSIGNED_REV, and TAG_METADATA
-        assert!(response.contains(&TAG_SEQ));
-        assert!(response.contains(&TAG_ASSIGNED_REV));
-        assert!(response.contains(&TAG_METADATA));
-    }
-
-    #[test]
-    fn should_build_append_ok_response() {
-        // Arrange
-
-        // Act
-        let response = StreamDomain::build_append_ok_response();
-
-        // Assert
-        assert!(response.is_empty());
     }
 
     #[test]

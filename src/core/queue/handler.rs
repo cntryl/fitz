@@ -5,38 +5,10 @@ use super::encoding::{
     build_success_response, parse_tlv_payload,
 };
 use super::service::QueueService;
-use super::types::QueueStats;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-/// Queue handler response types
-#[derive(Debug)]
-pub enum QueueResponse {
-    SubscribeOk,
-    UnsubscribeOk,
-    ReceiveOk {
-        messages: Vec<(String, Vec<u8>, String)>, // (id, body, delivery_token)
-    },
-    ExtendOk {
-        extended_count: usize,
-    },
-    AckOk {
-        acked_count: usize,
-    },
-    NackOk {
-        nacked_count: usize,
-    },
-    RequeueOk {
-        requeued_count: usize,
-    },
-    ListOk {
-        queues: Vec<String>, // List of available queue routes
-    },
-    ConfigOk,
-    Stats(QueueStats),
-}
 
 pub struct QueueDomain {
     service: Arc<RwLock<QueueService>>,

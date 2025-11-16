@@ -11,7 +11,7 @@
 use crate::core::queue::encoding::{
     decode_lease_info, decode_stored_queue_message, encode_lease_info, encode_stored_queue_message,
 };
-use crate::core::queue::types::{QueueConfig, QueueMessage};
+use crate::core::queue::types::{QueueMessage};
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
 use crate::storage::traits::KvStore;
 use cntryl_midge::ColumnFamilyId;
@@ -30,9 +30,6 @@ const DEFAULT_CF: ColumnFamilyId = ColumnFamilyId(0);
 // Type aliases to reduce complexity
 type LeaseInfo = (u64, String, u32); // (expiry_secs, owner_token, delivery_count)
 type LeaseMap = HashMap<String, HashMap<String, LeaseInfo>>;
-type RealmConfigMap = HashMap<String, QueueConfig>;
-type AreaConfigMap = HashMap<(String, String), QueueConfig>;
-type ResourceConfigMap = HashMap<(String, String, String), QueueConfig>;
 
 /// Queue domain prefix marker
 const DOMAIN_PREFIX: u8 = QUEUE_DOMAIN_PREFIX;
@@ -40,7 +37,6 @@ const DOMAIN_PREFIX: u8 = QUEUE_DOMAIN_PREFIX;
 /// Index type markers (second byte after domain prefix)
 const IDX_MESSAGE: u8 = queue_prefixes::MESSAGE;
 const IDX_LEASE: u8 = queue_prefixes::LEASE;
-const IDX_CONFIG: u8 = queue_prefixes::CONFIG;
 
 /// QueueService owns all queue business logic.
 /// Uses KvStore for durable persistence.
@@ -51,11 +47,6 @@ pub struct QueueService {
 
     // In-memory lease tracking: route -> id -> (expiry_secs, owner_token, delivery_count)
     leases: Arc<Mutex<LeaseMap>>,
-
-    // Hierarchical configuration maps
-    cfg_realm: Arc<Mutex<RealmConfigMap>>,
-    cfg_area: Arc<Mutex<AreaConfigMap>>,
-    cfg_resource: Arc<Mutex<ResourceConfigMap>>,
 }
 
 impl QueueService {
@@ -68,9 +59,6 @@ impl QueueService {
             kv_store,
             token_key: key,
             leases: Arc::new(Mutex::new(HashMap::new())),
-            cfg_realm: Arc::new(Mutex::new(HashMap::new())),
-            cfg_area: Arc::new(Mutex::new(HashMap::new())),
-            cfg_resource: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -91,13 +79,6 @@ impl QueueService {
     /// Build lease key: {DOMAIN_PREFIX} {IDX_LEASE} {realm} {area} {resource} {message_id}
     fn key_lease(realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
         encode_composite!(DOMAIN_PREFIX, IDX_LEASE, realm, area, resource, message_id)
-            .as_bytes()
-            .to_vec()
-    }
-
-    /// Build config key: {DOMAIN_PREFIX} {IDX_CONFIG} {realm} {area} {resource}
-    fn key_config(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        encode_composite!(DOMAIN_PREFIX, IDX_CONFIG, realm, area, resource)
             .as_bytes()
             .to_vec()
     }
@@ -692,24 +673,6 @@ mod tests {
         assert!(key.len() > 16);
         assert!(key.contains(&DOMAIN_PREFIX));
         assert!(key.contains(&IDX_LEASE));
-    }
-
-    #[test]
-    fn should_build_config_key_correctly() {
-        // Arrange
-        let realm = "test_realm";
-        let area = "test_area";
-        let resource = "test_resource";
-
-        // Act
-        let key = QueueService::key_config(realm, area, resource);
-
-        // Assert
-        assert!(!key.is_empty());
-        // Key should contain domain prefix and config index in the encoded form
-        assert!(key.len() > 16);
-        assert!(key.contains(&DOMAIN_PREFIX));
-        assert!(key.contains(&IDX_CONFIG));
     }
 
     #[test]

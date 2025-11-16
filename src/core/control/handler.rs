@@ -5,7 +5,7 @@ use super::types::ControlOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::notice::NoticeService;
 use crate::core::parsing::{response, tlv};
-use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
+use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -59,19 +59,6 @@ impl ControlDomain {
         response.push(TAG_BODY);
         response.push(body.len() as u8);
         response.extend_from_slice(body);
-
-        response
-    }
-
-    /// Build TLV-encoded error response
-    fn build_error_response(&self, error_msg: &str) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_ERR_MSG
-        let msg_bytes = error_msg.as_bytes();
-        response.push(TAG_ERR_MSG);
-        response.push(msg_bytes.len() as u8);
-        response.extend_from_slice(msg_bytes);
 
         response
     }
