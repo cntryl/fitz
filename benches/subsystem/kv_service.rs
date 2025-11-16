@@ -23,7 +23,7 @@ fn kv_service() -> Arc<KvService> {
             let store = fitz::storage::midge_adapter::create_memory_store().unwrap();
             Arc::new(KvService::new(store))
         })
-    })
+    }).clone()
 }
 
 const MAX_ITERS: u64 = 5_000;

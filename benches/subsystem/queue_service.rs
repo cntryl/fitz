@@ -15,7 +15,7 @@ fn rt() -> &'static Runtime {
 }
 
 fn queue_service() -> QueueService {
-    QueueService::new(fitz::storage::midge_adapter::create_memory_store().unwrap(), None)
+    QueueService::new(fitz::storage::midge_adapter::create_memory_store().unwrap())
 }
 
 const MAX_ITERS: u64 = 1_000;
@@ -43,7 +43,7 @@ fn bench_queue_enqueue_reserve(c: &mut Criterion) {
                             .expect("enqueue");
 
                         let _ = svc
-                            .reserve("realm1", "area1", "resource1", 1, 60)
+                            .recieve("realm1", "area1", "resource1", 1, 60)
                             .await
                             .expect("reserve");
                     }

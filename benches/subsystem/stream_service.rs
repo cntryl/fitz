@@ -20,9 +20,9 @@ fn stream_service() -> Arc<StreamService> {
     STREAM_SERVICE.get_or_init(|| {
         rt().block_on(async {
             let store = fitz::storage::midge_adapter::create_memory_store().unwrap();
-            Arc::new(StreamService::new(Arc::new(store)))
+            Arc::new(StreamService::new(store))
         })
-    })
+    }).clone()
 }
 
 const MAX_ITERS: u64 = 2_000;

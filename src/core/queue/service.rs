@@ -206,7 +206,7 @@ impl QueueService {
     }
 
     /// Reserve (lease) messages from the specified queue
-    pub async fn reserve(
+    pub async fn recieve(
         &self,
         realm: &str,
         area: &str,
@@ -730,7 +730,7 @@ mod tests {
 
         // Act & Assert - Reserve
         let messages = service
-            .reserve("test", "realm", "queue", 1, 30)
+            .recieve("test", "realm", "queue", 1, 30)
             .await
             .expect("Reserve should succeed");
 
@@ -783,7 +783,7 @@ mod tests {
 
         // Reserve with very short lease (1 second)
         let messages = service
-            .reserve("test", "realm", "queue", 1, 1)
+            .recieve("test", "realm", "queue", 1, 1)
             .await
             .expect("Reserve should succeed");
 
@@ -822,7 +822,7 @@ mod tests {
 
         // Act - Reserve again (should get the same message)
         let redelivered_messages = service
-            .reserve("test", "realm", "queue", 1, 30)
+            .recieve("test", "realm", "queue", 1, 30)
             .await
             .expect("Reserve should succeed after lease expiry");
 

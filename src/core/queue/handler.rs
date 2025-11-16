@@ -149,7 +149,7 @@ impl Domain for QueueDomain {
                     let batch_size = 10; // Default batch size
 
                     match service
-                        .reserve(realm, area, resource, batch_size, lease_duration)
+                        .recieve(realm, area, resource, batch_size, lease_duration)
                         .await
                     {
                         Ok(messages) => {

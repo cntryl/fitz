@@ -102,3 +102,33 @@ path = "benches/hotpath/rpc_core.rs"
 name = "hotpath_permissions"
 harness = false
 path = "benches/hotpath/permissions.rs"
+
+[[bench]]
+name = "hotpath_route_table"
+harness = false
+path = "benches/hotpath/route_table.rs"
+
+[[bench]]
+name = "hotpath_storage"
+harness = false
+path = "benches/hotpath/storage.rs"
+
+[[bench]]
+name = "subsystem_kv_service"
+harness = false
+path = "benches/subsystem/kv_service.rs"
+
+[[bench]]
+name = "subsystem_queue_service"
+harness = false
+path = "benches/subsystem/queue_service.rs"
+
+[[bench]]
+name = "subsystem_rpc_service"
+harness = false
+path = "benches/subsystem/rpc_service.rs"
+
+[[bench]]
+name = "subsystem_stream_service"
+harness = false
+path = "benches/subsystem/stream_service.rs"
