@@ -1,10 +1,9 @@
 //! Lease domain types
 
+use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
-
-use dashmap::DashMap;
 use tokio::sync::{oneshot, RwLock};
 
 use crate::protocol::route::Route;

@@ -44,6 +44,7 @@ crossbeam-skiplist = "0.1"
 fxhash = "0.2"
 num_cpus = "1.15"
 dashmap = "5"
+parking_lot = "0.12"
 smallvec = "1.13"
 cntryl-midge = { git = "https://github.com/cntryl/midge", branch = "main" }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main" }

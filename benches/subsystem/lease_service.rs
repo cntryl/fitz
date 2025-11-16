@@ -9,7 +9,7 @@ use fitz::core::lease::LeaseService;
 use fitz::routing::DEFAULT_RF;
 use std::env;
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 #[path = "../config.rs"]
@@ -98,13 +98,13 @@ fn bench_release(c: &mut Criterion) {
                 // Pre-acquire leases for release
                 let mut grants = Vec::new();
                 for i in 0..(MAX_ITERS / 10) {
-                    let key = format!("lease://bench/release/key_{:04}", i % 256);
+                    let key = format!("lease://bench/surrender/key_{:04}", i % 256);
                     if let Ok(grant) = svc.acquire(rf, &key, 30).await {
                         grants.push((key, grant));
                     }
                 }
 
-                // Benchmark releases
+                // Benchmark surrenders
                 for (key, grant) in grants {
                     let _ = svc.surrender(rf, &key, &grant.id, &grant.token).await;
                 }
@@ -140,7 +140,7 @@ fn bench_contention(c: &mut Criterion) {
                 // Give waiters time to queue up
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-                // Release to trigger grant to waiters
+                // Surrender to trigger grant to waiters
                 let _ = svc.surrender(rf, contended_key, &holder.id, &holder.token).await;
 
                 // Wait for all waiters to complete
@@ -175,7 +175,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                         // Renew
                         let _ = svc_clone.renew(rf, &key, &grant.id, &grant.token, 5).await;
 
-                        // Release
+                        // Surrender
                         let _ = svc_clone.surrender(rf, &key, &grant.id, &grant.token).await;
                     });
                     tasks.push(task);
@@ -183,10 +183,44 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 
                 // Wait for all concurrent operations to complete
                 for task in tasks {
-                    let _ = task.await;
+                    let result = task.await;
+                    assert!(result.is_ok());
                 }
             });
             start.elapsed()
+        })
+    });
+}
+
+fn bench_domain_sync_operations(c: &mut Criterion) {
+    let svc = service();
+
+    c.bench_function("lease_domain_sync_token_generation", |b| {
+        b.iter(|| {
+            let key = "lease://bench/sync/key";
+            let id = "test-id";
+            let expiry = Instant::now() + Duration::from_secs(30);
+            let _token = svc.bench_token_generation(key, id, expiry);
+        })
+    });
+}
+
+fn bench_domain_sync_state_transitions(c: &mut Criterion) {
+    let svc = service();
+
+    c.bench_function("lease_domain_sync_state_transitions", |b| {
+        b.iter(|| {
+            let _transitions = svc.bench_lease_state_transitions();
+        })
+    });
+}
+
+fn bench_domain_sync_uuid_generation(c: &mut Criterion) {
+    let svc = service();
+
+    c.bench_function("lease_domain_sync_uuid_generation", |b| {
+        b.iter(|| {
+            let _uuid = svc.bench_uuid_generation();
         })
     });
 }
@@ -200,5 +234,8 @@ criterion_group!(
         bench_release,
         bench_contention,
         bench_concurrent_operations,
+        bench_domain_sync_operations,
+        bench_domain_sync_state_transitions,
+        bench_domain_sync_uuid_generation,
 );
 criterion_main!(subsystem_lease_service);

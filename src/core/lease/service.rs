@@ -310,6 +310,79 @@ impl LeaseService {
     // `surrender` is the canonical domain term; no alias needed.
 }
 
+// --- Sync Benchmark Methods ---
+// These demonstrate the core domain logic without async overhead for performance analysis
+
+impl LeaseService {
+    /// Synchronous version of token generation for benchmarking
+    /// Measures pure CPU/memory operations without async runtime noise
+    pub fn bench_token_generation(&self, key: &str, id: &str, expiry: Instant) -> String {
+        self.compute_token(key, id, expiry)
+    }
+
+    /// Synchronous version of lease state transitions for benchmarking
+    /// Demonstrates core domain logic: acquire -> check active -> expire/reset
+    pub fn bench_lease_state_transitions(&self) -> u32 {
+        use std::sync::Mutex;
+        use std::time::Duration;
+
+        // Use std::sync primitives for pure sync benchmarking
+        struct SyncLeaseEntry {
+            id: String,
+            token: String,
+            expiry: Instant,
+        }
+
+        impl SyncLeaseEntry {
+            fn free() -> Self {
+                Self {
+                    id: String::new(),
+                    token: String::new(),
+                    expiry: Instant::now(),
+                }
+            }
+
+            fn is_active(&self, now: Instant) -> bool {
+                !self.id.is_empty() && now < self.expiry
+            }
+        }
+
+        let entry = Mutex::new(SyncLeaseEntry::free());
+        let now = Instant::now();
+        let mut transitions = 0u32;
+
+        // Simulate acquire
+        {
+            let mut lock = entry.lock().unwrap();
+            lock.id = "id".to_string();
+            lock.token = "token".to_string();
+            lock.expiry = now + Duration::from_secs(30);
+            transitions += 1;
+        }
+
+        // Simulate check active
+        {
+            let lock = entry.lock().unwrap();
+            let _active = lock.is_active(now);
+            transitions += 1;
+        }
+
+        // Simulate expire/reset
+        {
+            let mut lock = entry.lock().unwrap();
+            *lock = SyncLeaseEntry::free();
+            transitions += 1;
+        }
+
+        transitions
+    }
+
+    /// Synchronous version of UUID generation for benchmarking
+    pub fn bench_uuid_generation(&self) -> String {
+        self.new_uuid_string()
+    }
+}
+
 // --- Internals ---
 impl LeaseService {
     #[inline]
