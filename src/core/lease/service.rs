@@ -1406,7 +1406,7 @@ mod tests {
         let grant_rf2 = svc.acquire(rf2, key, 5).await.unwrap();
 
         // Assert - rf2 tenant got lease immediately (not blocked by rf1 waiter)
-        assert!(grant_rf2.id.len() > 0);
+        assert!(!grant_rf2.id.is_empty());
 
         // Surrender rf1 and verify waiter gets it
         svc.surrender(rf1, key, &holder_rf1.id, &holder_rf1.token)

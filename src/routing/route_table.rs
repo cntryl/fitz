@@ -328,15 +328,8 @@ pub struct RouteTable {
 impl RouteTable {
     pub fn new() -> Self {
         // Manual init because arrays require Copy/Default trick
-        let mut shards: [RouteTableShard; SHARD_COUNT] = {
-            // SAFETY: we immediately overwrite every element
-            let mut arr: [RouteTableShard; SHARD_COUNT] =
-                unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
-            for slot in &mut arr {
-                *slot = RouteTableShard::new();
-            }
-            arr
-        };
+        // Prefer safe initialization to avoid undefined behavior with `MaybeUninit`
+        let shards: [RouteTableShard; SHARD_COUNT] = std::array::from_fn(|_| RouteTableShard::new());
 
         Self { shards }
     }
@@ -368,6 +361,10 @@ impl RouteTable {
 
     pub fn len(&self) -> usize {
         self.shards.iter().map(|s| s.subs.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Zero-alloc hot path:

@@ -476,7 +476,7 @@ impl Domain for StreamDomain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::tags::*;
+    // Parent module imports required TAG_* constants; redundant here and flagged by clippy
 
     #[test]
     fn should_parse_empty_tlv_payload() {
@@ -517,10 +517,8 @@ mod tests {
     #[test]
     fn should_parse_tlv_payload_with_metadata() {
         // Arrange
-        let mut payload = vec![];
         let metadata_data = b"test metadata";
-        payload.push(TAG_METADATA);
-        payload.push(metadata_data.len() as u8);
+        let mut payload = vec![TAG_METADATA, metadata_data.len() as u8];
         payload.extend_from_slice(metadata_data);
 
         // Act
@@ -537,9 +535,7 @@ mod tests {
     #[test]
     fn should_parse_tlv_payload_with_stream_end() {
         // Arrange
-        let mut payload = vec![];
-        payload.push(TAG_STREAM_END);
-        payload.push(0); // Empty TLV
+        let payload = vec![TAG_STREAM_END, 0]; // Empty TLV
 
         // Act
         let (body, metadata, is_end, from_seq, limit) = StreamDomain::parse_tlv_payload(&payload);

@@ -438,7 +438,7 @@ mod tests {
             DomainResponse::Frame(frame) => {
                 // Should contain error message
                 let content = frame.as_ref();
-                assert!(content.len() > 0);
+                assert!(!content.is_empty());
                 // Check for TAG_ERR_MSG
                 assert!(content.contains(&TAG_ERR_MSG));
             }
@@ -450,9 +450,7 @@ mod tests {
     async fn should_reject_subscription_without_realm() {
         // Arrange
         let domain = NoticeDomain::new();
-        let mut payload = Vec::new();
-        payload.push(TAG_SUBSCRIBE);
-        payload.push(0); // Empty subscribe value
+        let payload = vec![TAG_SUBSCRIBE, 0];
 
         let request = DomainContext {
             route: Route {
@@ -478,7 +476,7 @@ mod tests {
             DomainResponse::Frame(frame) => {
                 // Should contain error message
                 let content = frame.as_ref();
-                assert!(content.len() > 0);
+                assert!(!content.is_empty());
                 // Check for TAG_ERR_MSG
                 assert!(content.contains(&TAG_ERR_MSG));
             }
@@ -490,9 +488,7 @@ mod tests {
     async fn should_accept_valid_subscription_with_wildcard() {
         // Arrange
         let domain = NoticeDomain::new();
-        let mut payload = Vec::new();
-        payload.push(TAG_SUBSCRIBE);
-        payload.push(0);
+        let payload = vec![TAG_SUBSCRIBE, 0];
 
         let request = DomainContext {
             route: Route {

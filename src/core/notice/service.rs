@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(msg.2, b"payload data"); // body
         assert_eq!(msg.3, None); // reply_to (always None for notices)
         assert_eq!(msg.4, None); // seq (always None for notices)
-        assert_eq!(msg.5, false); // end (always false for notices)
+        assert!(!msg.5); // end (always false for notices)
     }
 
     #[tokio::test]

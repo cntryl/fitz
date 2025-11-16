@@ -191,20 +191,16 @@ impl StreamService {
             .get(cf, &resource_key)
             .map_err(|e| format!("KvStore error checking for conflicts: {:?}", e))?
         {
-            // Decode existing event to compare
-            let existing_event = decode_event(&existing_data)
-                .map_err(|e| format!("Failed to decode existing event: {:?}", e))?;
-
-            // If same sequence exists with different body, it's a conflict
+            let existing_event = decode_event(&existing_data).map_err(|e| {
+                format!(
+                    "Failed to decode existing event for conflict check: {:?}",
+                    e
+                )
+            })?;
             if existing_event.body != event.body {
-                return Err(format!(
-                    "Sequence conflict: sequence {} already exists with different body",
-                    event.sequence
-                ));
+                return Err("Sequence conflict".to_string());
             }
-            // If same sequence with same body, it's idempotent - allow it
         }
-
         // Check if stream is already closed (has is_end=true event)
         if event.is_end {
             // Check if any existing event in this resource has is_end=true
@@ -319,8 +315,7 @@ impl StreamService {
             highest_committed = 0;
         }
 
-        loop {
-            if let Some(status) = area_state.reserved_ranges.get(&scan_seq) {
+        while let Some(status) = area_state.reserved_ranges.get(&scan_seq) {
                 if matches!(status, ReservationStatus::Committed) {
                     // This sequence is committed
                     area_state.reserved_ranges.remove(&scan_seq);
@@ -330,10 +325,6 @@ impl StreamService {
                     // Hit a Reserved (uncommitted) sequence, stop
                     break;
                 }
-            } else {
-                // No reservation at this sequence - stop scanning
-                break;
-            }
         }
 
         // Update in-memory watermark to highest contiguous committed
@@ -702,14 +693,14 @@ mod tests {
             .begin_append(TEST_RF, "realm1", "area1", "resource1")
             .await
             .expect("Begin");
-        for i in 0..5 {
+        for i in 0u64..5u64 {
             let event = StreamEvent {
                 sequence: i,
                 resource: "resource1".to_string(),
                 area_seq: None,
                 body: vec![i as u8],
                 metadata: None,
-                created_at: 1234567890 + i as u64,
+                created_at: 1234567890 + i,
                 is_end: false,
             };
             svc.append_event(txn, TEST_RF, event).await.expect("Append");

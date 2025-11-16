@@ -128,7 +128,7 @@ impl Domain for QueueDomain {
                 "enqueue" => {
                     let message_body = body.unwrap_or_default();
                     let ttl = ttl_secs.unwrap_or(0);
-                    let batch_size = 1; // Default to single message for now, could be extended
+                    let _batch_size = 1; // Default to single message for now, could be extended
 
                     match service
                         .enqueue(realm, area, resource, message_body, Some(ttl), None)

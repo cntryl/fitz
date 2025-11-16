@@ -516,7 +516,7 @@ pub fn decode_queue_message(data: &[u8]) -> Result<QueueMessage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::tags::*;
+    // tags are not needed for these unit tests; remove to silence clippy
 
     #[test]
     fn should_parse_empty_tlv_payload() {

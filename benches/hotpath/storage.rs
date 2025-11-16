@@ -4,9 +4,9 @@
 //! These benchmarks focus on the core storage primitives that are called frequently.
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use cntryl_midge::MidgeStore;
-use std::sync::OnceLock;
-use tempfile::TempDir;
+use fitz::storage::midge_adapter;
+use fitz::storage::traits::KvStore;
+use std::sync::{Arc, OnceLock};
 
 #[path = "../config.rs"]
 mod config;
@@ -14,17 +14,13 @@ mod config;
 // ---------------------------------------------------------
 // Shared test data and stores
 // ---------------------------------------------------------
-static TEMP_DIR: OnceLock<TempDir> = OnceLock::new();
-fn temp_dir() -> &'static TempDir {
-    TEMP_DIR.get_or_init(|| tempfile::TempDir::new().unwrap())
-}
-
-static MIDGE_STORE: OnceLock<MidgeStore> = OnceLock::new();
-fn midge_store() -> &'static MidgeStore {
+static MIDGE_STORE: OnceLock<Arc<dyn KvStore>> = OnceLock::new();
+fn midge_store() -> Arc<dyn KvStore> {
     MIDGE_STORE.get_or_init(|| {
-        let path = temp_dir().path().join("midge_hotpath");
-        MidgeStore::open(&path).unwrap()
+        // Use in-memory Midge store for benches — avoids filesystem effects
+        midge_adapter::create_memory_store().expect("create memory store")
     })
+    .clone()
 }
 
 static TEST_KEYS: OnceLock<Vec<String>> = OnceLock::new();

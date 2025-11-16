@@ -178,7 +178,7 @@ impl Domain for KvDomain {
             let (key, value) = Self::parse_tlv_body(&request.payload);
 
             // Parse realm and area from route
-            let realm = match request.route.realm.as_deref() {
+            let _realm = match request.route.realm.as_deref() {
                 Some(r) => r,
                 None => {
                     return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
@@ -186,7 +186,7 @@ impl Domain for KvDomain {
                     ));
                 }
             };
-            let area = match request.route.area.as_deref() {
+            let _area = match request.route.area.as_deref() {
                 Some(a) => a,
                 None => {
                     return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
