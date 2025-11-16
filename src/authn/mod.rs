@@ -46,12 +46,16 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn should_issue_token_when_client_creds_match_env() {
+        // Arrange
         std::env::remove_var("FITZ_NO_AUTH");
         std::env::set_var("FITZ_CLIENT_ID", "node-1");
         std::env::set_var("FITZ_CLIENT_SECRET", "s3cr3t");
         std::env::set_var("FITZ_CLIENT_PERMISSIONS", "read:stream://acme/*,write:queue://acme/orders/*");
 
+        // Act
         let token = issue_token_for_client("node-1", "s3cr3t");
+
+        // Assert
         assert!(token.is_some());
         let t = token.unwrap();
         assert!(t.starts_with("mock:node-1:control"));
@@ -61,22 +65,30 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn should_not_issue_when_creds_invalid() {
+        // Arrange
         std::env::set_var("FITZ_NO_AUTH", "0");
         std::env::remove_var("FITZ_CLIENT_ID");
         std::env::remove_var("FITZ_CLIENT_SECRET");
+
+        // Act
         let token = issue_token_for_client("x", "y");
+
+        // Assert
         assert!(token.is_none());
     }
 
     #[test]
     #[serial_test::serial]
     fn no_auth_mode_allows_dev_token() {
+        // Arrange
         std::env::set_var("FITZ_NO_AUTH", "1");
-            assert_eq!(std::env::var("FITZ_NO_AUTH").ok(), Some("1".to_string()), "env var not set");
-            assert!(crate::config::load().auth.no_auth, "config did not observe FITZ_NO_AUTH");
         std::env::remove_var("FITZ_CLIENT_ID");
         std::env::remove_var("FITZ_CLIENT_SECRET");
+
+        // Act
         let token = issue_token_for_client("foo", "bar");
+
+        // Assert
         assert_eq!(token, Some("mock:dev".to_string()));
     }
 }

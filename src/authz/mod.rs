@@ -27,8 +27,13 @@ mod tests {
 
     #[test]
     fn should_accept_any_token_when_no_auth() {
+        // Arrange
         std::env::set_var("FITZ_NO_AUTH", "1");
+
+        // Act
         let val = validate_token("anything");
+
+        // Assert
         assert_eq!(val, Some("dev".to_string()));
     }
 }
