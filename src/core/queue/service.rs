@@ -252,48 +252,79 @@ impl QueueService {
         let lease_prefix = Self::lease_prefix(realm, area, resource);
         let end_key = Self::prefix_end(&lease_prefix);
 
+        eprintln!("DEBUG: lease_prefix = {:?}", lease_prefix);
+        eprintln!("DEBUG: end_key = {:?}", end_key);
+
         // Phase 1: scan lease rows to find available messages
         let scan_results = self
             .kv_store
             .scan(DEFAULT_CF, &lease_prefix, end_key.as_slice())
             .map_err(|e| format!("Scan error: {:?}", e))?;
 
+        eprintln!("DEBUG: scan returned {} items", scan_results.len());
+
         let mut message_keys: Vec<Vec<u8>> = Vec::new();
         let mut staged_leases: Vec<(Vec<u8>, LeaseInfo)> = Vec::new();
 
         for (lease_key_bytes, lease_bytes) in scan_results {
+            eprintln!("DEBUG: found lease key = {:?}", lease_key_bytes);
             if staged_leases.len() >= batch_size {
                 break;
             }
 
             let mut lease_info: LeaseInfo = match decode_lease_info(&lease_bytes) {
                 Ok(info) => info,
-                Err(_) => LeaseInfo {
-                    lease_expiry: None,
-                    lease_owner: None,
-                    delivery_count: 0,
+                Err(e) => {
+                    eprintln!("DEBUG: failed to decode lease: {:?}", e);
+                    LeaseInfo {
+                        lease_expiry: None,
+                        lease_owner: None,
+                        delivery_count: 0,
+                    }
                 },
             };
 
+            eprintln!("DEBUG: lease_info = {:?}", lease_info);
+
             let available = match lease_info.lease_expiry {
-                Some(expiry) => expiry <= now,
-                None => lease_info.lease_owner.is_none(),
+                Some(expiry) => {
+                    let avail = expiry <= now;
+                    eprintln!("DEBUG: has expiry, expired={}, expiry={}, now={}", avail, expiry, now);
+                    avail
+                },
+                None => {
+                    let avail = lease_info.lease_owner.is_none();
+                    eprintln!("DEBUG: no expiry, owner is none={}", avail);
+                    avail
+                },
             };
 
+            eprintln!("DEBUG: available = {}", available);
+
             if !available {
+                eprintln!("DEBUG: skipping unavailable lease");
                 continue;
             }
 
             // derive message key
             let message_key = match Self::derive_message_key_from_lease(&lease_key_bytes) {
-                Some(k) => k,
-                None => continue,
+                Some(k) => {
+                    eprintln!("DEBUG: derived message key = {:?}", k);
+                    k
+                },
+                None => {
+                    eprintln!("DEBUG: failed to derive message key from lease");
+                    continue;
+                },
             };
 
             lease_info.delivery_count = lease_info.delivery_count.saturating_add(1);
             staged_leases.push((lease_key_bytes.to_vec(), lease_info));
             message_keys.push(message_key);
+            eprintln!("DEBUG: added to staged_leases and message_keys");
         }
+
+        eprintln!("DEBUG: after scan loop, message_keys.len() = {}", message_keys.len());
 
         if message_keys.is_empty() {
             return Ok(Vec::new());
@@ -302,12 +333,19 @@ impl QueueService {
         let mut results = Vec::new();
         let mut lease_updates: Vec<(Vec<u8>, LeaseInfo)> = Vec::new();
 
+        eprintln!("DEBUG: starting phase 2 (hydration)");
+
         for (message_key, (lease_key, lease_info)) in
             message_keys.into_iter().zip(staged_leases.into_iter())
         {
+            eprintln!("DEBUG: hydrating message_key = {:?}", message_key);
             let value_bytes = match self.kv_store.get(DEFAULT_CF, &message_key) {
-                Ok(Some(v)) => v,
+                Ok(Some(v)) => {
+                    eprintln!("DEBUG: found message in KV");
+                    v
+                },
                 Ok(None) => {
+                    eprintln!("DEBUG: message not found in KV, cleaning up orphaned lease");
                     // Message missing: clean up orphaned lease
                     self
                         .kv_store
@@ -315,7 +353,10 @@ impl QueueService {
                         .map_err(|e| format!("Storage error: {:?}", e))?;
                     continue;
                 }
-                Err(e) => return Err(format!("Storage error: {:?}", e)),
+                Err(e) => {
+                    eprintln!("DEBUG: KV get error: {:?}", e);
+                    return Err(format!("Storage error: {:?}", e));
+                },
             };
 
             let stored: StoredQueueMessage = match decode_stored_queue_message(&value_bytes) {
