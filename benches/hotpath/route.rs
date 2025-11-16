@@ -123,7 +123,7 @@ fn bench_route_parse_wildcard(c: &mut Criterion) {
 fn bench_route_table_subscribe(c: &mut Criterion) {
     c.bench_function("route_table_subscribe", |b| {
         b.iter_batched(
-            || RouteTable::new(),
+            RouteTable::new,
             |mut table| {
                 use tokio::sync::mpsc;
                 let rf = DEFAULT_RF;
