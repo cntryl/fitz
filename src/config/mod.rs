@@ -38,6 +38,7 @@ pub struct ControlConfig {
 pub struct AppConfig {
     pub transport: TransportConfig,
     pub control: ControlConfig,
+    pub auth: AuthConfig,
     pub broker: BrokerConfig,
 }
 
@@ -46,6 +47,15 @@ pub struct BrokerConfig {
     pub ack_window: usize,
     pub test_ack_delay_ms: u64,
     pub enforce_authz: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct AuthConfig {
+    pub no_auth: bool,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub client_permissions: Option<Vec<String>>,
+    pub oidc_jwks: Option<String>,
 }
 
 pub fn load() -> AppConfig {
@@ -65,6 +75,18 @@ pub fn load() -> AppConfig {
             route: env::var(vars::CONTROL_ROUTE).unwrap_or_else(|_| "self".to_string()),
             client_id: env::var(vars::CONTROL_CLIENT_ID).ok(),
             client_secret: env::var(vars::CONTROL_CLIENT_SECRET).ok(),
+        },
+        auth: AuthConfig {
+            no_auth: env::var(vars::FITZ_NO_AUTH)
+                .ok()
+                .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            client_id: env::var(vars::FITZ_CLIENT_ID).ok(),
+            client_secret: env::var(vars::FITZ_CLIENT_SECRET).ok(),
+            client_permissions: env::var(vars::FITZ_CLIENT_PERMISSIONS)
+                .ok()
+                .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
+            oidc_jwks: env::var(vars::FITZ_OIDC_JWKS).ok(),
         },
         broker: BrokerConfig {
             ack_window: env::var("BROKER_ACK_WINDOW")

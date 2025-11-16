@@ -54,6 +54,7 @@ futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 criterion = { version = "0.4", features = ["async_futures"] }
+serial_test = "0.5"
 
 
 [[bench]]

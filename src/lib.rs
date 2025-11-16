@@ -4,6 +4,7 @@
 
 pub mod authz;
 pub mod config;
+pub mod authn;
 pub mod core;
 pub mod protocol;
 pub mod routing;

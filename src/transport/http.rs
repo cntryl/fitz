@@ -56,24 +56,46 @@ pub async fn handle_request(
                 .get("client_secret")
                 .and_then(|t| t.as_str())
                 .unwrap_or("");
+            // If no-auth is enabled for dev-only setups, return a mock token
+            if crate::config::load().auth.no_auth {
+                let token = format!("mock:dev");
+                let body = serde_json::json!({
+                    "access_token": token,
+                    "token_type": "Bearer",
+                    "expires_in": 3600
+                });
+                let mut resp = Response::new(Body::from(body.to_string()));
+                resp.headers_mut().insert(
+                    hyper::header::CONTENT_TYPE,
+                    hyper::header::HeaderValue::from_static("application/json"),
+                );
+                return Ok(resp);
+            }
+
             if client_id.is_empty() || client_secret.is_empty() {
                 let mut resp = Response::new(Body::from("invalid credentials"));
                 *resp.status_mut() = StatusCode::UNAUTHORIZED;
                 return Ok(resp);
             }
-            // Prototype: accept any non-empty secret and issue a mock token understood by auth
-            let token = format!("mock:{}:control", client_id);
-            let body = serde_json::json!({
-                "access_token": token,
-                "token_type": "Bearer",
-                "expires_in": 3600
-            });
-            let mut resp = Response::new(Body::from(body.to_string()));
-            resp.headers_mut().insert(
-                hyper::header::CONTENT_TYPE,
-                hyper::header::HeaderValue::from_static("application/json"),
-            );
-            Ok(resp)
+            // Validate client credentials against configured credentials.
+            if let Some(tok) = crate::authn::issue_token_for_client(client_id, client_secret) {
+                let token = tok;
+                let body = serde_json::json!({
+                    "access_token": token,
+                    "token_type": "Bearer",
+                    "expires_in": 3600
+                });
+                let mut resp = Response::new(Body::from(body.to_string()));
+                resp.headers_mut().insert(
+                    hyper::header::CONTENT_TYPE,
+                    hyper::header::HeaderValue::from_static("application/json"),
+                );
+                return Ok(resp);
+            } else {
+                let mut resp = Response::new(Body::from("invalid credentials"));
+                *resp.status_mut() = StatusCode::UNAUTHORIZED;
+                return Ok(resp);
+            }
         }
         "/healthz" => Ok(Response::new(Body::from("ok"))),
         "/livez" => Ok(Response::new(Body::from("ok"))),

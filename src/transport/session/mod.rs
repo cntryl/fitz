@@ -236,21 +236,13 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                     .get("client_secret")
                                                     .and_then(|t| t.as_str())
                                                     .unwrap_or("");
-                                                let resp_body = if client_id.is_empty()
-                                                    || client_secret.is_empty()
-                                                {
-                                                    serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
-                                                } else {
-                                                    let token =
-                                                        format!("mock:{}:control", client_id);
-                                                    serde_json::json!({
-                                                        "access_token": token,
-                                                        "token_type": "Bearer",
-                                                        "expires_in": 3600
-                                                    })
-                                                    .to_string()
-                                                    .into_bytes()
-                                                };
+                                                    let resp_body = if client_id.is_empty() || client_secret.is_empty() {
+                                                        serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
+                                                    } else if let Some(token) = crate::authn::issue_token_for_client(client_id, client_secret) {
+                                                        serde_json::json!({"access_token": token, "token_type": "Bearer", "expires_in": 3600}).to_string().into_bytes()
+                                                    } else {
+                                                        serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
+                                                    };
                                                 let _ = {
                                                     // Build token response payload
                                                     let mut req_payload = Vec::new();
