@@ -244,8 +244,7 @@ impl Domain for NoticeDomain {
 
                     // Dispatch to subscribers (use read lock for concurrent publish)
                     let mut service = self.service.write().await;
-                    let (_delivered, _failed) =
-                        service.publish(request.route_family, &request.route_str, msg_id, body);
+                    let _r = service.publish(request.route_family, &request.route_str, msg_id, body);
 
                     // Build response using SmallVec (stack-allocated for typical <64B frames)
                     let route_bytes = request.route_str.as_bytes();

@@ -100,7 +100,7 @@ impl NoticeService {
         // Optimized path for single subscriber (most common case)
         if matches.len() == 1 {
             let sub = &matches[0];
-            match sub.sender.try_send((
+                match sub.sender.try_send((
                 route.to_string(),
                 msg_id.map(|s| s.to_string()),
                 body.to_vec(),
@@ -152,7 +152,8 @@ impl NoticeService {
             let _ = self.route_table.remove(rf, sub_id);
         }
 
-        PublishResult { delivered, failed }
+            let r = PublishResult { delivered, failed };
+            r
     }
 
     /// Get count of active subscriptions
@@ -179,8 +180,9 @@ mod tests {
 
         // Act
         let _sub_id = service.subscribe(DEFAULT_RF, "test/route".to_string(), 1, tx);
-        let (delivered, failed) =
-            service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
+        let r = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
+        let delivered = r.delivered;
+        let failed = r.failed;
 
         // Assert
         assert_eq!(delivered, 1);
@@ -199,7 +201,8 @@ mod tests {
 
         // Act
         let removed = service.unsubscribe(DEFAULT_RF, sub_id);
-        let (delivered, _) = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
+        let r = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"hello");
+        let delivered = r.delivered;
 
         // Assert
         assert!(removed);
@@ -231,8 +234,9 @@ mod tests {
         service.subscribe(DEFAULT_RF, "test/route".to_string(), 1, tx);
 
         // Act - fill the channel and overflow
-        service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"1");
-        let (_delivered, failed) = service.publish(DEFAULT_RF, "test/route", Some("msg-2"), b"2");
+        let _ = service.publish(DEFAULT_RF, "test/route", Some("msg-1"), b"1");
+        let r = service.publish(DEFAULT_RF, "test/route", Some("msg-2"), b"2");
+        let failed = r.failed;
 
         // Assert - second publish should fail due to backpressure
         assert_eq!(failed, 1);
@@ -258,7 +262,9 @@ mod tests {
         ];
 
         for route in test_routes {
-            let (delivered, failed) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
+            let failed = r.failed;
             assert_eq!(
                 delivered, 1,
                 "Route '{}' should match global wildcard",
@@ -286,7 +292,8 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
             if should_match {
                 assert_eq!(
                     delivered, 1,
@@ -322,7 +329,8 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
             if should_match {
                 assert_eq!(delivered, 1, "Route '{}' should match area wildcard", route);
                 let _ = rx.recv().await.unwrap();
@@ -353,7 +361,8 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
             if should_match {
                 assert_eq!(
                     delivered, 1,
@@ -392,7 +401,8 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
             if should_match {
                 assert_eq!(delivered, 1, "Route '{}' should match exact pattern", route);
                 let _ = rx.recv().await.unwrap();
@@ -424,7 +434,8 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
-            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
             if should_match {
                 assert_eq!(
                     delivered, 1,
@@ -463,7 +474,9 @@ mod tests {
 
         // Act
         let route = "notice://acme/prod/syslog/error";
-        let (delivered, failed) = service.publish(DEFAULT_RF, route, Some("msg-1"), b"alert");
+        let r = service.publish(DEFAULT_RF, route, Some("msg-1"), b"alert");
+        let delivered = r.delivered;
+        let failed = r.failed;
 
         // Assert - all 4 should receive the message
         assert_eq!(delivered, 4);
@@ -499,7 +512,8 @@ mod tests {
         ];
 
         for route in non_matching_routes {
-            let (delivered, _) = service.publish(DEFAULT_RF, route, None, b"test");
+            let r = service.publish(DEFAULT_RF, route, None, b"test");
+            let delivered = r.delivered;
             assert_eq!(
                 delivered, 0,
                 "Route '{}' should not match partial segment",
@@ -516,8 +530,9 @@ mod tests {
         service.subscribe(DEFAULT_RF, "test/*".to_string(), 1, tx);
 
         // Act
-        let (delivered, failed) =
-            service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
+            let r = service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
+        let delivered = r.delivered;
+        let failed = r.failed;
 
         // Assert
         assert_eq!(delivered, 1);
@@ -540,7 +555,7 @@ mod tests {
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1, tx);
 
         // Act - publish to non-matching route
-        let (delivered, failed) = service.publish(
+        let res = service.publish(
             DEFAULT_RF,
             "notice://other/staging/app/info",
             None,
@@ -548,8 +563,8 @@ mod tests {
         );
 
         // Assert - no deliveries
-        assert_eq!(delivered, 0);
-        assert_eq!(failed, 0);
+        assert_eq!(res.delivered, 0);
+        assert_eq!(res.failed, 0);
     }
 
     #[tokio::test]
@@ -560,7 +575,8 @@ mod tests {
         service.subscribe(DEFAULT_RF, "".to_string(), 1, tx);
 
         // Act
-        let (delivered, _) = service.publish(DEFAULT_RF, "", None, b"empty");
+        let r = service.publish(DEFAULT_RF, "", None, b"empty");
+        let delivered = r.delivered;
 
         // Assert - exact match on empty string
         assert_eq!(delivered, 1);
