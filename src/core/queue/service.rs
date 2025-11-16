@@ -9,27 +9,24 @@
 //! - 0x02 0x03 {realm} {area} {resource} → Queue configuration
 
 use crate::core::queue::encoding::{
-    decode_lease_info, decode_stored_queue_message, encode_lease_info, encode_stored_queue_message,
+    decode_lease_info,
+    decode_stored_queue_message,
+    encode_lease_info,
+    encode_stored_queue_message,
 };
-use crate::core::queue::types::QueueMessage;
+use crate::core::queue::types::{LeaseInfo, QueueMessage, StoredQueueMessage};
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
 use crate::storage::traits::KvStore;
-use cntryl_midge::ColumnFamilyId;
 use lexkey::{encode_composite, Encodable};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
-// Default column family for queue operations
-const DEFAULT_CF: ColumnFamilyId = ColumnFamilyId(0);
+// NOTE: The QueueService currently uses the default column family (0) for all
+// queue data. Once Midge exposes richer column-family APIs we can thread those
+// through explicitly.
 
-// NOTE: The following code requires updates for midge v2+ API which changed KvStore
-// All KvStore methods now require ColumnFamilyHandle as first parameter
-// This needs to be refactored once midge exposes default_column_family() or similar
-// Type aliases to reduce complexity
-type LeaseInfo = (u64, String, u32); // (expiry_secs, owner_token, delivery_count)
-type LeaseMap = HashMap<String, HashMap<String, LeaseInfo>>;
+// Default column family for queue operations
+const DEFAULT_CF: cntryl_midge::ColumnFamilyId = cntryl_midge::ColumnFamilyId(0);
 
 /// Queue domain prefix marker
 const DOMAIN_PREFIX: u8 = QUEUE_DOMAIN_PREFIX;
@@ -40,13 +37,10 @@ const IDX_LEASE: u8 = queue_prefixes::LEASE;
 
 /// QueueService owns all queue business logic.
 /// Uses KvStore for durable persistence.
-/// Tracks leases in-memory, persists messages to KvStore.
+/// Leases are persisted as separate rows; no in-memory lease state.
 pub struct QueueService {
     kv_store: Arc<dyn KvStore>,
     token_key: Vec<u8>,
-
-    // In-memory lease tracking: route -> id -> (expiry_secs, owner_token, delivery_count)
-    leases: Arc<Mutex<LeaseMap>>,
 }
 
 impl QueueService {
@@ -58,7 +52,6 @@ impl QueueService {
         Self {
             kv_store,
             token_key: key,
-            leases: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -77,10 +70,27 @@ impl QueueService {
     }
 
     /// Build lease key: {DOMAIN_PREFIX} {IDX_LEASE} {realm} {area} {resource} {message_id}
-    fn key_lease(realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
+    pub fn key_lease(realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
         encode_composite!(DOMAIN_PREFIX, IDX_LEASE, realm, area, resource, message_id)
             .as_bytes()
             .to_vec()
+    }
+
+    /// Build lease prefix (no message id): {DOMAIN_PREFIX} {IDX_LEASE} {realm} {area} {resource}
+    pub fn lease_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
+        encode_composite!(DOMAIN_PREFIX, IDX_LEASE, realm, area, resource)
+            .as_bytes()
+            .to_vec()
+    }
+
+    /// Derive the message key from a lease key by rewriting the index byte.
+    pub fn derive_message_key_from_lease(lease_key: &[u8]) -> Option<Vec<u8>> {
+        if lease_key.len() < 2 {
+            return None;
+        }
+        let mut key = lease_key.to_vec();
+        key[1] = IDX_MESSAGE;
+        Some(key)
     }
 
     /// List queues within a specific realm/area scope
@@ -155,12 +165,6 @@ impl QueueService {
         Ok(queue_list)
     }
 
-    // NOTE: All remaining methods below are DISABLED pending midge KvStore API integration
-    // The midge KvStore trait now requires ColumnFamilyHandle for all operations
-    // Once midge exposes a way to get/create the default column family, re-enable these methods
-
-    // All queue operations are disabled until midge KvStore API is updated
-
     /// Enqueue a message to the specified queue
     pub async fn enqueue(
         &self,
@@ -171,7 +175,6 @@ impl QueueService {
         ttl_secs: Option<u64>,
         _dedupe_key: Option<&str>,
     ) -> Result<String, String> {
-        use crate::core::queue::types::StoredQueueMessage;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         // Generate unique message ID
@@ -195,18 +198,33 @@ impl QueueService {
         let message_data = encode_stored_queue_message(&stored_message);
 
         // Build storage key
-        let key = Self::key_message(realm, area, resource, &message_id);
+        let message_key = Self::key_message(realm, area, resource, &message_id);
 
-        // Store message
-        self.kv_store
-            .put(DEFAULT_CF, &key, &message_data)
+        // Initial lease row: available, zero deliveries
+        let initial_lease = LeaseInfo {
+            lease_expiry: None,
+            lease_owner: None,
+            delivery_count: 0,
+        };
+        let lease_data = encode_lease_info(&initial_lease);
+        let lease_key = Self::key_lease(realm, area, resource, &message_id);
+
+        // Write immutable message row then lease row
+        self
+            .kv_store
+            .put(DEFAULT_CF, &message_key, &message_data)
+            .map_err(|e| format!("Storage error: {:?}", e))?;
+
+        self
+            .kv_store
+            .put(DEFAULT_CF, &lease_key, &lease_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
         Ok(message_id)
     }
 
     /// Reserve (lease) messages from the specified queue
-    pub async fn recieve(
+    pub async fn receive(
         &self,
         realm: &str,
         area: &str,
@@ -214,98 +232,153 @@ impl QueueService {
         batch_size: usize,
         lease_secs: u32,
     ) -> Result<Vec<QueueMessage>, String> {
-        use crate::core::queue::types::{LeaseInfo, QueueMessage, StoredQueueMessage};
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("Time error: {:?}", e))?
             .as_secs();
+        let lease_prefix = Self::lease_prefix(realm, area, resource);
 
-        let lease_expiry = now + lease_secs as u64;
-        let token = self.generate_delivery_token(realm, area, resource, &format!("batch_{}", now));
-
-        // Scan for available messages
-        let prefix = Self::key_message(realm, area, resource, "");
-        let end_key = vec![0xFF; 1000];
-        let results = self
+        // Phase 1: scan lease rows to find available messages
+        let scan_results = self
             .kv_store
-            .scan(DEFAULT_CF, &prefix, &end_key)
+            .scan(DEFAULT_CF, &lease_prefix, &[])
             .map_err(|e| format!("Scan error: {:?}", e))?;
 
-        let mut available_messages = Vec::new();
-        let mut to_lease = Vec::new();
+        let mut message_keys: Vec<Vec<u8>> = Vec::new();
+        let mut staged_leases: Vec<(Vec<u8>, LeaseInfo)> = Vec::new();
 
-        for (_key_bytes, value_bytes) in results {
-            if available_messages.len() >= batch_size {
+        for (lease_key_bytes, lease_bytes) in scan_results {
+            if staged_leases.len() >= batch_size {
                 break;
             }
 
-            // Parse stored message
-            let stored_message: StoredQueueMessage = decode_stored_queue_message(&value_bytes)?;
-            let message_id = stored_message.id.clone();
-
-            // Check if there's a lease record
-            let lease_key = Self::key_lease(realm, area, resource, &message_id);
-            let lease_data = self.kv_store.get(DEFAULT_CF, &lease_key).ok().flatten();
-
-            let (is_available, current_delivery_count) = if let Some(ref data) = lease_data {
-                // Parse lease info
-                let lease_info: LeaseInfo = decode_lease_info(data)?;
-                // Check if lease is expired
-                let available = match lease_info.lease_expiry {
-                    Some(expiry) => expiry <= now,
-                    None => true,
-                };
-                (available, lease_info.delivery_count)
-            } else {
-                // No lease record, message is available
-                (true, 0)
+            let mut lease_info: LeaseInfo = match decode_lease_info(&lease_bytes) {
+                Ok(info) => info,
+                Err(_) => LeaseInfo {
+                    lease_expiry: None,
+                    lease_owner: None,
+                    delivery_count: 0,
+                },
             };
 
-            if is_available {
-                // Create lease info
-                let lease_info = LeaseInfo {
-                    lease_expiry: Some(lease_expiry),
-                    lease_owner: Some(token.clone()),
-                    delivery_count: current_delivery_count + 1,
-                };
+            let available = match lease_info.lease_expiry {
+                Some(expiry) => expiry <= now,
+                None => lease_info.lease_owner.is_none(),
+            };
 
-                // Create full message for return
-                let message = QueueMessage {
-                    id: message_id.clone(),
-                    route: stored_message.route.clone(),
-                    body: stored_message.body.clone(),
-                    lease_expiry: lease_info.lease_expiry,
-                    lease_owner: lease_info.lease_owner.clone(),
-                    delivery_count: lease_info.delivery_count,
-                    created_at: stored_message.created_at,
-                    ttl_secs: stored_message.ttl_secs,
-                };
-
-                available_messages.push(message);
-                to_lease.push((lease_key, lease_info, message_id));
+            if !available {
+                continue;
             }
+
+            // derive message key
+            let message_key = match Self::derive_message_key_from_lease(&lease_key_bytes) {
+                Some(k) => k,
+                None => continue,
+            };
+
+            lease_info.delivery_count = lease_info.delivery_count.saturating_add(1);
+            staged_leases.push((lease_key_bytes.to_vec(), lease_info));
+            message_keys.push(message_key);
         }
 
-        // Store lease records
-        for (lease_key, lease_info, message_id) in to_lease {
-            let lease_data = encode_lease_info(&lease_info);
-            self.kv_store
-                .put(DEFAULT_CF, &lease_key, &lease_data)
-                .map_err(|e| format!("Storage error: {:?}", e))?;
+        if message_keys.is_empty() {
+            return Ok(Vec::new());
+        }
 
-            // Update in-memory lease tracking
-            let mut leases = self.leases.lock().await;
-            let route_key = format!("{}/{}/{}", realm, area, resource);
-            let route_leases = leases.entry(route_key).or_insert_with(HashMap::new);
-            route_leases.insert(
-                message_id,
-                (lease_expiry, token.clone(), lease_info.delivery_count),
+        let mut results = Vec::new();
+        let mut lease_updates: Vec<(Vec<u8>, LeaseInfo)> = Vec::new();
+
+        for (message_key, (lease_key, lease_info)) in
+            message_keys.into_iter().zip(staged_leases.into_iter())
+        {
+            let value_bytes = match self.kv_store.get(DEFAULT_CF, &message_key) {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    // Message missing: clean up orphaned lease
+                    self
+                        .kv_store
+                        .delete(DEFAULT_CF, &lease_key)
+                        .map_err(|e| format!("Storage error: {:?}", e))?;
+                    continue;
+                }
+                Err(e) => return Err(format!("Storage error: {:?}", e)),
+            };
+
+            let stored: StoredQueueMessage = match decode_stored_queue_message(&value_bytes) {
+                Ok(m) => m,
+                Err(_) => {
+                    // Corrupted message: best-effort cleanup
+                    self
+                        .kv_store
+                        .delete(DEFAULT_CF, &lease_key)
+                        .map_err(|e| format!("Storage error: {:?}", e))?;
+                    self
+                        .kv_store
+                        .delete(DEFAULT_CF, &message_key)
+                        .map_err(|e| format!("Storage error: {:?}", e))?;
+                    continue;
+                }
+            };
+
+            // TTL enforcement: drop expired messages
+            if let Some(ttl) = stored.ttl_secs {
+                let expiry_ts = stored.created_at.saturating_add(ttl);
+                if expiry_ts <= now {
+                    self
+                        .kv_store
+                        .delete(DEFAULT_CF, &lease_key)
+                        .map_err(|e| format!("Storage error: {:?}", e))?;
+                    self
+                        .kv_store
+                        .delete(DEFAULT_CF, &message_key)
+                        .map_err(|e| format!("Storage error: {:?}", e))?;
+                    continue;
+                }
+            }
+
+            let lease_expiry = now.saturating_add(lease_secs as u64);
+            let token = self.generate_delivery_token(
+                realm,
+                area,
+                resource,
+                &stored.id,
+                lease_expiry,
+                lease_info.delivery_count,
             );
+
+            let lease_info = LeaseInfo {
+                lease_expiry: Some(lease_expiry),
+                lease_owner: Some(token.clone()),
+                delivery_count: lease_info.delivery_count,
+            };
+
+            let message = QueueMessage {
+                id: stored.id.clone(),
+                route: stored.route.clone(),
+                body: stored.body.clone(),
+                lease_expiry: lease_info.lease_expiry,
+                lease_owner: lease_info.lease_owner.clone(),
+                delivery_count: lease_info.delivery_count,
+                created_at: stored.created_at,
+                ttl_secs: stored.ttl_secs,
+            };
+
+            results.push(message);
+            lease_updates.push((lease_key, lease_info));
         }
 
-        Ok(available_messages)
+        // Phase 3: commit new leases
+        for (lease_key, lease_info) in lease_updates {
+            let data = encode_lease_info(&lease_info);
+            self
+                .kv_store
+                .put(DEFAULT_CF, &lease_key, &data)
+                .map_err(|e| format!("Storage error: {:?}", e))?;
+        }
+
+        Ok(results)
     }
 
     /// Complete (acknowledge) a leased message
@@ -318,8 +391,7 @@ impl QueueService {
         delivery_token: &str,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
-            .await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)?;
 
         // Check lease record for ownership
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -329,7 +401,7 @@ impl QueueService {
             .map_err(|e| format!("Storage error: {:?}", e))?
             .ok_or_else(|| "Lease not found".to_string())?;
 
-        let lease_info: crate::core::queue::types::LeaseInfo = decode_lease_info(&lease_data)?;
+        let lease_info: LeaseInfo = decode_lease_info(&lease_data)?;
 
         // Verify lease ownership
         if lease_info.lease_owner.as_deref() != Some(delivery_token) {
@@ -338,19 +410,14 @@ impl QueueService {
 
         // Delete both message and lease records
         let message_key = Self::key_message(realm, area, resource, message_id);
-        self.kv_store
+        self
+            .kv_store
             .delete(DEFAULT_CF, &message_key)
             .map_err(|e| format!("Storage error: {:?}", e))?;
-        self.kv_store
+        self
+            .kv_store
             .delete(DEFAULT_CF, &lease_key)
             .map_err(|e| format!("Storage error: {:?}", e))?;
-
-        // Remove from in-memory lease tracking
-        let mut leases = self.leases.lock().await;
-        let route_key = format!("{}/{}/{}", realm, area, resource);
-        if let Some(route_leases) = leases.get_mut(&route_key) {
-            route_leases.remove(message_id);
-        }
 
         Ok(())
     }
@@ -366,8 +433,7 @@ impl QueueService {
         additional_secs: u32,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
-            .await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)?;
 
         // Get lease record
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -377,7 +443,7 @@ impl QueueService {
             .map_err(|e| format!("Storage error: {:?}", e))?
             .ok_or_else(|| "Lease not found".to_string())?;
 
-        let mut lease_info: crate::core::queue::types::LeaseInfo = decode_lease_info(&lease_data)?;
+        let mut lease_info: LeaseInfo = decode_lease_info(&lease_data)?;
 
         // Verify lease ownership
         if lease_info.lease_owner.as_deref() != Some(delivery_token) {
@@ -393,103 +459,23 @@ impl QueueService {
 
         // Update lease record
         let updated_data = encode_lease_info(&lease_info);
-        self.kv_store
+        self
+            .kv_store
             .put(DEFAULT_CF, &lease_key, &updated_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
-
-        // Update in-memory lease tracking
-        let mut leases = self.leases.lock().await;
-        let route_key = format!("{}/{}/{}", realm, area, resource);
-        if let Some(route_leases) = leases.get_mut(&route_key) {
-            if let Some((expiry, token, delivery_count)) = route_leases.get_mut(message_id) {
-                *expiry = new_expiry;
-                *token = delivery_token.to_string();
-                *delivery_count = lease_info.delivery_count;
-            }
-        }
 
         Ok(())
     }
 
-    /// Peek at the next available message without leasing it
-    pub async fn peek(
-        &self,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> Result<Option<crate::core::queue::types::QueueMessage>, String> {
-        use crate::core::queue::types::{LeaseInfo, QueueMessage, StoredQueueMessage};
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("Time error: {:?}", e))?
-            .as_secs();
-
-        // Scan for messages
-        let prefix = Self::key_message(realm, area, resource, "");
-        let end_key = vec![0xFF; 1000];
-        let results = self
-            .kv_store
-            .scan(DEFAULT_CF, &prefix, &end_key)
-            .map_err(|e| format!("Scan error: {:?}", e))?;
-
-        for (_key_bytes, value_bytes) in results {
-            let stored_message: StoredQueueMessage = decode_stored_queue_message(&value_bytes)?;
-            let message_id = stored_message.id.clone();
-
-            // Check lease record
-            let lease_key = Self::key_lease(realm, area, resource, &message_id);
-            let lease_data = self.kv_store.get(DEFAULT_CF, &lease_key).ok().flatten();
-
-            let is_available = if let Some(ref data) = lease_data {
-                let lease_info: LeaseInfo = decode_lease_info(data)?;
-                match lease_info.lease_expiry {
-                    Some(expiry) => expiry <= now,
-                    None => true,
-                }
-            } else {
-                true
-            };
-
-            if is_available {
-                // Return message with lease info populated
-                let (lease_expiry, lease_owner, delivery_count) = if let Some(ref data) = lease_data
-                {
-                    let lease_info: LeaseInfo = decode_lease_info(data)?;
-                    (
-                        lease_info.lease_expiry,
-                        lease_info.lease_owner,
-                        lease_info.delivery_count,
-                    )
-                } else {
-                    (None, None, 0)
-                };
-
-                let message = QueueMessage {
-                    id: message_id,
-                    route: stored_message.route,
-                    body: stored_message.body,
-                    lease_expiry,
-                    lease_owner,
-                    delivery_count,
-                    created_at: stored_message.created_at,
-                    ttl_secs: stored_message.ttl_secs,
-                };
-                return Ok(Some(message));
-            }
-        }
-
-        Ok(None)
-    }
-
     /// Generate a delivery token for a message
-    fn generate_delivery_token(
+    pub(crate) fn generate_delivery_token(
         &self,
         realm: &str,
         area: &str,
         resource: &str,
-        nonce: &str,
+        message_id: &str,
+        lease_expiry: u64,
+        delivery_count: u32,
     ) -> String {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
@@ -499,14 +485,16 @@ impl QueueService {
         mac.update(realm.as_bytes());
         mac.update(area.as_bytes());
         mac.update(resource.as_bytes());
-        mac.update(nonce.as_bytes());
+        mac.update(message_id.as_bytes());
+        mac.update(&lease_expiry.to_be_bytes());
+        mac.update(&delivery_count.to_be_bytes());
 
         let result = mac.finalize();
         hex::encode(result.into_bytes())
     }
 
     /// Verify a delivery token
-    async fn verify_delivery_token(
+    pub(crate) fn verify_delivery_token(
         &self,
         realm: &str,
         area: &str,
@@ -514,18 +502,33 @@ impl QueueService {
         message_id: &str,
         token: &str,
     ) -> Result<(), String> {
-        // For now, just check if the token exists in our in-memory tracking
-        // In a production system, you'd verify the HMAC
-        let leases = self.leases.lock().await;
-        let route_key = format!("{}/{}/{}", realm, area, resource);
-        if let Some(route_leases) = leases.get(&route_key) {
-            if let Some((_, stored_token, _)) = route_leases.get(message_id) {
-                if stored_token == token {
-                    return Ok(());
-                }
-            }
+        // Load current lease and recompute the expected token
+        let lease_key = Self::key_lease(realm, area, resource, message_id);
+        let lease_data = self
+            .kv_store
+            .get(DEFAULT_CF, &lease_key)
+            .map_err(|e| format!("Storage error: {:?}", e))?
+            .ok_or_else(|| "Lease not found".to_string())?;
+
+        let lease_info: LeaseInfo = decode_lease_info(&lease_data)?;
+        let lease_expiry = lease_info
+            .lease_expiry
+            .ok_or_else(|| "Message not leased".to_string())?;
+
+        let expected = self.generate_delivery_token(
+            realm,
+            area,
+            resource,
+            message_id,
+            lease_expiry,
+            lease_info.delivery_count,
+        );
+
+        if expected == token {
+            Ok(())
+        } else {
+            Err("Invalid or expired token".to_string())
         }
-        Err("Invalid or expired token".to_string())
     }
 
     /// Nack (negative acknowledge) a leased message - release lease without completing
@@ -538,8 +541,7 @@ impl QueueService {
         delivery_token: &str,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
-            .await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)?;
 
         // Get lease record
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -549,7 +551,7 @@ impl QueueService {
             .map_err(|e| format!("Storage error: {:?}", e))?
             .ok_or_else(|| "Lease not found".to_string())?;
 
-        let lease_info: crate::core::queue::types::LeaseInfo = decode_lease_info(&lease_data)?;
+        let lease_info: LeaseInfo = decode_lease_info(&lease_data)?;
 
         // Verify lease ownership
         if lease_info.lease_owner.as_deref() != Some(delivery_token) {
@@ -557,16 +559,10 @@ impl QueueService {
         }
 
         // Delete lease record to release lease
-        self.kv_store
+        self
+            .kv_store
             .delete(DEFAULT_CF, &lease_key)
             .map_err(|e| format!("Storage error: {:?}", e))?;
-
-        // Remove from in-memory lease tracking
-        let mut leases = self.leases.lock().await;
-        let route_key = format!("{}/{}/{}", realm, area, resource);
-        if let Some(route_leases) = leases.get_mut(&route_key) {
-            route_leases.remove(message_id);
-        }
 
         Ok(())
     }
@@ -581,8 +577,7 @@ impl QueueService {
         delivery_token: &str,
     ) -> Result<(), String> {
         // Verify token
-        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)
-            .await?;
+        self.verify_delivery_token(realm, area, resource, message_id, delivery_token)?;
 
         // Get lease record
         let lease_key = Self::key_lease(realm, area, resource, message_id);
@@ -592,7 +587,7 @@ impl QueueService {
             .map_err(|e| format!("Storage error: {:?}", e))?
             .ok_or_else(|| "Lease not found".to_string())?;
 
-        let lease_info: crate::core::queue::types::LeaseInfo = decode_lease_info(&lease_data)?;
+        let lease_info: LeaseInfo = decode_lease_info(&lease_data)?;
 
         // Verify lease ownership
         if lease_info.lease_owner.as_deref() != Some(delivery_token) {
@@ -600,7 +595,7 @@ impl QueueService {
         }
 
         // Reset delivery count and clear lease
-        let updated_lease = crate::core::queue::types::LeaseInfo {
+        let updated_lease = LeaseInfo {
             lease_expiry: None,
             lease_owner: None,
             delivery_count: 0,
@@ -608,16 +603,10 @@ impl QueueService {
 
         // Update lease record
         let updated_data = encode_lease_info(&updated_lease);
-        self.kv_store
+        self
+            .kv_store
             .put(DEFAULT_CF, &lease_key, &updated_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
-
-        // Remove from in-memory lease tracking
-        let mut leases = self.leases.lock().await;
-        let route_key = format!("{}/{}/{}", realm, area, resource);
-        if let Some(route_leases) = leases.get_mut(&route_key) {
-            route_leases.remove(message_id);
-        }
 
         Ok(())
     }
@@ -728,9 +717,9 @@ mod tests {
             "Stored message ID should match"
         );
 
-        // Act & Assert - Reserve
+        // Act & Assert - Receive
         let messages = service
-            .recieve("test", "realm", "queue", 1, 30)
+            .receive("test", "realm", "queue", 1, 30)
             .await
             .expect("Reserve should succeed");
 
@@ -757,16 +746,13 @@ mod tests {
             .await
             .expect("Complete should succeed");
 
-        // Verify message is gone
-        let peek_result = service
-            .peek("test", "realm", "queue")
-            .await
-            .expect("Peek should succeed");
-
-        assert!(
-            peek_result.is_none(),
-            "Message should be deleted after completion"
-        );
+        // Verify message is gone: direct KV lookup
+        let key = QueueService::key_message("test", "realm", "queue", &message_id);
+        let stored = service
+            .kv_store
+            .get(DEFAULT_CF, &key)
+            .expect("Storage get should succeed");
+        assert!(stored.is_none(), "Message should be deleted after completion");
     }
 
     #[tokio::test]
@@ -783,15 +769,14 @@ mod tests {
 
         // Reserve with very short lease (1 second)
         let messages = service
-            .recieve("test", "realm", "queue", 1, 1)
+            .receive("test", "realm", "queue", 1, 1)
             .await
             .expect("Reserve should succeed");
 
         assert_eq!(messages.len(), 1);
         let _delivery_token = messages[0].lease_owner.as_ref().unwrap().clone();
 
-        // Wait for lease to expire (in a real system, this would happen automatically)
-        // For testing, we'll manually clear the lease record
+        // Simulate lease expiry by clearing lease owner/expiry
         let lease_key = QueueService::key_lease("test", "realm", "queue", &message_id);
         let lease_data = service
             .kv_store
@@ -812,17 +797,9 @@ mod tests {
             .put(DEFAULT_CF, &lease_key, &updated_data)
             .expect("Storage put should succeed");
 
-        // Clear in-memory tracking
-        let mut leases = service.leases.lock().await;
-        let route_key = "test/realm/queue".to_string();
-        if let Some(route_leases) = leases.get_mut(&route_key) {
-            route_leases.remove(&message_id);
-        }
-        drop(leases);
-
         // Act - Reserve again (should get the same message)
         let redelivered_messages = service
-            .recieve("test", "realm", "queue", 1, 30)
+            .receive("test", "realm", "queue", 1, 30)
             .await
             .expect("Reserve should succeed after lease expiry");
 
