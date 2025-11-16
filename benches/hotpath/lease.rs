@@ -4,7 +4,7 @@
 //! for true microsecond-precision measurement with nearly zero warmup time.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::lease::service::LeaseService;
+use fitz::core::lease::LeaseService;
 use fitz::routing::DEFAULT_RF;
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
