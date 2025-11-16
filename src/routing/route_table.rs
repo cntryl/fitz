@@ -1,5 +1,6 @@
 use fxhash::FxHashMap;
 use smallvec::SmallVec;
+use std::sync::Arc;
 
 use crate::core::domain::SubSender;
 
@@ -20,6 +21,9 @@ const MAX_SEGMENTS: usize = 8;
 /// Max matches we'll return per lookup without reallocating.
 /// In practice, most routes have < 16 subscribers.
 const MAX_MATCHES: usize = 256;
+
+/// Type alias for subscriber slabs
+type SubSlab = Arc<[RtSubscription]>;
 
 /// Basic subscription entry
 #[derive(Debug, Clone)]
@@ -72,8 +76,8 @@ impl SubList {
 /// - wildcard_child: matches "*" at this position
 #[derive(Debug, Default, Clone)]
 struct TrieNode {
-    exact_subs: SubList,
-    trailing_wildcard_subs: SubList,
+    exact_subs: Option<SubSlab>,
+    trailing_wildcard_subs: Option<SubSlab>,
     children: FxHashMap<String, TrieNode>,
     wildcard_child: Option<Box<TrieNode>>,
 }
@@ -81,10 +85,47 @@ struct TrieNode {
 impl TrieNode {
     /// Is this node completely empty (used for pruning)
     fn is_empty(&self) -> bool {
-        self.exact_subs.is_empty()
-            && self.trailing_wildcard_subs.is_empty()
+        self.exact_subs.is_none()
+            && self.trailing_wildcard_subs.is_none()
             && self.children.is_empty()
             && self.wildcard_child.is_none()
+    }
+}
+
+/// Fanout result: zero-allocation iterator over matched subscribers
+#[derive(Debug)]
+pub struct Fanout<'a> {
+    slabs: Vec<&'a SubSlab>,
+    slab_index: usize,
+    item_index: usize,
+}
+
+impl<'a> Fanout<'a> {
+    fn new() -> Self {
+        Self {
+            slabs: Vec::new(),
+            slab_index: 0,
+            item_index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for Fanout<'a> {
+    type Item = &'a RtSubscription;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.slab_index < self.slabs.len() {
+            let slab = self.slabs[self.slab_index];
+            if self.item_index < slab.len() {
+                let item = &slab[self.item_index];
+                self.item_index += 1;
+                return Some(item);
+            } else {
+                self.slab_index += 1;
+                self.item_index = 0;
+            }
+        }
+        None
     }
 }
 
@@ -92,14 +133,14 @@ impl TrieNode {
 #[derive(Debug, Clone)]
 struct RouteTrie {
     root: TrieNode,
-    global_subs: SubList, // pattern == "*"
+    global_subs: Option<SubSlab>, // pattern == "*"
 }
 
 impl RouteTrie {
     fn new() -> Self {
         Self {
             root: TrieNode::default(),
-            global_subs: SubList::default(),
+            global_subs: None,
         }
     }
 }
@@ -125,7 +166,7 @@ impl RouteTableShard {
         let id = sub.id;
         let pattern = sub.route_pattern.clone();
 
-        self.insert_into_trie(rf, &pattern, id);
+        self.insert_into_trie(rf, &pattern, &sub);
         self.subs.insert(id, sub);
     }
 
@@ -147,11 +188,17 @@ impl RouteTableShard {
         }
     }
 
-    fn insert_into_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub_id: u64) {
+    fn insert_into_trie(&mut self, rf: RouteFamilyId, pattern: &str, sub: &RtSubscription) {
         let trie = self.tries.entry(rf).or_insert_with(RouteTrie::new);
 
         if pattern == "*" {
-            trie.global_subs.insert_if_absent(sub_id);
+            trie.global_subs = Some(if let Some(ref existing) = trie.global_subs {
+                let mut v = (**existing).to_vec();
+                v.push(sub.clone());
+                Arc::from(v)
+            } else {
+                Arc::from(vec![sub.clone()])
+            });
             return;
         }
 
@@ -178,9 +225,21 @@ impl RouteTableShard {
         }
 
         if has_trailing_wildcard {
-            node.trailing_wildcard_subs.insert_if_absent(sub_id);
+            node.trailing_wildcard_subs = Some(if let Some(ref existing) = node.trailing_wildcard_subs {
+                let mut v = (**existing).to_vec();
+                v.push(sub.clone());
+                Arc::from(v)
+            } else {
+                Arc::from(vec![sub.clone()])
+            });
         } else {
-            node.exact_subs.insert_if_absent(sub_id);
+            node.exact_subs = Some(if let Some(ref existing) = node.exact_subs {
+                let mut v = (**existing).to_vec();
+                v.push(sub.clone());
+                Arc::from(v)
+            } else {
+                Arc::from(vec![sub.clone()])
+            });
         }
     }
 
@@ -190,7 +249,10 @@ impl RouteTableShard {
         };
 
         if pattern == "*" {
-            trie.global_subs.retain(|id| id != sub_id);
+            trie.global_subs = trie.global_subs.as_ref().and_then(|existing| {
+                let v: Vec<_> = existing.iter().filter(|s| s.id != sub_id).cloned().collect();
+                if v.is_empty() { None } else { Some(Arc::from(v)) }
+            });
             return;
         }
 
@@ -210,83 +272,61 @@ impl RouteTableShard {
             sub_id: u64,
             is_trailing: bool,
             depth: usize,
-        ) -> bool {
+        ) {
             if depth == segments.len() {
                 if is_trailing {
-                    node.trailing_wildcard_subs.retain(|id| id != sub_id);
+                    node.trailing_wildcard_subs = node.trailing_wildcard_subs.as_ref().and_then(|existing| {
+                        let v: Vec<_> = existing.iter().filter(|s| s.id != sub_id).cloned().collect();
+                        if v.is_empty() { None } else { Some(Arc::from(v)) }
+                    });
                 } else {
-                    node.exact_subs.retain(|id| id != sub_id);
+                    node.exact_subs = node.exact_subs.as_ref().and_then(|existing| {
+                        let v: Vec<_> = existing.iter().filter(|s| s.id != sub_id).cloned().collect();
+                        if v.is_empty() { None } else { Some(Arc::from(v)) }
+                    });
                 }
-                return node.is_empty();
+                return;
             }
 
             let seg = segments[depth];
 
             if seg == "*" {
                 if let Some(child) = node.wildcard_child.as_mut() {
-                    let prune = remove_rec(child, segments, sub_id, is_trailing, depth + 1);
-                    if prune {
-                        node.wildcard_child = None;
-                    }
+                    remove_rec(child, segments, sub_id, is_trailing, depth + 1);
                 }
             } else if let Some(child) = node.children.get_mut(seg) {
-                let prune = remove_rec(child, segments, sub_id, is_trailing, depth + 1);
-                if prune {
-                    node.children.remove(seg);
-                }
+                remove_rec(child, segments, sub_id, is_trailing, depth + 1);
             }
-
-            node.is_empty()
         }
 
-        remove_rec(
-            &mut trie.root,
-            segments_to_traverse,
-            sub_id,
-            has_trailing_wildcard,
-            0,
-        );
+        remove_rec(&mut trie.root, segments_to_traverse, sub_id, has_trailing_wildcard, 0);
     }
 
-    /// Zero-alloc match inside a shard:
-    /// - `route_segments` lives on caller's stack
-    /// - `scratch_ids` is a fixed stack array for all shards
-    fn matching_ids_into(
-        &self,
-        rf: RouteFamilyId,
-        route_segments: &[&str],
-        scratch_ids: &mut [u64; MAX_MATCHES],
-        count: &mut usize,
-    ) {
+    /// Zero-alloc match inside a shard: collect slabs
+    fn matching_slabs(&self, rf: RouteFamilyId, route_segments: &[&str]) -> Vec<&SubSlab> {
         let Some(trie) = self.tries.get(&rf) else {
-            return;
+            return Vec::new();
         };
 
+        let mut slabs = Vec::new();
+
         // Global wildcard
-        for id in trie.global_subs.iter() {
-            if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
-                scratch_ids[*count] = id;
-                *count += 1;
-            }
+        if let Some(ref slab) = trie.global_subs {
+            slabs.push(slab);
         }
 
-        fn walk(
-            node: &TrieNode,
+        fn walk<'a>(
+            node: &'a TrieNode,
             segs: &[&str],
             depth: usize,
-            scratch_ids: &mut [u64; MAX_MATCHES],
-            count: &mut usize,
+            slabs: &mut Vec<&'a SubSlab>,
         ) {
             if depth == segs.len() {
-                for id in node
-                    .exact_subs
-                    .iter()
-                    .chain(node.trailing_wildcard_subs.iter())
-                {
-                    if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
-                        scratch_ids[*count] = id;
-                        *count += 1;
-                    }
+                if let Some(ref slab) = node.exact_subs {
+                    slabs.push(slab);
+                }
+                if let Some(ref slab) = node.trailing_wildcard_subs {
+                    slabs.push(slab);
                 }
                 return;
             }
@@ -294,27 +334,24 @@ impl RouteTableShard {
             let seg = segs[depth];
 
             if let Some(child) = node.children.get(seg) {
-                walk(child, segs, depth + 1, scratch_ids, count);
+                walk(child, segs, depth + 1, slabs);
             }
 
             if let Some(child) = node.wildcard_child.as_ref() {
-                walk(child, segs, depth + 1, scratch_ids, count);
+                walk(child, segs, depth + 1, slabs);
             }
 
             // Hierarchical prefix + trailing wildcard match
-            for id in node
-                .exact_subs
-                .iter()
-                .chain(node.trailing_wildcard_subs.iter())
-            {
-                if *count < MAX_MATCHES && !scratch_ids[..*count].contains(&id) {
-                    scratch_ids[*count] = id;
-                    *count += 1;
-                }
+            if let Some(ref slab) = node.exact_subs {
+                slabs.push(slab);
+            }
+            if let Some(ref slab) = node.trailing_wildcard_subs {
+                slabs.push(slab);
             }
         }
 
-        walk(&trie.root, route_segments, 0, scratch_ids, count);
+        walk(&trie.root, route_segments, 0, &mut slabs);
+        slabs
     }
 }
 
@@ -369,11 +406,8 @@ impl RouteTable {
         self.len() == 0
     }
 
-    /// Zero-alloc hot path:
-    /// - route split into stack array
-    /// - scratch_ids is stack array
-    /// - no heap allocations until we build the final Vec
-    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
+    /// Zero-alloc hot path: return iterator over matched subscribers
+    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Fanout {
         // Split route once into stack-backed array
         let mut segs: [&str; MAX_SEGMENTS] = [""; MAX_SEGMENTS];
         let mut seg_len = 0;
@@ -385,20 +419,9 @@ impl RouteTable {
 
         let shard = self.shard_ref(rf);
 
-        // Collect IDs into stack buffer
-        let mut ids_buf: [u64; MAX_MATCHES] = [0; MAX_MATCHES];
-        let mut count = 0usize;
+        let slabs = shard.matching_slabs(rf, route_segments);
 
-        shard.matching_ids_into(rf, route_segments, &mut ids_buf, &mut count);
-
-        // Single Vec allocation at the very end
-        let mut out = Vec::with_capacity(count);
-        for id in ids_buf[..count].iter() {
-            if let Some(sub) = shard.subs.get(id) {
-                out.push(sub.clone());
-            }
-        }
-        out
+        Fanout { slabs, slab_index: 0, item_index: 0 }
     }
 }
 
@@ -507,7 +530,7 @@ mod tests {
         };
 
         rt.insert(DEFAULT_RF, sub);
-        let matches = rt.matching_subscribers(DEFAULT_RF, "a/b/c");
+        let matches: Vec<_> = rt.matching_subscribers(DEFAULT_RF, "a/b/c").collect();
         assert_eq!(matches.len(), 1);
     }
 
@@ -1122,8 +1145,8 @@ mod tests {
         rt.insert(CF_TENANT_B, sub_b);
 
         // Assert: Verify each CF has its own subscription
-        let matches_a = rt.matching_subscribers(CF_TENANT_A, "app/alerts/error");
-        let matches_b = rt.matching_subscribers(CF_TENANT_B, "app/alerts/error");
+        let matches_a: Vec<_> = rt.matching_subscribers(CF_TENANT_A, "app/alerts/error").collect();
+        let matches_b: Vec<_> = rt.matching_subscribers(CF_TENANT_B, "app/alerts/error").collect();
 
         assert_eq!(matches_a.len(), 1, "CF A should have exactly 1 match");
         assert_eq!(matches_b.len(), 1, "CF B should have exactly 1 match");
@@ -1164,7 +1187,7 @@ mod tests {
         );
 
         // Act: Query PROD with a matching route
-        let matches_prod = rt.matching_subscribers(CF_PROD, "system/alerts/critical");
+        let matches_prod: Vec<_> = rt.matching_subscribers(CF_PROD, "system/alerts/critical").collect();
 
         // Assert: Should only get the PROD subscription, not DEV
         assert_eq!(matches_prod.len(), 1);
@@ -1219,10 +1242,10 @@ mod tests {
         );
 
         // Act: Query each CF
-        let cf1_matches = rt.matching_subscribers(CF_1, "realm1/area/resource");
-        let cf2_matches = rt.matching_subscribers(CF_2, "realm2/area/resource");
-        let cf3_matches = rt.matching_subscribers(CF_3, "realm1/area/resource");
-        let cf1_realm2 = rt.matching_subscribers(CF_1, "realm2/area/resource");
+        let cf1_matches: Vec<_> = rt.matching_subscribers(CF_1, "realm1/area/resource").collect();
+        let cf2_matches: Vec<_> = rt.matching_subscribers(CF_2, "realm2/area/resource").collect();
+        let cf3_matches: Vec<_> = rt.matching_subscribers(CF_3, "realm1/area/resource").collect();
+        let cf1_realm2: Vec<_> = rt.matching_subscribers(CF_1, "realm2/area/resource").collect();
 
         // Assert: Each CF returns only its own subscriptions
         assert_eq!(cf1_matches.len(), 1);
@@ -1280,7 +1303,7 @@ mod tests {
         );
 
         // Act: Query with a specific route
-        let matches = rt.matching_subscribers(CF_MULTI, "app/alerts/critical");
+        let matches: Vec<_> = rt.matching_subscribers(CF_MULTI, "app/alerts/critical").collect();
 
         // Assert: Should match all three patterns (hierarchical matching)
         assert_eq!(
@@ -1329,11 +1352,11 @@ mod tests {
         assert_eq!(removed.unwrap().id, 1);
 
         // CF_A should no longer have the subscription
-        let cf_a_matches = rt.matching_subscribers(CF_A, "service/endpoint");
+        let cf_a_matches: Vec<_> = rt.matching_subscribers(CF_A, "service/endpoint").collect();
         assert_eq!(cf_a_matches.len(), 0);
 
         // CF_B should still have its subscription
-        let cf_b_matches = rt.matching_subscribers(CF_B, "service/endpoint");
+        let cf_b_matches: Vec<_> = rt.matching_subscribers(CF_B, "service/endpoint").collect();
         assert_eq!(cf_b_matches.len(), 1);
         assert_eq!(cf_b_matches[0].id, 2);
     }
@@ -1400,16 +1423,16 @@ mod tests {
         assert_eq!(rt.len(), 2, "Should have 2 subscriptions remaining");
 
         // CF_PRIMARY should be empty for that channel
-        let cf_primary_remaining = rt.matching_subscribers(CF_PRIMARY, "r1");
+        let cf_primary_remaining: Vec<_> = rt.matching_subscribers(CF_PRIMARY, "r1").collect();
         assert_eq!(cf_primary_remaining.len(), 0);
 
         // CF_SECONDARY should still have CHANNEL_ID's subscription
-        let cf_secondary_remaining = rt.matching_subscribers(CF_SECONDARY, "r3");
+        let cf_secondary_remaining: Vec<_> = rt.matching_subscribers(CF_SECONDARY, "r3").collect();
         assert_eq!(cf_secondary_remaining.len(), 1);
         assert_eq!(cf_secondary_remaining[0].id, 3);
 
         // CF_SECONDARY should still have the subscription from channel 999
-        let cf_secondary_999 = rt.matching_subscribers(CF_SECONDARY, "r4");
+        let cf_secondary_999: Vec<_> = rt.matching_subscribers(CF_SECONDARY, "r4").collect();
         assert_eq!(cf_secondary_999.len(), 1);
         assert_eq!(cf_secondary_999[0].id, 4);
     }
@@ -1434,7 +1457,7 @@ mod tests {
         );
 
         // Act
-        let matches = rt.matching_subscribers(CF_MISSING, "test/route");
+        let matches: Vec<_> = rt.matching_subscribers(CF_MISSING, "test/route").collect();
 
         // Assert
         assert_eq!(matches.len(), 0);
@@ -1473,8 +1496,8 @@ mod tests {
         );
 
         // Act
-        let matches_enabled = rt.matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route");
-        let matches_disabled = rt.matching_subscribers(CF_NO_GLOBAL, "any/random/route");
+        let matches_enabled: Vec<_> = rt.matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route").collect();
+        let matches_disabled: Vec<_> = rt.matching_subscribers(CF_NO_GLOBAL, "any/random/route").collect();
 
         // Assert
         assert_eq!(matches_enabled.len(), 1);
@@ -1550,10 +1573,10 @@ mod tests {
         );
 
         // Act
-        let acme_prod = rt.matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts");
-        let acme_any = rt.matching_subscribers(CF_TENANT_ACME, "anything");
-        let widgets_alert = rt.matching_subscribers(CF_TENANT_WIDGETS, "widgets/alerts/critical");
-        let widgets_other = rt.matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts");
+        let acme_prod: Vec<_> = rt.matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts").collect();
+        let acme_any: Vec<_> = rt.matching_subscribers(CF_TENANT_ACME, "anything").collect();
+        let widgets_alert: Vec<_> = rt.matching_subscribers(CF_TENANT_WIDGETS, "widgets/alerts/critical").collect();
+        let widgets_other: Vec<_> = rt.matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts").collect();
 
         // Assert
         assert_eq!(

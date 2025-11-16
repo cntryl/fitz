@@ -168,7 +168,7 @@ impl RpcService {
     /// Hot path: called for every RPC request
     #[inline]
     pub fn matching_handlers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
-        self.handler_routes.matching_subscribers(rf, route)
+        self.handler_routes.matching_subscribers(rf, route).cloned().collect()
     }
 
     /// Get matching inbox subscribers for a reply route
@@ -178,7 +178,7 @@ impl RpcService {
         rf: RouteFamilyId,
         inbox_route: &str,
     ) -> Vec<RtSubscription> {
-        self.inbox_routes.matching_subscribers(rf, inbox_route)
+        self.inbox_routes.matching_subscribers(rf, inbox_route).cloned().collect()
     }
 
     /// Check if a channel can publish to an inbox (only handlers of active requests)

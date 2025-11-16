@@ -105,7 +105,7 @@ fn bench_route_table_match_exact_scale(c: &mut Criterion) {
             move |b, _| {
                 b.iter(|| {
                     let matches = table.matching_subscribers(rf, &probe);
-                    black_box(matches);
+                    black_box(matches.collect::<Vec<_>>());
                 });
             }
         });
@@ -142,7 +142,7 @@ fn bench_route_table_match_wildcards_scale(c: &mut Criterion) {
             let probe = probe_hit.clone();
             move |b, _| {
                 b.iter(|| {
-                    black_box(table.matching_subscribers(rf, &probe));
+                    black_box(table.matching_subscribers(rf, &probe).collect::<Vec<_>>());
                 });
             }
         });
@@ -153,7 +153,7 @@ fn bench_route_table_match_wildcards_scale(c: &mut Criterion) {
             let probe = probe_miss.clone();
             move |b, _| {
                 b.iter(|| {
-                    black_box(table.matching_subscribers(rf, &probe));
+                    black_box(table.matching_subscribers(rf, &probe).collect::<Vec<_>>());
                 });
             }
         });
@@ -184,7 +184,7 @@ fn bench_route_table_fanout_clone_cost(c: &mut Criterion) {
         let table = Arc::clone(&table);
             move |b| {
                 b.iter(|| {
-                    black_box(table.matching_subscribers(rf, &probe));
+                    black_box(table.matching_subscribers(rf, &probe).collect::<Vec<_>>());
                 });
             }
     });
@@ -209,7 +209,7 @@ fn bench_route_table_multi_rf_sharding(c: &mut Criterion) {
         let table = Arc::clone(&table);
         move |b| {
             b.iter(|| {
-                black_box(table.matching_subscribers(probe_rf, probe));
+                black_box(table.matching_subscribers(probe_rf, probe).collect::<Vec<_>>());
             });
         }
     });

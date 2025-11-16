@@ -86,7 +86,7 @@ impl NoticeService {
         msg_id: Option<&str>,
         body: &[u8],
     ) -> PublishResult {
-        let matches = self.route_table.matching_subscribers(rf, route);
+        let matches: Vec<_> = self.route_table.matching_subscribers(rf, route).collect();
 
         // Fast path: no subscribers
         if matches.is_empty() {
@@ -102,7 +102,7 @@ impl NoticeService {
 
         // Optimized path for single subscriber (most common case)
         if matches.len() == 1 {
-            let sub = &matches[0];
+            let sub = matches[0];
             match sub.sender.try_send((
                 route.to_string(),
                 msg_id.map(|s| s.to_string()),
