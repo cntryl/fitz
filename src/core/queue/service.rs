@@ -11,7 +11,7 @@
 use crate::core::queue::encoding::{
     decode_lease_info, decode_stored_queue_message, encode_lease_info, encode_stored_queue_message,
 };
-use crate::core::queue::types::{QueueMessage};
+use crate::core::queue::types::QueueMessage;
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
 use crate::storage::traits::KvStore;
 use cntryl_midge::ColumnFamilyId;

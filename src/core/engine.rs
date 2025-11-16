@@ -282,5 +282,8 @@ pub fn start_engine_with_join() -> EngineStartup {
         }
     });
 
-    EngineStartup { join_handle: jh, handle }
+    EngineStartup {
+        join_handle: jh,
+        handle,
+    }
 }

@@ -315,15 +315,15 @@ impl StreamService {
         }
 
         while let Some(status) = area_state.reserved_ranges.get(&scan_seq) {
-                if matches!(status, ReservationStatus::Committed) {
-                    // This sequence is committed
-                    area_state.reserved_ranges.remove(&scan_seq);
-                    highest_committed = scan_seq;
-                    scan_seq += 1;
-                } else {
-                    // Hit a Reserved (uncommitted) sequence, stop
-                    break;
-                }
+            if matches!(status, ReservationStatus::Committed) {
+                // This sequence is committed
+                area_state.reserved_ranges.remove(&scan_seq);
+                highest_committed = scan_seq;
+                scan_seq += 1;
+            } else {
+                // Hit a Reserved (uncommitted) sequence, stop
+                break;
+            }
         }
 
         // Update in-memory watermark to highest contiguous committed

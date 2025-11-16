@@ -150,7 +150,10 @@ impl Router {
             .collect();
 
         if matching_subs.is_empty() {
-            return DispatchResult { delivered: 0, removed: vec![] };
+            return DispatchResult {
+                delivered: 0,
+                removed: vec![],
+            };
         }
 
         // Sort for deterministic round-robin

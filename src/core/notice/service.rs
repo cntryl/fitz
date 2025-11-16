@@ -90,7 +90,10 @@ impl NoticeService {
 
         // Fast path: no subscribers
         if matches.is_empty() {
-            return PublishResult { delivered: 0, failed: 0 };
+            return PublishResult {
+                delivered: 0,
+                failed: 0,
+            };
         }
 
         let mut delivered = 0usize;
@@ -100,7 +103,7 @@ impl NoticeService {
         // Optimized path for single subscriber (most common case)
         if matches.len() == 1 {
             let sub = &matches[0];
-                match sub.sender.try_send((
+            match sub.sender.try_send((
                 route.to_string(),
                 msg_id.map(|s| s.to_string()),
                 body.to_vec(),
@@ -108,14 +111,25 @@ impl NoticeService {
                 None,  // Notices never have seq
                 false, // Notices never have end flag
             )) {
-                            Ok(_) => return PublishResult { delivered: 1, failed: 0 },
+                Ok(_) => {
+                    return PublishResult {
+                        delivered: 1,
+                        failed: 0,
+                    }
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    return PublishResult { delivered: 0, failed: 1 }
+                    return PublishResult {
+                        delivered: 0,
+                        failed: 1,
+                    }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Subscriber disconnected, remove it
                     let _ = self.route_table.remove(rf, sub.id);
-                    return PublishResult { delivered: 0, failed: 1 };
+                    return PublishResult {
+                        delivered: 0,
+                        failed: 1,
+                    };
                 }
             }
         }
@@ -529,7 +543,7 @@ mod tests {
         service.subscribe(DEFAULT_RF, "test/*".to_string(), 1, tx);
 
         // Act
-            let r = service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
+        let r = service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
         let delivered = r.delivered;
         let failed = r.failed;
 

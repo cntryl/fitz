@@ -329,7 +329,8 @@ impl RouteTable {
     pub fn new() -> Self {
         // Manual init because arrays require Copy/Default trick
         // Prefer safe initialization to avoid undefined behavior with `MaybeUninit`
-        let shards: [RouteTableShard; SHARD_COUNT] = std::array::from_fn(|_| RouteTableShard::new());
+        let shards: [RouteTableShard; SHARD_COUNT] =
+            std::array::from_fn(|_| RouteTableShard::new());
 
         Self { shards }
     }

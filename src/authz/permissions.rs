@@ -10,13 +10,13 @@
 
 #[derive(Debug, Clone)]
 struct Grant {
-    intent: Option<String>,    // read, write, * for any intent
+    intent: Option<String>, // read, write, * for any intent
     scheme: Option<&'static str>,
     realm: Option<String>,
     area: Option<String>,
     resource: Option<String>,
     operation: Option<String>, // specific operation, None means any operation within intent
-    wildcard: bool, // when true, descendants under resource are allowed
+    wildcard: bool,            // when true, descendants under resource are allowed
 }
 
 impl Grant {
@@ -168,9 +168,7 @@ fn action_from_str(_s: &str) -> bool {
     true
 }
 
-fn parse_route_scope(
-    scope: &str,
-)-> RouteScope {
+fn parse_route_scope(scope: &str) -> RouteScope {
     // Expect intent::scheme://realm[/area[/resource]] with optional trailing /* wildcard
     // intent can be "read", "write", "*" or omitted (defaults to None for any)
     let mut wildcard = false;

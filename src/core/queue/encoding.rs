@@ -20,9 +20,7 @@ pub struct QueueTlvPayload {
 }
 
 /// Parse TLV payload to extract queue operation parameters
-pub fn parse_tlv_payload(
-    payload: &[u8],
-)-> QueueTlvPayload {
+pub fn parse_tlv_payload(payload: &[u8]) -> QueueTlvPayload {
     let mut message_id = None;
     let mut body = None;
     let mut lease_secs = None;

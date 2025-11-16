@@ -1,11 +1,11 @@
 // Stream domain handler - routes all stream:// operations
 
 use super::service::StreamService;
-use super::types::{StreamEvent};
+use super::types::StreamEvent;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
-    TAG_ASSIGNED_REV, TAG_BODY, TAG_METADATA, TAG_NOTIFICATION, TAG_SEQ,
-    TAG_STREAM_END, TAG_WATERMARK,
+    TAG_ASSIGNED_REV, TAG_BODY, TAG_METADATA, TAG_NOTIFICATION, TAG_SEQ, TAG_STREAM_END,
+    TAG_WATERMARK,
 };
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
