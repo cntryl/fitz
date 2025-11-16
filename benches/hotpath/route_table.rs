@@ -1,6 +1,5 @@
 // Moved from benches/hotpath/route.rs — subsystem bench for RouteTable
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use fitz::protocol::route::parse_route;
+use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::routing::RouteTable;
 use fitz::routing::DEFAULT_RF;
 use std::sync::OnceLock;

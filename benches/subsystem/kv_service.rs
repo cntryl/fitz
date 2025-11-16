@@ -1,9 +1,8 @@
 // Moved from benches/hotpath/kv.rs — now classified as a subsystem/service benchmark
 #![allow(dead_code)]
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::core::kv::KvService;
 use fitz::core::kv::KvOperation;
-use fitz::storage::traits::KvStore;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 

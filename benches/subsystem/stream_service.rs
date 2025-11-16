@@ -1,9 +1,8 @@
 // Moved from benches/hotpath/stream.rs — subsystem/service-level bench
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::core::stream::StreamService;
 use fitz::core::stream::types::StreamEvent;
 use fitz::routing::DEFAULT_RF;
-use fitz::storage::traits::KvStore;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 

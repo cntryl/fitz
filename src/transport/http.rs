@@ -58,7 +58,7 @@ pub async fn handle_request(
                 .unwrap_or("");
             // If no-auth is enabled for dev-only setups, return a mock token
             if crate::config::load().auth.no_auth {
-                let token = format!("mock:dev");
+                let token = "mock:dev".to_string();
                 let body = serde_json::json!({
                     "access_token": token,
                     "token_type": "Bearer",
@@ -90,11 +90,11 @@ pub async fn handle_request(
                     hyper::header::CONTENT_TYPE,
                     hyper::header::HeaderValue::from_static("application/json"),
                 );
-                return Ok(resp);
+                Ok(resp)
             } else {
                 let mut resp = Response::new(Body::from("invalid credentials"));
                 *resp.status_mut() = StatusCode::UNAUTHORIZED;
-                return Ok(resp);
+                Ok(resp)
             }
         }
         "/healthz" => Ok(Response::new(Body::from("ok"))),

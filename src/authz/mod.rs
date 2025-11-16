@@ -21,6 +21,11 @@ pub fn validate_token(token: &str) -> Option<String> {
     }
 }
 
+/// Initialize authorization subsystem (stub)
+pub fn init() {
+    // TODO: init authz backends
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,9 +41,4 @@ mod tests {
         // Assert
         assert_eq!(val, Some("dev".to_string()));
     }
-}
-
-/// Initialize authorization subsystem (stub)
-pub fn init() {
-    // TODO: init authz backends
 }

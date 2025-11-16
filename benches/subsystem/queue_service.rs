@@ -1,9 +1,7 @@
 // Moved from benches/hotpath/queue.rs — now a subsystem/service-level bench
 use criterion::{criterion_group, criterion_main, Criterion};
 use fitz::core::queue::QueueService;
-use fitz::routing::DEFAULT_RF;
-use fitz::storage::traits::KvStore;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 
 #[path = "../config.rs"]
@@ -30,7 +28,7 @@ fn bench_queue_enqueue_reserve(c: &mut Criterion) {
                 .expect("rt")
                 .block_on(async {
                     for i in 0..MAX_ITERS {
-                        let id = svc
+                        let _id = svc
                             .enqueue(
                                 "realm1",
                                 "area1",

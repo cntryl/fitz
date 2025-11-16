@@ -17,7 +17,7 @@ pub fn issue_token_for_client(client_id: &str, client_secret: &str) -> Option<St
 
     // If NO_AUTH enabled, return a token for the dev tenant
     if cfg.auth.no_auth {
-        return Some(format!("mock:dev"));
+        return Some("mock:dev".to_string());
     }
 
     if let (Some(cfg_id), Some(cfg_secret)) = (cfg.auth.client_id.clone(), cfg.auth.client_secret.clone()) {
