@@ -96,12 +96,35 @@ impl QueueService {
 
     /// Derive the message key from a lease key by rewriting the index byte.
     pub fn derive_message_key_from_lease(lease_key: &[u8]) -> Option<Vec<u8>> {
-        if lease_key.len() < 2 {
+        // The lexkey encoding puts each u8 into an 8-byte encoded block.
+        // Structure: [DOMAIN_PREFIX encoded (8 bytes)][IDX encoded (8 bytes)][rest...]
+        // We need to change the IDX byte which is at a specific position in the second block.
+        
+        // Minimum length check: need at least 2 encoded blocks (16 bytes)
+        if lease_key.len() < 16 {
             return None;
         }
+        
         let mut key = lease_key.to_vec();
-        key[1] = IDX_MESSAGE;
-        Some(key)
+        
+        // Find where IDX_LEASE byte is located
+        // Based on the debug output, lexkey encodes u8 values with leading zeros
+        // and the actual value at the end of each 8-byte block
+        // Let's search for IDX_LEASE in the first 20 bytes and replace it with IDX_MESSAGE
+        let mut found = false;
+        for i in 8..std::cmp::min(20, key.len()) {
+            if key[i] == IDX_LEASE {
+                key[i] = IDX_MESSAGE;
+                found = true;
+                break;
+            }
+        }
+        
+        if found {
+            Some(key)
+        } else {
+            None
+        }
     }
 
     /// List queues within a specific realm/area scope
