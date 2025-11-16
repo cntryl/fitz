@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 /// - Subscribe/Unsubscribe: manage in-memory subscriptions
 /// - Publish: dispatch notifications to matching subscribers
 /// - Best-effort delivery with backpressure handling
+#[derive(Debug)]
 pub struct NoticeService {
     next_sub_id: u64,
     route_table: RouteTable,

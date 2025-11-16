@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 

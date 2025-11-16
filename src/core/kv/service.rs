@@ -8,6 +8,7 @@ use super::types::KvOperation;
 use crate::storage::traits::{KvStore, KvTransaction};
 use cntryl_midge::ColumnFamilyId;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 // Default column family for KV domain
@@ -30,6 +31,17 @@ struct ActiveTransaction {
     id: u64,
 }
 
+impl Debug for ActiveTransaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActiveTransaction")
+            .field("transaction", &"<dyn KvTransaction>")
+            .field("realm", &self.realm)
+            .field("area", &self.area)
+            .field("id", &self.id)
+            .finish()
+    }
+}
+
 /// KV service handles key-value storage operations with transaction semantics
 /// All operations require an active transaction
 /// - Put: store key-value pairs
@@ -45,6 +57,16 @@ pub struct KvService {
     active_transactions: Arc<Mutex<HashMap<u64, ActiveTransaction>>>,
     /// Next transaction ID
     next_transaction_id: Arc<Mutex<u64>>,
+}
+
+impl Debug for KvService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KvService")
+            .field("store", &"<dyn KvStore>")
+            .field("active_transactions", &self.active_transactions)
+            .field("next_transaction_id", &self.next_transaction_id)
+            .finish()
+    }
 }
 
 impl KvService {

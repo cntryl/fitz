@@ -21,6 +21,7 @@ use crate::storage::traits::KvStore;
 use cntryl_midge::ColumnFamilyId;
 use lexkey::{encode_composite, Encodable};
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 /// Stream domain prefix marker
@@ -52,6 +53,7 @@ struct AreaStreamState {
 
 /// Active append transaction state - single resource per transaction
 /// Events are written immediately to KvStore, transaction tracks metadata only
+#[derive(Debug)]
 struct ActiveTransaction {
     realm: String,
     area: String,
@@ -70,6 +72,18 @@ pub struct StreamService {
     active_transactions: Arc<Mutex<HashMap<u64, ActiveTransaction>>>,
     /// Next transaction ID
     next_txn_id: Arc<Mutex<u64>>,
+}
+
+impl Debug for StreamService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamService")
+            .field("kv_store", &"<dyn KvStore>")
+            .field("subscriptions", &self.subscriptions)
+            .field("area_states", &self.area_states)
+            .field("active_transactions", &self.active_transactions)
+            .field("next_txn_id", &self.next_txn_id)
+            .finish()
+    }
 }
 
 impl StreamService {

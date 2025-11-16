@@ -20,6 +20,7 @@ struct InboxContext {
 /// - Inbox ownership enforcement (only owner can subscribe)
 /// - Handler authorization (only handlers can publish to client inboxes)
 /// - Automatic cleanup on session close
+#[derive(Debug)]
 pub struct RpcService {
     /// Next subscription ID
     next_sub_id: u64,

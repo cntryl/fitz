@@ -16,6 +16,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 // aliases moved to `types.rs`
 
+#[derive(Debug)]
 struct Shard {
     route_families: DashMap<RouteFamilyId, Arc<RealmMap>>, // rf -> realms
 }
@@ -27,6 +28,7 @@ impl Shard {
     }
 }
 
+#[derive(Debug)]
 pub struct LeaseService {
     shards: Vec<Arc<Shard>>, // sharded by realm
     secret: Arc<Vec<u8>>,    // HMAC key

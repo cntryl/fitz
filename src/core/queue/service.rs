@@ -18,6 +18,7 @@ use crate::core::queue::types::{LeaseInfo, QueueMessage, StoredQueueMessage};
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
 use crate::storage::traits::KvStore;
 use lexkey::{encode_composite, Encodable};
+use std::fmt::Debug;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -41,6 +42,15 @@ const IDX_LEASE: u8 = queue_prefixes::LEASE;
 pub struct QueueService {
     kv_store: Arc<dyn KvStore>,
     token_key: Vec<u8>,
+}
+
+impl Debug for QueueService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueueService")
+            .field("kv_store", &"<dyn KvStore>")
+            .field("token_key", &self.token_key)
+            .finish()
+    }
 }
 
 impl QueueService {
