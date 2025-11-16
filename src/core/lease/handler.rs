@@ -84,15 +84,15 @@ impl LeaseDomain {
                     ),
                 }
             }
-            LeaseOperation::Release => {
-                // Release requires TAG_ID and TAG_DELIVERY_TOKEN
+            LeaseOperation::Surrender => {
+                // Surrender requires TAG_ID and TAG_DELIVERY_TOKEN
                 let id = tlv::parse_string(&payload, TAG_ID);
                 let token = tlv::parse_string(&payload, TAG_DELIVERY_TOKEN);
 
                 match (id, token) {
-                    (Some(id), Some(token)) => self.handle_release(svc, rf, key, id, token).await,
+                    (Some(id), Some(token)) => self.handle_surrender(svc, rf, key, id, token).await,
                     _ => DomainResponse::Error(
-                        "release requires TAG_ID and TAG_DELIVERY_TOKEN".to_string(),
+                        "surrender requires TAG_ID and TAG_DELIVERY_TOKEN".to_string(),
                     ),
                 }
             }
@@ -150,7 +150,7 @@ impl LeaseDomain {
         }
     }
 
-    async fn handle_release(
+    async fn handle_surrender(
         &self,
         svc: &Arc<LeaseService>,
         rf: crate::storage::RouteFamilyId,
@@ -214,16 +214,16 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_release_operation_from_route() {
+    fn should_parse_surrender_operation_from_route() {
         // Arrange
-        let route = parse_route("lease://realm1/area1/resource1/release").unwrap();
+        let route = parse_route("lease://realm1/area1/resource1/surrender").unwrap();
 
         // Act
         let op = LeaseOperation::from_route(&route);
 
         // Assert
         assert!(op.is_ok());
-        assert_eq!(op.unwrap(), LeaseOperation::Release);
+        assert_eq!(op.unwrap(), LeaseOperation::Surrender);
     }
 
     #[test]

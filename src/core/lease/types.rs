@@ -21,8 +21,8 @@ pub enum LeaseOperation {
     Acquire,
     /// Renew - extend an existing lease
     Renew,
-    /// Release - voluntarily release a lease
-    Release,
+    /// Surrender - voluntarily surrender a lease
+    Surrender,
 }
 
 impl LeaseOperation {
@@ -31,7 +31,7 @@ impl LeaseOperation {
         match route.operation.as_deref() {
             Some("acquire") => Ok(LeaseOperation::Acquire),
             Some("renew") => Ok(LeaseOperation::Renew),
-            Some("release") => Ok(LeaseOperation::Release),
+            Some("surrender") => Ok(LeaseOperation::Surrender),
             None => {
                 // Default to Acquire if no operation specified
                 Ok(LeaseOperation::Acquire)
