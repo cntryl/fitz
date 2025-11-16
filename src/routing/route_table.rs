@@ -70,7 +70,7 @@ impl SubList {
 /// - trailing_wildcard_subs: subscriptions like "a/b/*" anchored here
 /// - children: exact segment children
 /// - wildcard_child: matches "*" at this position
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct TrieNode {
     exact_subs: SubList,
     trailing_wildcard_subs: SubList,
@@ -89,7 +89,7 @@ impl TrieNode {
 }
 
 /// Per-RF trie
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RouteTrie {
     root: TrieNode,
     global_subs: SubList, // pattern == "*"
@@ -105,7 +105,7 @@ impl RouteTrie {
 }
 
 /// One shard of the route table
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct RouteTableShard {
     /// Authoritative subs by ID (for remove / cleanup)
     subs: FxHashMap<u64, RtSubscription>,
@@ -321,6 +321,7 @@ impl RouteTableShard {
 /// Sharded route table:
 /// - sharded by RF for locality & future parallelism
 /// - zero-alloc hotpath for matches
+#[derive(Debug, Clone)]
 pub struct RouteTable {
     shards: [RouteTableShard; SHARD_COUNT],
 }
