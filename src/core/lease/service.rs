@@ -134,7 +134,7 @@ impl LeaseService {
         id: &str,
         token: &str,
         add_secs: u32,
-    ) -> Result<u32, String> {
+    ) -> Result<LeaseGrant, String> {
         if add_secs == 0 {
             return Err("invalid_ttl".into());
         }
@@ -151,10 +151,17 @@ impl LeaseService {
         }
 
         lock.expiry += Duration::from_secs(add_secs as u64);
-        Ok(lock
+        let new_ttl = lock
             .expiry
             .saturating_duration_since(Instant::now())
-            .as_secs() as u32)
+            .as_secs() as u32;
+        
+        Ok(LeaseGrant {
+            id: lock.id.clone(),
+            token: lock.token.clone(),
+            ttl_secs: new_ttl,
+            body: lock.body.clone(),
+        })
     }
 
     /// Release; clear and prune maps (synchronous, no waiter handoff).

@@ -41,6 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 crossbeam-epoch = "0.9"
 crossbeam-queue = "0.3"
 crossbeam-skiplist = "0.1"
+crossbeam-channel = "0.5"
 fxhash = "0.2"
 num_cpus = "1.15"
 dashmap = "5"

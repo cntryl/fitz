@@ -14,6 +14,7 @@ pub struct TlvKeyValue {
     pub value: Option<Vec<u8>>,
 }
 
+#[derive(Debug)]
 pub struct KvDomain {
     service: Arc<KvService>,
 }
@@ -176,55 +177,50 @@ impl Default for KvDomain {
 */
 
 impl Domain for KvDomain {
-    fn handle<'a>(
-        &'a self,
-        request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            // Determine operation from route
-            let operation = match KvOperation::from_route(&request.route) {
-                Ok(op) => op,
-                Err(err) => {
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        Self::build_tlv_response(Err(err)),
-                    ));
-                }
-            };
+    fn handle(&self, request: DomainContext) -> DomainResponse {
+        // Determine operation from route
+        let operation = match KvOperation::from_route(&request.route) {
+            Ok(op) => op,
+            Err(err) => {
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    Self::build_tlv_response(Err(err)),
+                ));
+            }
+        };
 
-            // Parse TLV body for key and value
-            let kv = Self::parse_tlv_body(&request.payload);
-            let key = kv.key;
-            let value = kv.value;
+        // Parse TLV body for key and value
+        let kv = Self::parse_tlv_body(&request.payload);
+        let key = kv.key;
+        let value = kv.value;
 
-            // Parse realm and area from route
-            let _realm = match request.route.realm.as_deref() {
-                Some(r) => r,
-                None => {
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        Self::build_tlv_response(Err("Missing realm in route".to_string())),
-                    ));
-                }
-            };
-            let _area = match request.route.area.as_deref() {
-                Some(a) => a,
-                None => {
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        Self::build_tlv_response(Err("Missing area in route".to_string())),
-                    ));
-                }
-            };
+        // Parse realm and area from route
+        let _realm = match request.route.realm.as_deref() {
+            Some(r) => r,
+            None => {
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    Self::build_tlv_response(Err("Missing realm in route".to_string())),
+                ));
+            }
+        };
+        let _area = match request.route.area.as_deref() {
+            Some(a) => a,
+            None => {
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    Self::build_tlv_response(Err("Missing area in route".to_string())),
+                ));
+            }
+        };
 
-            // Use shared service instance (bench- and cache-friendly)
-            let service = Arc::clone(&self.service);
+        // Use shared service instance (bench- and cache-friendly)
+        let service = Arc::clone(&self.service);
 
-            // Handle the operation
-            let result = service
-                .handle_operation(operation, &request.route_str, key, value);
+        // Handle the operation
+        let result = service
+            .handle_operation(operation, &request.route_str, key, value);
 
-            // Build and return response
-            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                Self::build_tlv_response(result),
-            ))
-        })
+        // Build and return response
+        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+            Self::build_tlv_response(result),
+        ))
     }
 }

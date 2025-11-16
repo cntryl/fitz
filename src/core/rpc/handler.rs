@@ -15,12 +15,13 @@ use crate::protocol::tags::{
 };
 use smallvec::SmallVec;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 /// Response buffer optimized for typical RPC frames (<64 bytes for control messages)
 /// Uses stack allocation to avoid heap overhead for small messages
 type ResponseBuf = SmallVec<[u8; 64]>;
 
+#[derive(Debug)]
 pub struct RpcDomain {
     service: Arc<RwLock<RpcService>>,
 }
@@ -132,7 +133,7 @@ impl RpcDomain {
     }
 
     /// Handle RPC request (client sending request to handler)
-    async fn handle_rpc_request(
+    fn handle_rpc_request(
         &self,
         rf: crate::routing::RouteFamilyId,
         route: &str,
@@ -140,7 +141,7 @@ impl RpcDomain {
         reply_route: Option<&str>,
         body: &[u8],
     ) -> ResponseBuf {
-        let service = self.service.read().await;
+        let service = self.service.read();
 
         // Find matching handlers
         let handlers = service.matching_handlers(rf, route);
@@ -156,7 +157,7 @@ impl RpcDomain {
         // Register active request for inbox authorization
         if let (Some(corr_id), Some(reply)) = (correlation_id, reply_route) {
             drop(service); // Release read lock
-            let mut service = self.service.write().await;
+            let mut service = self.service.write();
             service.register_request(corr_id.to_string(), route.to_string(), reply.to_string());
         }
 
@@ -182,7 +183,7 @@ impl RpcDomain {
     }
 
     /// Handle RPC reply (handler sending reply to client inbox)
-    async fn handle_rpc_reply(
+    fn handle_rpc_reply(
         &self,
         rf: crate::routing::RouteFamilyId,
         inbox_route: &str,
@@ -191,7 +192,7 @@ impl RpcDomain {
         seq: Option<u64>,
         is_stream_end: bool,
     ) -> ResponseBuf {
-        let service = self.service.read().await;
+        let service = self.service.read();
 
         // Authorization: check if correlation_id allows publishing to this inbox
         if let Some(corr_id) = correlation_id {
@@ -250,102 +251,88 @@ impl Default for RpcDomain {
 }
 
 impl Domain for RpcDomain {
-    fn handle<'a>(
-        &'a self,
-        request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            let payload = &request.payload;
+    fn handle(&self, request: DomainContext) -> DomainResponse {
+        let payload = &request.payload;
 
-            // Parse TLV payload
-            let parse_result = match self.parse_tlv_single_pass(payload) {
-                Ok(result) => result,
-                Err(error_msg) => {
-                    let response_data = self.build_error_response(&error_msg);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        response_data.to_vec(),
-                    ));
-                }
-            };
-
-            // Extract route from request
-            let route = &request.route_str;
-
-            // Extract optional fields
-            let correlation_id = parse_result
-                .id_range
-                .and_then(|(start, len)| std::str::from_utf8(&payload[start..start + len]).ok());
-
-            let reply_route = parse_result
-                .reply_route_range
-                .and_then(|(start, len)| std::str::from_utf8(&payload[start..start + len]).ok());
-
-            let body = parse_result
-                .body_range
-                .map(|(start, len)| &payload[start..start + len])
-                .unwrap_or(&[]);
-
-            // Handle subscribe/unsubscribe
-            if parse_result.has_subscribe {
-                // Subscribe operation - actual subscription happens via Domain::subscribe trait method
-                // Handler just acknowledges
-                let response_data = self.build_subscribe_response(route);
+        // Parse TLV payload
+        let parse_result = match self.parse_tlv_single_pass(payload) {
+            Ok(result) => result,
+            Err(error_msg) => {
+                let response_data = self.build_error_response(&error_msg);
                 return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response_data.to_vec(),
                 ));
             }
+        };
 
-            if parse_result.has_unsubscribe {
-                // Unsubscribe operation - actual unsubscription happens via Domain::unsubscribe trait method
-                // Handler just acknowledges
-                let response_data = self.build_subscribe_response(route);
-                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                    response_data.to_vec(),
-                ));
-            }
+        // Extract route from request
+        let route = &request.route_str;
 
-            // Determine if this is a request or reply
-            let is_reply = route.starts_with("inbox://");
+        // Extract optional fields
+        let correlation_id = parse_result
+            .id_range
+            .and_then(|(start, len)| std::str::from_utf8(&payload[start..start + len]).ok());
 
-            let response_data = if is_reply {
-                // This is a reply from handler to client
-                self.handle_rpc_reply(
-                    request.route_family,
-                    route,
-                    correlation_id,
-                    body,
-                    parse_result.seq_value,
-                    parse_result.has_stream_end,
-                )
-                .await
-            } else {
-                // This is a request from client to handler
-                self.handle_rpc_request(
-                    request.route_family,
-                    route,
-                    correlation_id,
-                    reply_route,
-                    body,
-                )
-                .await
-            };
+        let reply_route = parse_result
+            .reply_route_range
+            .and_then(|(start, len)| std::str::from_utf8(&payload[start..start + len]).ok());
 
-            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+        let body = parse_result
+            .body_range
+            .map(|(start, len)| &payload[start..start + len])
+            .unwrap_or(&[]);
+
+        // Handle subscribe/unsubscribe
+        if parse_result.has_subscribe {
+            // Subscribe operation - actual subscription happens via Domain::subscribe trait method
+            // Handler just acknowledges
+            let response_data = self.build_subscribe_response(route);
+            return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                 response_data.to_vec(),
-            ))
-        })
+            ));
+        }
+
+        if parse_result.has_unsubscribe {
+            // Unsubscribe operation - actual unsubscription happens via Domain::unsubscribe trait method
+            // Handler just acknowledges
+            let response_data = self.build_subscribe_response(route);
+            return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                response_data.to_vec(),
+            ));
+        }
+
+        // Determine if this is a request or reply
+        let is_reply = route.starts_with("inbox://");
+
+        let response_data = if is_reply {
+            // This is a reply from handler to client
+            self.handle_rpc_reply(
+                request.route_family,
+                route,
+                correlation_id,
+                body,
+                parse_result.seq_value,
+                parse_result.has_stream_end,
+            )
+        } else {
+            // This is a request from client to handler
+            self.handle_rpc_request(
+                request.route_family,
+                route,
+                correlation_id,
+                reply_route,
+                body,
+            )
+        };
+
+        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+            response_data.to_vec(),
+        ))
     }
 
-    fn cleanup_channel<'a>(
-        &'a self,
-        rf: crate::routing::RouteFamilyId,
-        channel_id: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        let service = Arc::clone(&self.service);
-        Box::pin(async move {
-            let mut svc = service.write().await;
-            svc.cleanup_channel(rf, channel_id)
-        })
+    fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {
+        let mut svc = self.service.write();
+        svc.cleanup_channel(rf, channel_id)
     }
 }
 

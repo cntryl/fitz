@@ -49,7 +49,7 @@ pub enum DomainResponse {
 
 /// Domain trait - each domain implements this to handle its operations
 /// All domain operations are SYNCHRONOUS - no async, no .await, no tokio primitives
-pub trait Domain: Send + Sync {
+pub trait Domain: Send + Sync + std::fmt::Debug {
     /// Handle a request for this domain (SYNCHRONOUS)
     /// Domain parses TLV tags from context.payload to extract operation details
     /// Returns DomainResponse with TLV-encoded response or error

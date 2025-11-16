@@ -8,9 +8,10 @@ use super::service::QueueService;
 use super::types::QueueOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::storage::traits::KvStore;
+use parking_lot::RwLock;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
+#[derive(Debug)]
 pub struct QueueDomain {
     service: Arc<RwLock<QueueService>>,
 }
@@ -59,56 +60,52 @@ impl QueueDomain {
 }
 
 impl Domain for QueueDomain {
-    fn handle<'a>(
-        &'a self,
-        request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            // Parse TLV payload
-            let parsed = Self::parse_tlv_payload(&request.payload);
-            let message_id = parsed.message_id.clone();
-            let body = parsed.body.clone();
-            let lease_secs = parsed.lease_secs;
-            let delivery_token = parsed.delivery_token.clone();
-            let ttl_secs = parsed.ttl_secs;
-            let _config = parsed.config;
+    fn handle(&self, request: DomainContext) -> DomainResponse {
+        // Parse TLV payload
+        let parsed = Self::parse_tlv_payload(&request.payload);
+        let message_id = parsed.message_id.clone();
+        let body = parsed.body.clone();
+        let lease_secs = parsed.lease_secs;
+        let delivery_token = parsed.delivery_token.clone();
+        let ttl_secs = parsed.ttl_secs;
+        let _config = parsed.config;
 
-            // Extract realm, area, resource, and operation from Route
-            let realm = match &request.route.realm {
-                Some(r) => r.as_str(),
-                None => return DomainResponse::Error("Missing realm in route".to_string()),
-            };
-            let area = match &request.route.area {
-                Some(a) => a.as_str(),
-                None => return DomainResponse::Error("Missing area in route".to_string()),
-            };
-            let resource = match &request.route.resource {
-                Some(r) => r.as_str(),
-                None => return DomainResponse::Error("Missing resource in route".to_string()),
-            };
+        // Extract realm, area, resource, and operation from Route
+        let realm = match &request.route.realm {
+            Some(r) => r.as_str(),
+            None => return DomainResponse::Error("Missing realm in route".to_string()),
+        };
+        let area = match &request.route.area {
+            Some(a) => a.as_str(),
+            None => return DomainResponse::Error("Missing area in route".to_string()),
+        };
+        let resource = match &request.route.resource {
+            Some(r) => r.as_str(),
+            None => return DomainResponse::Error("Missing resource in route".to_string()),
+        };
 
-            // Determine queue operation
-            let queue_operation = match QueueOperation::from_route(&request.route) {
-                Ok(op) => op,
-                Err(e) => {
-                    // For malformed or unknown operations return a TLV error frame so
-                    // the engine and client receive an encoded error (consistent with
-                    // other domains like `notice` which return error frames).
-                    // If the operation is missing entirely, return a DomainResponse::Error
-                    // so callers can inspect that condition explicitly (tests expect this)
-                    if e.contains("Missing operation") {
-                        return DomainResponse::Error(e);
-                    }
-                    let response = Self::build_error_response(&e);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        response,
-                    ));
+        // Determine queue operation
+        let queue_operation = match QueueOperation::from_route(&request.route) {
+            Ok(op) => op,
+            Err(e) => {
+                // For malformed or unknown operations return a TLV error frame so
+                // the engine and client receive an encoded error (consistent with
+                // other domains like `notice` which return error frames).
+                // If the operation is missing entirely, return a DomainResponse::Error
+                // so callers can inspect that condition explicitly (tests expect this)
+                if e.contains("Missing operation") {
+                    return DomainResponse::Error(e);
                 }
-            };
+                let response = Self::build_error_response(&e);
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    response,
+                ));
+            }
+        };
 
-            let service = self.service.read().await;
+        let service = self.service.read();
 
-            match queue_operation {
+        match queue_operation {
                 QueueOperation::Enqueue => {
                     let message_body = body.unwrap_or_default();
                     let ttl = ttl_secs.unwrap_or(0);
@@ -116,7 +113,6 @@ impl Domain for QueueDomain {
 
                     match service
                         .enqueue(realm, area, resource, message_body, Some(ttl), None)
-                        .await
                     {
                         Ok(message_id) => {
                             let response = Self::build_enqueue_response(&[message_id]);
@@ -150,7 +146,6 @@ impl Domain for QueueDomain {
 
                     match service
                         .receive(realm, area, resource, batch_size, lease_duration)
-                        .await
                     {
                         Ok(messages) => {
                             let message_data: Vec<(String, Vec<u8>, String)> = messages
@@ -177,7 +172,6 @@ impl Domain for QueueDomain {
 
                     match service
                         .extend_lease(realm, area, resource, &msg_id, &token, additional_secs)
-                        .await
                     {
                         Ok(()) => {
                             let response = Self::build_success_response();
@@ -199,7 +193,6 @@ impl Domain for QueueDomain {
 
                     match service
                         .complete(realm, area, resource, &msg_id, &token)
-                        .await
                     {
                         Ok(()) => {
                             let response = Self::build_success_response();
@@ -219,7 +212,7 @@ impl Domain for QueueDomain {
                     let msg_id = message_id.unwrap_or_default();
                     let token = delivery_token.unwrap_or_default();
 
-                    match service.nack(realm, area, resource, &msg_id, &token).await {
+                    match service.nack(realm, area, resource, &msg_id, &token) {
                         Ok(()) => {
                             let response = Self::build_success_response();
                             DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
@@ -240,7 +233,6 @@ impl Domain for QueueDomain {
 
                     match service
                         .requeue(realm, area, resource, &msg_id, &token)
-                        .await
                     {
                         Ok(()) => {
                             let response = Self::build_success_response();
@@ -269,7 +261,6 @@ impl Domain for QueueDomain {
                         // List all queues in this realm/area scope
                         let queues = service
                             .list_queues_in_scope(realm, area)
-                            .await
                             .unwrap_or_else(|_| Vec::new());
                         let response = Self::build_list_response(&queues);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
@@ -279,7 +270,6 @@ impl Domain for QueueDomain {
                         // List all queues in this realm (realm/*/*/list)
                         let queues = service
                             .list_queues_in_realm(realm)
-                            .await
                             .unwrap_or_else(|_| Vec::new());
                         let response = Self::build_list_response(&queues);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
@@ -300,19 +290,12 @@ impl Domain for QueueDomain {
                     let response = Self::build_success_response();
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
-            }
-        })
+        }
     }
 
-    fn cleanup_channel<'a>(
-        &'a self,
-        _rf: crate::routing::RouteFamilyId,
-        _channel_id: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            // Queue domain doesn't maintain per-channel state currently
-            // This could be extended to clean up channel-specific leases if needed
-        })
+    fn cleanup_channel(&self, _rf: crate::routing::RouteFamilyId, _channel_id: u32) {
+        // Queue domain doesn't maintain per-channel state currently
+        // This could be extended to clean up channel-specific leases if needed
     }
 }
 
@@ -323,7 +306,7 @@ mod tests {
     use crate::protocol::route::parse_route;
     use crate::storage::midge_adapter::create_memory_store;
 
-    async fn create_test_handler() -> QueueDomain {
+    fn create_test_handler() -> QueueDomain {
         let kv_store = create_memory_store().expect("Failed to create memory store");
         QueueDomain::new(kv_store)
     }
@@ -340,14 +323,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_parse_resource_path_with_operation() {
+    #[test]
+    fn should_parse_resource_path_with_operation() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -358,16 +341,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_enqueue_operation() {
+    #[test]
+    fn should_handle_enqueue_operation() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let payload = vec![0x01, 0x04, b'b', b'o', b'd', b'y']; // TAG_BODY with "body"
         let context =
             create_test_context("queue://test_realm/test_area/resource1/enqueue", payload);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -378,14 +361,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_receive_operation() {
+    #[test]
+    fn should_handle_receive_operation() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/test_area/resource1/receive", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -396,14 +379,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_list_operation_for_specific_queue() {
+    #[test]
+    fn should_handle_list_operation_for_specific_queue() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -414,14 +397,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_list_operation_for_area_wildcard() {
+    #[test]
+    fn should_handle_list_operation_for_area_wildcard() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/test_area/*/list", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -432,14 +415,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_list_operation_for_realm_wildcard() {
+    #[test]
+    fn should_handle_list_operation_for_realm_wildcard() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/*/*/list", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -450,14 +433,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_unknown_operation() {
+    #[test]
+    fn should_handle_unknown_operation() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/test_area/resource1/unknown", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -468,16 +451,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_reject_missing_area() {
+    #[test]
+    fn should_reject_missing_area() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let mut context =
             create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
         context.route.area = None;
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -486,16 +469,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_reject_missing_resource() {
+    #[test]
+    fn should_reject_missing_resource() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let mut context =
             create_test_context("queue://test_realm/test_area/resource1/list", vec![]);
         context.route.resource = None;
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {
@@ -504,15 +487,15 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_reject_invalid_resource_path_format() {
+    #[test]
+    fn should_reject_invalid_resource_path_format() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context =
             create_test_context("queue://test_realm/test_area/invalid/path/format", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {

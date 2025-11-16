@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -117,6 +117,64 @@ async fn handle_connection(
     }
 
     tracing::debug!("ws connection {conn_id} closed");
+    engine.on_disconnect(conn_id);
+    crate::transport::dec_active_connections();
+    Ok(())
+}
+
+pub async fn handle_upgraded_connection(
+    ws_stream: WebSocketStream<hyper::upgrade::Upgraded>,
+    engine: EngineHandle,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    crate::transport::inc_active_connections();
+    let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+    tracing::debug!("ws upgraded connection {conn_id} accepted");
+
+    let (mut ws_sink, mut ws_stream) = ws_stream.split();
+
+    // Outbound queue for this connection.
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Register with engine (engine stores outbound_tx for this conn_id).
+    engine.register_connection(conn_id, outbound_tx);
+
+    // Single task handles both reading from WS and writing outbound frames.
+    loop {
+        tokio::select! {
+            // Inbound frames: WS → engine.on_frame(conn_id, bytes)
+            msg = ws_stream.next() => {
+                match msg {
+                    Some(Ok(Message::Binary(bytes))) => {
+                        // Synchronous handoff into engine; engine will enqueue internally.
+                        engine.on_frame(conn_id, bytes);
+                    }
+                    Some(Ok(Message::Close(_))) => {
+                        break;
+                    }
+                    Some(Ok(_other)) => {
+                        continue;
+                    }
+                    Some(Err(e)) => {
+                        tracing::debug!("ws {conn_id} read error: {e}");
+                        break;
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+
+            // Outbound frames: engine → WS
+            Some(frame) = outbound_rx.recv() => {
+                if let Err(e) = ws_sink.send(Message::Binary(frame)).await {
+                    tracing::debug!("ws {conn_id} write error: {e}");
+                    break;
+                }
+            }
+        }
+    }
+
+    tracing::debug!("ws upgraded connection {conn_id} closed");
     engine.on_disconnect(conn_id);
     crate::transport::dec_active_connections();
     Ok(())

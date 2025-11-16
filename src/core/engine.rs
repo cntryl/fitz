@@ -17,7 +17,6 @@ use std::sync::Arc;
 use crate::core::domain::{DomainContext, DomainResponse};
 use crate::core::registry::DomainRegistry;
 use crate::protocol::route::parse_route;
-use crate::routing::RouteFamilyId;
 
 use crossbeam_channel::{Receiver, Sender};
 
@@ -36,14 +35,16 @@ pub enum EngineEvent {
 /// A handle held by async WS tasks.
 /// They push inbound frames into `inbox`.
 /// They hold their per-connection outbound `Sender<Vec<u8>>`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EngineHandle {
     inbox: Sender<EngineEvent>,
+    domains: Arc<DomainRegistry>,
+    registry: Arc<EngineConnectionRegistry>,
 }
 
 impl EngineHandle {
-    pub fn new(inbox: Sender<EngineEvent>) -> Self {
-        Self { inbox }
+    pub fn new(inbox: Sender<EngineEvent>, domains: Arc<DomainRegistry>, registry: Arc<EngineConnectionRegistry>) -> Self {
+        Self { inbox, domains, registry }
     }
 
     /// Called by WS reader task when a frame arrives.
@@ -56,21 +57,63 @@ impl EngineHandle {
         let _ = self.inbox.send(EngineEvent::Disconnect { conn_id });
     }
 
+    /// Synchronous dispatch for transport layer.
+    /// Builds a frame, calls domain dispatch, returns response bytes.
+    pub fn dispatch(
+        &self,
+        route: String,
+        payload: Vec<u8>,
+        channel_id: u32,
+        route_family: crate::routing::RouteFamilyId,
+    ) -> Result<Vec<u8>, String> {
+        // Parse route
+        let parsed = match parse_route(&route) {
+            Ok(r) => r,
+            Err(e) => return Err(format!("invalid route: {}", e)),
+        };
+
+        // Build domain request context
+        let ctx = DomainContext {
+            route: parsed.clone(),
+            route_str: route,
+            payload,
+            channel_id,
+            route_family,
+            sender: None,
+        };
+
+        // Domain dispatch (synchronous)
+        let response = self.domains
+            .dispatch(parsed.scheme.as_str(), ctx)?;
+
+        // Convert to bytes
+        match response {
+            DomainResponse::Frame(frame) => Ok(frame.into_vec()),
+            DomainResponse::Ok => Ok(vec![]),
+            DomainResponse::Error(err) => Err(err),
+        }
+    }
+
     /// Called when the connection is established to register its outbound queue.
     pub fn register_connection(
         &self,
-        registry: &EngineConnectionRegistry,
         conn_id: ConnectionId,
-        outbound: Sender<Vec<u8>>,
+        outbound: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ) {
-        registry.register(conn_id, outbound);
+        self.registry.register(conn_id, outbound);
+    }
+
+    /// Called when a channel is being cleaned up (connection disconnect, etc.)
+    pub fn cleanup_channel(&self, channel_id: u32, route_family: crate::routing::RouteFamilyId) {
+        self.domains.cleanup_channel(route_family, channel_id);
     }
 }
 
 /// Stores per-connection outbound queues.
 /// Engine pushes outbound frames via these.
+#[derive(Debug)]
 pub struct EngineConnectionRegistry {
-    conns: parking_lot::RwLock<HashMap<ConnectionId, Sender<Vec<u8>>>>,
+    conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
 }
 
 impl EngineConnectionRegistry {
@@ -80,7 +123,7 @@ impl EngineConnectionRegistry {
         }
     }
 
-    pub fn register(&self, conn_id: ConnectionId, tx: Sender<Vec<u8>>) {
+    pub fn register(&self, conn_id: ConnectionId, tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) {
         self.conns.write().insert(conn_id, tx);
     }
 
@@ -98,14 +141,14 @@ impl EngineConnectionRegistry {
 /// Engine: a synchronous event loop.
 pub struct Engine {
     inbox: Receiver<EngineEvent>,
-    registry: EngineConnectionRegistry,
+    registry: Arc<EngineConnectionRegistry>,
     domains: Arc<DomainRegistry>,
 }
 
 impl Engine {
     pub fn new(
         inbox: Receiver<EngineEvent>,
-        registry: EngineConnectionRegistry,
+        registry: Arc<EngineConnectionRegistry>,
         domains: Arc<DomainRegistry>,
     ) -> Self {
         Self {
@@ -130,11 +173,21 @@ impl Engine {
     }
 
     fn handle_frame(&self, conn_id: ConnectionId, bytes: Vec<u8>) {
-        // Parse TLV or your protocol envelope.
-        // Assume you already extracted route, payload, route_family, channel_id, etc.
-        let (route, payload, channel_id, route_family) =
+        // Parse frame header first to get channel_id for error reporting
+        let parsed_frame = match crate::protocol::frame::parse_frame(&bytes) {
+            Ok(f) => f,
+            Err(e) => {
+                // Can't get channel_id, use 0
+                self.send_error(conn_id, 0, &format!("frame parse error: {:?}", e));
+                return;
+            }
+        };
+        let channel_id = parsed_frame.header.channel_id;
+
+        // Decode TLVs
+        let (route, payload, route_family) =
             match crate::protocol::frame::decode(bytes) {
-                Ok(v) => v,
+                Ok((r, p, rf)) => (r, p, rf),
                 Err(e) => {
                     self.send_error(conn_id, channel_id, &e);
                     return;
@@ -174,7 +227,7 @@ impl Engine {
                 // empty response allowed
                 self.registry.send(
                     conn_id,
-                    crate::protocol::frame::PooledFrame::empty().into_vec(),
+                    crate::protocol::frame::PooledFrame::from_vec(vec![]).into_vec(),
                 );
             }
             Ok(DomainResponse::Error(err)) => {
@@ -188,11 +241,11 @@ impl Engine {
 
     fn handle_disconnect(&self, conn_id: ConnectionId) {
         self.registry.remove(conn_id);
-        self.domains.cleanup_channel(conn_id);
+        // TODO: cleanup channels - need to track which channels belong to which connection
     }
 
     fn send_error(&self, conn_id: ConnectionId, channel_id: u32, err: &str) {
         let frame = crate::protocol::frame::make_error(channel_id, err);
-        self.registry.send(conn_id, frame.into_vec());
+        self.registry.send(conn_id, frame.to_vec());
     }
 }

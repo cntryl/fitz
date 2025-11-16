@@ -612,6 +612,7 @@ dependencies = [
  "cntryl-midge",
  "crc32fast",
  "criterion",
+ "crossbeam-channel",
  "crossbeam-epoch",
  "crossbeam-queue",
  "crossbeam-skiplist",

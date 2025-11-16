@@ -79,7 +79,7 @@ pub async fn handle_request(
                     Ok(upgraded) => {
                         match tokio_tungstenite::accept_async(upgraded).await {
                             Ok(ws_stream) => {
-                                if let Err(e) = crate::transport::ws::handle_ws_connection(
+                                if let Err(e) = crate::transport::ws::handle_upgraded_connection(
                                     ws_stream,
                                     engine_for_ws,
                                 )

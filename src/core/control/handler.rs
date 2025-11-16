@@ -7,8 +7,9 @@ use crate::core::notice::NoticeService;
 use crate::core::parsing::{response, tlv};
 use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
+#[derive(Debug)]
 pub struct ControlDomain {
     service: ControlService,
     // Control domain uses notice service for pub/sub
@@ -64,76 +65,65 @@ impl Default for ControlDomain {
 }
 
 impl Domain for ControlDomain {
-    fn handle<'a>(
-        &'a self,
-        request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            // Parse body from TLV payload
-            let body = match tlv::parse_bytes(&request.payload, TAG_BODY) {
-                Some(b) => b,
-                None => {
-                    let error_response = response::error("Missing body in request");
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        error_response,
-                    ));
-                }
-            };
-
-            // Determine operation from route
-            let operation = match ControlOperation::from_route(&request.route_str) {
-                Ok(op) => op,
-                Err(e) => {
-                    let error_response = response::error(&e);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        error_response,
-                    ));
-                }
-            };
-
-            // Handle the control operation
-            match self.service.handle_operation(operation, &body).await {
-                Ok(response_body) => {
-                    // Dispatch to subscribers (pub/sub pattern)
-                    let msg_id_string =
-                        tlv::parse_string(&request.payload, TAG_ID).map(|s| s.to_string());
-                    let msg_id = msg_id_string.as_deref();
-
-                    let mut notice_service = self.notice_service.write().await;
-                    let _ = notice_service.publish(
-                        request.route_family,
-                        &request.route_str,
-                        msg_id,
-                        &response_body,
-                    );
-                    drop(notice_service);
-
-                    // Build TLV-encoded response
-                    // Echo the body back for pub/sub pattern
-                    let response =
-                        self.build_tlv_response(&request.route_str, None, &response_body);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
-                }
-                Err(err) => {
-                    let error_response = response::error(&err);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        error_response,
-                    ))
-                }
+    fn handle(&self, request: DomainContext) -> DomainResponse {
+        // Parse body from TLV payload
+        let body = match tlv::parse_bytes(&request.payload, TAG_BODY) {
+            Some(b) => b,
+            None => {
+                let error_response = response::error("Missing body in request");
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    error_response,
+                ));
             }
-        })
+        };
+
+        // Determine operation from route
+        let operation = match ControlOperation::from_route(&request.route_str) {
+            Ok(op) => op,
+            Err(e) => {
+                let error_response = response::error(&e);
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    error_response,
+                ));
+            }
+        };
+
+        // Handle the control operation
+        match self.service.handle_operation(operation, &body) {
+            Ok(response_body) => {
+                // Dispatch to subscribers (pub/sub pattern)
+                let msg_id_string =
+                    tlv::parse_string(&request.payload, TAG_ID).map(|s| s.to_string());
+                let msg_id = msg_id_string.as_deref();
+
+                let mut notice_service = self.notice_service.write();
+                let _ = notice_service.publish(
+                    request.route_family,
+                    &request.route_str,
+                    msg_id,
+                    &response_body,
+                );
+                drop(notice_service);
+
+                // Build TLV-encoded response
+                // Echo the body back for pub/sub pattern
+                let response =
+                    self.build_tlv_response(&request.route_str, None, &response_body);
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+            }
+            Err(err) => {
+                let error_response = response::error(&err);
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    error_response,
+                ))
+            }
+        }
     }
 
     /// Cleanup all subscriptions for a channel (delegates to notice service)
-    fn cleanup_channel<'a>(
-        &'a self,
-        rf: crate::routing::RouteFamilyId,
-        channel_id: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.notice_service.write().await;
-            service.cleanup_channel(rf, channel_id)
-        })
+    fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {
+        let mut service = self.notice_service.write();
+        service.cleanup_channel(rf, channel_id)
     }
 }
 
@@ -233,7 +223,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {
@@ -267,7 +257,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {

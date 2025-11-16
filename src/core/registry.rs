@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 /// A registry that knows how to route to domains without HashMap lookups
 /// This is compiled/optimized at startup, not interpreted at runtime
+#[derive(Debug)]
 pub struct DomainRegistry {
     notice: Arc<dyn Domain>,
     rpc: Arc<dyn Domain>,
@@ -26,38 +27,38 @@ impl DomainRegistry {
     ///
     /// Returns Ok(response) if domain found and handled successfully
     /// Returns Err if scheme not found or domain returns error
-    pub async fn dispatch(
+    pub fn dispatch(
         &self,
         scheme: &str,
         request: DomainContext,
     ) -> Result<DomainResponse, String> {
         match scheme {
-            "notice" => Ok(self.notice.handle(request).await),
-            "rpc" => Ok(self.rpc.handle(request).await),
-            "queue" => Ok(self.queue.handle(request).await),
-            "lease" => Ok(self.lease.handle(request).await),
-            "control" => Ok(self.control.handle(request).await),
-            "stream" => Ok(self.stream.handle(request).await),
-            "kv" => Ok(self.kv.handle(request).await),
+            "notice" => Ok(self.notice.handle(request)),
+            "rpc" => Ok(self.rpc.handle(request)),
+            "queue" => Ok(self.queue.handle(request)),
+            "lease" => Ok(self.lease.handle(request)),
+            "control" => Ok(self.control.handle(request)),
+            "stream" => Ok(self.stream.handle(request)),
+            "kv" => Ok(self.kv.handle(request)),
             _ => Err(format!("unsupported scheme: {}", scheme)),
         }
     }
 
     /// Cleanup a channel across all domains
     /// Domains use this to cleanup subscriptions, inboxes, resources, etc.
-    pub async fn cleanup_channel(&self, rf: crate::storage::RouteFamilyId, channel_id: u32) {
-        self.notice.cleanup_channel(rf, channel_id).await;
-        self.rpc.cleanup_channel(rf, channel_id).await;
-        self.queue.cleanup_channel(rf, channel_id).await;
-        self.lease.cleanup_channel(rf, channel_id).await;
-        self.control.cleanup_channel(rf, channel_id).await;
-        self.stream.cleanup_channel(rf, channel_id).await;
-        self.kv.cleanup_channel(rf, channel_id).await;
+    pub fn cleanup_channel(&self, rf: crate::storage::RouteFamilyId, channel_id: u32) {
+        self.notice.cleanup_channel(rf, channel_id);
+        self.rpc.cleanup_channel(rf, channel_id);
+        self.queue.cleanup_channel(rf, channel_id);
+        self.lease.cleanup_channel(rf, channel_id);
+        self.control.cleanup_channel(rf, channel_id);
+        self.stream.cleanup_channel(rf, channel_id);
+        self.kv.cleanup_channel(rf, channel_id);
     }
 
     /// Subscribe to notifications for a route pattern
     /// Returns subscription ID for later unsubscribe
-    pub async fn subscribe(
+    pub fn subscribe(
         &self,
         rf: crate::routing::RouteFamilyId,
         route_pattern: String,
@@ -66,13 +67,12 @@ impl DomainRegistry {
     ) -> Result<u64, String> {
         self.stream
             .subscribe(rf, route_pattern, channel_id, sender)
-            .await
     }
 
     /// Unsubscribe from notifications
     /// Returns true if subscription was found and removed
-    pub async fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
-        self.stream.unsubscribe(subscription_id).await
+    pub fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
+        self.stream.unsubscribe(subscription_id)
     }
 
     /// Create a new registry with all domains initialized

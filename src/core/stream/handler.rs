@@ -9,7 +9,7 @@ use crate::protocol::tags::{
 };
 use crate::storage::traits::KvStore;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 /// Parsed TLV payload for stream operations
 #[derive(Debug, Clone)]
@@ -21,6 +21,7 @@ pub struct StreamTlvPayload {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug)]
 pub struct StreamDomain {
     service: Arc<RwLock<StreamService>>,
 }
@@ -46,14 +47,14 @@ impl StreamDomain {
         channel_id: u32,
         sender: crate::core::domain::SubSender,
     ) -> Result<u64, String> {
-        let mut service = self.service.write().await;
+        let mut service = self.service.write();
         Ok(service.subscribe(rf, route_pattern, channel_id, sender))
     }
 
     /// Unsubscribe from availability notifications
     /// Returns true if subscription was found and removed
     pub async fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
-        let mut service = self.service.write().await;
+        let mut service = self.service.write();
         Ok(service.unsubscribe(subscription_id))
     }
 
@@ -228,20 +229,16 @@ impl Default for StreamDomain {
 */
 
 impl Domain for StreamDomain {
-    fn handle<'a>(
-        &'a self,
-        request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            let service = self.service.read().await;
+    fn handle(&self, request: DomainContext) -> DomainResponse {
+        let service = self.service.read();
 
-            // Parse operation from route and TLV payload
-            let parsed = Self::parse_tlv_payload(&request.payload);
-            let body = parsed.body;
-            let metadata = parsed.metadata;
-            let is_end = parsed.is_end;
-            let from_seq = parsed.from_seq;
-            let limit = parsed.limit;
+        // Parse operation from route and TLV payload
+        let parsed = Self::parse_tlv_payload(&request.payload);
+        let body = parsed.body;
+        let metadata = parsed.metadata;
+        let is_end = parsed.is_end;
+        let from_seq = parsed.from_seq;
+        let limit = parsed.limit;
 
             // Extract area and resource from Route
             let area = match &request.route.area {
@@ -354,18 +351,11 @@ impl Domain for StreamDomain {
                 }
                 _ => DomainResponse::Error(format!("Unknown stream operation: {}", operation)),
             }
-        })
     }
 
-    fn cleanup_channel<'a>(
-        &'a self,
-        rf: crate::routing::RouteFamilyId,
-        channel_id: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.service.write().await;
-            service.cleanup_channel(rf, channel_id);
-        })
+    fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {
+        let mut service = self.service.write();
+        service.cleanup_channel(rf, channel_id);
     }
 }
 

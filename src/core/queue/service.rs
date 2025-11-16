@@ -291,7 +291,7 @@ impl QueueService {
 
             let mut lease_info: LeaseInfo = match decode_lease_info(&lease_bytes) {
                 Ok(info) => info,
-                Err(e) => {
+                Err(_e) => {
                     LeaseInfo {
                         lease_expiry: None,
                         lease_owner: None,

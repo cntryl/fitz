@@ -269,7 +269,6 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                             0,
                                                             route_family,
                                                         )
-                                                        .await
                                                 };
                                             } else {
                                                 let _ = send_err_chan(
@@ -448,9 +447,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                 req_payload,
                                                 0,
                                                 route_family,
-                                            )
-                                            .await
-                                        {
+                                            ) {
                                             Ok(response) => {
                                                 // Parse sequence number from response
                                                 if let Some(seq_bytes) =
@@ -561,9 +558,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                 req_payload,
                                                 0,
                                                 route_family,
-                                            )
-                                            .await
-                                        {
+                                            ) {
                                             Ok(_response) => {}
                                             Err(e) => {
                                                 let _ = send_err_chan(
@@ -821,9 +816,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     );
 
                                     match engine_task
-                                        .dispatch(route.clone(), req_payload, 0, route_family)
-                                        .await
-                                    {
+                                        .dispatch(route.clone(), req_payload, 0, route_family) {
                                         Ok(response) => {
                                             // Parse remaining seconds from response
                                             if let Some(lease_bytes) =
@@ -916,9 +909,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     );
 
                                     match engine_task
-                                        .dispatch(route.clone(), req_payload, 0, route_family)
-                                        .await
-                                    {
+                                        .dispatch(route.clone(), req_payload, 0, route_family) {
                                         Ok(response) => {
                                             // Parse response TLVs
                                             if let (Some(id_bytes), Some(body), Some(token_bytes)) = (
@@ -1009,9 +1000,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     );
 
                                     match engine_task
-                                        .dispatch(route.clone(), req_payload, 0, route_family)
-                                        .await
-                                    {
+                                        .dispatch(route.clone(), req_payload, 0, route_family) {
                                         Ok(_response) => {
                                             let mut p = Vec::new();
                                             fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);
@@ -1088,7 +1077,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                 None => DEFAULT_RF,
             }
         };
-        let _ = engine_clone.cleanup_channel(channel, route_family).await;
+        let _ = engine_clone.cleanup_channel(channel, route_family);
     });
 }
 

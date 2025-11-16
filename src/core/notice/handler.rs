@@ -13,12 +13,13 @@ use crate::protocol::tags::{
 };
 use smallvec::SmallVec;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 /// Response buffer optimized for typical notice frames (<64 bytes)
 /// Uses stack allocation to avoid heap overhead for small messages
 type ResponseBuf = SmallVec<[u8; 64]>;
 
+#[derive(Debug)]
 pub struct NoticeDomain {
     service: Arc<RwLock<NoticeService>>,
 }
@@ -146,122 +147,111 @@ enum NoticeOp {
 }
 
 impl Domain for NoticeDomain {
-    fn handle<'a>(
-        &'a self,
-        request: DomainContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DomainResponse> + Send + 'a>> {
-        Box::pin(async move {
-            // Parse TLV payload in a single pass (optimization: avoid double-scan)
-            let parse_result = match self.parse_tlv_single_pass(&request.payload) {
-                Ok(result) => result,
-                Err(e) => {
-                    let error_response = self.build_error_response(&e);
-                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        error_response.to_vec(),
-                    ));
-                }
-            };
-
-            match parse_result.operation {
-                NoticeOp::Subscribe => {
-                    // Validate subscription route format
-                    if let Err(e) =
-                        crate::protocol::route::validate_notice_subscription(&request.route_str)
-                    {
-                        let error_response = self.build_error_response(e);
-                        return DomainResponse::Frame(
-                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
-                        );
-                    }
-
-                    // Subscribe operation - handled by engine via Subscribe command
-                    // Domain just acknowledges
-                    let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        response.to_vec(),
-                    ))
-                }
-
-                NoticeOp::Unsubscribe => {
-                    // Unsubscribe operation - handled by engine via Unsubscribe command
-                    // Domain just acknowledges
-                    let response = self.build_tlv_response(&request.route_str);
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        response.to_vec(),
-                    ))
-                }
-
-                NoticeOp::Publish => {
-                    // Validate publish route format
-                    if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route)
-                    {
-                        let error_response = self.build_error_response(e);
-                        return DomainResponse::Frame(
-                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
-                        );
-                    }
-
-                    // Extract body from parsed range (avoid second scan)
-                    let body = match parse_result.body_range {
-                        Some((start, len)) => &request.payload[start..start + len],
-                        None => {
-                            let error_response =
-                                self.build_error_response("Missing body in publish");
-                            return DomainResponse::Frame(
-                                crate::protocol::frame::PooledFrame::from_vec(
-                                    error_response.to_vec(),
-                                ),
-                            );
-                        }
-                    };
-
-                    // Extract msg_id from parsed range (avoid second scan)
-                    let msg_id = parse_result.id_range.and_then(|(start, len)| {
-                        std::str::from_utf8(&request.payload[start..start + len]).ok()
-                    });
-
-                    // Dispatch to subscribers (use read lock for concurrent publish)
-                    let mut service = self.service.write().await;
-                    let _r =
-                        service.publish(request.route_family, &request.route_str, msg_id, body);
-
-                    // Build response using SmallVec (stack-allocated for typical <64B frames)
-                    let route_bytes = request.route_str.as_bytes();
-
-                    let mut response = ResponseBuf::new();
-
-                    response.push(TAG_ROUTE);
-                    response.push(route_bytes.len() as u8);
-                    response.extend_from_slice(route_bytes);
-
-                    if let Some(id) = msg_id {
-                        response.push(TAG_ID);
-                        response.push(id.len() as u8);
-                        response.extend_from_slice(id.as_bytes());
-                    }
-
-                    response.push(TAG_BODY);
-                    response.push(body.len() as u8);
-                    response.extend_from_slice(body);
-
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                        response.to_vec(),
-                    ))
-                }
+    fn handle(&self, request: DomainContext) -> DomainResponse {
+        // Parse TLV payload in a single pass (optimization: avoid double-scan)
+        let parse_result = match self.parse_tlv_single_pass(&request.payload) {
+            Ok(result) => result,
+            Err(e) => {
+                let error_response = self.build_error_response(&e);
+                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    error_response.to_vec(),
+                ));
             }
-        })
+        };
+
+        match parse_result.operation {
+            NoticeOp::Subscribe => {
+                // Validate subscription route format
+                if let Err(e) =
+                    crate::protocol::route::validate_notice_subscription(&request.route_str)
+                {
+                    let error_response = self.build_error_response(e);
+                    return DomainResponse::Frame(
+                        crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
+                    );
+                }
+
+                // Subscribe operation - handled by engine via Subscribe command
+                // Domain just acknowledges
+                let response = self.build_tlv_response(&request.route_str);
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    response.to_vec(),
+                ))
+            }
+
+            NoticeOp::Unsubscribe => {
+                // Unsubscribe operation - handled by engine via Unsubscribe command
+                // Domain just acknowledges
+                let response = self.build_tlv_response(&request.route_str);
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    response.to_vec(),
+                ))
+            }
+
+            NoticeOp::Publish => {
+                // Validate publish route format
+                if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route)
+                {
+                    let error_response = self.build_error_response(e);
+                    return DomainResponse::Frame(
+                        crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
+                    );
+                }
+
+                // Extract body from parsed range (avoid second scan)
+                let body = match parse_result.body_range {
+                    Some((start, len)) => &request.payload[start..start + len],
+                    None => {
+                        let error_response =
+                            self.build_error_response("Missing body in publish");
+                        return DomainResponse::Frame(
+                            crate::protocol::frame::PooledFrame::from_vec(
+                                error_response.to_vec(),
+                            ),
+                        );
+                    }
+                };
+
+                // Extract msg_id from parsed range (avoid second scan)
+                let msg_id = parse_result.id_range.and_then(|(start, len)| {
+                    std::str::from_utf8(&request.payload[start..start + len]).ok()
+                });
+
+                // Dispatch to subscribers (use read lock for concurrent publish)
+                let mut service = self.service.write();
+                let _r =
+                    service.publish(request.route_family, &request.route_str, msg_id, body);
+
+                // Build response using SmallVec (stack-allocated for typical <64B frames)
+                let route_bytes = request.route_str.as_bytes();
+
+                let mut response = ResponseBuf::new();
+
+                response.push(TAG_ROUTE);
+                response.push(route_bytes.len() as u8);
+                response.extend_from_slice(route_bytes);
+
+                if let Some(id) = msg_id {
+                    response.push(TAG_ID);
+                    response.push(id.len() as u8);
+                    response.extend_from_slice(id.as_bytes());
+                }
+
+                response.push(TAG_BODY);
+                response.push(body.len() as u8);
+                response.extend_from_slice(body);
+
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                    response.to_vec(),
+                ))
+            }
+        }
     }
 
     /// Cleanup all subscriptions for a channel
-    fn cleanup_channel<'a>(
-        &'a self,
-        rf: crate::routing::RouteFamilyId,
-        channel_id: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            let mut service = self.service.write().await;
-            service.cleanup_channel(rf, channel_id)
-        })
+    fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {
+        let mut service = self.service.write();
+        service.cleanup_channel(rf, channel_id)
     }
 }
 
