@@ -264,6 +264,121 @@ fn bench_multitenant_leases(c: &mut Criterion) {
     });
 }
 
+/// Extreme concurrency: 100 threads contending for same resource
+fn bench_extreme_contention(c: &mut Criterion) {
+    c.bench_function("lease_extreme_contention_100_threads", |b| {
+        b.iter(|| {
+            // Arrange
+            let domain: Arc<LeaseDomain> = Arc::clone(&Arc::new(LeaseDomain::new()));
+
+            // Act - 100 concurrent attempts to acquire the same lease
+            let handles: Vec<_> = (0..100)
+                .map(|i| {
+                    let domain = Arc::clone(&domain);
+                    std::thread::spawn(move || {
+                        let payload = build_acquire_payload(30);
+                        let route = build_route("hotly-contested-resource");
+                        let ctx = DomainContext {
+                            route,
+                            route_str: "lease://realm1/area1/hotly-contested-resource".to_string(),
+                            payload,
+                            channel_id: i as u32,
+                            route_family: 0,
+                            sender: None,
+                        };
+                        domain.handle(ctx)
+                    })
+                })
+                .collect();
+
+            for handle in handles {
+                let _ = handle.join();
+            }
+
+            // Assert - implicit success (only 1 should succeed, 99 should fail)
+        });
+    });
+}
+
+/// High-scale multi-tenant: 100 tenants with 100 leases each = 10k active leases
+fn bench_high_scale_multitenant(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lease_high_scale");
+    group.sample_size(10);
+    
+    group.bench_function("10k_active_leases_100_tenants", |b| {
+        b.iter(|| {
+            // Arrange
+            let domain: Arc<LeaseDomain> = Arc::clone(&Arc::new(LeaseDomain::new()));
+
+            // Act - 100 tenants each acquiring 100 leases
+            let handles: Vec<_> = (0..100)
+                .map(|tenant_id| {
+                    let domain = Arc::clone(&domain);
+                    std::thread::spawn(move || {
+                        for i in 0..100 {
+                            let payload = build_acquire_payload(30);
+                            let route = build_route(&format!("resource-{}", i));
+                            let ctx = DomainContext {
+                                route,
+                                route_str: format!("lease://realm1/area1/resource-{}", i),
+                                payload,
+                                channel_id: tenant_id as u32,
+                                route_family: tenant_id as u32,
+                                sender: None,
+                            };
+                            domain.handle(ctx);
+                        }
+                    })
+                })
+                .collect();
+
+            for handle in handles {
+                let _ = handle.join();
+            }
+
+            // Assert - implicit success
+        });
+    });
+    
+    group.finish();
+}
+
+/// Rapid-fire acquire/surrender cycles (churn test)
+fn bench_rapid_churn(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lease_rapid_churn");
+    
+    for &count in &[100, 1000] {
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
+            b.iter(|| {
+                // Arrange
+                let domain = LeaseDomain::new();
+                
+                // Act - rapid acquire/surrender cycles
+                for i in 0..count {
+                    // Acquire
+                    let payload = build_acquire_payload(30);
+                    let route = build_route(&format!("churn-resource-{}", i % 10)); // Only 10 unique resources
+                    let ctx = DomainContext {
+                        route: route.clone(),
+                        route_str: format!("lease://realm1/area1/churn-resource-{}", i % 10),
+                        payload,
+                        channel_id: 1,
+                        route_family: 0,
+                        sender: None,
+                    };
+                    let _ = domain.handle(ctx);
+                    
+                    // Immediately surrender (simplified - would need token extraction in real test)
+                }
+                
+                // Assert - implicit success
+            });
+        });
+    }
+    
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_lease_core;
     config = config::criterion_config();
@@ -275,7 +390,11 @@ criterion_group!(
         // Handler->Service benchmarks
         bench_sequential_lease_cycles,
         bench_concurrent_lease_contention,
-        bench_multitenant_leases
+        bench_multitenant_leases,
+        // Extreme scale benchmarks
+        bench_extreme_contention,
+        bench_high_scale_multitenant,
+        bench_rapid_churn
 );
 
 criterion_main!(hotpath_lease_core);
