@@ -4,6 +4,7 @@
 //! and notice service integration.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::control::ControlDomain;
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
@@ -11,7 +12,6 @@ use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::TAG_BODY;
 use std::sync::Arc;
-use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -19,7 +19,7 @@ mod config;
 /// Build TLV payload for control operations
 fn build_control_payload(body: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_BODY
     payload.push(TAG_BODY);
     if body.len() <= 254 {
@@ -30,7 +30,7 @@ fn build_control_payload(body: &[u8]) -> Vec<u8> {
         payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
         payload.extend_from_slice(body);
     }
-    
+
     payload
 }
 
@@ -50,9 +50,9 @@ fn build_route(operation: &str) -> Route {
 /// Sequential heartbeat operations
 fn bench_sequential_heartbeat(c: &mut Criterion) {
     let domain = ControlDomain::new();
-    
+
     let mut group = c.benchmark_group("control_sequential_heartbeat");
-    
+
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -62,31 +62,30 @@ fn bench_sequential_heartbeat(c: &mut Criterion) {
                     let body = b"heartbeat";
                     let payload = build_control_payload(body);
                     let route = build_route("heartbeat");
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: "control://system/heartbeat".to_string(),
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
-                    
+
                     let _response = domain.handle(ctx);
                 }
-                
+
                 // Assert - implicit success
             });
         });
     }
-    
+
     group.finish();
 }
 
 /// Configuration update operations
 fn bench_config_updates(c: &mut Criterion) {
     let domain = ControlDomain::new();
-    
+
     c.bench_function("control_config_updates", |b| {
         b.iter(|| {
             // Arrange & Act
@@ -94,19 +93,18 @@ fn bench_config_updates(c: &mut Criterion) {
                 let body = format!("{{\"key\":\"value{}\"}}", i).into_bytes();
                 let payload = build_control_payload(&body);
                 let route = build_route("config");
-                
+
                 let ctx = DomainContext {
                     route,
                     route_str: "control://system/config".to_string(),
                     payload,
                     channel_id: 1,
                     route_family: 0,
-
                 };
-                
+
                 let _response = domain.handle(ctx);
             }
-            
+
             // Assert - implicit success
         });
     });
@@ -134,7 +132,6 @@ fn bench_concurrent_commands(c: &mut Criterion) {
                                 payload,
                                 channel_id: channel_id as u32,
                                 route_family: 0,
-
                             };
                             domain.handle(ctx);
                         }
@@ -154,18 +151,18 @@ fn bench_concurrent_commands(c: &mut Criterion) {
 /// Command payload sizes
 fn bench_command_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("control_command_sizes");
-    
+
     for &size in &[64, 256, 1024, 4096] {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let domain = ControlDomain::new();
-            
+
             b.iter(|| {
                 // Arrange
                 let body = vec![0u8; size];
                 let payload = build_control_payload(&body);
                 let route = build_route("command");
-                
+
                 // Act
                 let ctx = DomainContext {
                     route,
@@ -173,16 +170,15 @@ fn bench_command_sizes(c: &mut Criterion) {
                     payload,
                     channel_id: 1,
                     route_family: 0,
-
                 };
-                
+
                 let _response = domain.handle(ctx);
-                
+
                 // Assert - implicit success
             });
         });
     }
-    
+
     group.finish();
 }
 

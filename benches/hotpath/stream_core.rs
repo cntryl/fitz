@@ -4,15 +4,15 @@
 //! and concurrent writer patterns.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::stream::StreamDomain;
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::registry::DomainRegistry;
+use fitz::core::stream::StreamDomain;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_METADATA, TAG_SEQ};
 use fitz::storage::midge_adapter;
 use std::sync::Arc;
-use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -20,7 +20,7 @@ mod config;
 /// Build TLV payload for stream append
 fn build_append_payload(body: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_BODY
     payload.push(TAG_BODY);
     if body.len() <= 254 {
@@ -31,7 +31,7 @@ fn build_append_payload(body: &[u8]) -> Vec<u8> {
         payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
         payload.extend_from_slice(body);
     }
-    
+
     payload
 }
 
@@ -39,7 +39,7 @@ fn build_append_payload(body: &[u8]) -> Vec<u8> {
 #[allow(dead_code)]
 fn build_append_with_metadata_payload(body: &[u8], metadata: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_BODY
     payload.push(TAG_BODY);
     if body.len() <= 254 {
@@ -50,7 +50,7 @@ fn build_append_with_metadata_payload(body: &[u8], metadata: &[u8]) -> Vec<u8> {
         payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
         payload.extend_from_slice(body);
     }
-    
+
     // TAG_METADATA
     payload.push(TAG_METADATA);
     if metadata.len() <= 254 {
@@ -61,7 +61,7 @@ fn build_append_with_metadata_payload(body: &[u8], metadata: &[u8]) -> Vec<u8> {
         payload.extend_from_slice(&(metadata.len() as u32).to_be_bytes());
         payload.extend_from_slice(metadata);
     }
-    
+
     payload
 }
 
@@ -69,12 +69,12 @@ fn build_append_with_metadata_payload(body: &[u8], metadata: &[u8]) -> Vec<u8> {
 #[allow(dead_code)]
 fn build_read_payload(from_seq: u64) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_SEQ
     payload.push(TAG_SEQ);
     payload.push(8);
     payload.extend_from_slice(&from_seq.to_be_bytes());
-    
+
     payload
 }
 
@@ -108,7 +108,7 @@ fn build_route_with_operation(resource: &str, operation: &str) -> Route {
 fn bench_sequential_append(c: &mut Criterion) {
     let mut group = c.benchmark_group("stream_sequential_append");
     group.sample_size(10); // Limit iterations to prevent unbounded memory growth
-    
+
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -122,16 +122,15 @@ fn bench_sequential_append(c: &mut Criterion) {
                         let body = format!("event-{}", i).into_bytes();
                         let payload = build_append_payload(&body);
                         let route = build_route("append");
-                        
+
                         let ctx = DomainContext {
                             route,
                             route_str: "stream://realm1/area1/append".to_string(),
                             payload,
                             channel_id: 1,
                             route_family: 0,
-
                         };
-                        
+
                         let _response = domain.handle(ctx);
                     }
                 },
@@ -139,7 +138,7 @@ fn bench_sequential_append(c: &mut Criterion) {
             );
         });
     }
-    
+
     group.finish();
 }
 
@@ -166,7 +165,6 @@ fn bench_concurrent_writers(c: &mut Criterion) {
                                 payload,
                                 channel_id: i as u32,
                                 route_family: 0,
-
                             };
                             domain.handle(ctx);
                         }
@@ -187,7 +185,7 @@ fn bench_concurrent_writers(c: &mut Criterion) {
 fn bench_event_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("stream_event_sizes");
     group.sample_size(10); // Limit iterations to prevent unbounded memory growth
-    
+
     for &size in &[64, 256, 1024, 4096, 16384] {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
@@ -208,7 +206,6 @@ fn bench_event_sizes(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
                     let _response = domain.handle(ctx);
                 },
@@ -216,7 +213,7 @@ fn bench_event_sizes(c: &mut Criterion) {
             );
         });
     }
-    
+
     group.finish();
 }
 
@@ -243,7 +240,6 @@ fn bench_multitenant_append(c: &mut Criterion) {
                                 payload,
                                 channel_id: tenant_id as u32,
                                 route_family: tenant_id as u32,
-
                             };
                             domain.handle(ctx);
                         }
@@ -275,7 +271,6 @@ fn bench_sequential_read(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-
         };
         let _ = domain.handle(ctx);
     }
@@ -294,7 +289,6 @@ fn bench_sequential_read(c: &mut Criterion) {
                     payload,
                     channel_id: 2,
                     route_family: 0,
-
                 };
                 let _ = domain.handle(ctx);
             });
@@ -318,7 +312,6 @@ fn bench_range_read(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-
         };
         let _ = domain.handle(ctx);
     }
@@ -335,7 +328,6 @@ fn bench_range_read(c: &mut Criterion) {
                     payload,
                     channel_id: 3,
                     route_family: 0,
-
                 };
                 let _ = domain.handle(ctx);
             });

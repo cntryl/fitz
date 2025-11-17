@@ -8,14 +8,14 @@
 //! Goal: Understand pub/sub performance and identify scalability limits
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::notice::NoticeDomain;
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::notice::NoticeDomain;
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_SUBSCRIBE};
 use std::sync::Arc;
-use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -29,13 +29,13 @@ fn build_subscribe_payload() -> Vec<u8> {
 /// Build TLV payload for publish
 fn build_publish_payload(msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     if let Some(id) = msg_id {
         payload.push(TAG_ID);
         payload.push(id.len() as u8);
         payload.extend_from_slice(id.as_bytes());
     }
-    
+
     payload.push(TAG_BODY);
     if body.len() <= 254 {
         payload.push(body.len() as u8);
@@ -45,7 +45,7 @@ fn build_publish_payload(msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
         payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
         payload.extend_from_slice(body);
     }
-    
+
     payload
 }
 
@@ -65,9 +65,9 @@ fn build_route(realm: &str, area: &str, resource: &str, operation: &str) -> Rout
 /// Sequential publish operations (no subscribers)
 fn bench_sequential_publish_no_subscribers(c: &mut Criterion) {
     let domain = NoticeDomain::new();
-    
+
     let mut group = c.benchmark_group("notice_sequential_publish_no_subs");
-    
+
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -76,31 +76,30 @@ fn bench_sequential_publish_no_subscribers(c: &mut Criterion) {
                     let body = format!("message_{}", i).into_bytes();
                     let payload = build_publish_payload(Some(&format!("msg_{}", i)), &body);
                     let route = build_route("realm1", "area1", "alerts", "critical");
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: "notice://realm1/area1/alerts/critical".to_string(),
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
-                    
+
                     black_box(domain.handle(ctx));
                 }
             });
         });
     }
-    
+
     group.finish();
 }
 
 /// Test message size impact
 fn bench_message_sizes(c: &mut Criterion) {
     let domain = NoticeDomain::new();
-    
+
     let mut group = c.benchmark_group("notice_message_sizes");
-    
+
     for size in [64, 256, 1024, 4096, 16384] {
         group.throughput(Throughput::Bytes(size));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
@@ -108,28 +107,27 @@ fn bench_message_sizes(c: &mut Criterion) {
                 let body = vec![0u8; size as usize];
                 let payload = build_publish_payload(Some("msg_id"), &body);
                 let route = build_route("realm1", "area1", "data", "stream");
-                
+
                 let ctx = DomainContext {
                     route,
                     route_str: "notice://realm1/area1/data/stream".to_string(),
                     payload,
                     channel_id: 1,
                     route_family: 0,
-
                 };
-                
+
                 black_box(domain.handle(ctx));
             });
         });
     }
-    
+
     group.finish();
 }
 
 /// Concurrent publish from multiple route families (multi-tenant)
 fn bench_concurrent_multitenant_publish(c: &mut Criterion) {
     let domain = Arc::new(NoticeDomain::new());
-    
+
     c.bench_function("notice_concurrent_multitenant", |b| {
         b.iter(|| {
             // Simulate 10 tenants publishing 10 messages each
@@ -144,16 +142,15 @@ fn bench_concurrent_multitenant_publish(c: &mut Criterion) {
                         "events",
                         "update",
                     );
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: format!("notice://realm{}/area{}/events/update", rf, rf),
                         payload,
                         channel_id: i as u32,
                         route_family: rf,
-
                     };
-                    
+
                     black_box(domain.handle(ctx));
                 }
             }
@@ -164,7 +161,7 @@ fn bench_concurrent_multitenant_publish(c: &mut Criterion) {
 /// Test route matching complexity with wildcards
 fn bench_wildcard_matching(c: &mut Criterion) {
     let domain = NoticeDomain::new();
-    
+
     c.bench_function("notice_wildcard_matching", |b| {
         b.iter(|| {
             // Test various wildcard patterns
@@ -174,22 +171,21 @@ fn bench_wildcard_matching(c: &mut Criterion) {
                 ("realm1", "*", "*", "op1"),
                 ("*", "*", "*", "op1"),
             ];
-            
+
             for (realm, area, resource, operation) in patterns {
                 let body = b"test_message".to_vec();
                 let payload = build_publish_payload(Some("msg_id"), &body);
                 let route = build_route(realm, area, resource, operation);
                 let route_str = format!("notice://{}/{}/{}/{}", realm, area, resource, operation);
-                
+
                 let ctx = DomainContext {
                     route,
                     route_str,
                     payload,
                     channel_id: 1,
                     route_family: 0,
-
                 };
-                
+
                 black_box(domain.handle(ctx));
             }
         });
@@ -199,7 +195,7 @@ fn bench_wildcard_matching(c: &mut Criterion) {
 /// High frequency publish (stress test)
 fn bench_high_frequency_publish(c: &mut Criterion) {
     let domain = Arc::new(NoticeDomain::new());
-    
+
     c.bench_function("notice_high_frequency", |b| {
         b.iter(|| {
             // 1000 rapid-fire publishes
@@ -208,16 +204,15 @@ fn bench_high_frequency_publish(c: &mut Criterion) {
                 let body = vec![0u8; 128];
                 let payload = build_publish_payload(None, &body);
                 let route = build_route("realm1", "area1", "stream", "data");
-                
+
                 let ctx = DomainContext {
                     route,
                     route_str: "notice://realm1/area1/stream/data".to_string(),
                     payload,
                     channel_id: (i % 10) as u32,
                     route_family: 0,
-
                 };
-                
+
                 black_box(domain.handle(ctx));
             }
         });
@@ -249,9 +244,8 @@ fn bench_engine_dispatch_publish(c: &mut Criterion) {
 
 /// EXTREME: Broadcast fanout - 1 publish delivered to many subscribers
 fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
-    
     let mut group = c.benchmark_group("notice_extreme_broadcast_fanout");
-    
+
     for subscriber_count in [10, 100, 1000] {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{}_subscribers", subscriber_count)),
@@ -259,23 +253,18 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
             |b, &subscriber_count| {
                 b.iter(|| {
                     let domain = NoticeDomain::new();
-                    
-                    // Subscribe many channels to the same route
-                    let sub_payload = build_subscribe_payload();
+                    let service = domain.get_service();
+
+                    // Actually subscribe many channels to the same route
                     for channel_id in 0..subscriber_count {
-
-                        let route = build_route("realm1", "area1", "broadcast", "alert");
-                        let ctx = DomainContext {
-                            route,
-                            route_str: "notice://realm1/area1/broadcast/alert".to_string(),
-                            payload: sub_payload.clone(),
-                            channel_id: channel_id as u32,
-                            route_family: 0,
-
-                        };
-                        let _ = domain.handle(ctx);
+                        let mut svc = service.write();
+                        let _ = svc.subscribe(
+                            0,
+                            "notice://realm1/area1/broadcast/alert".to_string(),
+                            channel_id as u32,
+                        );
                     }
-                    
+
                     // Now publish once - should fan out to all subscribers
                     let body = vec![0u8; 256];
                     let payload = build_publish_payload(Some("broadcast_msg"), &body);
@@ -286,23 +275,21 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
                         payload,
                         channel_id: 9999,
                         route_family: 0,
-
                     };
-                    
+
                     black_box(domain.handle(ctx));
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// EXTREME: Subscription churn - rapid subscribe/unsubscribe operations
 fn bench_extreme_subscription_churn(c: &mut Criterion) {
-    
     let mut group = c.benchmark_group("notice_extreme_subscription_churn");
-    
+
     for churn_count in [100, 1000] {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{}_cycles", churn_count)),
@@ -310,44 +297,26 @@ fn bench_extreme_subscription_churn(c: &mut Criterion) {
             |b, &churn_count| {
                 b.iter(|| {
                     let domain = NoticeDomain::new();
-                    let sub_payload = build_subscribe_payload();
-                    
+                    let service = domain.get_service();
+
                     // Rapidly add and implicitly remove (via domain recreation) subscriptions
                     for i in 0..churn_count {
-
-                        let route = build_route(
-                            "realm1",
-                            "area1",
-                            &format!("resource_{}", i % 10),
-                            "update",
-                        );
-                        let route_str = format!(
-                            "notice://realm1/area1/resource_{}/update",
-                            i % 10
-                        );
-                        let ctx = DomainContext {
-                            route,
-                            route_str,
-                            payload: sub_payload.clone(),
-                            channel_id: i as u32,
-                            route_family: 0,
-
-                        };
-                        black_box(domain.handle(ctx));
+                        let route_str = format!("notice://realm1/area1/resource_{}/update", i % 10);
+                        let mut svc = service.write();
+                        black_box(svc.subscribe(0, route_str, i as u32));
                     }
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// EXTREME: Wildcard explosion - many overlapping wildcard patterns
 fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
-    
     let mut group = c.benchmark_group("notice_extreme_wildcard_explosion");
-    
+
     for wildcard_count in [10, 100] {
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{}_wildcards", wildcard_count)),
@@ -355,12 +324,10 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
             |b, &wildcard_count| {
                 b.iter(|| {
                     let domain = NoticeDomain::new();
-                    let sub_payload = build_subscribe_payload();
-                    
+                    let service = domain.get_service();
+
                     // Create many overlapping wildcard subscriptions
                     for i in 0..wildcard_count {
-
-                        
                         // Mix of wildcard patterns that could all match the same publish
                         let (area, resource) = match i % 4 {
                             0 => ("*", "*"),
@@ -368,20 +335,12 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
                             2 => ("*", "events"),
                             _ => ("area1", "events"),
                         };
-                        
-                        let route = build_route("realm1", area, resource, "update");
-                        let route_str = format!("notice://realm1/{}/{}/update", area, resource);
-                        let ctx = DomainContext {
-                            route,
-                            route_str,
-                            payload: sub_payload.clone(),
-                            channel_id: i as u32,
-                            route_family: 0,
 
-                        };
-                        let _ = domain.handle(ctx);
+                        let route_str = format!("notice://realm1/{}/{}/update", area, resource);
+                        let mut svc = service.write();
+                        let _ = svc.subscribe(0, route_str, i as u32);
                     }
-                    
+
                     // Publish to a route that matches ALL wildcards
                     let body = vec![0u8; 128];
                     let payload = build_publish_payload(Some("wildcard_test"), &body);
@@ -392,22 +351,21 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
                         payload,
                         channel_id: 9999,
                         route_family: 0,
-
                     };
-                    
+
                     black_box(domain.handle(ctx));
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
 criterion_group!(
     name = hotpath_notice_core;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_sequential_publish_no_subscribers,
         bench_message_sizes,
         bench_concurrent_multitenant_publish,

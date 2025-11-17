@@ -4,15 +4,15 @@
 //! and concurrent producer/consumer patterns.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::queue::QueueDomain;
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::queue::QueueDomain;
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
-use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_LEASE, TAG_DELIVERY_TOKEN};
+use fitz::protocol::tags::{TAG_BODY, TAG_DELIVERY_TOKEN, TAG_ID, TAG_LEASE};
 use fitz::storage::midge_adapter;
 use std::sync::Arc;
-use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -20,7 +20,7 @@ mod config;
 /// Build TLV payload for queue enqueue
 fn build_enqueue_payload(body: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_BODY
     payload.push(TAG_BODY);
     if body.len() <= 254 {
@@ -31,19 +31,19 @@ fn build_enqueue_payload(body: &[u8]) -> Vec<u8> {
         payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
         payload.extend_from_slice(body);
     }
-    
+
     payload
 }
 
 /// Build TLV payload for queue reserve (dequeue)
 fn build_reserve_payload(lease_secs: u64) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_LEASE
     payload.push(TAG_LEASE);
     payload.push(8);
     payload.extend_from_slice(&lease_secs.to_be_bytes());
-    
+
     payload
 }
 
@@ -51,17 +51,17 @@ fn build_reserve_payload(lease_secs: u64) -> Vec<u8> {
 #[allow(dead_code)]
 fn build_consume_payload(message_id: &str, delivery_token: &str) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_ID
     payload.push(TAG_ID);
     payload.push(message_id.len() as u8);
     payload.extend_from_slice(message_id.as_bytes());
-    
+
     // TAG_DELIVERY_TOKEN
     payload.push(TAG_DELIVERY_TOKEN);
     payload.push(delivery_token.len() as u8);
     payload.extend_from_slice(delivery_token.as_bytes());
-    
+
     payload
 }
 
@@ -82,7 +82,7 @@ fn build_route(operation: &str) -> Route {
 fn bench_sequential_enqueue(c: &mut Criterion) {
     let mut group = c.benchmark_group("queue_sequential_enqueue");
     group.sample_size(10); // Limit iterations to prevent unbounded memory growth
-    
+
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -96,16 +96,15 @@ fn bench_sequential_enqueue(c: &mut Criterion) {
                         let body = format!("message-{}", i).into_bytes();
                         let payload = build_enqueue_payload(&body);
                         let route = build_route("enqueue");
-                        
+
                         let ctx = DomainContext {
                             route,
                             route_str: "queue://realm1/area1/enqueue".to_string(),
                             payload,
                             channel_id: 1,
                             route_family: 0,
-
                         };
-                        
+
                         let _response = domain.handle(ctx);
                     }
                 },
@@ -113,7 +112,7 @@ fn bench_sequential_enqueue(c: &mut Criterion) {
             );
         });
     }
-    
+
     group.finish();
 }
 
@@ -121,7 +120,7 @@ fn bench_sequential_enqueue(c: &mut Criterion) {
 fn bench_sequential_reserve(c: &mut Criterion) {
     let store = midge_adapter::create_memory_store().expect("create store");
     let domain = QueueDomain::new(store);
-    
+
     // Warm-up: enqueue 10k messages
     for i in 0..10000 {
         let body = format!("message-{}", i).into_bytes();
@@ -133,13 +132,12 @@ fn bench_sequential_reserve(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-
         };
         domain.handle(ctx);
     }
-    
+
     let mut group = c.benchmark_group("queue_sequential_reserve");
-    
+
     for count in [100, 1000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -148,24 +146,23 @@ fn bench_sequential_reserve(c: &mut Criterion) {
                 for _ in 0..count {
                     let payload = build_reserve_payload(30); // 30 second lease
                     let route = build_route("reserve");
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: "queue://realm1/area1/reserve".to_string(),
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
-                    
+
                     let _response = domain.handle(ctx);
                 }
-                
+
                 // Assert - implicit success
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -194,7 +191,6 @@ fn bench_concurrent_producer_consumer(c: &mut Criterion) {
                             payload,
                             channel_id: i as u32,
                             route_family: 0,
-
                         };
                         domain.handle(ctx);
                     }
@@ -214,7 +210,6 @@ fn bench_concurrent_producer_consumer(c: &mut Criterion) {
                             payload,
                             channel_id: (100 + i) as u32,
                             route_family: 0,
-
                         };
                         domain.handle(ctx);
                     }
@@ -234,7 +229,7 @@ fn bench_concurrent_producer_consumer(c: &mut Criterion) {
 fn bench_message_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("queue_message_sizes");
     group.sample_size(10); // Limit iterations to prevent unbounded memory growth
-    
+
     for &size in &[64, 256, 1024, 4096, 16384] {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
@@ -246,23 +241,22 @@ fn bench_message_sizes(c: &mut Criterion) {
                 |(domain, body)| {
                     let payload = build_enqueue_payload(&body);
                     let route = build_route("enqueue");
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: "queue://realm1/area1/enqueue".to_string(),
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
-                    
+
                     let _response = domain.handle(ctx);
                 },
                 criterion::BatchSize::SmallInput,
             );
         });
     }
-    
+
     group.finish();
 }
 

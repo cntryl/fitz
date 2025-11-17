@@ -5,6 +5,7 @@
 //! Pure sync - no channels, no I/O. Returns routing decisions as data.
 
 use crate::routing::{RouteFamilyId, RouteTable, RtSubscription};
+use smallvec::SmallVec;
 
 #[cfg(test)]
 use crate::routing::DEFAULT_RF;
@@ -29,9 +30,10 @@ pub struct MatchedSubscription {
 
 /// Result of a publish operation: list of matched subscribers
 /// Transport layer is responsible for actual delivery
+/// Optimized: SmallVec avoids heap allocation for <8 subscribers
 #[derive(Debug, Clone)]
 pub struct PublishResult {
-    pub subscribers: Vec<MatchedSubscription>,
+    pub subscribers: SmallVec<[(u32, u64); 8]>, // (channel_id, sub_id)
 }
 
 impl NoticeService {
@@ -45,15 +47,10 @@ impl NoticeService {
 
     /// Subscribe to a route pattern for a specific route family (tenant)
     /// Returns subscription ID
-    /// 
+    ///
     /// Pure sync operation - just updates routing table
     /// Transport layer maintains channel_id -> channel mapping
-    pub fn subscribe(
-        &mut self,
-        rf: RouteFamilyId,
-        route_pattern: String,
-        channel_id: u32,
-    ) -> u64 {
+    pub fn subscribe(&mut self, rf: RouteFamilyId, route_pattern: String, channel_id: u32) -> u64 {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
 
@@ -92,14 +89,10 @@ impl NoticeService {
         _msg_id: Option<&str>,
         _body: &[u8],
     ) -> PublishResult {
-        let subscribers: Vec<MatchedSubscription> = self
+        let subscribers: SmallVec<[(u32, u64); 8]> = self
             .route_table
             .matching_subscribers(rf, route)
-            .map(|sub| MatchedSubscription {
-                id: sub.id,
-                channel_id: sub.channel_id,
-                route_pattern: sub.route_pattern.clone(),
-            })
+            .map(|sub| (sub.channel_id, sub.id))
             .collect();
 
         PublishResult { subscribers }
@@ -132,8 +125,8 @@ mod tests {
 
         // Assert
         assert_eq!(r.subscribers.len(), 1);
-        assert_eq!(r.subscribers[0].channel_id, 1);
-        assert_eq!(r.subscribers[0].route_pattern, "test/route");
+        assert_eq!(r.subscribers[0].0, 1); // channel_id
+        assert_eq!(r.subscribers[0].1, 1); // sub_id
     }
 
     #[test]
@@ -179,7 +172,7 @@ mod tests {
     }
 
     // ========================================================================
-    // COMPREHENSIVE WILDCARD PATTERN MATCHING TESTS  
+    // COMPREHENSIVE WILDCARD PATTERN MATCHING TESTS
     // Pure routing tests - no channels, domains return matched subscribers
     // ========================================================================
 
@@ -188,8 +181,6 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "*".to_string(), 1);
-
-        // Act & Assert - global wildcard matches everything
         let test_routes = vec![
             "notice://realm/area/resource/op",
             "a/b/c",
@@ -198,9 +189,13 @@ mod tests {
         ];
 
         for route in test_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             assert_eq!(
-                r.subscribers.len(), 1,
+                r.subscribers.len(),
+                1,
                 "Route '{}' should match global wildcard",
                 route
             );
@@ -212,8 +207,6 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 1);
-
-        // Act & Assert - should match all under realm
         let matching_routes = vec![
             ("notice://acme/prod/syslog/error", true),
             ("notice://acme/dev/app/warning", true),
@@ -223,16 +216,21 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             if should_match {
                 assert_eq!(
-                    r.subscribers.len(), 1,
+                    r.subscribers.len(),
+                    1,
                     "Route '{}' should match realm wildcard",
                     route
                 );
             } else {
                 assert_eq!(
-                    r.subscribers.len(), 0,
+                    r.subscribers.len(),
+                    0,
                     "Route '{}' should not match realm wildcard",
                     route
                 );
@@ -245,8 +243,6 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1);
-
-        // Act & Assert
         let matching_routes = vec![
             ("notice://acme/prod/syslog/error", true),
             ("notice://acme/prod/app/info", true),
@@ -257,12 +253,21 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             if should_match {
-                assert_eq!(r.subscribers.len(), 1, "Route '{}' should match area wildcard", route);
+                assert_eq!(
+                    r.subscribers.len(),
+                    1,
+                    "Route '{}' should match area wildcard",
+                    route
+                );
             } else {
                 assert_eq!(
-                    r.subscribers.len(), 0,
+                    r.subscribers.len(),
+                    0,
                     "Route '{}' should not match area wildcard",
                     route
                 );
@@ -275,8 +280,6 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/*".to_string(), 1);
-
-        // Act & Assert
         let matching_routes = vec![
             ("notice://acme/prod/syslog/error", true),
             ("notice://acme/prod/syslog/warning", true),
@@ -286,16 +289,21 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             if should_match {
                 assert_eq!(
-                    r.subscribers.len(), 1,
+                    r.subscribers.len(),
+                    1,
                     "Route '{}' should match resource wildcard",
                     route
                 );
             } else {
                 assert_eq!(
-                    r.subscribers.len(), 0,
+                    r.subscribers.len(),
+                    0,
                     "Route '{}' should not match resource wildcard",
                     route
                 );
@@ -312,8 +320,6 @@ mod tests {
             "notice://acme/prod/syslog/critical".to_string(),
             1,
         );
-
-        // Act & Assert
         let matching_routes = vec![
             ("notice://acme/prod/syslog/critical", true),
             ("notice://acme/prod/syslog/error", false),
@@ -322,12 +328,21 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             if should_match {
-                assert_eq!(r.subscribers.len(), 1, "Route '{}' should match exact pattern", route);
+                assert_eq!(
+                    r.subscribers.len(),
+                    1,
+                    "Route '{}' should match exact pattern",
+                    route
+                );
             } else {
                 assert_eq!(
-                    r.subscribers.len(), 0,
+                    r.subscribers.len(),
+                    0,
                     "Route '{}' should not match exact pattern",
                     route
                 );
@@ -340,8 +355,6 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog".to_string(), 1);
-
-        // Act & Assert - without trailing /*, still matches child paths
         let matching_routes = vec![
             ("notice://acme/prod/syslog", true),              // Exact
             ("notice://acme/prod/syslog/error", true),        // Child
@@ -352,16 +365,21 @@ mod tests {
         ];
 
         for (route, should_match) in matching_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             if should_match {
                 assert_eq!(
-                    r.subscribers.len(), 1,
+                    r.subscribers.len(),
+                    1,
                     "Route '{}' should match hierarchical prefix",
                     route
                 );
             } else {
                 assert_eq!(
-                    r.subscribers.len(), 0,
+                    r.subscribers.len(),
+                    0,
                     "Route '{}' should not match hierarchical prefix",
                     route
                 );
@@ -371,27 +389,20 @@ mod tests {
 
     #[test]
     fn should_deliver_to_multiple_matching_subscriptions() {
-        // Arrange - multiple overlapping subscriptions
+        // Arrange
         let mut service = NoticeService::new();
-
         service.subscribe(DEFAULT_RF, "*".to_string(), 1); // Global
         service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 2); // Realm
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 3); // Area
-        service.subscribe(
-            DEFAULT_RF,
-            "notice://acme/prod/syslog/error".to_string(),
-            4,
-        ); // Exact
+        service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/error".to_string(), 4); // Exact
 
         // Act
         let route = "notice://acme/prod/syslog/error";
         let r = service.publish(DEFAULT_RF, route, Some("msg-1"), b"alert");
 
-        // Assert - all 4 should match
+        // Assert
         assert_eq!(r.subscribers.len(), 4);
-        
-        // Verify all channel IDs are present
-        let mut channel_ids: Vec<u32> = r.subscribers.iter().map(|s| s.channel_id).collect();
+        let mut channel_ids: Vec<u32> = r.subscribers.iter().map(|s| s.0).collect();
         channel_ids.sort();
         assert_eq!(channel_ids, vec![1, 2, 3, 4]);
     }
@@ -401,8 +412,6 @@ mod tests {
         // Arrange
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "notice://realm".to_string(), 1);
-
-        // Act & Assert - should not match partial names
         let non_matching_routes = vec![
             "notice://realm123",
             "notice://realm-prod",
@@ -411,9 +420,13 @@ mod tests {
         ];
 
         for route in non_matching_routes {
+            // Act
             let r = service.publish(DEFAULT_RF, route, None, b"test");
+
+            // Assert
             assert_eq!(
-                r.subscribers.len(), 0,
+                r.subscribers.len(),
+                0,
                 "Route '{}' should not match partial segment",
                 route
             );
@@ -429,11 +442,10 @@ mod tests {
         // Act
         let r = service.publish(DEFAULT_RF, "test/alerts", Some("msg-123"), b"payload data");
 
-        // Assert - verify routing metadata
+        // Assert
         assert_eq!(r.subscribers.len(), 1);
-        assert_eq!(r.subscribers[0].id, sub_id);
-        assert_eq!(r.subscribers[0].channel_id, 1);
-        assert_eq!(r.subscribers[0].route_pattern, "test/*");
+        assert_eq!(r.subscribers[0].1, sub_id); // sub_id
+        assert_eq!(r.subscribers[0].0, 1); // channel_id
     }
 
     #[test]
@@ -442,7 +454,7 @@ mod tests {
         let mut service = NoticeService::new();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1);
 
-        // Act - publish to non-matching route
+        // Act
         let res = service.publish(
             DEFAULT_RF,
             "notice://other/staging/app/info",
@@ -450,7 +462,7 @@ mod tests {
             b"orphan message",
         );
 
-        // Assert - no matches
+        // Assert
         assert_eq!(res.subscribers.len(), 0);
     }
 
@@ -463,9 +475,7 @@ mod tests {
         // Act
         let r = service.publish(DEFAULT_RF, "", None, b"empty");
 
-        // Assert - exact match on empty string
+        // Assert
         assert_eq!(r.subscribers.len(), 1);
-        assert_eq!(r.subscribers[0].route_pattern, "");
     }
 }
-

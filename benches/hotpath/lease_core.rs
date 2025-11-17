@@ -5,16 +5,16 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::lease::LeaseDomain;
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::lease::LeaseDomain;
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_TOKEN};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::sync::Arc;
-use crossbeam_channel;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -121,12 +121,12 @@ fn bench_lease_entry_state_transitions(c: &mut Criterion) {
 /// Build TLV payload for lease acquire
 fn build_acquire_payload(ttl_secs: u64) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_BODY (TTL as bytes)
     payload.push(TAG_BODY);
     payload.push(8);
     payload.extend_from_slice(&ttl_secs.to_be_bytes());
-    
+
     payload
 }
 
@@ -134,12 +134,12 @@ fn build_acquire_payload(ttl_secs: u64) -> Vec<u8> {
 #[allow(dead_code)]
 fn build_renew_payload(token: &str) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_TOKEN
     payload.push(TAG_TOKEN);
     payload.push(token.len() as u8);
     payload.extend_from_slice(token.as_bytes());
-    
+
     payload
 }
 
@@ -159,9 +159,9 @@ fn build_route(operation: &str) -> Route {
 /// Sequential lease acquire/renew/surrender cycles
 fn bench_sequential_lease_cycles(c: &mut Criterion) {
     let domain = LeaseDomain::new();
-    
+
     let mut group = c.benchmark_group("lease_sequential_cycles");
-    
+
     for count in [100, 1000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -177,19 +177,18 @@ fn bench_sequential_lease_cycles(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
                     let _response = domain.handle(ctx);
-                    
+
                     // Note: In a real benchmark we'd extract the token and renew/surrender,
                     // but for throughput testing this measures the acquire hotpath
                 }
-                
+
                 // Assert - implicit success
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -213,7 +212,6 @@ fn bench_concurrent_lease_contention(c: &mut Criterion) {
                             payload,
                             channel_id: i as u32,
                             route_family: 0,
-
                         };
                         domain.handle(ctx)
                     })
@@ -250,7 +248,6 @@ fn bench_multitenant_leases(c: &mut Criterion) {
                                 payload,
                                 channel_id: tenant_id as u32,
                                 route_family: tenant_id as u32, // Different route families
-
                             };
                             domain.handle(ctx);
                         }
@@ -287,7 +284,6 @@ fn bench_extreme_contention(c: &mut Criterion) {
                             payload,
                             channel_id: i as u32,
                             route_family: 0,
-
                         };
                         domain.handle(ctx)
                     })
@@ -307,7 +303,7 @@ fn bench_extreme_contention(c: &mut Criterion) {
 fn bench_high_scale_multitenant(c: &mut Criterion) {
     let mut group = c.benchmark_group("lease_high_scale");
     group.sample_size(10);
-    
+
     group.bench_function("10k_active_leases_100_tenants", |b| {
         b.iter(|| {
             // Arrange
@@ -327,7 +323,6 @@ fn bench_high_scale_multitenant(c: &mut Criterion) {
                                 payload,
                                 channel_id: tenant_id as u32,
                                 route_family: tenant_id as u32,
-
                             };
                             domain.handle(ctx);
                         }
@@ -342,20 +337,20 @@ fn bench_high_scale_multitenant(c: &mut Criterion) {
             // Assert - implicit success
         });
     });
-    
+
     group.finish();
 }
 
 /// Rapid-fire acquire/surrender cycles (churn test)
 fn bench_rapid_churn(c: &mut Criterion) {
     let mut group = c.benchmark_group("lease_rapid_churn");
-    
+
     for &count in &[100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
             b.iter(|| {
                 // Arrange
                 let domain = LeaseDomain::new();
-                
+
                 // Act - rapid acquire/surrender cycles
                 for i in 0..count {
                     // Acquire
@@ -367,18 +362,17 @@ fn bench_rapid_churn(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
                     let _ = domain.handle(ctx);
-                    
+
                     // Immediately surrender (simplified - would need token extraction in real test)
                 }
-                
+
                 // Assert - implicit success
             });
         });
     }
-    
+
     group.finish();
 }
 

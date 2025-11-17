@@ -4,15 +4,15 @@
 //! and handler registration/matching performance.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::rpc::RpcDomain;
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::registry::DomainRegistry;
+use fitz::core::rpc::RpcDomain;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE_REPLY};
-use tokio::sync::mpsc;
 use std::sync::Arc;
-use crossbeam_channel;
+use tokio::sync::mpsc;
 
 #[path = "../config.rs"]
 mod config;
@@ -136,7 +136,7 @@ fn bench_request_tracking(c: &mut Criterion) {
                     let handler_route = format!("rpc://realm/area/handler");
                     let reply_route = format!("rpc://realm/area/inbox-{}", i);
                     svc.register_request(corr_id.clone(), handler_route, reply_route);
-                    
+
                     // Deregister half of them
                     if i % 2 == 0 {
                         let _old = svc.deregister_request(&corr_id);
@@ -232,11 +232,8 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                 )>(1_024);
                 {
                     let mut svc = service.write();
-                    let _sub_id = svc.subscribe_handler(
-                        0,
-                        "rpc://realm1/area1/handler".to_string(),
-                        42,
-                    );
+                    let _sub_id =
+                        svc.subscribe_handler(0, "rpc://realm1/area1/handler".to_string(), 42);
                 }
                 let _ = handler_tx; // Suppress unused warning
 
@@ -269,7 +266,6 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                         payload: req_payload,
                         channel_id: client_channel,
                         route_family: 0,
-
                     };
                     let _ = domain.handle(ctx);
 
@@ -281,7 +277,6 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                         payload: reply_payload,
                         channel_id: 42,
                         route_family: 0,
-
                     };
                     let _ = domain.handle(ctx_reply);
                 }
@@ -316,8 +311,12 @@ fn bench_reply_payload_sizes(c: &mut Criterion) {
                     let route = svc.allocate_inbox(client_channel);
                     let _ = svc.subscribe_inbox(0, route.clone(), client_channel);
                     let _ = client_tx; // Suppress unused warning
-                    // Also register an active request so replies are authorized
-                    svc.register_request("corr-size".to_string(), "rpc://realm1/area1/handler".to_string(), route.clone());
+                                       // Also register an active request so replies are authorized
+                    svc.register_request(
+                        "corr-size".to_string(),
+                        "rpc://realm1/area1/handler".to_string(),
+                        route.clone(),
+                    );
                     route
                 };
 
@@ -329,7 +328,6 @@ fn bench_reply_payload_sizes(c: &mut Criterion) {
                     payload,
                     channel_id: 100,
                     route_family: 0,
-
                 };
                 let _ = domain.handle(ctx_reply);
             });

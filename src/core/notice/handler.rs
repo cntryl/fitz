@@ -6,14 +6,15 @@
 // - Single-pass TLV parsing with detailed error reporting
 // - SmallVec stack allocation for typical <64B response frames
 
+use super::encoding;
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
     TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
+use parking_lot::RwLock;
 use smallvec::SmallVec;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 /// Response buffer optimized for typical notice frames (<64 bytes)
 /// Uses stack allocation to avoid heap overhead for small messages
@@ -166,13 +167,19 @@ impl Domain for NoticeDomain {
                     crate::protocol::route::validate_notice_subscription(&request.route_str)
                 {
                     let error_response = self.build_error_response(e);
-                    return DomainResponse::Frame(
-                        crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
-                    );
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response.to_vec(),
+                    ));
                 }
 
-                // Subscribe operation - handled by engine via Subscribe command
-                // Domain just acknowledges
+                // Actually subscribe via service
+                let mut service = self.service.write();
+                let _sub_id = service.subscribe(
+                    request.route_family,
+                    request.route_str.clone(),
+                    request.channel_id,
+                );
+
                 let response = self.build_tlv_response(&request.route_str);
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response.to_vec(),
@@ -180,8 +187,12 @@ impl Domain for NoticeDomain {
             }
 
             NoticeOp::Unsubscribe => {
-                // Unsubscribe operation - handled by engine via Unsubscribe command
-                // Domain just acknowledges
+                // For unsubscribe, we need subscription ID which isn't in the frame
+                // Alternative: cleanup all subscriptions for this channel_id on this route
+                // For now, cleanup entire channel (matches typical client disconnect behavior)
+                let mut service = self.service.write();
+                service.cleanup_channel(request.route_family, request.channel_id);
+
                 let response = self.build_tlv_response(&request.route_str);
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response.to_vec(),
@@ -190,24 +201,20 @@ impl Domain for NoticeDomain {
 
             NoticeOp::Publish => {
                 // Validate publish route format
-                if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route)
-                {
+                if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route) {
                     let error_response = self.build_error_response(e);
-                    return DomainResponse::Frame(
-                        crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
-                    );
+                    return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                        error_response.to_vec(),
+                    ));
                 }
 
                 // Extract body from parsed range (avoid second scan)
                 let body = match parse_result.body_range {
                     Some((start, len)) => &request.payload[start..start + len],
                     None => {
-                        let error_response =
-                            self.build_error_response("Missing body in publish");
+                        let error_response = self.build_error_response("Missing body in publish");
                         return DomainResponse::Frame(
-                            crate::protocol::frame::PooledFrame::from_vec(
-                                error_response.to_vec(),
-                            ),
+                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
                         );
                     }
                 };
@@ -217,36 +224,37 @@ impl Domain for NoticeDomain {
                     std::str::from_utf8(&request.payload[start..start + len]).ok()
                 });
 
-                // Dispatch to subscribers
+                // Dispatch to subscribers - get fanout list
                 let service = self.service.read();
-                let _r =
+                let result =
                     service.publish(request.route_family, &request.route_str, msg_id, body);
 
-                // Optimized response: only route + id (no body echo)
-                // For 16KB messages, this saves 16KB per publish!
-                let mut response = ResponseBuf::new();
-                
-                response.push(TAG_ROUTE);
-                let route_bytes = request.route_str.as_bytes();
-                if route_bytes.len() <= 255 {
-                    response.push(route_bytes.len() as u8);
-                    response.extend_from_slice(route_bytes);
-                } else {
-                    // Route > 255 bytes - unlikely but handle it
-                    return DomainResponse::Ok;
-                }
+                // Build notification frame using encoding module
+                let notification_frame =
+                    encoding::build_notification_frame(&request.route_str, msg_id, body);
 
-                if let Some(id) = msg_id {
-                    if id.len() <= 255 {
-                        response.push(TAG_ID);
-                        response.push(id.len() as u8);
-                        response.extend_from_slice(id.as_bytes());
+                // Build ACK frame with subscriber count
+                let ack_frame = match encoding::build_ack_frame_with_count(
+                    &request.route_str,
+                    msg_id,
+                    result.subscribers.len() as u32,
+                ) {
+                    Some(frame) => frame,
+                    None => {
+                        // Route too long - return error
+                        let error_response = self.build_error_response("Route too long");
+                        return DomainResponse::Frame(
+                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
+                        );
                     }
-                }
+                };
 
-                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                    response.to_vec(),
-                ))
+                // Return fanout delivery instruction
+                DomainResponse::NoticeDelivery {
+                    subscribers: result.subscribers,
+                    notification_frame,
+                    ack_frame: crate::protocol::frame::PooledFrame::from_vec(ack_frame),
+                }
             }
         }
     }
@@ -318,7 +326,6 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // test uses default route family
-
         };
 
         // Act
@@ -360,7 +367,6 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // test uses default route family
-
         };
 
         // Act
@@ -371,7 +377,11 @@ mod tests {
             DomainResponse::Frame(frame) => {
                 assert!(!frame.as_ref().is_empty());
             }
-            _ => panic!("Expected Frame response"),
+            DomainResponse::NoticeDelivery { ack_frame, .. } => {
+                // New behavior: returns NoticeDelivery with fanout instructions
+                assert!(!ack_frame.as_ref().is_empty());
+            }
+            _ => panic!("Expected Frame or NoticeDelivery response"),
         }
     }
 
@@ -398,7 +408,6 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // test uses default route family
-
         };
 
         // Act
@@ -436,7 +445,6 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // test uses default route family
-
         };
 
         // Act
@@ -474,7 +482,6 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // test uses default route family
-
         };
 
         // Act

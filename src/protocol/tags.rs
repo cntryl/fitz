@@ -119,6 +119,9 @@ pub const TAG_CRC32: u8 = 0xFE;
 /// Proposed ACK window (u32 BE) supplied by clients in HELLO/CONNECT frames.
 pub const TAG_ACK_WINDOW: u8 = 0x60;
 
+/// Count of items (u32 BE) - used for subscriber count in notice ACKs.
+pub const TAG_COUNT: u8 = 0x61;
+
 // ---------------------------------------------------------------------------
 // Frame type constants
 // ---------------------------------------------------------------------------

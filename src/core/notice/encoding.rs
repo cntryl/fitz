@@ -4,7 +4,7 @@
 //! for notice operations (subscribe, unsubscribe, publish).
 
 use crate::protocol::tags::{
-    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
+    TAG_BODY, TAG_COUNT, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
 use smallvec::SmallVec;
 
@@ -151,6 +151,105 @@ pub fn build_error_response(error_msg: &str) -> ResponseBuf {
     response.extend_from_slice(msg_bytes);
 
     response
+}
+
+/// Build a complete TLV notification frame for fanout delivery
+///
+/// Frame structure: TAG_ROUTE + route + [TAG_ID + id] + TAG_BODY + body
+///
+/// # Arguments
+/// * `route` - Full route string (e.g., "notice://realm/area/resource/op")
+/// * `msg_id` - Optional message ID for correlation
+/// * `body` - Message payload bytes
+///
+/// # Returns
+/// Complete TLV-encoded frame ready to send to subscribers
+pub fn build_notification_frame(route: &str, msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::new();
+
+    // TAG_ROUTE (always present)
+    frame.push(TAG_ROUTE);
+    let route_bytes = route.as_bytes();
+    if route_bytes.len() <= 255 {
+        frame.push(route_bytes.len() as u8);
+        frame.extend_from_slice(route_bytes);
+    } else {
+        // Route > 255 bytes - use extended length encoding
+        frame.push(255);
+        frame.extend_from_slice(&(route_bytes.len() as u32).to_be_bytes());
+        frame.extend_from_slice(route_bytes);
+    }
+
+    // TAG_ID (optional)
+    if let Some(id) = msg_id {
+        let id_bytes = id.as_bytes();
+        if id_bytes.len() <= 255 {
+            frame.push(TAG_ID);
+            frame.push(id_bytes.len() as u8);
+            frame.extend_from_slice(id_bytes);
+        }
+    }
+
+    // TAG_BODY (always present)
+    frame.push(TAG_BODY);
+    if body.len() <= 254 {
+        frame.push(body.len() as u8);
+        frame.extend_from_slice(body);
+    } else {
+        // Body > 254 bytes - use extended length encoding (255 signals 4-byte length follows)
+        frame.push(255);
+        frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        frame.extend_from_slice(body);
+    }
+
+    frame
+}
+
+/// Build ACK frame for publisher confirmation with subscriber count
+///
+/// Frame structure: TAG_ROUTE + route + [TAG_ID + id] + TAG_COUNT + count
+///
+/// # Arguments
+/// * `route` - Original publish route
+/// * `msg_id` - Optional message ID to echo back
+/// * `subscriber_count` - Number of subscribers that received the notification
+///
+/// # Returns
+/// Complete TLV-encoded ACK frame, or None if route is too long
+pub fn build_ack_frame_with_count(
+    route: &str,
+    msg_id: Option<&str>,
+    subscriber_count: u32,
+) -> Option<Vec<u8>> {
+    let mut frame = Vec::new();
+
+    // TAG_ROUTE (always present)
+    frame.push(TAG_ROUTE);
+    let route_bytes = route.as_bytes();
+    if route_bytes.len() <= 255 {
+        frame.push(route_bytes.len() as u8);
+        frame.extend_from_slice(route_bytes);
+    } else {
+        // Route > 255 bytes - extremely unlikely, return None to signal error
+        return None;
+    }
+
+    // TAG_ID (optional - echo back if provided)
+    if let Some(id) = msg_id {
+        let id_bytes = id.as_bytes();
+        if id_bytes.len() <= 255 {
+            frame.push(TAG_ID);
+            frame.push(id_bytes.len() as u8);
+            frame.extend_from_slice(id_bytes);
+        }
+    }
+
+    // TAG_COUNT (always present in ACK)
+    frame.push(TAG_COUNT);
+    frame.push(4); // u32 = 4 bytes
+    frame.extend_from_slice(&subscriber_count.to_be_bytes());
+
+    Some(frame)
 }
 
 #[cfg(test)]
@@ -326,5 +425,86 @@ mod tests {
         assert_eq!(response[0], TAG_ERR_MSG);
         assert_eq!(response[1], error_msg.len() as u8);
         assert_eq!(&response[2..], error_msg.as_bytes());
+    }
+
+    #[test]
+    fn should_build_notification_frame_with_all_fields() {
+        // Arrange
+        let route = "notice://realm/area/resource/alerts";
+        let msg_id = Some("msg-123");
+        let body = b"hello world";
+
+        // Act
+        let frame = build_notification_frame(route, msg_id, body);
+
+        // Assert
+        assert!(!frame.is_empty());
+        assert_eq!(frame[0], TAG_ROUTE);
+        assert!(frame.contains(&TAG_ID));
+        assert!(frame.contains(&TAG_BODY));
+    }
+
+    #[test]
+    fn should_build_notification_frame_without_msg_id() {
+        // Arrange
+        let route = "notice://realm/area/resource/alerts";
+        let body = b"test";
+
+        // Act
+        let frame = build_notification_frame(route, None, body);
+
+        // Assert
+        assert!(!frame.is_empty());
+        assert_eq!(frame[0], TAG_ROUTE);
+        assert!(!frame.contains(&TAG_ID));
+        assert!(frame.contains(&TAG_BODY));
+    }
+
+    #[test]
+    fn should_build_ack_frame_with_count() {
+        // Arrange
+        let route = "notice://realm/area/resource/alerts";
+        let msg_id = Some("msg-123");
+        let count = 42;
+
+        // Act
+        let frame = build_ack_frame_with_count(route, msg_id, count);
+
+        // Assert
+        assert!(frame.is_some());
+        let frame = frame.unwrap();
+        assert_eq!(frame[0], TAG_ROUTE);
+        assert!(frame.contains(&TAG_ID));
+        assert!(frame.contains(&TAG_COUNT));
+    }
+
+    #[test]
+    fn should_handle_large_body_with_extended_length() {
+        // Arrange
+        let route = "notice://test";
+        let body = vec![0u8; 300]; // > 254 bytes
+
+        // Act
+        let frame = build_notification_frame(route, None, &body);
+
+        // Assert
+        assert!(!frame.is_empty());
+        // Find TAG_BODY
+        let body_idx = frame.iter().position(|&b| b == TAG_BODY).unwrap();
+        // Next byte should be 255 (extended length marker)
+        assert_eq!(frame[body_idx + 1], 255);
+    }
+
+    #[test]
+    fn should_return_none_for_oversized_route_in_ack() {
+        // Arrange
+        let route = &"a".repeat(300); // > 255 bytes
+        let count = 10;
+
+        // Act
+        let result = build_ack_frame_with_count(route, None, count);
+
+        // Assert
+        assert!(result.is_none());
     }
 }

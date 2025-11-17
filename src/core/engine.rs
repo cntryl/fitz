@@ -87,7 +87,6 @@ impl EngineHandle {
             payload,
             channel_id,
             route_family,
-
         };
 
         // Domain dispatch (synchronous)
@@ -110,6 +109,21 @@ impl EngineHandle {
                 // 2. Serialize message as frame
                 // 3. Send via connection's outbound channel with backpressure handling
                 let _ = (target_channel_id, message); // Suppress unused warning
+                Ok(ack_frame.into_vec())
+            }
+            DomainResponse::NoticeDelivery {
+                subscribers,
+                notification_frame,
+                ack_frame,
+            } => {
+                // TODO: Implement actual fanout via transport connection registry
+                // For now, just return ACK with subscriber count
+                // Full implementation needs:
+                // 1. For each (channel_id, _sub_id) in subscribers
+                // 2. Look up channel_id -> connection mapping
+                // 3. Send notification_frame via connection's outbound channel
+                // 4. Handle backpressure per connection
+                let _ = (subscribers, notification_frame); // Suppress unused warning
                 Ok(ack_frame.into_vec())
             }
         }
@@ -236,7 +250,6 @@ impl Engine {
             payload,
             channel_id,
             route_family,
-
         };
 
         // Domain dispatch (synchronous)
@@ -269,6 +282,21 @@ impl Engine {
                 // 2. Serialize message as frame
                 // 3. Send via target connection's outbound channel with backpressure
                 let _ = (target_channel_id, message); // Suppress unused warning
+                self.registry.send(conn_id, ack_frame.into_vec());
+            }
+            Ok(DomainResponse::NoticeDelivery {
+                subscribers,
+                notification_frame,
+                ack_frame,
+            }) => {
+                // Fan out notification to all subscribers
+                for (subscriber_channel_id, _sub_id) in &subscribers {
+                    // TODO: Look up subscriber_channel_id -> connection mapping
+                    // For now, we don't have that mapping, so fanout is incomplete
+                    // Full implementation requires tracking channel_id -> conn_id mapping
+                    let _ = (subscriber_channel_id, &notification_frame);
+                }
+                // Send ACK back to publisher
                 self.registry.send(conn_id, ack_frame.into_vec());
             }
             Err(e) => {

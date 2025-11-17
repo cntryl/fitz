@@ -43,6 +43,17 @@ pub enum DomainResponse {
         /// Acknowledgment frame to send back to requester
         ack_frame: crate::protocol::frame::PooledFrame,
     },
+
+    /// Notice fanout delivery - domain returns list of subscribers,
+    /// transport performs actual fanout with backpressure handling
+    NoticeDelivery {
+        /// List of (channel_id, sub_id) tuples to deliver to
+        subscribers: smallvec::SmallVec<[(u32, u64); 8]>,
+        /// Pre-built notification frame payload (TLV: route + id + body)
+        notification_frame: Vec<u8>,
+        /// Acknowledgment frame to send back to publisher
+        ack_frame: crate::protocol::frame::PooledFrame,
+    },
 }
 
 /// Domain trait - each domain implements this to handle its operations

@@ -8,15 +8,15 @@
 //! Goal: Understand where KV performance degrades and optimize accordingly
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::kv::KvDomain;
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::kv::KvDomain;
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID};
 use fitz::storage::midge_adapter;
 use std::sync::Arc;
-use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -24,12 +24,12 @@ mod config;
 /// Build TLV payload for KV operations
 fn build_kv_payload(key: &str, value: Option<&[u8]>) -> Vec<u8> {
     let mut payload = Vec::new();
-    
+
     // TAG_ID (key)
     payload.push(TAG_ID);
     payload.push(key.len() as u8);
     payload.extend_from_slice(key.as_bytes());
-    
+
     // TAG_BODY (value) - optional for GET
     if let Some(v) = value {
         payload.push(TAG_BODY);
@@ -43,7 +43,7 @@ fn build_kv_payload(key: &str, value: Option<&[u8]>) -> Vec<u8> {
             payload.extend_from_slice(v);
         }
     }
-    
+
     payload
 }
 
@@ -64,7 +64,7 @@ fn build_route(operation: &str) -> Route {
 fn bench_sequential_put(c: &mut Criterion) {
     let mut group = c.benchmark_group("kv_sequential_put");
     group.sample_size(10); // Limit iterations to prevent unbounded memory growth
-    
+
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -79,16 +79,15 @@ fn bench_sequential_put(c: &mut Criterion) {
                         let value = vec![0u8; 64];
                         let payload = build_kv_payload(&key, Some(&value));
                         let route = build_route("put");
-                        
+
                         let ctx = DomainContext {
                             route,
                             route_str: format!("kv://realm1/area1/put"),
                             payload,
                             channel_id: 1,
                             route_family: 0,
-
                         };
-                        
+
                         black_box(domain.handle(ctx));
                     }
                 },
@@ -96,7 +95,7 @@ fn bench_sequential_put(c: &mut Criterion) {
             );
         });
     }
-    
+
     group.finish();
 }
 
@@ -104,7 +103,7 @@ fn bench_sequential_put(c: &mut Criterion) {
 fn bench_sequential_get(c: &mut Criterion) {
     let store = midge_adapter::create_memory_store().expect("create store");
     let domain = KvDomain::new(store);
-    
+
     // Warm-up: insert 10k keys
     for i in 0..10000 {
         let key = format!("key{:08}", i);
@@ -117,13 +116,12 @@ fn bench_sequential_get(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-
         };
         domain.handle(ctx);
     }
-    
+
     let mut group = c.benchmark_group("kv_sequential_get");
-    
+
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -132,22 +130,21 @@ fn bench_sequential_get(c: &mut Criterion) {
                     let key = format!("key{:08}", i);
                     let payload = build_kv_payload(&key, None);
                     let route = build_route("get");
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: format!("kv://realm1/area1/get"),
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
-                    
+
                     black_box(domain.handle(ctx));
                 }
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -155,7 +152,7 @@ fn bench_sequential_get(c: &mut Criterion) {
 fn bench_concurrent_mixed(c: &mut Criterion) {
     let store = midge_adapter::create_memory_store().expect("create store");
     let domain = Arc::new(KvDomain::new(store));
-    
+
     // Warm-up
     for i in 0..1000 {
         let key = format!("key{:08}", i);
@@ -168,18 +165,17 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-
         };
         domain.handle(ctx);
     }
-    
+
     c.bench_function("kv_concurrent_mixed", |b| {
         b.iter(|| {
             // Simulate 100 concurrent operations (50 reads, 50 writes)
             for i in 0..100 {
                 let domain: Arc<KvDomain> = Arc::clone(&domain);
                 let key = format!("key{:08}", i % 1000);
-                
+
                 if i % 2 == 0 {
                     // GET
                     let payload = build_kv_payload(&key, None);
@@ -190,7 +186,6 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
                         payload,
                         channel_id: (i % 10) as u32,
                         route_family: 0,
-
                     };
                     black_box(domain.handle(ctx));
                 } else {
@@ -204,7 +199,6 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
                         payload,
                         channel_id: (i % 10) as u32,
                         route_family: 0,
-
                     };
                     black_box(domain.handle(ctx));
                 }
@@ -217,7 +211,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
 fn bench_payload_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("kv_payload_sizes");
     group.sample_size(10); // Limit iterations to prevent unbounded memory growth
-    
+
     for size in [64, 256, 1024, 4096, 16384] {
         group.throughput(Throughput::Bytes(size));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
@@ -230,23 +224,22 @@ fn bench_payload_sizes(c: &mut Criterion) {
                     let key = "test_key".to_string();
                     let payload = build_kv_payload(&key, Some(&value));
                     let route = build_route("put");
-                    
+
                     let ctx = DomainContext {
                         route,
                         route_str: format!("kv://realm1/area1/put"),
                         payload,
                         channel_id: 1,
                         route_family: 0,
-
                     };
-                    
+
                     black_box(domain.handle(ctx));
                 },
                 criterion::BatchSize::SmallInput,
             );
         });
     }
-    
+
     group.finish();
 }
 
@@ -277,7 +270,7 @@ fn bench_engine_dispatch_put_get(c: &mut Criterion) {
 criterion_group!(
     name = hotpath_kv_core;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_sequential_put,
         bench_sequential_get,
         bench_concurrent_mixed,
