@@ -86,6 +86,11 @@ harness = false
 path = "benches/hotpath/kv_core.rs"
 
 [[bench]]
+name = "hotpath_notice_core"
+harness = false
+path = "benches/hotpath/notice_core.rs"
+
+[[bench]]
 name = "hotpath_queue_core"
 harness = false
 path = "benches/hotpath/queue_core.rs"
@@ -134,3 +139,8 @@ path = "benches/subsystem/rpc_service.rs"
 name = "subsystem_stream_service"
 harness = false
 path = "benches/subsystem/stream_service.rs"
+
+[[bench]]
+name = "hotpath_control_core"
+harness = false
+path = "benches/hotpath/control_core.rs"
