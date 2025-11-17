@@ -88,37 +88,52 @@ fn build_route(operation: &str) -> Route {
     }
 }
 
+/// Build route for stream operation with explicit operation segment
+fn build_route_with_operation(resource: &str, operation: &str) -> Route {
+    let route_str = format!("stream://realm1/area1/{}/{}", resource, operation);
+    Route {
+        scheme: fitz::protocol::route::Scheme::Stream,
+        realm: Some("realm1".to_string()),
+        area: Some("area1".to_string()),
+        resource: Some(resource.to_string()),
+        operation: Some(operation.to_string()),
+        raw: route_str,
+    }
+}
+
 /// Sequential append operations
 fn bench_sequential_append(c: &mut Criterion) {
-    let store = midge_adapter::create_memory_store().expect("create store");
-    let domain = StreamDomain::new(store);
-    
     let mut group = c.benchmark_group("stream_sequential_append");
+    group.sample_size(10); // Limit iterations to prevent unbounded memory growth
     
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
-            b.iter(|| {
-                // Arrange & Act
-                for i in 0..count {
-                    let body = format!("event-{}", i).into_bytes();
-                    let payload = build_append_payload(&body);
-                    let route = build_route("append");
-                    
-                    let ctx = DomainContext {
-                        route,
-                        route_str: "stream://realm1/area1/append".to_string(),
-                        payload,
-                        channel_id: 1,
-                        route_family: 0,
-                        sender: None,
-                    };
-                    
-                    let _response = domain.handle(ctx);
-                }
-                
-                // Assert - implicit success
-            });
+            b.iter_batched(
+                || {
+                    let store = midge_adapter::create_memory_store().expect("create store");
+                    StreamDomain::new(store)
+                },
+                |domain| {
+                    for i in 0..count {
+                        let body = format!("event-{}", i).into_bytes();
+                        let payload = build_append_payload(&body);
+                        let route = build_route("append");
+                        
+                        let ctx = DomainContext {
+                            route,
+                            route_str: "stream://realm1/area1/append".to_string(),
+                            payload,
+                            channel_id: 1,
+                            route_family: 0,
+                            sender: None,
+                        };
+                        
+                        let _response = domain.handle(ctx);
+                    }
+                },
+                criterion::BatchSize::SmallInput,
+            );
         });
     }
     
@@ -168,33 +183,34 @@ fn bench_concurrent_writers(c: &mut Criterion) {
 /// Event sizes benchmark
 fn bench_event_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("stream_event_sizes");
+    group.sample_size(10); // Limit iterations to prevent unbounded memory growth
     
     for &size in &[64, 256, 1024, 4096, 16384] {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let store = midge_adapter::create_memory_store().expect("create store");
-            let domain = StreamDomain::new(store);
-            
-            b.iter(|| {
-                // Arrange
-                let body = vec![0u8; size];
-                let payload = build_append_payload(&body);
-                let route = build_route("append");
-                
-                // Act
-                let ctx = DomainContext {
-                    route,
-                    route_str: "stream://realm1/area1/append".to_string(),
-                    payload,
-                    channel_id: 1,
-                    route_family: 0,
-                    sender: None,
-                };
-                
-                let _response = domain.handle(ctx);
-                
-                // Assert - implicit success
-            });
+            b.iter_batched(
+                || {
+                    // Create fresh store and domain per iteration to prevent memory accumulation
+                    let store = midge_adapter::create_memory_store().expect("create store");
+                    let domain = StreamDomain::new(store);
+                    (domain, vec![0u8; size])
+                },
+                |(domain, body)| {
+                    // Act
+                    let payload = build_append_payload(&body);
+                    let route = build_route("append");
+                    let ctx = DomainContext {
+                        route,
+                        route_str: "stream://realm1/area1/append".to_string(),
+                        payload,
+                        channel_id: 1,
+                        route_family: 0,
+                        sender: None,
+                    };
+                    let _response = domain.handle(ctx);
+                },
+                criterion::BatchSize::SmallInput,
+            );
         });
     }
     
@@ -241,6 +257,90 @@ fn bench_multitenant_append(c: &mut Criterion) {
     });
 }
 
+/// Sequential read operations after warm-up
+fn bench_sequential_read(c: &mut Criterion) {
+    // Warm-up dataset: 10k appends
+    let store = midge_adapter::create_memory_store().expect("create store");
+    let domain = StreamDomain::new(store);
+    for i in 0..10_000 {
+        let body = format!("event-{}", i).into_bytes();
+        let payload = build_append_payload(&body);
+        let route = build_route("append");
+        let ctx = DomainContext {
+            route,
+            route_str: "stream://realm1/area1/append".to_string(),
+            payload,
+            channel_id: 1,
+            route_family: 0,
+            sender: None,
+        };
+        let _ = domain.handle(ctx);
+    }
+
+    let mut group = c.benchmark_group("stream_sequential_read");
+    for &count in &[100usize, 1000] {
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &_count| {
+            b.iter(|| {
+                // Read starting at 0 with default limit
+                let payload = build_read_payload(0);
+                let route = build_route_with_operation("resource1", "read");
+                let ctx = DomainContext {
+                    route,
+                    route_str: "stream://realm1/area1/resource1/read".to_string(),
+                    payload,
+                    channel_id: 2,
+                    route_family: 0,
+                    sender: None,
+                };
+                let _ = domain.handle(ctx);
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Range read by moving start sequence
+fn bench_range_read(c: &mut Criterion) {
+    let store = midge_adapter::create_memory_store().expect("create store");
+    let domain = StreamDomain::new(store);
+    // Warm up smaller dataset
+    for i in 0..2_000 {
+        let body = format!("event-{}", i).into_bytes();
+        let payload = build_append_payload(&body);
+        let route = build_route("append");
+        let ctx = DomainContext {
+            route,
+            route_str: "stream://realm1/area1/append".to_string(),
+            payload,
+            channel_id: 1,
+            route_family: 0,
+            sender: None,
+        };
+        let _ = domain.handle(ctx);
+    }
+
+    let mut group = c.benchmark_group("stream_range_read");
+    for &start in &[0u64, 500, 1_000, 1_500] {
+        group.bench_with_input(BenchmarkId::from_parameter(start), &start, |b, &start| {
+            b.iter(|| {
+                let payload = build_read_payload(start);
+                let route = build_route_with_operation("resource1", "read");
+                let ctx = DomainContext {
+                    route,
+                    route_str: "stream://realm1/area1/resource1/read".to_string(),
+                    payload,
+                    channel_id: 3,
+                    route_family: 0,
+                    sender: None,
+                };
+                let _ = domain.handle(ctx);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_stream_core;
     config = config::criterion_config();
@@ -248,6 +348,8 @@ criterion_group!(
         bench_sequential_append,
         bench_concurrent_writers,
         bench_event_sizes,
-        bench_multitenant_append
+    bench_multitenant_append,
+    bench_sequential_read,
+    bench_range_read
 );
 criterion_main!(hotpath_stream_core);

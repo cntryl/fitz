@@ -77,35 +77,37 @@ fn build_route(operation: &str) -> Route {
 
 /// Sequential enqueue operations
 fn bench_sequential_enqueue(c: &mut Criterion) {
-    let store = midge_adapter::create_memory_store().expect("create store");
-    let domain = QueueDomain::new(store);
-    
     let mut group = c.benchmark_group("queue_sequential_enqueue");
+    group.sample_size(10); // Limit iterations to prevent unbounded memory growth
     
     for count in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(count));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
-            b.iter(|| {
-                // Arrange & Act
-                for i in 0..count {
-                    let body = format!("message-{}", i).into_bytes();
-                    let payload = build_enqueue_payload(&body);
-                    let route = build_route("enqueue");
-                    
-                    let ctx = DomainContext {
-                        route,
-                        route_str: "queue://realm1/area1/enqueue".to_string(),
-                        payload,
-                        channel_id: 1,
-                        route_family: 0,
-                        sender: None,
-                    };
-                    
-                    let _response = domain.handle(ctx);
-                }
-                
-                // Assert - implicit success
-            });
+            b.iter_batched(
+                || {
+                    let store = midge_adapter::create_memory_store().expect("create store");
+                    QueueDomain::new(store)
+                },
+                |domain| {
+                    for i in 0..count {
+                        let body = format!("message-{}", i).into_bytes();
+                        let payload = build_enqueue_payload(&body);
+                        let route = build_route("enqueue");
+                        
+                        let ctx = DomainContext {
+                            route,
+                            route_str: "queue://realm1/area1/enqueue".to_string(),
+                            payload,
+                            channel_id: 1,
+                            route_family: 0,
+                            sender: None,
+                        };
+                        
+                        let _response = domain.handle(ctx);
+                    }
+                },
+                criterion::BatchSize::SmallInput,
+            );
         });
     }
     
@@ -228,33 +230,33 @@ fn bench_concurrent_producer_consumer(c: &mut Criterion) {
 /// Message sizes benchmark
 fn bench_message_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("queue_message_sizes");
+    group.sample_size(10); // Limit iterations to prevent unbounded memory growth
     
     for &size in &[64, 256, 1024, 4096, 16384] {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let store = midge_adapter::create_memory_store().expect("create store");
-            let domain = QueueDomain::new(store);
-            
-            b.iter(|| {
-                // Arrange
-                let body = vec![0u8; size];
-                let payload = build_enqueue_payload(&body);
-                let route = build_route("enqueue");
-                
-                // Act
-                let ctx = DomainContext {
-                    route,
-                    route_str: "queue://realm1/area1/enqueue".to_string(),
-                    payload,
-                    channel_id: 1,
-                    route_family: 0,
-                    sender: None,
-                };
-                
-                let _response = domain.handle(ctx);
-                
-                // Assert - implicit success
-            });
+            b.iter_batched(
+                || {
+                    let store = midge_adapter::create_memory_store().expect("create store");
+                    (QueueDomain::new(store), vec![0u8; size])
+                },
+                |(domain, body)| {
+                    let payload = build_enqueue_payload(&body);
+                    let route = build_route("enqueue");
+                    
+                    let ctx = DomainContext {
+                        route,
+                        route_str: "queue://realm1/area1/enqueue".to_string(),
+                        payload,
+                        channel_id: 1,
+                        route_family: 0,
+                        sender: None,
+                    };
+                    
+                    let _response = domain.handle(ctx);
+                },
+                criterion::BatchSize::SmallInput,
+            );
         });
     }
     
