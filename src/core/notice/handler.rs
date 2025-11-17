@@ -237,8 +237,9 @@ impl Domain for NoticeDomain {
                 let notification_frame =
                     encoding::build_notification_frame(&request.route_str, msg_id, body);
 
-                // Build ACK frame with subscriber count unless TAG_NO_ACK is present
-                let ack_frame_opt = if parse_result.no_ack {
+                // Build ACK frame with subscriber count unless TAG_NO_ACK is present OR no subscribers
+                // Optimization: Skip ACK construction when no one is listening
+                let ack_frame_opt = if parse_result.no_ack || result.subscribers.is_empty() {
                     None
                 } else {
                     match encoding::build_ack_frame_with_count(
@@ -246,9 +247,7 @@ impl Domain for NoticeDomain {
                         msg_id,
                         result.subscribers.len() as u32,
                     ) {
-                        Some(frame) => Some(
-                            crate::protocol::frame::PooledFrame::from_vec(frame),
-                        ),
+                        Some(frame) => Some(frame),
                         None => {
                             // Route too long - return error
                             let error_response = self.build_error_response("Route too long");
@@ -353,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn should_handle_publish_request() {
+    fn should_handle_publish_request_with_no_subscribers() {
         // Arrange
         let domain = NoticeDomain::new();
         let mut payload = Vec::new();
@@ -389,14 +388,66 @@ mod tests {
             DomainResponse::Frame(frame) => {
                 assert!(!frame.as_ref().is_empty());
             }
-            DomainResponse::NoticeDelivery { ack_frame, .. } => {
-                // New behavior: returns NoticeDelivery with fanout instructions
-                match ack_frame {
-                    Some(frame) => assert!(!frame.as_ref().is_empty()),
-                    None => panic!("Expected ACK frame to be present"),
-                }
+            DomainResponse::NoticeDelivery { ack_frame, subscribers, .. } => {
+                // Optimization: no subscribers = no ACK (lazy ACK)
+                assert!(subscribers.is_empty());
+                assert!(ack_frame.is_none());
             }
             _ => panic!("Expected Frame or NoticeDelivery response"),
+        }
+    }
+
+    #[test]
+    fn should_handle_publish_request_with_subscribers() {
+        // Arrange
+        let domain = NoticeDomain::new();
+        let service = domain.get_service();
+        
+        // Subscribe first so we have subscribers
+        {
+            let mut svc = service.write();
+            svc.subscribe(0, "notice://realm1/area1/resource1/alerts".to_string(), 99);
+        }
+
+        let mut payload = Vec::new();
+        payload.push(TAG_ID);
+        let id = b"msg-1";
+        payload.push(id.len() as u8);
+        payload.extend_from_slice(id);
+        payload.push(TAG_BODY);
+        let body = b"hello world";
+        payload.push(body.len() as u8);
+        payload.extend_from_slice(body);
+
+        let request = DomainContext {
+            route: Route {
+                scheme: crate::protocol::route::Scheme::Notice,
+                realm: Some("realm1".to_string()),
+                area: Some("area1".to_string()),
+                resource: Some("resource1".to_string()),
+                operation: Some("alerts".to_string()),
+                raw: "notice://realm1/area1/resource1/alerts".to_string(),
+            },
+            route_str: "notice://realm1/area1/resource1/alerts".to_string(),
+            payload,
+            channel_id: 1,
+            route_family: 0, // test uses default route family
+        };
+
+        // Act
+        let response = domain.handle(request);
+
+        // Assert
+        match response {
+            DomainResponse::NoticeDelivery { ack_frame, subscribers, .. } => {
+                // With subscribers: ACK should be present
+                assert!(!subscribers.is_empty());
+                match ack_frame {
+                    Some(frame) => assert!(!frame.as_ref().is_empty()),
+                    None => panic!("Expected ACK frame when subscribers exist"),
+                }
+            }
+            _ => panic!("Expected NoticeDelivery response"),
         }
     }
 
