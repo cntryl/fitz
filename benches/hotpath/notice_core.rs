@@ -10,9 +10,12 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::notice::NoticeDomain;
+use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_SUBSCRIBE};
 use std::sync::Arc;
+use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -221,9 +224,31 @@ fn bench_high_frequency_publish(c: &mut Criterion) {
     });
 }
 
+/// Engine dispatch path: publish with varying payload sizes (no subscribers)
+fn bench_engine_dispatch_publish(c: &mut Criterion) {
+    // Build a minimal EngineHandle once per group
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let registry = Arc::new(EngineConnectionRegistry::new());
+    let domains = Arc::new(DomainRegistry::new());
+    let engine = EngineHandle::new(tx, domains, registry);
+
+    let mut group = c.benchmark_group("notice_engine_dispatch_publish");
+    for &size in &[64usize, 1024, 16_384] {
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let body = vec![0u8; size];
+                let payload = build_publish_payload(Some("id"), &body);
+                let route = "notice://realm1/area1/stream/data".to_string();
+                let _ = black_box(engine.dispatch(route, payload, 1, 0));
+            });
+        });
+    }
+    group.finish();
+}
+
 /// EXTREME: Broadcast fanout - 1 publish delivered to many subscribers
 fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
-    use crossbeam_channel;
     
     let mut group = c.benchmark_group("notice_extreme_broadcast_fanout");
     
@@ -275,7 +300,6 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
 
 /// EXTREME: Subscription churn - rapid subscribe/unsubscribe operations
 fn bench_extreme_subscription_churn(c: &mut Criterion) {
-    use crossbeam_channel;
     
     let mut group = c.benchmark_group("notice_extreme_subscription_churn");
     
@@ -321,7 +345,6 @@ fn bench_extreme_subscription_churn(c: &mut Criterion) {
 
 /// EXTREME: Wildcard explosion - many overlapping wildcard patterns
 fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
-    use crossbeam_channel;
     
     let mut group = c.benchmark_group("notice_extreme_wildcard_explosion");
     
@@ -390,6 +413,7 @@ criterion_group!(
         bench_concurrent_multitenant_publish,
         bench_wildcard_matching,
         bench_high_frequency_publish,
+    bench_engine_dispatch_publish,
         bench_extreme_broadcast_fanout,
         bench_extreme_subscription_churn,
         bench_extreme_wildcard_explosion

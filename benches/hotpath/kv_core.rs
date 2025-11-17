@@ -10,10 +10,13 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::kv::KvDomain;
+use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID};
 use fitz::storage::midge_adapter;
 use std::sync::Arc;
+use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -247,6 +250,30 @@ fn bench_payload_sizes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Engine dispatch path: simple PUT then GET using EngineHandle
+fn bench_engine_dispatch_put_get(c: &mut Criterion) {
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let registry = Arc::new(EngineConnectionRegistry::new());
+    let domains = Arc::new(DomainRegistry::new());
+    let engine = EngineHandle::new(tx, domains, registry);
+
+    let mut group = c.benchmark_group("kv_engine_dispatch_put_get");
+    for &size in &[64usize, 1024] {
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let key = "bench_key";
+                let value = vec![0u8; size];
+                let put_payload = build_kv_payload(key, Some(&value));
+                let get_payload = build_kv_payload(key, None);
+                let _ = engine.dispatch("kv://realm1/area1/put".to_string(), put_payload, 1, 0);
+                let _ = engine.dispatch("kv://realm1/area1/get".to_string(), get_payload, 1, 0);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_kv_core;
     config = config::criterion_config();
@@ -254,6 +281,7 @@ criterion_group!(
         bench_sequential_put,
         bench_sequential_get,
         bench_concurrent_mixed,
-        bench_payload_sizes
+        bench_payload_sizes,
+        bench_engine_dispatch_put_get
 );
 criterion_main!(hotpath_kv_core);

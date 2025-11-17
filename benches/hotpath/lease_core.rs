@@ -7,11 +7,14 @@ use base64::{engine::general_purpose, Engine as _};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::lease::LeaseDomain;
+use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_TOKEN};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::sync::Arc;
+use crossbeam_channel;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -379,6 +382,26 @@ fn bench_rapid_churn(c: &mut Criterion) {
     group.finish();
 }
 
+/// Engine dispatch path: lease acquire via EngineHandle
+fn bench_engine_dispatch_acquire(c: &mut Criterion) {
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let registry = Arc::new(EngineConnectionRegistry::new());
+    let domains = Arc::new(DomainRegistry::new());
+    let engine = EngineHandle::new(tx, domains, registry);
+
+    let mut group = c.benchmark_group("lease_engine_dispatch_acquire");
+    for &ttl in &[5u64, 30] {
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(BenchmarkId::from_parameter(ttl), &ttl, |b, &ttl| {
+            b.iter(|| {
+                let payload = build_acquire_payload(ttl);
+                let _ = engine.dispatch("lease://realm1/area1/resource".to_string(), payload, 1, 0);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_lease_core;
     config = config::criterion_config();
@@ -394,7 +417,8 @@ criterion_group!(
         // Extreme scale benchmarks
         bench_extreme_contention,
         bench_high_scale_multitenant,
-        bench_rapid_churn
+        bench_rapid_churn,
+        bench_engine_dispatch_acquire
 );
 
 criterion_main!(hotpath_lease_core);

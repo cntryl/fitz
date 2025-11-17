@@ -6,9 +6,12 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fitz::core::control::ControlDomain;
 use fitz::core::domain::{Domain, DomainContext};
+use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::TAG_BODY;
 use std::sync::Arc;
+use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -183,6 +186,27 @@ fn bench_command_sizes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Engine dispatch path: heartbeat via EngineHandle
+fn bench_engine_dispatch_heartbeat(c: &mut Criterion) {
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let registry = Arc::new(EngineConnectionRegistry::new());
+    let domains = Arc::new(DomainRegistry::new());
+    let engine = EngineHandle::new(tx, domains, registry);
+
+    let mut group = c.benchmark_group("control_engine_dispatch_heartbeat");
+    for &size in &[16usize, 256] {
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let body = vec![0u8; size];
+                let payload = build_control_payload(&body);
+                let _ = engine.dispatch("control://system/heartbeat".to_string(), payload, 1, 0);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_control_core;
     config = config::criterion_config();
@@ -190,6 +214,7 @@ criterion_group!(
         bench_sequential_heartbeat,
         bench_config_updates,
         bench_concurrent_commands,
-        bench_command_sizes
+        bench_command_sizes,
+        bench_engine_dispatch_heartbeat
 );
 criterion_main!(hotpath_control_core);

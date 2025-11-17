@@ -6,10 +6,13 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::queue::QueueDomain;
+use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_LEASE, TAG_DELIVERY_TOKEN};
 use fitz::storage::midge_adapter;
 use std::sync::Arc;
+use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -263,6 +266,27 @@ fn bench_message_sizes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Engine dispatch path: enqueue via EngineHandle
+fn bench_engine_dispatch_enqueue(c: &mut Criterion) {
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let registry = Arc::new(EngineConnectionRegistry::new());
+    let domains = Arc::new(DomainRegistry::new());
+    let engine = EngineHandle::new(tx, domains, registry);
+
+    let mut group = c.benchmark_group("queue_engine_dispatch_enqueue");
+    for &size in &[64usize, 1024, 4096] {
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let body = vec![0u8; size];
+                let payload = build_enqueue_payload(&body);
+                let _ = engine.dispatch("queue://realm1/area1/enqueue".to_string(), payload, 1, 0);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_queue_core;
     config = config::criterion_config();
@@ -270,6 +294,7 @@ criterion_group!(
         bench_sequential_enqueue,
         bench_sequential_reserve,
         bench_concurrent_producer_consumer,
-        bench_message_sizes
+        bench_message_sizes,
+        bench_engine_dispatch_enqueue
 );
 criterion_main!(hotpath_queue_core);

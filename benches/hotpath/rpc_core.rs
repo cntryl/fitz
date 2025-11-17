@@ -6,10 +6,13 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::rpc::RpcDomain;
+use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
+use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
 use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE_REPLY};
 use tokio::sync::mpsc;
 use std::sync::Arc;
+use crossbeam_channel;
 
 #[path = "../config.rs"]
 mod config;
@@ -335,6 +338,28 @@ fn bench_reply_payload_sizes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Engine dispatch path: request with no handler (measures routing + error path)
+fn bench_engine_dispatch_request_no_handler(c: &mut Criterion) {
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let registry = Arc::new(EngineConnectionRegistry::new());
+    let domains = Arc::new(DomainRegistry::new());
+    let engine = EngineHandle::new(tx, domains, registry);
+
+    let mut group = c.benchmark_group("rpc_engine_dispatch_request_no_handler");
+    for &size in &[64usize, 1024] {
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let body = vec![0u8; size];
+                let payload = build_request_payload("corr", "inbox://7_1", &body);
+                let route = "rpc://realm1/area1/handler".to_string();
+                let _ = engine.dispatch(route, payload, 7, 0);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_rpc_core;
     config = config::criterion_config();
@@ -344,6 +369,7 @@ criterion_group!(
     bench_concurrent_inbox_allocation,
     bench_correlation_lookup_scaling,
     bench_sequential_request_reply,
-    bench_reply_payload_sizes
+    bench_reply_payload_sizes,
+    bench_engine_dispatch_request_no_handler
 );
 criterion_main!(hotpath_rpc_core);
