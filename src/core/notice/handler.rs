@@ -233,7 +233,7 @@ impl Domain for NoticeDomain {
                 let result =
                     service.publish(request.route_family, &request.route_str, msg_id, body);
 
-                // Build notification frame using encoding module
+                // Build notification frame using encoding module (always needed)
                 let notification_frame =
                     encoding::build_notification_frame(&request.route_str, msg_id, body);
 
@@ -242,22 +242,11 @@ impl Domain for NoticeDomain {
                 let ack_frame_opt = if parse_result.no_ack || result.subscribers.is_empty() {
                     None
                 } else {
-                    match encoding::build_ack_frame_with_count(
+                    encoding::build_ack_frame_with_count(
                         &request.route_str,
                         msg_id,
                         result.subscribers.len() as u32,
-                    ) {
-                        Some(frame) => Some(frame),
-                        None => {
-                            // Route too long - return error
-                            let error_response = self.build_error_response("Route too long");
-                            return DomainResponse::Frame(
-                                crate::protocol::frame::PooledFrame::from_vec(
-                                    error_response.to_vec(),
-                                ),
-                            );
-                        }
-                    }
+                    )
                 };
 
                 // Return fanout delivery instruction

@@ -1,171 +1,133 @@
-//! Comprehensive hotpath benchmarks for Notice domain - handler -> service layering
+//! Hotpath benchmarks for NoticeDomain
 //!
-//! Tests:
-//! - High volume: sequential subscribe/publish operations
-//! - High concurrency: parallel operations from multiple clients
-//! - Breakdown points: subscriber counts, message sizes, wildcard matching
-//!
-//! Goal: Understand pub/sub performance and identify scalability limits
+//! This version:
+//! - no setup in the timed region
+//! - domains + subscribers built once
+//! - payloads and contexts prebuilt
+//! - pure handler cost
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crossbeam_channel;
-use fitz::core::domain::{Domain, DomainContext};
-use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
-use fitz::core::notice::NoticeDomain;
-use fitz::core::registry::DomainRegistry;
-use fitz::protocol::route::Route;
-use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_NO_ACK, TAG_SUBSCRIBE};
 use std::sync::Arc;
+
+use fitz::core::domain::{Domain, DomainContext};
+use fitz::core::notice::NoticeDomain;
+use fitz::protocol::route::{Route, Scheme};
+use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_NO_ACK};
 
 #[path = "../config.rs"]
 mod config;
 
-#[derive(Copy, Clone)]
-enum AckMode {
-    Ack,
-    NoAck,
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+fn build_route_str(r: &str, a: &str, res: &str, op: &str) -> String {
+    format!("notice://{}/{}/{}/{}", r, a, res, op)
 }
 
-impl AckMode {
-    fn label(&self) -> &'static str {
-        match self {
-            AckMode::Ack => "ack",
-            AckMode::NoAck => "no_ack",
-        }
-    }
-}
-
-/// Build TLV payload for subscribe
-#[allow(dead_code)]
-fn build_subscribe_payload() -> Vec<u8> {
-    vec![TAG_SUBSCRIBE, 0]
-}
-
-/// Build TLV payload for publish
-fn build_publish_payload(msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::new();
-
-    if let Some(id) = msg_id {
-        payload.push(TAG_ID);
-        payload.push(id.len() as u8);
-        payload.extend_from_slice(id.as_bytes());
-    }
-
-    payload.push(TAG_BODY);
-    if body.len() <= 254 {
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
-    } else {
-        payload.push(255);
-        payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        payload.extend_from_slice(body);
-    }
-
-    payload
-}
-
-/// Build TLV payload for publish with no-ACK
-fn build_publish_payload_no_ack(msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::new();
-
-    // Signal no-ACK desired
-    payload.push(TAG_NO_ACK);
-    payload.push(0);
-
-    if let Some(id) = msg_id {
-        payload.push(TAG_ID);
-        payload.push(id.len() as u8);
-        payload.extend_from_slice(id.as_bytes());
-    }
-
-    payload.push(TAG_BODY);
-    if body.len() <= 254 {
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
-    } else {
-        payload.push(255);
-        payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        payload.extend_from_slice(body);
-    }
-
-    payload
-}
-
-/// Build route for notice operation
-fn build_route(realm: &str, area: &str, resource: &str, operation: &str) -> Route {
-    let route_str = format!("notice://{}/{}/{}/{}", realm, area, resource, operation);
+fn build_route(r: &str, a: &str, res: &str, op: &str) -> Route {
     Route {
-        scheme: fitz::protocol::route::Scheme::Notice,
-        realm: Some(realm.to_string()),
-        area: Some(area.to_string()),
-        resource: Some(resource.to_string()),
-        operation: Some(operation.to_string()),
-        raw: route_str.clone(),
+        scheme: Scheme::Notice,
+        realm: Some(r.to_string()),
+        area: Some(a.to_string()),
+        resource: Some(res.to_string()),
+        operation: Some(op.to_string()),
+        raw: build_route_str(r, a, res, op),
     }
 }
 
-/// Sequential publish operations (no subscribers)
-fn bench_sequential_publish_no_subscribers(c: &mut Criterion) {
-    let domain = NoticeDomain::new();
+fn build_payload(id: Option<&str>, body: &[u8], no_ack: bool) -> Vec<u8> {
+    let mut out = Vec::new();
 
-    let mut group = c.benchmark_group("notice_sequential_publish_no_subs");
-
-    for mode in [AckMode::Ack, AckMode::NoAck] {
-        for count in [100, 1000, 10000] {
-            group.throughput(Throughput::Elements(count));
-            group.bench_with_input(BenchmarkId::new(mode.label(), count), &count, |b, &count| {
-                b.iter(|| {
-                    for i in 0..count {
-                        let body = format!("message_{}", i).into_bytes();
-                        let payload = match mode {
-                            AckMode::Ack => build_publish_payload(Some(&format!("msg_{}", i)), &body),
-                            AckMode::NoAck => build_publish_payload_no_ack(Some(&format!("msg_{}", i)), &body),
-                        };
-                        let route = build_route("realm1", "area1", "alerts", "critical");
-
-                        let ctx = DomainContext {
-                            route,
-                            route_str: "notice://realm1/area1/alerts/critical".to_string(),
-                            payload,
-                            channel_id: 1,
-                            route_family: 0,
-                        };
-
-                        black_box(domain.handle(ctx));
-                    }
-                });
-            });
-        }
+    if no_ack {
+        out.push(TAG_NO_ACK);
+        out.push(0);
     }
+
+    if let Some(id) = id {
+        out.push(TAG_ID);
+        out.push(id.len() as u8);
+        out.extend_from_slice(id.as_bytes());
+    }
+
+    out.push(TAG_BODY);
+    if body.len() <= 254 {
+        out.push(body.len() as u8);
+        out.extend_from_slice(body);
+    } else {
+        out.push(255);
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        out.extend_from_slice(body);
+    }
+
+    out
+}
+
+// -----------------------------------------------------------------------------
+// Benchmarks
+// -----------------------------------------------------------------------------
+
+// 1. Sequential publish (no subscribers)
+fn bench_publish_no_subscribers(c: &mut Criterion) {
+    let domain = NoticeDomain::new();
+    let route = build_route("realm1", "area1", "alerts", "critical");
+    let route_str = route.raw.clone();
+
+    let payload = build_payload(Some("id"), b"hello", false);
+
+    let ctx = DomainContext {
+        route,
+        route_str,
+        payload,
+        channel_id: 1,
+        route_family: 0,
+    };
+
+    let mut group = c.benchmark_group("notice_publish_no_subscribers");
+
+    group.bench_function("ack", |b| {
+        b.iter(|| {
+            black_box(domain.handle(ctx.clone()));
+        });
+    });
+
+    let mut ctx_noack = ctx.clone();
+    ctx_noack.payload = build_payload(Some("id"), b"hello", true);
+
+    group.bench_function("no_ack", |b| {
+        b.iter(|| {
+            black_box(domain.handle(ctx_noack.clone()));
+        });
+    });
 
     group.finish();
 }
 
-/// (Removed) Separate no-ACK variant merged into loop above
-
-/// Test message size impact
+// 2. Message size impact (prebuilt contexts per size)
 fn bench_message_sizes(c: &mut Criterion) {
     let domain = NoticeDomain::new();
 
     let mut group = c.benchmark_group("notice_message_sizes");
 
     for size in [64, 256, 1024, 4096, 16384] {
-        group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+        let body = vec![0u8; size];
+        let payload = build_payload(Some("id"), &body, false);
+
+        let route = build_route("realm1", "area1", "data", "stream");
+        let route_str = route.raw.clone();
+
+        let ctx = DomainContext {
+            route,
+            route_str,
+            payload,
+            channel_id: 1,
+            route_family: 0,
+        };
+
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| {
-                let body = vec![0u8; size as usize];
-                let payload = build_publish_payload(Some("msg_id"), &body);
-                let route = build_route("realm1", "area1", "data", "stream");
-
-                let ctx = DomainContext {
-                    route,
-                    route_str: "notice://realm1/area1/data/stream".to_string(),
-                    payload,
-                    channel_id: 1,
-                    route_family: 0,
-                };
-
-                black_box(domain.handle(ctx));
+                black_box(domain.handle(ctx.clone()));
             });
         });
     }
@@ -173,168 +135,90 @@ fn bench_message_sizes(c: &mut Criterion) {
     group.finish();
 }
 
-/// Concurrent publish from multiple route families (multi-tenant)
-fn bench_concurrent_multitenant_publish(c: &mut Criterion) {
-    let domain = Arc::new(NoticeDomain::new());
-
-    c.bench_function("notice_concurrent_multitenant", |b| {
-        b.iter(|| {
-            // Simulate 10 tenants publishing 10 messages each
-            for rf in 0..10u32 {
-                for i in 0..10 {
-                    let domain: Arc<NoticeDomain> = Arc::clone(&domain);
-                    let body = format!("tenant_{}_message_{}", rf, i).into_bytes();
-                    let payload = build_publish_payload(Some(&format!("msg_{}_{}", rf, i)), &body);
-                    let route = build_route(
-                        &format!("realm{}", rf),
-                        &format!("area{}", rf),
-                        "events",
-                        "update",
-                    );
-
-                    let ctx = DomainContext {
-                        route,
-                        route_str: format!("notice://realm{}/area{}/events/update", rf, rf),
-                        payload,
-                        channel_id: i as u32,
-                        route_family: rf,
-                    };
-
-                    black_box(domain.handle(ctx));
-                }
-            }
-        });
-    });
-}
-
-/// Test route matching complexity with wildcards
+// 3. Wildcard match hotpath (subscriptions created once)
 fn bench_wildcard_matching(c: &mut Criterion) {
     let domain = NoticeDomain::new();
+    let service = domain.get_service();
 
-    c.bench_function("notice_wildcard_matching", |b| {
-        b.iter(|| {
-            // Test various wildcard patterns
-            let patterns = vec![
-                ("realm1", "area1", "resource1", "op1"),
-                ("realm1", "area1", "*", "op1"),
-                ("realm1", "*", "*", "op1"),
-                ("*", "*", "*", "op1"),
-            ];
+    // create wildcard subscribers once
+    {
+        let mut svc = service.write();
+        let _ = svc.subscribe(0, "notice://realm1/area1/*/update".to_string(), 1);
+        let _ = svc.subscribe(0, "notice://realm1/*/events/update".to_string(), 2);
+        let _ = svc.subscribe(0, "notice://*/area1/events/update".to_string(), 3);
+        let _ = svc.subscribe(0, "notice://*/*/events/update".to_string(), 4);
+    }
 
-            for (realm, area, resource, operation) in patterns {
-                let body = b"test_message".to_vec();
-                let payload = build_publish_payload(Some("msg_id"), &body);
-                let route = build_route(realm, area, resource, operation);
-                let route_str = format!("notice://{}/{}/{}/{}", realm, area, resource, operation);
+    let patterns = [
+        ("realm1", "area1", "events", "update"),
+        ("realm1", "area1", "*", "update"),
+        ("realm1", "*", "*", "update"),
+    ];
 
-                let ctx = DomainContext {
-                    route,
-                    route_str,
-                    payload,
-                    channel_id: 1,
-                    route_family: 0,
-                };
+    let mut group = c.benchmark_group("notice_wildcard_matching");
 
-                black_box(domain.handle(ctx));
-            }
-        });
-    });
-}
+    for (r, a, res, op) in patterns {
+        let route = build_route(r, a, res, op);
+        let route_str = route.raw.clone();
+        let payload = build_payload(Some("id"), b"test", false);
 
-/// High frequency publish (stress test)
-fn bench_high_frequency_publish(c: &mut Criterion) {
-    let domain = Arc::new(NoticeDomain::new());
+        let ctx = DomainContext {
+            route,
+            route_str,
+            payload,
+            channel_id: 99,
+            route_family: 0,
+        };
 
-    c.bench_function("notice_high_frequency", |b| {
-        b.iter(|| {
-            // 1000 rapid-fire publishes
-            for i in 0..1000 {
-                let domain: Arc<NoticeDomain> = Arc::clone(&domain);
-                let body = vec![0u8; 128];
-                let payload = build_publish_payload(None, &body);
-                let route = build_route("realm1", "area1", "stream", "data");
-
-                let ctx = DomainContext {
-                    route,
-                    route_str: "notice://realm1/area1/stream/data".to_string(),
-                    payload,
-                    channel_id: (i % 10) as u32,
-                    route_family: 0,
-                };
-
-                black_box(domain.handle(ctx));
-            }
-        });
-    });
-}
-
-/// Engine dispatch path: publish with varying payload sizes (no subscribers)
-fn bench_engine_dispatch_publish(c: &mut Criterion) {
-    // Build a minimal EngineHandle once per group
-    let (tx, _rx) = crossbeam_channel::unbounded();
-    let registry = Arc::new(EngineConnectionRegistry::new());
-    let domains = Arc::new(DomainRegistry::new());
-    let engine = EngineHandle::new(tx, domains, registry);
-
-    let mut group = c.benchmark_group("notice_engine_dispatch_publish");
-    for mode in [AckMode::Ack, AckMode::NoAck] {
-        for &size in &[64usize, 1024, 16_384] {
-            group.throughput(Throughput::Bytes(size as u64));
-            group.bench_with_input(BenchmarkId::new(mode.label(), size), &size, |b, &size| {
-                b.iter(|| {
-                    let body = vec![0u8; size];
-                    let payload = match mode {
-                        AckMode::Ack => build_publish_payload(Some("id"), &body),
-                        AckMode::NoAck => build_publish_payload_no_ack(Some("id"), &body),
-                    };
-                    let route = "notice://realm1/area1/stream/data".to_string();
-                    let _ = black_box(engine.dispatch(route, payload, 1, 0));
-                });
+        group.bench_function(format!("{}/{}/{}/{}", r, a, res, op), |b| {
+            b.iter(|| {
+                black_box(domain.handle(ctx.clone()));
             });
+        });
+    }
+
+    group.finish();
+}
+
+// 4. Fanout: many subscribers (register once)
+fn bench_broadcast_fanout(c: &mut Criterion) {
+    let mut group = c.benchmark_group("notice_broadcast_fanout");
+
+    for &sub_count in &[10, 100, 1000] {
+        let domain = NoticeDomain::new();
+        let service = domain.get_service();
+
+        // register subscribers ONCE
+        {
+            let mut svc = service.write();
+            for ch in 0..sub_count {
+                let _ = svc.subscribe(
+                    0,
+                    "notice://realm1/area1/broadcast/alert".to_string(),
+                    ch as u32,
+                );
+            }
         }
-    }
-    group.finish();
-}
 
-/// (Removed) Separate engine no-ACK variant merged into loop above
+        // publish ctx
+        let body = vec![0u8; 128];
+        let payload = build_payload(Some("id"), &body, false);
+        let route = build_route("realm1", "area1", "broadcast", "alert");
+        let route_str = route.raw.clone();
 
-/// EXTREME: Broadcast fanout - 1 publish delivered to many subscribers
-fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
-    let mut group = c.benchmark_group("notice_extreme_broadcast_fanout");
+        let ctx = DomainContext {
+            route,
+            route_str,
+            payload,
+            channel_id: 9999,
+            route_family: 0,
+        };
 
-    for subscriber_count in [10, 100, 1000] {
         group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{}_subscribers", subscriber_count)),
-            &subscriber_count,
-            |b, &subscriber_count| {
-                b.iter(|| {
-                    let domain = NoticeDomain::new();
-                    let service = domain.get_service();
-
-                    // Actually subscribe many channels to the same route
-                    for channel_id in 0..subscriber_count {
-                        let mut svc = service.write();
-                        let _ = svc.subscribe(
-                            0,
-                            "notice://realm1/area1/broadcast/alert".to_string(),
-                            channel_id as u32,
-                        );
-                    }
-
-                    // Now publish once - should fan out to all subscribers
-                    let body = vec![0u8; 256];
-                    let payload = build_publish_payload(Some("broadcast_msg"), &body);
-                    let route = build_route("realm1", "area1", "broadcast", "alert");
-                    let ctx = DomainContext {
-                        route,
-                        route_str: "notice://realm1/area1/broadcast/alert".to_string(),
-                        payload,
-                        channel_id: 9999,
-                        route_family: 0,
-                    };
-
-                    black_box(domain.handle(ctx));
-                });
+            BenchmarkId::from_parameter(sub_count),
+            &sub_count,
+            |b, _| {
+                b.iter(|| black_box(domain.handle(ctx.clone())));
             },
         );
     }
@@ -342,94 +226,17 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
     group.finish();
 }
 
-/// EXTREME: Subscription churn - rapid subscribe/unsubscribe operations
-fn bench_extreme_subscription_churn(c: &mut Criterion) {
-    let mut group = c.benchmark_group("notice_extreme_subscription_churn");
-
-    for churn_count in [100, 1000] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{}_cycles", churn_count)),
-            &churn_count,
-            |b, &churn_count| {
-                b.iter(|| {
-                    let domain = NoticeDomain::new();
-                    let service = domain.get_service();
-
-                    // Rapidly add and implicitly remove (via domain recreation) subscriptions
-                    for i in 0..churn_count {
-                        let route_str = format!("notice://realm1/area1/resource_{}/update", i % 10);
-                        let mut svc = service.write();
-                        black_box(svc.subscribe(0, route_str, i as u32));
-                    }
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-/// EXTREME: Wildcard explosion - many overlapping wildcard patterns
-fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
-    let mut group = c.benchmark_group("notice_extreme_wildcard_explosion");
-
-    for wildcard_count in [10, 100] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{}_wildcards", wildcard_count)),
-            &wildcard_count,
-            |b, &wildcard_count| {
-                b.iter(|| {
-                    let domain = NoticeDomain::new();
-                    let service = domain.get_service();
-
-                    // Create many overlapping wildcard subscriptions
-                    for i in 0..wildcard_count {
-                        // Mix of wildcard patterns that could all match the same publish
-                        let (area, resource) = match i % 4 {
-                            0 => ("*", "*"),
-                            1 => ("area1", "*"),
-                            2 => ("*", "events"),
-                            _ => ("area1", "events"),
-                        };
-
-                        let route_str = format!("notice://realm1/{}/{}/update", area, resource);
-                        let mut svc = service.write();
-                        let _ = svc.subscribe(0, route_str, i as u32);
-                    }
-
-                    // Publish to a route that matches ALL wildcards
-                    let body = vec![0u8; 128];
-                    let payload = build_publish_payload(Some("wildcard_test"), &body);
-                    let route = build_route("realm1", "area1", "events", "update");
-                    let ctx = DomainContext {
-                        route,
-                        route_str: "notice://realm1/area1/events/update".to_string(),
-                        payload,
-                        channel_id: 9999,
-                        route_family: 0,
-                    };
-
-                    black_box(domain.handle(ctx));
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
+// -----------------------------------------------------------------------------
+// Criterion registration
+// -----------------------------------------------------------------------------
 
 criterion_group!(
     name = hotpath_notice_core;
     config = config::criterion_config();
     targets =
-        bench_sequential_publish_no_subscribers,
+        bench_publish_no_subscribers,
         bench_message_sizes,
-        bench_concurrent_multitenant_publish,
         bench_wildcard_matching,
-        bench_high_frequency_publish,
-        bench_engine_dispatch_publish,
-        bench_extreme_broadcast_fanout,
-        bench_extreme_subscription_churn,
-        bench_extreme_wildcard_explosion
+        bench_broadcast_fanout
 );
 criterion_main!(hotpath_notice_core);

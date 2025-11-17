@@ -5,6 +5,7 @@ use super::types::ControlOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::notice::NoticeService;
 use crate::core::parsing::{response, tlv};
+use crate::protocol::frame::find_tlv;
 use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -66,8 +67,8 @@ impl Default for ControlDomain {
 
 impl Domain for ControlDomain {
     fn handle(&self, request: DomainContext) -> DomainResponse {
-        // Parse body from TLV payload
-        let body = match tlv::parse_bytes(&request.payload, TAG_BODY) {
+        // Parse body from TLV payload (zero-copy borrow)
+        let body = match find_tlv(&request.payload, TAG_BODY) {
             Some(b) => b,
             None => {
                 let error_response = response::error("Missing body in request");
@@ -138,10 +139,10 @@ mod tests {
         crate::protocol::frame::build_tlv(TAG_BODY, b"hello", &mut payload);
 
         // Act
-        let result = tlv::parse_bytes(&payload, TAG_BODY);
+        let result = find_tlv(&payload, TAG_BODY);
 
         // Assert
-        assert_eq!(result, Some(b"hello".to_vec()));
+        assert_eq!(result, Some(b"hello" as &[u8]));
     }
 
     #[test]

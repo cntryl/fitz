@@ -39,11 +39,6 @@ pub mod tlv {
         })
     }
 
-    /// Parse a byte vector from a TLV tag
-    pub fn parse_bytes(payload: &[u8], tag: u8) -> Option<Vec<u8>> {
-        find_tlv(payload, tag).map(|b| b.to_vec())
-    }
-
     /// Parse multiple TLV values in a single pass, returning a result struct
     /// This is more efficient than multiple find_tlv calls for the same payload
     pub fn parse_multi<'a, F, R>(payload: &'a [u8], parser: F) -> R
@@ -194,8 +189,8 @@ mod tests {
         let response = response::success(Some(body));
 
         // Assert
-        let parsed = tlv::parse_bytes(&response, TAG_BODY);
-        assert_eq!(parsed, Some(body.to_vec()));
+        let parsed = find_tlv(&response, TAG_BODY);
+        assert_eq!(parsed, Some(body as &[u8]));
     }
 
     #[test]
