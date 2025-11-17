@@ -266,7 +266,7 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                         payload: req_payload,
                         channel_id: client_channel,
                         route_family: 0,
-                        sender: None,
+
                     };
                     let _ = domain.handle(ctx);
 
@@ -278,7 +278,7 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                         payload: reply_payload,
                         channel_id: 42,
                         route_family: 0,
-                        sender: None,
+
                     };
                     let _ = domain.handle(ctx_reply);
                 }
@@ -326,7 +326,7 @@ fn bench_reply_payload_sizes(c: &mut Criterion) {
                     payload,
                     channel_id: 100,
                     route_family: 0,
-                    sender: None,
+
                 };
                 let _ = domain.handle(ctx_reply);
             });

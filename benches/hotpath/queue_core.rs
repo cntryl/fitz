@@ -100,7 +100,7 @@ fn bench_sequential_enqueue(c: &mut Criterion) {
                             payload,
                             channel_id: 1,
                             route_family: 0,
-                            sender: None,
+
                         };
                         
                         let _response = domain.handle(ctx);
@@ -130,7 +130,7 @@ fn bench_sequential_reserve(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-            sender: None,
+
         };
         domain.handle(ctx);
     }
@@ -152,7 +152,7 @@ fn bench_sequential_reserve(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     let _response = domain.handle(ctx);
@@ -191,7 +191,7 @@ fn bench_concurrent_producer_consumer(c: &mut Criterion) {
                             payload,
                             channel_id: i as u32,
                             route_family: 0,
-                            sender: None,
+
                         };
                         domain.handle(ctx);
                     }
@@ -211,7 +211,7 @@ fn bench_concurrent_producer_consumer(c: &mut Criterion) {
                             payload,
                             channel_id: (100 + i) as u32,
                             route_family: 0,
-                            sender: None,
+
                         };
                         domain.handle(ctx);
                     }
@@ -250,7 +250,7 @@ fn bench_message_sizes(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     let _response = domain.handle(ctx);

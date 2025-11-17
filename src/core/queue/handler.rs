@@ -304,7 +304,7 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0,
-            sender: None,
+
         }
     }
 

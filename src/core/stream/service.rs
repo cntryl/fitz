@@ -12,7 +12,6 @@
 
 use super::encoding::{decode_event, encode_event};
 use super::types::StreamEvent;
-use crate::core::router::Router;
 use crate::routing::RouteFamilyId;
 use crate::storage::markers::{
     stream as stream_prefixes, STREAM_DISCOVERY_MARKER, STREAM_DOMAIN_PREFIX,
@@ -65,7 +64,6 @@ struct ActiveTransaction {
 /// Stream service handles event stream operations with full transaction semantics
 pub struct StreamService {
     kv_store: Arc<dyn KvStore>,
-    subscriptions: Router,
     /// Area stream states with watermark and reservation tracking per (rf, area)
     area_states: Arc<Mutex<HashMap<(RouteFamilyId, String), AreaStreamState>>>,
     /// Active transactions per transaction_id
@@ -78,7 +76,6 @@ impl Debug for StreamService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamService")
             .field("kv_store", &"<dyn KvStore>")
-            .field("subscriptions", &self.subscriptions)
             .field("area_states", &self.area_states)
             .field("active_transactions", &self.active_transactions)
             .field("next_txn_id", &self.next_txn_id)
@@ -91,7 +88,6 @@ impl StreamService {
     pub fn new(kv_store: Arc<dyn KvStore>) -> Self {
         Self {
             kv_store,
-            subscriptions: Router::new(),
             area_states: Arc::new(Mutex::new(HashMap::new())),
             active_transactions: Arc::new(Mutex::new(HashMap::new())),
             next_txn_id: Arc::new(Mutex::new(1)),
@@ -516,28 +512,9 @@ impl StreamService {
         }
     }
 
-    /// Subscribe to stream notifications for a route pattern
-    /// Returns subscription ID for later unsubscribe
-    pub fn subscribe(
-        &mut self,
-        _rf: RouteFamilyId,
-        route_pattern: String,
-        channel_id: u32,
-        sender: crate::core::domain::SubSender,
-    ) -> u64 {
-        self.subscriptions
-            .subscribe(route_pattern, channel_id, sender)
-    }
-
-    /// Unsubscribe from stream notifications
-    /// Returns true if subscription was found and removed
-    pub fn unsubscribe(&mut self, subscription_id: u64) -> bool {
-        self.subscriptions.unsubscribe(subscription_id)
-    }
-
-    /// Cleanup all subscriptions for a channel
-    pub fn cleanup_channel(&mut self, _rf: RouteFamilyId, channel_id: u32) {
-        self.subscriptions.cleanup_channel(channel_id);
+    /// Cleanup all subscriptions for a channel (no-op, stream subscriptions not implemented)
+    pub fn cleanup_channel(&mut self, _rf: RouteFamilyId, _channel_id: u32) {
+        // No-op: stream subscriptions are not currently implemented
     }
 }
 

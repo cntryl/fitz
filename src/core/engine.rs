@@ -87,7 +87,7 @@ impl EngineHandle {
             payload,
             channel_id,
             route_family,
-            sender: None,
+
         };
 
         // Domain dispatch (synchronous)
@@ -236,7 +236,7 @@ impl Engine {
             payload,
             channel_id,
             route_family,
-            sender: None,
+
         };
 
         // Domain dispatch (synchronous)

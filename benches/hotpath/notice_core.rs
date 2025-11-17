@@ -80,7 +80,7 @@ fn bench_sequential_publish_no_subscribers(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     black_box(domain.handle(ctx));
@@ -112,7 +112,7 @@ fn bench_message_sizes(c: &mut Criterion) {
                     payload,
                     channel_id: 1,
                     route_family: 0,
-                    sender: None,
+
                 };
                 
                 black_box(domain.handle(ctx));
@@ -148,7 +148,7 @@ fn bench_concurrent_multitenant_publish(c: &mut Criterion) {
                         payload,
                         channel_id: i as u32,
                         route_family: rf,
-                        sender: None,
+
                     };
                     
                     black_box(domain.handle(ctx));
@@ -184,7 +184,7 @@ fn bench_wildcard_matching(c: &mut Criterion) {
                     payload,
                     channel_id: 1,
                     route_family: 0,
-                    sender: None,
+
                 };
                 
                 black_box(domain.handle(ctx));
@@ -212,7 +212,7 @@ fn bench_high_frequency_publish(c: &mut Criterion) {
                     payload,
                     channel_id: (i % 10) as u32,
                     route_family: 0,
-                    sender: None,
+
                 };
                 
                 black_box(domain.handle(ctx));
@@ -238,7 +238,7 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
                     // Subscribe many channels to the same route
                     let sub_payload = build_subscribe_payload();
                     for channel_id in 0..subscriber_count {
-                        let (tx, _rx) = crossbeam_channel::bounded(100);
+
                         let route = build_route("realm1", "area1", "broadcast", "alert");
                         let ctx = DomainContext {
                             route,
@@ -246,7 +246,7 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
                             payload: sub_payload.clone(),
                             channel_id: channel_id as u32,
                             route_family: 0,
-                            sender: Some(tx),
+
                         };
                         let _ = domain.handle(ctx);
                     }
@@ -261,7 +261,7 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
                         payload,
                         channel_id: 9999,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     black_box(domain.handle(ctx));
@@ -290,7 +290,7 @@ fn bench_extreme_subscription_churn(c: &mut Criterion) {
                     
                     // Rapidly add and implicitly remove (via domain recreation) subscriptions
                     for i in 0..churn_count {
-                        let (tx, _rx) = crossbeam_channel::bounded(100);
+
                         let route = build_route(
                             "realm1",
                             "area1",
@@ -307,7 +307,7 @@ fn bench_extreme_subscription_churn(c: &mut Criterion) {
                             payload: sub_payload.clone(),
                             channel_id: i as u32,
                             route_family: 0,
-                            sender: Some(tx),
+
                         };
                         black_box(domain.handle(ctx));
                     }
@@ -336,7 +336,7 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
                     
                     // Create many overlapping wildcard subscriptions
                     for i in 0..wildcard_count {
-                        let (tx, _rx) = crossbeam_channel::bounded(100);
+
                         
                         // Mix of wildcard patterns that could all match the same publish
                         let (area, resource) = match i % 4 {
@@ -354,7 +354,7 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
                             payload: sub_payload.clone(),
                             channel_id: i as u32,
                             route_family: 0,
-                            sender: Some(tx),
+
                         };
                         let _ = domain.handle(ctx);
                     }
@@ -369,7 +369,7 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
                         payload,
                         channel_id: 9999,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     black_box(domain.handle(ctx));

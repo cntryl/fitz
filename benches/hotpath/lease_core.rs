@@ -174,7 +174,7 @@ fn bench_sequential_lease_cycles(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     let _response = domain.handle(ctx);
                     
@@ -210,7 +210,7 @@ fn bench_concurrent_lease_contention(c: &mut Criterion) {
                             payload,
                             channel_id: i as u32,
                             route_family: 0,
-                            sender: None,
+
                         };
                         domain.handle(ctx)
                     })
@@ -247,7 +247,7 @@ fn bench_multitenant_leases(c: &mut Criterion) {
                                 payload,
                                 channel_id: tenant_id as u32,
                                 route_family: tenant_id as u32, // Different route families
-                                sender: None,
+
                             };
                             domain.handle(ctx);
                         }
@@ -284,7 +284,7 @@ fn bench_extreme_contention(c: &mut Criterion) {
                             payload,
                             channel_id: i as u32,
                             route_family: 0,
-                            sender: None,
+
                         };
                         domain.handle(ctx)
                     })
@@ -324,7 +324,7 @@ fn bench_high_scale_multitenant(c: &mut Criterion) {
                                 payload,
                                 channel_id: tenant_id as u32,
                                 route_family: tenant_id as u32,
-                                sender: None,
+
                             };
                             domain.handle(ctx);
                         }
@@ -364,7 +364,7 @@ fn bench_rapid_churn(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     let _ = domain.handle(ctx);
                     

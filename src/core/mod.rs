@@ -3,8 +3,6 @@ pub mod engine;
 pub mod parsing;
 pub mod registry;
 
-pub mod router;
-
 pub mod rpc;
 
 pub mod notice;

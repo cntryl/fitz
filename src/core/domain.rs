@@ -3,18 +3,6 @@
 
 use crate::protocol::route::Route;
 use crate::routing::RouteFamilyId;
-use crossbeam_channel;
-
-/// Type alias for subscriber channels (used by domains that support pub/sub)
-/// Uses crossbeam-channel for better performance in sync domains
-pub type SubSender = crossbeam_channel::Sender<(
-    String,
-    Option<String>,
-    Vec<u8>,
-    Option<String>,
-    Option<u32>,
-    bool,
-)>;
 
 /// Complete context for a domain operation
 /// Encapsulates all information needed to handle a request or manage resources
@@ -30,8 +18,6 @@ pub struct DomainContext {
     pub channel_id: u32,
     /// Storage route family (for namespacing/multi-tenant operations)
     pub route_family: RouteFamilyId,
-    /// Optional sender for domains that support subscriptions
-    pub sender: Option<SubSender>,
 }
 
 /// Response from domain operation
@@ -74,22 +60,4 @@ pub trait Domain: Send + Sync + std::fmt::Debug {
     /// Called when a channel closes or session ends
     /// Default implementation does nothing
     fn cleanup_channel(&self, _route_family: RouteFamilyId, _channel_id: u32) {}
-
-    /// Subscribe to notifications for a route pattern (SYNCHRONOUS)
-    /// Default implementation returns error (not supported)
-    fn subscribe(
-        &self,
-        _route_family: RouteFamilyId,
-        _route_pattern: String,
-        _channel_id: u32,
-        _sender: SubSender,
-    ) -> Result<u64, String> {
-        Err("subscribe not supported".to_string())
-    }
-
-    /// Unsubscribe from notifications (SYNCHRONOUS)
-    /// Default implementation returns error (not supported)
-    fn unsubscribe(&self, _subscription_id: u64) -> Result<bool, String> {
-        Err("unsubscribe not supported".to_string())
-    }
 }

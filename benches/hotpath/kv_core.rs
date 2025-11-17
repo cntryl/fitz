@@ -83,7 +83,7 @@ fn bench_sequential_put(c: &mut Criterion) {
                             payload,
                             channel_id: 1,
                             route_family: 0,
-                            sender: None,
+
                         };
                         
                         black_box(domain.handle(ctx));
@@ -114,7 +114,7 @@ fn bench_sequential_get(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-            sender: None,
+
         };
         domain.handle(ctx);
     }
@@ -136,7 +136,7 @@ fn bench_sequential_get(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     black_box(domain.handle(ctx));
@@ -165,7 +165,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-            sender: None,
+
         };
         domain.handle(ctx);
     }
@@ -187,7 +187,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
                         payload,
                         channel_id: (i % 10) as u32,
                         route_family: 0,
-                        sender: None,
+
                     };
                     black_box(domain.handle(ctx));
                 } else {
@@ -201,7 +201,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
                         payload,
                         channel_id: (i % 10) as u32,
                         route_family: 0,
-                        sender: None,
+
                     };
                     black_box(domain.handle(ctx));
                 }
@@ -234,7 +234,7 @@ fn bench_payload_sizes(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     
                     black_box(domain.handle(ctx));

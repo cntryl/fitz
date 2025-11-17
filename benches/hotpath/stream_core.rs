@@ -126,7 +126,7 @@ fn bench_sequential_append(c: &mut Criterion) {
                             payload,
                             channel_id: 1,
                             route_family: 0,
-                            sender: None,
+
                         };
                         
                         let _response = domain.handle(ctx);
@@ -163,7 +163,7 @@ fn bench_concurrent_writers(c: &mut Criterion) {
                                 payload,
                                 channel_id: i as u32,
                                 route_family: 0,
-                                sender: None,
+
                             };
                             domain.handle(ctx);
                         }
@@ -205,7 +205,7 @@ fn bench_event_sizes(c: &mut Criterion) {
                         payload,
                         channel_id: 1,
                         route_family: 0,
-                        sender: None,
+
                     };
                     let _response = domain.handle(ctx);
                 },
@@ -240,7 +240,7 @@ fn bench_multitenant_append(c: &mut Criterion) {
                                 payload,
                                 channel_id: tenant_id as u32,
                                 route_family: tenant_id as u32,
-                                sender: None,
+
                             };
                             domain.handle(ctx);
                         }
@@ -272,7 +272,7 @@ fn bench_sequential_read(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-            sender: None,
+
         };
         let _ = domain.handle(ctx);
     }
@@ -291,7 +291,7 @@ fn bench_sequential_read(c: &mut Criterion) {
                     payload,
                     channel_id: 2,
                     route_family: 0,
-                    sender: None,
+
                 };
                 let _ = domain.handle(ctx);
             });
@@ -315,7 +315,7 @@ fn bench_range_read(c: &mut Criterion) {
             payload,
             channel_id: 1,
             route_family: 0,
-            sender: None,
+
         };
         let _ = domain.handle(ctx);
     }
@@ -332,7 +332,7 @@ fn bench_range_read(c: &mut Criterion) {
                     payload,
                     channel_id: 3,
                     route_family: 0,
-                    sender: None,
+
                 };
                 let _ = domain.handle(ctx);
             });

@@ -180,7 +180,7 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // tests use default route family
-            sender: None,
+
         };
 
         // Act
@@ -218,7 +218,7 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // tests use default route family
-            sender: None,
+
         };
 
         // Act
@@ -252,7 +252,7 @@ mod tests {
             payload,
             channel_id: 1,
             route_family: 0, // tests use default route family
-            sender: None,
+
         };
 
         // Act

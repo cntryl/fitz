@@ -38,26 +38,6 @@ impl StreamDomain {
         Arc::clone(&self.service)
     }
 
-    /// Subscribe to availability notifications for a route pattern
-    /// Returns subscription ID for later unsubscribe
-    pub fn subscribe(
-        &self,
-        rf: crate::routing::RouteFamilyId,
-        route_pattern: String,
-        channel_id: u32,
-        sender: crate::core::domain::SubSender,
-    ) -> Result<u64, String> {
-        let mut service = self.service.write();
-        Ok(service.subscribe(rf, route_pattern, channel_id, sender))
-    }
-
-    /// Unsubscribe from availability notifications
-    /// Returns true if subscription was found and removed
-    pub fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
-        let mut service = self.service.write();
-        Ok(service.unsubscribe(subscription_id))
-    }
-
     /// Parse TLV payload to extract stream operation parameters
     /// Note: For append operations the server will assign `resource_seq` and `created_at`.
     /// Clients may still include TAG_SEQ for read/seek purposes; TAG_SEQ in append

@@ -1,6 +1,6 @@
 // New DomainRegistry pattern - cleaner orchestration
 
-use crate::core::domain::{Domain, DomainContext, DomainResponse, SubSender};
+use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use std::sync::Arc;
 
 /// A registry that knows how to route to domains without HashMap lookups
@@ -50,24 +50,6 @@ impl DomainRegistry {
         self.control.cleanup_channel(rf, channel_id);
         self.stream.cleanup_channel(rf, channel_id);
         self.kv.cleanup_channel(rf, channel_id);
-    }
-
-    /// Subscribe to notifications for a route pattern
-    /// Returns subscription ID for later unsubscribe
-    pub fn subscribe(
-        &self,
-        rf: crate::routing::RouteFamilyId,
-        route_pattern: String,
-        channel_id: u32,
-        sender: SubSender,
-    ) -> Result<u64, String> {
-        self.stream.subscribe(rf, route_pattern, channel_id, sender)
-    }
-
-    /// Unsubscribe from notifications
-    /// Returns true if subscription was found and removed
-    pub fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
-        self.stream.unsubscribe(subscription_id)
     }
 
     /// Create a new registry with all domains initialized
