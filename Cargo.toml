@@ -59,25 +59,21 @@ criterion = { version = "0.4", features = ["async_futures"] }
 serial_test = "0.5"
 
 
+# Domain benchmarks (full handler->service layer)
 [[bench]]
-name = "hotpath_lease_core"
+name = "hotpath_control_core"
 harness = false
-path = "benches/hotpath/lease_core.rs"
-
-[[bench]]
-name = "hotpath_route_core"
-harness = false
-path = "benches/hotpath/route_core.rs"
-
-[[bench]]
-name = "hotpath_tlv_core"
-harness = false
-path = "benches/hotpath/tlv_core.rs"
+path = "benches/hotpath/control_core.rs"
 
 [[bench]]
 name = "hotpath_kv_core"
 harness = false
 path = "benches/hotpath/kv_core.rs"
+
+[[bench]]
+name = "hotpath_lease_core"
+harness = false
+path = "benches/hotpath/lease_core.rs"
 
 [[bench]]
 name = "hotpath_notice_core"
@@ -90,19 +86,25 @@ harness = false
 path = "benches/hotpath/queue_core.rs"
 
 [[bench]]
-name = "hotpath_stream_core"
-harness = false
-path = "benches/hotpath/stream_core.rs"
-
-[[bench]]
 name = "hotpath_rpc_core"
 harness = false
 path = "benches/hotpath/rpc_core.rs"
 
 [[bench]]
+name = "hotpath_stream_core"
+harness = false
+path = "benches/hotpath/stream_core.rs"
+
+# Infrastructure benchmarks
+[[bench]]
 name = "hotpath_permissions"
 harness = false
 path = "benches/hotpath/permissions.rs"
+
+[[bench]]
+name = "hotpath_route_core"
+harness = false
+path = "benches/hotpath/route_core.rs"
 
 [[bench]]
 name = "hotpath_route_table"
@@ -110,6 +112,6 @@ harness = false
 path = "benches/hotpath/route_table.rs"
 
 [[bench]]
-name = "hotpath_control_core"
+name = "hotpath_tlv_core"
 harness = false
-path = "benches/hotpath/control_core.rs"
+path = "benches/hotpath/tlv_core.rs"
