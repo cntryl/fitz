@@ -2,8 +2,6 @@ use fxhash::FxHashMap;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
-use crate::core::domain::SubSender;
-
 /// Route Family identifier (tenant / shard / CF boundary)
 pub type RouteFamilyId = u32;
 
@@ -21,13 +19,13 @@ const MAX_SEGMENTS: usize = 8;
 /// Type alias for subscriber slabs
 type SubSlab = Arc<[RtSubscription]>;
 
-/// Basic subscription entry
+/// Basic subscription entry - pure metadata, no I/O primitives
+/// Transport layer maintains the mapping from channel_id -> actual channel
 #[derive(Debug, Clone)]
 pub struct RtSubscription {
     pub id: u64,
     pub route_pattern: String,
     pub channel_id: u32,
-    pub sender: SubSender,
 }
 
 /// One node in the route trie:
@@ -490,17 +488,16 @@ fn route_matches(_rf: RouteFamilyId, pattern: &str, route: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
 
-    #[tokio::test]
-    async fn should_insert_and_match() {
+    #[test]
+    fn should_insert_and_match() {
         let mut rt = RouteTable::new();
-        let (tx, _rx) = mpsc::channel(10);
+
         let sub = RtSubscription {
             id: 1,
             route_pattern: "a/b/*".to_string(),
             channel_id: 1,
-            sender: tx,
+
         };
 
         rt.insert(DEFAULT_RF, sub);
@@ -508,11 +505,11 @@ mod tests {
         assert_eq!(matches.len(), 1);
     }
 
-    #[tokio::test]
-    async fn should_remove_and_cleanup() {
+    #[test]
+    fn should_remove_and_cleanup() {
         let mut rt = RouteTable::new();
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
+
+
 
         rt.insert(
             DEFAULT_RF,
@@ -520,7 +517,7 @@ mod tests {
                 id: 1,
                 route_pattern: "r1".to_string(),
                 channel_id: 1,
-                sender: tx1,
+
             },
         );
         rt.insert(
@@ -529,7 +526,7 @@ mod tests {
                 id: 2,
                 route_pattern: "r2".to_string(),
                 channel_id: 2,
-                sender: tx2,
+
             },
         );
 
@@ -1090,28 +1087,28 @@ mod tests {
     // MULTI-COLUMN FAMILY TESTS - Verify CF Isolation
     // ========================================================================
 
-    #[tokio::test]
-    async fn should_isolate_subscriptions_between_cfs() {
+    #[test]
+    fn should_isolate_subscriptions_between_cfs() {
         // Arrange
         let mut rt = RouteTable::new();
         const CF_TENANT_A: u32 = 1;
         const CF_TENANT_B: u32 = 2;
 
-        let (tx_a, _rx_a) = mpsc::channel(10);
-        let (tx_b, _rx_b) = mpsc::channel(10);
+
+
 
         let sub_a = RtSubscription {
             id: 1,
             route_pattern: "app/alerts/*".to_string(),
             channel_id: 10,
-            sender: tx_a,
+
         };
 
         let sub_b = RtSubscription {
             id: 2,
             route_pattern: "app/alerts/*".to_string(),
             channel_id: 20,
-            sender: tx_b,
+
         };
 
         // Act: Insert same pattern into different CFs
@@ -1132,15 +1129,15 @@ mod tests {
         assert_eq!(matches_b[0].id, 2, "CF B match should have id=2");
     }
 
-    #[tokio::test]
-    async fn should_not_return_other_cf_subscriptions() {
+    #[test]
+    fn should_not_return_other_cf_subscriptions() {
         // Arrange
         let mut rt = RouteTable::new();
         const CF_PROD: u32 = 1;
         const CF_DEV: u32 = 2;
 
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
+
+
 
         // Insert pattern into PROD CF
         rt.insert(
@@ -1149,7 +1146,7 @@ mod tests {
                 id: 100,
                 route_pattern: "system/alerts/*".to_string(),
                 channel_id: 1,
-                sender: tx1,
+
             },
         );
 
@@ -1160,7 +1157,7 @@ mod tests {
                 id: 101,
                 route_pattern: "system/alerts/*".to_string(),
                 channel_id: 2,
-                sender: tx2,
+
             },
         );
 
@@ -1178,17 +1175,17 @@ mod tests {
         assert_eq!(matches_prod[0].channel_id, 1);
     }
 
-    #[tokio::test]
-    async fn should_maintain_separate_tries_per_cf() {
+    #[test]
+    fn should_maintain_separate_tries_per_cf() {
         // Arrange
         let mut rt = RouteTable::new();
         const CF_1: u32 = 1;
         const CF_2: u32 = 2;
         const CF_3: u32 = 3;
 
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
-        let (tx3, _rx3) = mpsc::channel(10);
+
+
+
 
         // Insert hierarchical patterns into each CF
         rt.insert(
@@ -1197,7 +1194,7 @@ mod tests {
                 id: 1,
                 route_pattern: "realm1/area/*".to_string(),
                 channel_id: 10,
-                sender: tx1,
+
             },
         );
 
@@ -1207,7 +1204,7 @@ mod tests {
                 id: 2,
                 route_pattern: "realm2/area/*".to_string(),
                 channel_id: 20,
-                sender: tx2,
+
             },
         );
 
@@ -1217,7 +1214,7 @@ mod tests {
                 id: 3,
                 route_pattern: "realm1/area/*".to_string(),
                 channel_id: 30,
-                sender: tx3,
+
             },
         );
 
@@ -1249,15 +1246,15 @@ mod tests {
         assert_eq!(cf1_realm2.len(), 0);
     }
 
-    #[tokio::test]
-    async fn should_support_multiple_subscriptions_per_cf() {
+    #[test]
+    fn should_support_multiple_subscriptions_per_cf() {
         // Arrange
         let mut rt = RouteTable::new();
         const CF_MULTI: u32 = 5;
 
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
-        let (tx3, _rx3) = mpsc::channel(10);
+
+
+
 
         // Insert multiple patterns into the same CF
         rt.insert(
@@ -1266,7 +1263,7 @@ mod tests {
                 id: 1,
                 route_pattern: "app/*".to_string(),
                 channel_id: 100,
-                sender: tx1,
+
             },
         );
 
@@ -1276,7 +1273,7 @@ mod tests {
                 id: 2,
                 route_pattern: "app/alerts/*".to_string(),
                 channel_id: 101,
-                sender: tx2,
+
             },
         );
 
@@ -1286,7 +1283,7 @@ mod tests {
                 id: 3,
                 route_pattern: "app/alerts/critical".to_string(),
                 channel_id: 102,
-                sender: tx3,
+
             },
         );
 
@@ -1314,21 +1311,21 @@ mod tests {
         const CF_A: u32 = 10;
         const CF_B: u32 = 20;
 
-        let (tx_a, _rx_a) = mpsc::channel(10);
-        let (tx_b, _rx_b) = mpsc::channel(10);
+
+
 
         let sub_a = RtSubscription {
             id: 1,
             route_pattern: "service/*".to_string(),
             channel_id: 1,
-            sender: tx_a,
+
         };
 
         let sub_b = RtSubscription {
             id: 2,
             route_pattern: "service/*".to_string(),
             channel_id: 2,
-            sender: tx_b,
+
         };
 
         rt.insert(CF_A, sub_a);
@@ -1359,10 +1356,10 @@ mod tests {
         const CF_SECONDARY: u32 = 200;
         const CHANNEL_ID: u32 = 5;
 
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
-        let (tx3, _rx3) = mpsc::channel(10);
-        let (tx4, _rx4) = mpsc::channel(10);
+
+
+
+
 
         // Insert subscriptions from CHANNEL_ID into both CFs
         rt.insert(
@@ -1371,7 +1368,7 @@ mod tests {
                 id: 1,
                 route_pattern: "r1".to_string(),
                 channel_id: CHANNEL_ID,
-                sender: tx1,
+
             },
         );
 
@@ -1381,7 +1378,7 @@ mod tests {
                 id: 2,
                 route_pattern: "r2".to_string(),
                 channel_id: CHANNEL_ID,
-                sender: tx2,
+
             },
         );
 
@@ -1392,7 +1389,7 @@ mod tests {
                 id: 3,
                 route_pattern: "r3".to_string(),
                 channel_id: CHANNEL_ID,
-                sender: tx3,
+
             },
         );
 
@@ -1402,7 +1399,7 @@ mod tests {
                 id: 4,
                 route_pattern: "r4".to_string(),
                 channel_id: 999, // Different channel
-                sender: tx4,
+
             },
         );
 
@@ -1434,7 +1431,7 @@ mod tests {
         const CF_EXISTS: u32 = 1;
         const CF_MISSING: u32 = 999;
 
-        let (tx, _rx) = mpsc::channel(10);
+
 
         rt.insert(
             CF_EXISTS,
@@ -1442,7 +1439,7 @@ mod tests {
                 id: 1,
                 route_pattern: "test/route".to_string(),
                 channel_id: 1,
-                sender: tx,
+
             },
         );
 
@@ -1460,8 +1457,8 @@ mod tests {
         const CF_GLOBAL_ENABLED: u32 = 1;
         const CF_NO_GLOBAL: u32 = 2;
 
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
+
+
 
         // CF_GLOBAL_ENABLED has a global wildcard subscription
         rt.insert(
@@ -1470,7 +1467,7 @@ mod tests {
                 id: 1,
                 route_pattern: "*".to_string(),
                 channel_id: 1,
-                sender: tx1,
+
             },
         );
 
@@ -1481,7 +1478,7 @@ mod tests {
                 id: 2,
                 route_pattern: "specific/route".to_string(),
                 channel_id: 2,
-                sender: tx2,
+
             },
         );
 
@@ -1507,11 +1504,11 @@ mod tests {
         const CF_TENANT_ACME: u32 = 1;
         const CF_TENANT_WIDGETS: u32 = 2;
 
-        let (tx1, _rx1) = mpsc::channel(10);
-        let (tx2, _rx2) = mpsc::channel(10);
-        let (tx3, _rx3) = mpsc::channel(10);
-        let (tx4, _rx4) = mpsc::channel(10);
-        let (tx5, _rx5) = mpsc::channel(10);
+
+
+
+
+
 
         // ACME tenant subscriptions
         rt.insert(
@@ -1520,7 +1517,7 @@ mod tests {
                 id: 1,
                 route_pattern: "acme/*".to_string(),
                 channel_id: 100,
-                sender: tx1,
+
             },
         );
 
@@ -1530,7 +1527,7 @@ mod tests {
                 id: 2,
                 route_pattern: "acme/prod/*".to_string(),
                 channel_id: 101,
-                sender: tx2,
+
             },
         );
 
@@ -1541,7 +1538,7 @@ mod tests {
                 id: 3,
                 route_pattern: "widgets/*".to_string(),
                 channel_id: 200,
-                sender: tx3,
+
             },
         );
 
@@ -1551,7 +1548,7 @@ mod tests {
                 id: 4,
                 route_pattern: "widgets/alerts/*".to_string(),
                 channel_id: 201,
-                sender: tx4,
+
             },
         );
 
@@ -1562,7 +1559,7 @@ mod tests {
                 id: 5,
                 route_pattern: "*".to_string(),
                 channel_id: 102,
-                sender: tx5,
+
             },
         );
 

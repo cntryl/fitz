@@ -233,9 +233,9 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                         0,
                         "rpc://realm1/area1/handler".to_string(),
                         42,
-                        handler_tx,
                     );
                 }
+                let _ = handler_tx; // Suppress unused warning
 
                 // Allocate inbox for client and subscribe to it
                 let client_channel = 7u32;
@@ -251,7 +251,8 @@ fn bench_sequential_request_reply(c: &mut Criterion) {
                         Option<u32>,
                         bool,
                     )>(1_024);
-                    let _ = svc.subscribe_inbox(0, route.clone(), client_channel, client_tx);
+                    let _ = svc.subscribe_inbox(0, route.clone(), client_channel);
+                    let _ = client_tx; // Suppress unused warning
                     route
                 };
 
@@ -310,7 +311,8 @@ fn bench_reply_payload_sizes(c: &mut Criterion) {
                 let inbox_route = {
                     let mut svc = service.write();
                     let route = svc.allocate_inbox(client_channel);
-                    let _ = svc.subscribe_inbox(0, route.clone(), client_channel, client_tx);
+                    let _ = svc.subscribe_inbox(0, route.clone(), client_channel);
+                    let _ = client_tx; // Suppress unused warning
                     // Also register an active request so replies are authorized
                     svc.register_request("corr-size".to_string(), "rpc://realm1/area1/handler".to_string(), route.clone());
                     route

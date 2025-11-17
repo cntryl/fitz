@@ -223,7 +223,7 @@ fn bench_high_frequency_publish(c: &mut Criterion) {
 
 /// EXTREME: Broadcast fanout - 1 publish delivered to many subscribers
 fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
-    use tokio::sync::mpsc;
+    use crossbeam_channel;
     
     let mut group = c.benchmark_group("notice_extreme_broadcast_fanout");
     
@@ -238,7 +238,7 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
                     // Subscribe many channels to the same route
                     let sub_payload = build_subscribe_payload();
                     for channel_id in 0..subscriber_count {
-                        let (tx, _rx) = mpsc::channel(100);
+                        let (tx, _rx) = crossbeam_channel::bounded(100);
                         let route = build_route("realm1", "area1", "broadcast", "alert");
                         let ctx = DomainContext {
                             route,
@@ -275,7 +275,7 @@ fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
 
 /// EXTREME: Subscription churn - rapid subscribe/unsubscribe operations
 fn bench_extreme_subscription_churn(c: &mut Criterion) {
-    use tokio::sync::mpsc;
+    use crossbeam_channel;
     
     let mut group = c.benchmark_group("notice_extreme_subscription_churn");
     
@@ -290,7 +290,7 @@ fn bench_extreme_subscription_churn(c: &mut Criterion) {
                     
                     // Rapidly add and implicitly remove (via domain recreation) subscriptions
                     for i in 0..churn_count {
-                        let (tx, _rx) = mpsc::channel(100);
+                        let (tx, _rx) = crossbeam_channel::bounded(100);
                         let route = build_route(
                             "realm1",
                             "area1",
@@ -321,7 +321,7 @@ fn bench_extreme_subscription_churn(c: &mut Criterion) {
 
 /// EXTREME: Wildcard explosion - many overlapping wildcard patterns
 fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
-    use std::sync::mpsc;
+    use crossbeam_channel;
     
     let mut group = c.benchmark_group("notice_extreme_wildcard_explosion");
     
@@ -336,7 +336,7 @@ fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
                     
                     // Create many overlapping wildcard subscriptions
                     for i in 0..wildcard_count {
-                        let (tx, _rx) = mpsc::channel();
+                        let (tx, _rx) = crossbeam_channel::bounded(100);
                         
                         // Mix of wildcard patterns that could all match the same publish
                         let (area, resource) = match i % 4 {

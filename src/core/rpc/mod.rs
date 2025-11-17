@@ -7,5 +7,5 @@ mod types;
 
 // Re-export public API
 pub use handler::RpcDomain;
-pub use service::RpcService;
+pub use service::{RpcDeliveryResult, RpcMessage, RpcService};
 pub use types::*;

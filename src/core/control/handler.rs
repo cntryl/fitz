@@ -96,7 +96,7 @@ impl Domain for ControlDomain {
                     tlv::parse_string(&request.payload, TAG_ID).map(|s| s.to_string());
                 let msg_id = msg_id_string.as_deref();
 
-                let mut notice_service = self.notice_service.write();
+                let notice_service = self.notice_service.read();
                 let _ = notice_service.publish(
                     request.route_family,
                     &request.route_str,

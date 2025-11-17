@@ -24,12 +24,10 @@ fn bench_route_table_match_exact(c: &mut Criterion) {
     let mut table = RouteTable::new();
     let rf = DEFAULT_RF;
     for (idx, route) in test_routes().iter().enumerate() {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let sub = fitz::routing::RtSubscription {
             id: idx as u64 + 1,
             route_pattern: route.clone(),
             channel_id: 1,
-            sender: tx,
         };
         table.insert(rf, sub);
     }

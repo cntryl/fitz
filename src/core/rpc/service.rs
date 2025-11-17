@@ -1,8 +1,43 @@
 //! RPC domain service - handles request/reply coordination and inbox management
 
-use crate::core::domain::SubSender;
 use crate::routing::{RouteFamilyId, RouteTable, RtSubscription};
 use fxhash::FxHashMap;
+
+/// RPC message to be delivered to a channel
+#[derive(Debug, Clone)]
+pub struct RpcMessage {
+    pub route: String,
+    pub correlation_id: Option<String>,
+    pub body: Vec<u8>,
+    pub reply_route: Option<String>,
+    pub seq: Option<u32>,
+    pub is_stream_end: bool,
+}
+
+/// Result of routing an RPC request/reply - pure routing data, no I/O
+#[derive(Debug)]
+pub struct RpcDeliveryResult {
+    /// Matched target with channel_id and message payload
+    pub target: Option<(u32, RpcMessage)>,
+    /// Error message if routing failed
+    pub error: Option<String>,
+}
+
+impl RpcDeliveryResult {
+    pub fn success(channel_id: u32, message: RpcMessage) -> Self {
+        Self {
+            target: Some((channel_id, message)),
+            error: None,
+        }
+    }
+
+    pub fn error(msg: String) -> Self {
+        Self {
+            target: None,
+            error: Some(msg),
+        }
+    }
+}
 
 /// Inbox ownership and security context
 #[derive(Debug, Clone)]
@@ -82,7 +117,6 @@ impl RpcService {
         rf: RouteFamilyId,
         route_pattern: String,
         channel_id: u32,
-        sender: SubSender,
     ) -> u64 {
         let id = self.next_sub_id;
         self.next_sub_id = self.next_sub_id.wrapping_add(1);
@@ -91,7 +125,6 @@ impl RpcService {
             id,
             route_pattern,
             channel_id,
-            sender,
         };
 
         self.handler_routes.insert(rf, sub);
@@ -105,7 +138,6 @@ impl RpcService {
         rf: RouteFamilyId,
         inbox_route: String,
         channel_id: u32,
-        sender: SubSender,
     ) -> Result<u64, String> {
         // Check if inbox exists and caller is owner
         match self.inboxes.get_mut(&inbox_route) {
@@ -117,7 +149,6 @@ impl RpcService {
                     id,
                     route_pattern: inbox_route, // Move instead of clone
                     channel_id,
-                    sender,
                 };
 
                 self.inbox_routes.insert(rf, sub);
@@ -200,6 +231,79 @@ impl RpcService {
             .unwrap_or(false)
     }
 
+    /// Route an RPC request to a handler (pure routing, no I/O)
+    /// Returns channel_id and message to deliver, or error
+    pub fn route_request(
+        &self,
+        rf: RouteFamilyId,
+        route: &str,
+        correlation_id: Option<&str>,
+        reply_route: Option<&str>,
+        body: &[u8],
+    ) -> RpcDeliveryResult {
+        // Find matching handlers
+        let handlers = self.matching_handlers(rf, route);
+
+        if handlers.is_empty() {
+            return RpcDeliveryResult::error("No handlers available".to_string());
+        }
+
+        // Use first available handler (simple dispatch)
+        let handler = &handlers[0];
+
+        let message = RpcMessage {
+            route: route.to_string(),
+            correlation_id: correlation_id.map(|s| s.to_string()),
+            body: body.to_vec(),
+            reply_route: reply_route.map(|s| s.to_string()),
+            seq: None,
+            is_stream_end: false,
+        };
+
+        RpcDeliveryResult::success(handler.channel_id, message)
+    }
+
+    /// Route an RPC reply to an inbox (pure routing, no I/O)
+    /// Returns channel_id and message to deliver, or error
+    pub fn route_reply(
+        &self,
+        rf: RouteFamilyId,
+        inbox_route: &str,
+        correlation_id: Option<&str>,
+        body: &[u8],
+        seq: Option<u64>,
+        is_stream_end: bool,
+    ) -> RpcDeliveryResult {
+        // Authorization: check if correlation_id allows publishing to this inbox
+        let Some(corr_id) = correlation_id else {
+            return RpcDeliveryResult::error("Missing correlation ID for reply".to_string());
+        };
+
+        if !self.can_publish_to_inbox(inbox_route, corr_id) {
+            return RpcDeliveryResult::error("Unauthorized inbox access".to_string());
+        }
+
+        // Find inbox subscriber
+        let subscribers = self.matching_inbox_subscribers(rf, inbox_route);
+
+        if subscribers.is_empty() {
+            return RpcDeliveryResult::error("Inbox not found".to_string());
+        }
+
+        let subscriber = &subscribers[0];
+
+        let message = RpcMessage {
+            route: inbox_route.to_string(),
+            correlation_id: Some(corr_id.to_string()),
+            body: body.to_vec(),
+            reply_route: None,
+            seq: seq.map(|s| s as u32),
+            is_stream_end,
+        };
+
+        RpcDeliveryResult::success(subscriber.channel_id, message)
+    }
+
     /// Cleanup all resources for a channel (on disconnect)
     pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
         // Remove handler subscriptions for the route family
@@ -238,7 +342,6 @@ impl Default for RpcService {
 mod tests {
     use super::*;
     use crate::routing::DEFAULT_RF;
-    use tokio::sync::mpsc;
 
     #[test]
     fn should_allocate_unique_inboxes_for_same_channel() {
@@ -259,12 +362,11 @@ mod tests {
     fn should_enforce_inbox_ownership_across_channels() {
         // Arrange
         let mut service = RpcService::new();
-        let (tx, _rx) = mpsc::channel(1);
         let inbox = service.allocate_inbox(1);
 
         // Act
-        let result1 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1, tx.clone());
-        let result2 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 2, tx.clone());
+        let result1 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
+        let result2 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 2);
 
         // Assert
         assert!(result1.is_ok());
@@ -275,11 +377,10 @@ mod tests {
     fn should_cleanup_channel_resources_when_channel_disconnects() {
         // Arrange
         let mut service = RpcService::new();
-        let (tx, _rx) = mpsc::channel(1);
         let inbox = service.allocate_inbox(1);
-        let _ = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1, tx.clone());
+        let _ = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
         let _handler_sub =
-            service.subscribe_handler(DEFAULT_RF, "rpc://test/svc/op".to_string(), 1, tx.clone());
+            service.subscribe_handler(DEFAULT_RF, "rpc://test/svc/op".to_string(), 1);
 
         // Act
         service.cleanup_channel(DEFAULT_RF, 1);

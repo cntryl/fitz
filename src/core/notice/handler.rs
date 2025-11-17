@@ -217,29 +217,32 @@ impl Domain for NoticeDomain {
                     std::str::from_utf8(&request.payload[start..start + len]).ok()
                 });
 
-                // Dispatch to subscribers (use read lock for concurrent publish)
-                let mut service = self.service.write();
+                // Dispatch to subscribers
+                let service = self.service.read();
                 let _r =
                     service.publish(request.route_family, &request.route_str, msg_id, body);
 
-                // Build response using SmallVec (stack-allocated for typical <64B frames)
-                let route_bytes = request.route_str.as_bytes();
-
+                // Optimized response: only route + id (no body echo)
+                // For 16KB messages, this saves 16KB per publish!
                 let mut response = ResponseBuf::new();
-
+                
                 response.push(TAG_ROUTE);
-                response.push(route_bytes.len() as u8);
-                response.extend_from_slice(route_bytes);
-
-                if let Some(id) = msg_id {
-                    response.push(TAG_ID);
-                    response.push(id.len() as u8);
-                    response.extend_from_slice(id.as_bytes());
+                let route_bytes = request.route_str.as_bytes();
+                if route_bytes.len() <= 255 {
+                    response.push(route_bytes.len() as u8);
+                    response.extend_from_slice(route_bytes);
+                } else {
+                    // Route > 255 bytes - unlikely but handle it
+                    return DomainResponse::Ok;
                 }
 
-                response.push(TAG_BODY);
-                response.push(body.len() as u8);
-                response.extend_from_slice(body);
+                if let Some(id) = msg_id {
+                    if id.len() <= 255 {
+                        response.push(TAG_ID);
+                        response.push(id.len() as u8);
+                        response.extend_from_slice(id.as_bytes());
+                    }
+                }
 
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response.to_vec(),

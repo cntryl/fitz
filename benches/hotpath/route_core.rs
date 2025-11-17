@@ -44,11 +44,11 @@ fn make_subscription(id: u64, pattern: String, channel_id: u32) -> RtSubscriptio
         Option<u32>,
         bool,
     )>(1);
+    let _ = tx; // Suppress unused warning
     RtSubscription {
         id,
         route_pattern: pattern,
         channel_id,
-        sender: tx,
     }
 }
 

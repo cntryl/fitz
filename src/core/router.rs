@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use tokio::sync::mpsc::error::TrySendError;
+use crossbeam_channel::TrySendError;
 
 use crate::core::domain::SubSender;
 
@@ -112,7 +112,7 @@ impl Router {
                     end,
                 )) {
                     match e {
-                        TrySendError::Closed(_) => to_remove.push(*sub_id),
+                        TrySendError::Disconnected(_) => to_remove.push(*sub_id),
                         TrySendError::Full(_) => { /* drop on backpressure (best-effort) */ }
                     }
                 } else {
@@ -178,7 +178,7 @@ impl Router {
             end,
         )) {
             match e {
-                TrySendError::Closed(_) => {
+                TrySendError::Disconnected(_) => {
                     to_remove.push(*sub_id);
                     0
                 }
@@ -242,7 +242,7 @@ pub fn route_matches(pattern: &str, route: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
+    use crossbeam_channel;
 
     #[test]
     fn should_match_routes_exact_and_global() {
@@ -294,7 +294,7 @@ mod tests {
     fn should_subscribe_unsubscribe_len_is_empty() {
         // Arrange
         let mut r = Router::new();
-        let (tx, _rx) = mpsc::channel::<(
+        let (tx, _rx) = crossbeam_channel::bounded::<(
             String,
             Option<String>,
             Vec<u8>,
@@ -318,8 +318,8 @@ mod tests {
     fn should_cleanup_channel() {
         // Arrange
         let mut r = Router::new();
-        let (tx1, _rx1) = mpsc::channel(4);
-        let (tx2, _rx2) = mpsc::channel(4);
+        let (tx1, _rx1) = crossbeam_channel::bounded(4);
+        let (tx2, _rx2) = crossbeam_channel::bounded(4);
         let id1 = r.subscribe("a".to_string(), 10, tx1);
         let _id2 = r.subscribe("b".to_string(), 20, tx2);
 
@@ -336,7 +336,7 @@ mod tests {
     fn should_dispatch_success_and_receive() {
         // Arrange
         let mut r = Router::new();
-        let (tx, mut rx) = mpsc::channel(4);
+        let (tx, rx) = crossbeam_channel::bounded(4);
         let _id = r.subscribe("route/a".to_string(), 1, tx);
 
         // Act
@@ -364,7 +364,7 @@ mod tests {
         // Arrange
         let mut r = Router::new();
         // small capacity so we can force Full
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
         // pre-fill the channel so next try_send will return Full
         tx.try_send(("prefill".to_string(), None, vec![0u8], None, None, false))
             .expect("prefill send");
@@ -393,7 +393,7 @@ mod tests {
     fn should_remove_closed_sub_on_dispatch() {
         // Arrange
         let mut r = Router::new();
-        let (tx, rx) = mpsc::channel(4);
+        let (tx, rx) = crossbeam_channel::bounded(4);
         let id = r.subscribe("rm".to_string(), 2, tx);
 
         // Act

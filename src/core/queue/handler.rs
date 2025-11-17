@@ -319,7 +319,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should succeed
             }
             DomainResponse::Error(e) => panic!("Expected success, got error: {}", e),
@@ -339,7 +339,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should succeed
             }
             DomainResponse::Error(e) => panic!("Expected success, got error: {}", e),
@@ -357,7 +357,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should succeed
             }
             DomainResponse::Error(e) => panic!("Expected success, got error: {}", e),
@@ -375,7 +375,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should succeed
             }
             DomainResponse::Error(e) => panic!("Expected success, got error: {}", e),
@@ -393,7 +393,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should succeed
             }
             DomainResponse::Error(e) => panic!("Expected success, got error: {}", e),
@@ -411,7 +411,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should succeed
             }
             DomainResponse::Error(e) => panic!("Expected success, got error: {}", e),
@@ -429,7 +429,7 @@ mod tests {
 
         // Assert
         match result {
-            DomainResponse::Frame(_) | DomainResponse::Ok => {
+            DomainResponse::Frame(_) | DomainResponse::Ok | DomainResponse::RpcDelivery { .. } => {
                 // Should return error response for unknown operation
             }
             DomainResponse::Error(e) => panic!("Expected frame response with error, got: {}", e),

@@ -98,6 +98,20 @@ impl EngineHandle {
             DomainResponse::Frame(frame) => Ok(frame.into_vec()),
             DomainResponse::Ok => Ok(vec![]),
             DomainResponse::Error(err) => Err(err),
+            DomainResponse::RpcDelivery {
+                target_channel_id,
+                message,
+                ack_frame,
+            } => {
+                // TODO: Implement RPC message delivery via transport layer
+                // For now, just return the acknowledgment
+                // Transport needs to:
+                // 1. Look up channel_id -> connection mapping
+                // 2. Serialize message as frame
+                // 3. Send via connection's outbound channel with backpressure handling
+                let _ = (target_channel_id, message); // Suppress unused warning
+                Ok(ack_frame.into_vec())
+            }
         }
     }
 
@@ -242,6 +256,20 @@ impl Engine {
             }
             Ok(DomainResponse::Error(err)) => {
                 self.send_error(conn_id, channel_id, &err);
+            }
+            Ok(DomainResponse::RpcDelivery {
+                target_channel_id,
+                message,
+                ack_frame,
+            }) => {
+                // TODO: Implement RPC message delivery via transport layer
+                // For now, just send the acknowledgment back to requester
+                // Transport needs to:
+                // 1. Look up target_channel_id -> connection mapping
+                // 2. Serialize message as frame
+                // 3. Send via target connection's outbound channel with backpressure
+                let _ = (target_channel_id, message); // Suppress unused warning
+                self.registry.send(conn_id, ack_frame.into_vec());
             }
             Err(e) => {
                 self.send_error(conn_id, channel_id, &e);

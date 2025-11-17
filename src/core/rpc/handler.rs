@@ -46,6 +46,7 @@ impl RpcDomain {
     }
 
     /// Handle RPC request (client sending request to handler)
+    /// Returns routing result - transport layer performs actual delivery
     fn handle_rpc_request(
         &self,
         rf: crate::routing::RouteFamilyId,
@@ -53,45 +54,20 @@ impl RpcDomain {
         correlation_id: Option<&str>,
         reply_route: Option<&str>,
         body: &[u8],
-    ) -> Vec<u8> {
-        let service = self.service.read();
-
-        // Find matching handlers
-        let handlers = service.matching_handlers(rf, route);
-
-        if handlers.is_empty() {
-            return self.build_error_response("No handlers available");
-        }
-
-        // Use first available handler (simple dispatch)
-        // Future enhancement: implement round-robin, least-connections, or weighted load balancing
-        let handler = &handlers[0];
-
+    ) -> super::service::RpcDeliveryResult {
         // Register active request for inbox authorization
         if let (Some(corr_id), Some(reply)) = (correlation_id, reply_route) {
-            drop(service); // Release read lock
             let mut service = self.service.write();
             service.register_request(corr_id.to_string(), route.to_string(), reply.to_string());
         }
 
-        // Forward request to handler
-        match handler.sender.try_send((
-            route.to_string(),
-            correlation_id.map(|s| s.to_string()),
-            body.to_vec(),
-            reply_route.map(|s| s.to_string()),
-            None,  // seq
-            false, // stream_end
-        )) {
-            Ok(_) => {
-                // Request delivered successfully
-                encoding::build_request_response(route).to_vec()
-            }
-            Err(_) => self.build_error_response("Handler backpressure"),
-        }
+        // Route request to handler (pure sync, no I/O)
+        let service = self.service.read();
+        service.route_request(rf, route, correlation_id, reply_route, body)
     }
 
     /// Handle RPC reply (handler sending reply to client inbox)
+    /// Returns routing result - transport layer performs actual delivery
     fn handle_rpc_reply(
         &self,
         rf: crate::routing::RouteFamilyId,
@@ -100,41 +76,10 @@ impl RpcDomain {
         body: &[u8],
         seq: Option<u64>,
         is_stream_end: bool,
-    ) -> Vec<u8> {
+    ) -> super::service::RpcDeliveryResult {
+        // Route reply to inbox (pure sync, no I/O)
         let service = self.service.read();
-
-        // Authorization: check if correlation_id allows publishing to this inbox
-        if let Some(corr_id) = correlation_id {
-            if !service.can_publish_to_inbox(inbox_route, corr_id) {
-                return self.build_error_response("Unauthorized inbox access");
-            }
-        } else {
-            return self.build_error_response("Missing correlation ID for reply");
-        }
-
-        // Find inbox subscriber
-        let subscribers = service.matching_inbox_subscribers(rf, inbox_route);
-
-        if subscribers.is_empty() {
-            return self.build_error_response("Inbox not found");
-        }
-
-        let subscriber = &subscribers[0];
-
-        // Forward reply to client
-        match subscriber.sender.try_send((
-            inbox_route.to_string(),
-            correlation_id.map(|s| s.to_string()),
-            body.to_vec(),
-            None,                  // reply_to (N/A for replies)
-            seq.map(|s| s as u32), // Convert u64 to u32 for SubSender
-            is_stream_end,
-        )) {
-            Ok(_) => {
-                encoding::build_request_response(inbox_route).to_vec()
-            }
-            Err(_) => self.build_error_response("Client backpressure"),
-        }
+        service.route_reply(rf, inbox_route, correlation_id, body, seq, is_stream_end)
     }
 }
 
@@ -189,7 +134,7 @@ impl Domain for RpcDomain {
         // Determine if this is a request or reply
         let is_reply = route.starts_with("inbox://");
 
-        let response_data = if is_reply {
+        let delivery_result = if is_reply {
             // This is a reply from handler to client
             self.handle_rpc_reply(
                 request.route_family,
@@ -210,9 +155,40 @@ impl Domain for RpcDomain {
             )
         };
 
-        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-            response_data,
-        ))
+        // Convert delivery result to domain response
+        match delivery_result {
+            super::service::RpcDeliveryResult {
+                target: Some((channel_id, message)),
+                error: None,
+            } => {
+                // Success - return delivery instruction with ack
+                let ack_frame = crate::protocol::frame::PooledFrame::from_vec(
+                    encoding::build_request_response(route).to_vec(),
+                );
+                DomainResponse::RpcDelivery {
+                    target_channel_id: channel_id,
+                    message,
+                    ack_frame,
+                }
+            }
+            super::service::RpcDeliveryResult {
+                error: Some(err_msg),
+                ..
+            } => {
+                // Error - return error frame
+                let error_frame = crate::protocol::frame::PooledFrame::from_vec(
+                    self.build_error_response(&err_msg),
+                );
+                DomainResponse::Frame(error_frame)
+            }
+            _ => {
+                // Shouldn't happen, but handle gracefully
+                let error_frame = crate::protocol::frame::PooledFrame::from_vec(
+                    self.build_error_response("Internal routing error"),
+                );
+                DomainResponse::Frame(error_frame)
+            }
+        }
     }
 
     fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {

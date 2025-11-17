@@ -3,10 +3,11 @@
 
 use crate::protocol::route::Route;
 use crate::routing::RouteFamilyId;
-use tokio::sync::mpsc;
+use crossbeam_channel;
 
 /// Type alias for subscriber channels (used by domains that support pub/sub)
-pub type SubSender = mpsc::Sender<(
+/// Uses crossbeam-channel for better performance in sync domains
+pub type SubSender = crossbeam_channel::Sender<(
     String,
     Option<String>,
     Vec<u8>,
@@ -45,6 +46,17 @@ pub enum DomainResponse {
 
     /// Error message
     Error(String),
+
+    /// RPC delivery instruction - domain returns routing decision,
+    /// transport performs actual delivery with backpressure handling
+    RpcDelivery {
+        /// Target channel_id to deliver to
+        target_channel_id: u32,
+        /// Message payload
+        message: crate::core::rpc::RpcMessage,
+        /// Acknowledgment frame to send back to requester
+        ack_frame: crate::protocol::frame::PooledFrame,
+    },
 }
 
 /// Domain trait - each domain implements this to handle its operations
