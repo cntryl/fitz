@@ -7,6 +7,7 @@ use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID};
 
 /// Parsed TLV payload for KV operations
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct KvTlvPayload {
     pub key: Option<String>,
     pub value: Option<Vec<u8>>,
@@ -14,6 +15,7 @@ pub struct KvTlvPayload {
 
 /// Parse TLV body to extract key (TAG_ID) and value (TAG_BODY)
 /// Supports extended length encoding (255 = 4-byte length follows)
+#[allow(dead_code)]
 pub fn parse_tlv_payload(body: &[u8]) -> KvTlvPayload {
     let mut key = None;
     let mut value = None;
@@ -66,6 +68,7 @@ pub fn parse_tlv_payload(body: &[u8]) -> KvTlvPayload {
 
 /// Build TLV response with body or error
 /// For larger bodies, uses extended length encoding (255 = 4-byte length follows)
+#[allow(dead_code)]
 pub fn build_tlv_response(result: Result<Option<Vec<u8>>, String>) -> Vec<u8> {
     let mut response = Vec::new();
 
@@ -181,8 +184,11 @@ mod tests {
 
     #[test]
     fn should_build_success_response_without_body() {
-        // Arrange & Act
-        let response = build_tlv_response(Ok(None));
+        // Arrange
+        let input = Ok(None);
+
+        // Act
+        let response = build_tlv_response(input);
 
         // Assert
         assert_eq!(response[0], TAG_BODY);
@@ -215,7 +221,10 @@ mod tests {
         // Assert
         assert_eq!(response[0], TAG_BODY);
         assert_eq!(response[1], 255); // Extended length marker
-        assert_eq!(u32::from_be_bytes([response[2], response[3], response[4], response[5]]), 300);
+        assert_eq!(
+            u32::from_be_bytes([response[2], response[3], response[4], response[5]]),
+            300
+        );
         assert_eq!(&response[6..], &large_body[..]);
     }
 

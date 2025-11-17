@@ -414,12 +414,7 @@ impl StreamService {
     }
 
     /// Get current watermark for area (highest finalized area_seq)
-    pub fn get_watermark(
-        &self,
-        rf: RouteFamilyId,
-        realm: &str,
-        area: &str,
-    ) -> Result<u64, String> {
+    pub fn get_watermark(&self, rf: RouteFamilyId, realm: &str, area: &str) -> Result<u64, String> {
         let key = Self::key_watermark(realm, area);
         let cf = ColumnFamilyId(rf);
         match self
@@ -572,10 +567,8 @@ mod tests {
         let txn_id = svc
             .begin_append(TEST_RF, "realm1", "area1", "resource1")
             .expect("Begin");
-        svc.append_event(txn_id, TEST_RF, event)
-            .expect("Append");
-        let (first_seq, last_seq, count) =
-            svc.commit_append(txn_id, TEST_RF).expect("Commit");
+        svc.append_event(txn_id, TEST_RF, event).expect("Append");
+        let (first_seq, last_seq, count) = svc.commit_append(txn_id, TEST_RF).expect("Commit");
 
         // Assert
         assert_eq!(first_seq, 0);
@@ -612,15 +605,13 @@ mod tests {
         let txn1 = svc
             .begin_append(TEST_RF, "realm1", "area1", "resource1")
             .expect("Begin 1");
-        svc.append_event(txn1, TEST_RF, event1)
-            .expect("Append 1");
+        svc.append_event(txn1, TEST_RF, event1).expect("Append 1");
         let (first1, last1, _) = svc.commit_append(txn1, TEST_RF).expect("Commit 1");
 
         let txn2 = svc
             .begin_append(TEST_RF, "realm1", "area1", "resource2")
             .expect("Begin 2");
-        svc.append_event(txn2, TEST_RF, event2)
-            .expect("Append 2");
+        svc.append_event(txn2, TEST_RF, event2).expect("Append 2");
         let (first2, last2, _) = svc.commit_append(txn2, TEST_RF).expect("Commit 2");
 
         // Assert
@@ -658,15 +649,12 @@ mod tests {
         let txn = svc
             .begin_append(TEST_RF, "realm1", "area1", "resource1")
             .expect("Begin");
-        svc.append_event(txn, TEST_RF, event1)
-            .expect("Append 1");
-        svc.append_event(txn, TEST_RF, event2)
-            .expect("Append 2");
+        svc.append_event(txn, TEST_RF, event1).expect("Append 1");
+        svc.append_event(txn, TEST_RF, event2).expect("Append 2");
         svc.commit_append(txn, TEST_RF).expect("Commit");
 
         // Act
-        let result = svc
-            .read(TEST_RF, "realm1", "area1", "resource1", 0, 100);
+        let result = svc.read(TEST_RF, "realm1", "area1", "resource1", 0, 100);
 
         // Assert
         assert!(result.is_ok());
@@ -700,8 +688,7 @@ mod tests {
         svc.commit_append(txn, TEST_RF).expect("Commit");
 
         // Act
-        let result = svc
-            .read(TEST_RF, "realm1", "area1", "resource1", 0, 2);
+        let result = svc.read(TEST_RF, "realm1", "area1", "resource1", 0, 2);
 
         // Assert
         assert!(result.is_ok());
@@ -747,7 +734,6 @@ mod tests {
         // Act
         let watermark = svc
             .get_watermark(TEST_RF, "realm1", "area1")
-            
             .expect("Get watermark");
 
         // Assert
@@ -782,14 +768,9 @@ mod tests {
         // Events must be committed to be readable
         let txn = svc
             .begin_append(TEST_RF, "realm1", "area1", "resource1")
-            
             .expect("Begin");
-        svc.append_event(txn, TEST_RF, event1)
-            
-            .expect("Append 1");
-        svc.append_event(txn, TEST_RF, event2)
-            
-            .expect("Append 2");
+        svc.append_event(txn, TEST_RF, event1).expect("Append 1");
+        svc.append_event(txn, TEST_RF, event2).expect("Append 2");
         svc.commit_append(txn, TEST_RF).expect("Commit");
 
         // Act
@@ -836,7 +817,6 @@ mod tests {
         // Act
         let txn = svc
             .begin_append(TEST_RF, "realm1", "area1", "resource1")
-            
             .expect("Begin");
         svc.append_event(txn, TEST_RF, event).expect("Append");
         let rollback_result = svc.rollback_append(txn, TEST_RF);
@@ -845,7 +825,6 @@ mod tests {
         assert!(rollback_result.is_ok());
         let watermark = svc
             .get_watermark(TEST_RF, "realm1", "area1")
-            
             .expect("Get watermark");
         assert_eq!(watermark, 0); // Watermark not updated, events remain but "uncommitted"
     }
@@ -906,7 +885,6 @@ mod tests {
         let service = StreamService::new(kv_store);
         let txn = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
 
         let event1 = StreamEvent {
@@ -944,11 +922,9 @@ mod tests {
         let service = StreamService::new(kv_store);
         let txn1 = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
         let txn2 = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
 
         let event1 = StreamEvent {
@@ -988,11 +964,9 @@ mod tests {
         let service = StreamService::new(kv_store);
         let txn1 = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
         let txn2 = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
 
         let event1 = StreamEvent {
@@ -1031,11 +1005,9 @@ mod tests {
         let service = StreamService::new(kv_store);
         let txn1 = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
         let txn2 = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
 
         let closing_event = StreamEvent {
@@ -1058,10 +1030,7 @@ mod tests {
         };
 
         // Act
-        service
-            .append_event(txn1, TEST_RF, closing_event)
-            
-            .unwrap();
+        service.append_event(txn1, TEST_RF, closing_event).unwrap();
         service.commit_append(txn1, TEST_RF).unwrap(); // Commit to make it visible
 
         let result = service.append_event(txn2, TEST_RF, after_close_event);
@@ -1080,7 +1049,6 @@ mod tests {
         let service = StreamService::new(kv_store);
         let txn = service
             .begin_append(TEST_RF, "realm", "area", "resource")
-            
             .unwrap();
 
         let event1 = StreamEvent {

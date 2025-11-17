@@ -8,8 +8,8 @@ use crate::protocol::tags::{
     TAG_WATERMARK,
 };
 use crate::storage::traits::KvStore;
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 /// Parsed TLV payload for stream operations
 #[derive(Debug, Clone)]
@@ -240,117 +240,94 @@ impl Domain for StreamDomain {
         let from_seq = parsed.from_seq;
         let limit = parsed.limit;
 
-            // Extract area and resource from Route
-            let area = match &request.route.area {
-                Some(a) => a.as_str(),
-                None => return DomainResponse::Error("Missing area in route".to_string()),
-            };
-            let resource = match &request.route.resource {
-                Some(r) => r.as_str(),
-                None => return DomainResponse::Error("Missing resource in route".to_string()),
-            };
-            let operation = request.route.operation.as_deref().unwrap_or("append");
-            let realm = area; // Use area as realm for now
+        // Extract area and resource from Route
+        let area = match &request.route.area {
+            Some(a) => a.as_str(),
+            None => return DomainResponse::Error("Missing area in route".to_string()),
+        };
+        let resource = match &request.route.resource {
+            Some(r) => r.as_str(),
+            None => return DomainResponse::Error("Missing resource in route".to_string()),
+        };
+        let operation = request.route.operation.as_deref().unwrap_or("append");
+        let realm = area; // Use area as realm for now
 
-            match operation {
-                "append" => {
-                    // Create event from payload
-                    let event = StreamEvent {
-                        sequence: 0, // Will be assigned by client
-                        resource: resource.to_string(),
-                        area_seq: None,
-                        body: body.unwrap_or_default(),
-                        metadata,
-                        created_at: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                        is_end,
-                    };
+        match operation {
+            "append" => {
+                // Create event from payload
+                let event = StreamEvent {
+                    sequence: 0, // Will be assigned by client
+                    resource: resource.to_string(),
+                    area_seq: None,
+                    body: body.unwrap_or_default(),
+                    metadata,
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    is_end,
+                };
 
-                    // Use transaction API with direct writes
-                    match service
-                        .begin_append(request.route_family, realm, area, resource)
-                        
-                    {
-                        Ok(txn_id) => {
-                            match service
-                                .append_event(txn_id, request.route_family, event)
-                                
-                            {
-                                Ok(_) => {
-                                    match service.commit_append(txn_id, request.route_family)
-                                    {
-                                        Ok((first_seq, last_seq, _count)) => {
-                                            let response = Self::build_append_response(
-                                                first_seq,
-                                                Some(first_seq..last_seq + 1),
-                                            );
-                                            DomainResponse::Frame(
-                                                crate::protocol::frame::PooledFrame::from_vec(
-                                                    response,
-                                                ),
-                                            )
-                                        }
-                                        Err(e) => {
-                                            let _ = service
-                                                .rollback_append(txn_id, request.route_family)
-                                                ;
-                                            DomainResponse::Error(format!("Commit failed: {}", e))
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ =
-                                        service.rollback_append(txn_id, request.route_family);
-                                    DomainResponse::Error(format!("Append failed: {}", e))
-                                }
+                // Use transaction API with direct writes
+                match service.begin_append(request.route_family, realm, area, resource) {
+                    Ok(txn_id) => match service.append_event(txn_id, request.route_family, event) {
+                        Ok(_) => match service.commit_append(txn_id, request.route_family) {
+                            Ok((first_seq, last_seq, _count)) => {
+                                let response = Self::build_append_response(
+                                    first_seq,
+                                    Some(first_seq..last_seq + 1),
+                                );
+                                DomainResponse::Frame(
+                                    crate::protocol::frame::PooledFrame::from_vec(response),
+                                )
                             }
+                            Err(e) => {
+                                let _ = service.rollback_append(txn_id, request.route_family);
+                                DomainResponse::Error(format!("Commit failed: {}", e))
+                            }
+                        },
+                        Err(e) => {
+                            let _ = service.rollback_append(txn_id, request.route_family);
+                            DomainResponse::Error(format!("Append failed: {}", e))
                         }
-                        Err(e) => DomainResponse::Error(format!("Begin transaction failed: {}", e)),
-                    }
+                    },
+                    Err(e) => DomainResponse::Error(format!("Begin transaction failed: {}", e)),
                 }
-                "read" => {
-                    let from = from_seq.unwrap_or(0);
-                    let lim = limit.unwrap_or(100);
-
-                    match service
-                        .read(request.route_family, realm, area, resource, from, lim)
-                        
-                    {
-                        Ok(events) => {
-                            let response = Self::build_events_response(events);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => DomainResponse::Error(format!("Read failed: {}", e)),
-                    }
-                }
-                "read-area" => {
-                    let from = from_seq.unwrap_or(0);
-                    let lim = limit.unwrap_or(100);
-
-                    match service
-                        .read_area(request.route_family, realm, area, from, lim)
-                        
-                    {
-                        Ok(events) => {
-                            // Get watermark for response
-                            let watermark = service
-                                .get_watermark(request.route_family, realm, area)
-                                
-                                .unwrap_or(0);
-                            let response = Self::build_area_response(events, watermark);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => DomainResponse::Error(format!("Area read failed: {}", e)),
-                    }
-                }
-                _ => DomainResponse::Error(format!("Unknown stream operation: {}", operation)),
             }
+            "read" => {
+                let from = from_seq.unwrap_or(0);
+                let lim = limit.unwrap_or(100);
+
+                match service.read(request.route_family, realm, area, resource, from, lim) {
+                    Ok(events) => {
+                        let response = Self::build_events_response(events);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => DomainResponse::Error(format!("Read failed: {}", e)),
+                }
+            }
+            "read-area" => {
+                let from = from_seq.unwrap_or(0);
+                let lim = limit.unwrap_or(100);
+
+                match service.read_area(request.route_family, realm, area, from, lim) {
+                    Ok(events) => {
+                        // Get watermark for response
+                        let watermark = service
+                            .get_watermark(request.route_family, realm, area)
+                            .unwrap_or(0);
+                        let response = Self::build_area_response(events, watermark);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => DomainResponse::Error(format!("Area read failed: {}", e)),
+                }
+            }
+            _ => DomainResponse::Error(format!("Unknown stream operation: {}", operation)),
+        }
     }
 
     fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {

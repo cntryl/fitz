@@ -7,7 +7,9 @@ use tokio::runtime::Runtime;
 #[path = "../config.rs"]
 mod config;
 
+#[allow(dead_code)]
 static RT: OnceLock<Runtime> = OnceLock::new();
+#[allow(dead_code)]
 fn rt() -> &'static Runtime {
     RT.get_or_init(|| Runtime::new().expect("runtime"))
 }
@@ -24,28 +26,24 @@ fn bench_queue_enqueue_reserve(c: &mut Criterion) {
     c.bench_function("queue_enqueue_reserve_subsystem", |b| {
         b.iter_custom(|_| {
             let start = std::time::Instant::now();
-            tokio::runtime::Runtime::new()
-                .expect("rt")
-                .block_on(async {
-                    for i in 0..MAX_ITERS {
-                        let _id = svc
-                            .enqueue(
-                                "realm1",
-                                "area1",
-                                "resource1",
-                                format!("msg-{}", i).into_bytes(),
-                                Some(60),
-                                None,
-                            )
-                            .await
-                            .expect("enqueue");
+            tokio::runtime::Runtime::new().expect("rt").block_on(async {
+                for i in 0..MAX_ITERS {
+                    let _id = svc
+                        .enqueue(
+                            "realm1",
+                            "area1",
+                            "resource1",
+                            format!("msg-{}", i).into_bytes(),
+                            Some(60),
+                            None,
+                        )
+                        .expect("enqueue");
 
-                        let _ = svc
-                            .receive("realm1", "area1", "resource1", 1, 60)
-                            .await
-                            .expect("reserve");
-                    }
-                });
+                    let _ = svc
+                        .receive("realm1", "area1", "resource1", 1, 60)
+                        .expect("reserve");
+                }
+            });
             start.elapsed()
         })
     });

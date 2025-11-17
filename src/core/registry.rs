@@ -27,11 +27,7 @@ impl DomainRegistry {
     ///
     /// Returns Ok(response) if domain found and handled successfully
     /// Returns Err if scheme not found or domain returns error
-    pub fn dispatch(
-        &self,
-        scheme: &str,
-        request: DomainContext,
-    ) -> Result<DomainResponse, String> {
+    pub fn dispatch(&self, scheme: &str, request: DomainContext) -> Result<DomainResponse, String> {
         match scheme {
             "notice" => Ok(self.notice.handle(request)),
             "rpc" => Ok(self.rpc.handle(request)),
@@ -65,8 +61,7 @@ impl DomainRegistry {
         channel_id: u32,
         sender: SubSender,
     ) -> Result<u64, String> {
-        self.stream
-            .subscribe(rf, route_pattern, channel_id, sender)
+        self.stream.subscribe(rf, route_pattern, channel_id, sender)
     }
 
     /// Unsubscribe from notifications

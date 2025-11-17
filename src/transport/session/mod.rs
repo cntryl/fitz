@@ -236,13 +236,20 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                     .get("client_secret")
                                                     .and_then(|t| t.as_str())
                                                     .unwrap_or("");
-                                                    let resp_body = if client_id.is_empty() || client_secret.is_empty() {
-                                                        serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
-                                                    } else if let Some(token) = crate::authn::issue_token_for_client(client_id, client_secret) {
-                                                        serde_json::json!({"access_token": token, "token_type": "Bearer", "expires_in": 3600}).to_string().into_bytes()
-                                                    } else {
-                                                        serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
-                                                    };
+                                                let resp_body = if client_id.is_empty()
+                                                    || client_secret.is_empty()
+                                                {
+                                                    serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
+                                                } else if let Some(token) =
+                                                    crate::authn::issue_token_for_client(
+                                                        client_id,
+                                                        client_secret,
+                                                    )
+                                                {
+                                                    serde_json::json!({"access_token": token, "token_type": "Bearer", "expires_in": 3600}).to_string().into_bytes()
+                                                } else {
+                                                    serde_json::json!({"error":"invalid credentials"}).to_string().into_bytes()
+                                                };
                                                 let _ = {
                                                     // Build token response payload
                                                     let mut req_payload = Vec::new();
@@ -262,13 +269,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                                         &mut req_payload,
                                                     );
 
-                                                    engine_task
-                                                        .dispatch(
-                                                            reply_route,
-                                                            req_payload,
-                                                            0,
-                                                            route_family,
-                                                        )
+                                                    engine_task.dispatch(
+                                                        reply_route,
+                                                        req_payload,
+                                                        0,
+                                                        route_family,
+                                                    )
                                                 };
                                             } else {
                                                 let _ = send_err_chan(
@@ -441,13 +447,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         }
                                         fr::build_tlv(fr::TAG_BODY, pubref.body, &mut req_payload);
 
-                                        match engine_task
-                                            .dispatch(
-                                                route_str.clone(),
-                                                req_payload,
-                                                0,
-                                                route_family,
-                                            ) {
+                                        match engine_task.dispatch(
+                                            route_str.clone(),
+                                            req_payload,
+                                            0,
+                                            route_family,
+                                        ) {
                                             Ok(response) => {
                                                 // Parse sequence number from response
                                                 if let Some(seq_bytes) =
@@ -552,13 +557,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                             );
                                         }
 
-                                        match engine_task
-                                            .dispatch(
-                                                route_str.clone(),
-                                                req_payload,
-                                                0,
-                                                route_family,
-                                            ) {
+                                        match engine_task.dispatch(
+                                            route_str.clone(),
+                                            req_payload,
+                                            0,
+                                            route_family,
+                                        ) {
                                             Ok(_response) => {}
                                             Err(e) => {
                                                 let _ = send_err_chan(
@@ -815,8 +819,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         &mut req_payload,
                                     );
 
-                                    match engine_task
-                                        .dispatch(route.clone(), req_payload, 0, route_family) {
+                                    match engine_task.dispatch(
+                                        route.clone(),
+                                        req_payload,
+                                        0,
+                                        route_family,
+                                    ) {
                                         Ok(response) => {
                                             // Parse remaining seconds from response
                                             if let Some(lease_bytes) =
@@ -908,8 +916,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         &mut req_payload,
                                     );
 
-                                    match engine_task
-                                        .dispatch(route.clone(), req_payload, 0, route_family) {
+                                    match engine_task.dispatch(
+                                        route.clone(),
+                                        req_payload,
+                                        0,
+                                        route_family,
+                                    ) {
                                         Ok(response) => {
                                             // Parse response TLVs
                                             if let (Some(id_bytes), Some(body), Some(token_bytes)) = (
@@ -999,8 +1011,12 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                         &mut req_payload,
                                     );
 
-                                    match engine_task
-                                        .dispatch(route.clone(), req_payload, 0, route_family) {
+                                    match engine_task.dispatch(
+                                        route.clone(),
+                                        req_payload,
+                                        0,
+                                        route_family,
+                                    ) {
                                         Ok(_response) => {
                                             let mut p = Vec::new();
                                             fr::build_tlv(fr::TAG_ROUTE, route.as_bytes(), &mut p);

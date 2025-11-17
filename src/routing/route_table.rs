@@ -168,13 +168,14 @@ impl RouteTableShard {
         }
 
         if has_trailing_wildcard {
-            node.trailing_wildcard_subs = Some(if let Some(ref existing) = node.trailing_wildcard_subs {
-                let mut v = (**existing).to_vec();
-                v.push(sub.clone());
-                Arc::from(v)
-            } else {
-                Arc::from(vec![sub.clone()])
-            });
+            node.trailing_wildcard_subs =
+                Some(if let Some(ref existing) = node.trailing_wildcard_subs {
+                    let mut v = (**existing).to_vec();
+                    v.push(sub.clone());
+                    Arc::from(v)
+                } else {
+                    Arc::from(vec![sub.clone()])
+                });
         } else {
             node.exact_subs = Some(if let Some(ref existing) = node.exact_subs {
                 let mut v = (**existing).to_vec();
@@ -193,8 +194,16 @@ impl RouteTableShard {
 
         if pattern == "*" {
             trie.global_subs = trie.global_subs.as_ref().and_then(|existing| {
-                let v: Vec<_> = existing.iter().filter(|s| s.id != sub_id).cloned().collect();
-                if v.is_empty() { None } else { Some(Arc::from(v)) }
+                let v: Vec<_> = existing
+                    .iter()
+                    .filter(|s| s.id != sub_id)
+                    .cloned()
+                    .collect();
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(Arc::from(v))
+                }
             });
             return;
         }
@@ -218,14 +227,31 @@ impl RouteTableShard {
         ) {
             if depth == segments.len() {
                 if is_trailing {
-                    node.trailing_wildcard_subs = node.trailing_wildcard_subs.as_ref().and_then(|existing| {
-                        let v: Vec<_> = existing.iter().filter(|s| s.id != sub_id).cloned().collect();
-                        if v.is_empty() { None } else { Some(Arc::from(v)) }
-                    });
+                    node.trailing_wildcard_subs =
+                        node.trailing_wildcard_subs.as_ref().and_then(|existing| {
+                            let v: Vec<_> = existing
+                                .iter()
+                                .filter(|s| s.id != sub_id)
+                                .cloned()
+                                .collect();
+                            if v.is_empty() {
+                                None
+                            } else {
+                                Some(Arc::from(v))
+                            }
+                        });
                 } else {
                     node.exact_subs = node.exact_subs.as_ref().and_then(|existing| {
-                        let v: Vec<_> = existing.iter().filter(|s| s.id != sub_id).cloned().collect();
-                        if v.is_empty() { None } else { Some(Arc::from(v)) }
+                        let v: Vec<_> = existing
+                            .iter()
+                            .filter(|s| s.id != sub_id)
+                            .cloned()
+                            .collect();
+                        if v.is_empty() {
+                            None
+                        } else {
+                            Some(Arc::from(v))
+                        }
                     });
                 }
                 return;
@@ -242,7 +268,13 @@ impl RouteTableShard {
             }
         }
 
-        remove_rec(&mut trie.root, segments_to_traverse, sub_id, has_trailing_wildcard, 0);
+        remove_rec(
+            &mut trie.root,
+            segments_to_traverse,
+            sub_id,
+            has_trailing_wildcard,
+            0,
+        );
     }
 
     /// Zero-alloc match inside a shard: collect slabs
@@ -258,12 +290,7 @@ impl RouteTableShard {
             slabs.push(slab);
         }
 
-        fn walk<'a>(
-            node: &'a TrieNode,
-            segs: &[&str],
-            depth: usize,
-            slabs: &mut Vec<&'a SubSlab>,
-        ) {
+        fn walk<'a>(node: &'a TrieNode, segs: &[&str], depth: usize, slabs: &mut Vec<&'a SubSlab>) {
             if depth == segs.len() {
                 if let Some(ref slab) = node.exact_subs {
                     slabs.push(slab);
@@ -364,7 +391,11 @@ impl RouteTable {
 
         let slabs = shard.matching_slabs(rf, route_segments);
 
-        Fanout { slabs, slab_index: 0, item_index: 0 }
+        Fanout {
+            slabs,
+            slab_index: 0,
+            item_index: 0,
+        }
     }
 }
 
@@ -1088,8 +1119,12 @@ mod tests {
         rt.insert(CF_TENANT_B, sub_b);
 
         // Assert: Verify each CF has its own subscription
-        let matches_a: Vec<_> = rt.matching_subscribers(CF_TENANT_A, "app/alerts/error").collect();
-        let matches_b: Vec<_> = rt.matching_subscribers(CF_TENANT_B, "app/alerts/error").collect();
+        let matches_a: Vec<_> = rt
+            .matching_subscribers(CF_TENANT_A, "app/alerts/error")
+            .collect();
+        let matches_b: Vec<_> = rt
+            .matching_subscribers(CF_TENANT_B, "app/alerts/error")
+            .collect();
 
         assert_eq!(matches_a.len(), 1, "CF A should have exactly 1 match");
         assert_eq!(matches_b.len(), 1, "CF B should have exactly 1 match");
@@ -1130,7 +1165,9 @@ mod tests {
         );
 
         // Act: Query PROD with a matching route
-        let matches_prod: Vec<_> = rt.matching_subscribers(CF_PROD, "system/alerts/critical").collect();
+        let matches_prod: Vec<_> = rt
+            .matching_subscribers(CF_PROD, "system/alerts/critical")
+            .collect();
 
         // Assert: Should only get the PROD subscription, not DEV
         assert_eq!(matches_prod.len(), 1);
@@ -1185,10 +1222,18 @@ mod tests {
         );
 
         // Act: Query each CF
-        let cf1_matches: Vec<_> = rt.matching_subscribers(CF_1, "realm1/area/resource").collect();
-        let cf2_matches: Vec<_> = rt.matching_subscribers(CF_2, "realm2/area/resource").collect();
-        let cf3_matches: Vec<_> = rt.matching_subscribers(CF_3, "realm1/area/resource").collect();
-        let cf1_realm2: Vec<_> = rt.matching_subscribers(CF_1, "realm2/area/resource").collect();
+        let cf1_matches: Vec<_> = rt
+            .matching_subscribers(CF_1, "realm1/area/resource")
+            .collect();
+        let cf2_matches: Vec<_> = rt
+            .matching_subscribers(CF_2, "realm2/area/resource")
+            .collect();
+        let cf3_matches: Vec<_> = rt
+            .matching_subscribers(CF_3, "realm1/area/resource")
+            .collect();
+        let cf1_realm2: Vec<_> = rt
+            .matching_subscribers(CF_1, "realm2/area/resource")
+            .collect();
 
         // Assert: Each CF returns only its own subscriptions
         assert_eq!(cf1_matches.len(), 1);
@@ -1246,7 +1291,9 @@ mod tests {
         );
 
         // Act: Query with a specific route
-        let matches: Vec<_> = rt.matching_subscribers(CF_MULTI, "app/alerts/critical").collect();
+        let matches: Vec<_> = rt
+            .matching_subscribers(CF_MULTI, "app/alerts/critical")
+            .collect();
 
         // Assert: Should match all three patterns (hierarchical matching)
         assert_eq!(
@@ -1439,8 +1486,12 @@ mod tests {
         );
 
         // Act
-        let matches_enabled: Vec<_> = rt.matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route").collect();
-        let matches_disabled: Vec<_> = rt.matching_subscribers(CF_NO_GLOBAL, "any/random/route").collect();
+        let matches_enabled: Vec<_> = rt
+            .matching_subscribers(CF_GLOBAL_ENABLED, "any/random/route")
+            .collect();
+        let matches_disabled: Vec<_> = rt
+            .matching_subscribers(CF_NO_GLOBAL, "any/random/route")
+            .collect();
 
         // Assert
         assert_eq!(matches_enabled.len(), 1);
@@ -1516,10 +1567,18 @@ mod tests {
         );
 
         // Act
-        let acme_prod: Vec<_> = rt.matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts").collect();
-        let acme_any: Vec<_> = rt.matching_subscribers(CF_TENANT_ACME, "anything").collect();
-        let widgets_alert: Vec<_> = rt.matching_subscribers(CF_TENANT_WIDGETS, "widgets/alerts/critical").collect();
-        let widgets_other: Vec<_> = rt.matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts").collect();
+        let acme_prod: Vec<_> = rt
+            .matching_subscribers(CF_TENANT_ACME, "acme/prod/alerts")
+            .collect();
+        let acme_any: Vec<_> = rt
+            .matching_subscribers(CF_TENANT_ACME, "anything")
+            .collect();
+        let widgets_alert: Vec<_> = rt
+            .matching_subscribers(CF_TENANT_WIDGETS, "widgets/alerts/critical")
+            .collect();
+        let widgets_other: Vec<_> = rt
+            .matching_subscribers(CF_TENANT_WIDGETS, "acme/prod/alerts")
+            .collect();
 
         // Assert
         assert_eq!(

@@ -1,8 +1,8 @@
 // Moved from benches/hotpath/kv.rs — now classified as a subsystem/service benchmark
 #![allow(dead_code)]
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::kv::KvService;
 use fitz::core::kv::KvOperation;
+use fitz::core::kv::KvService;
 use std::sync::{Arc, OnceLock};
 
 #[path = "../config.rs"]
@@ -10,11 +10,13 @@ mod config;
 
 static KV_SERVICE: OnceLock<Arc<KvService>> = OnceLock::new();
 fn kv_service() -> Arc<KvService> {
-    KV_SERVICE.get_or_init(|| {
-        // Create a KvService with in-memory store for benchmarking
-        let store = fitz::storage::midge_adapter::create_memory_store().unwrap();
-        Arc::new(KvService::new(store))
-    }).clone()
+    KV_SERVICE
+        .get_or_init(|| {
+            // Create a KvService with in-memory store for benchmarking
+            let store = fitz::storage::midge_adapter::create_memory_store().unwrap();
+            Arc::new(KvService::new(store))
+        })
+        .clone()
 }
 
 const MAX_ITERS: u64 = 5_000;
@@ -29,11 +31,10 @@ fn bench_kv_put_get_subsystem(c: &mut Criterion) {
             for i in 0..MAX_ITERS {
                 let key = format!("key_{}", i % 1024);
                 let val = format!("value_{}", i).into_bytes();
-                let _ = svc
-                    .handle_operation(KvOperation::Put, &route, Some(key.clone()), Some(val));
+                let _ =
+                    svc.handle_operation(KvOperation::Put, &route, Some(key.clone()), Some(val));
 
-                let _ = svc
-                    .handle_operation(KvOperation::Get, &route, Some(key.clone()), None);
+                let _ = svc.handle_operation(KvOperation::Get, &route, Some(key.clone()), None);
             }
             start.elapsed()
         })

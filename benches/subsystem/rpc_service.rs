@@ -1,16 +1,18 @@
 // Moved from benches/hotpath/rpc.rs — now a subsystem/service-level bench
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::rpc::RpcService;
 use fitz::core::domain::SubSender;
+use fitz::core::rpc::RpcService;
 use fitz::routing::DEFAULT_RF;
-use tokio::sync::mpsc;
 use std::sync::OnceLock;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 #[path = "../config.rs"]
 mod config;
 
+#[allow(dead_code)]
 static RT: OnceLock<Runtime> = OnceLock::new();
+#[allow(dead_code)]
 fn rt() -> &'static Runtime {
     RT.get_or_init(|| Runtime::new().expect("runtime"))
 }

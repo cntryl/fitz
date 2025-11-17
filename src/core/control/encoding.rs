@@ -7,12 +7,14 @@ use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE};
 
 /// Parsed TLV payload for control operations
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ControlTlvPayload {
     pub body: Option<Vec<u8>>,
     pub msg_id: Option<String>,
 }
 
 /// Parse TLV payload to extract body and optional message ID
+#[allow(dead_code)]
 pub fn parse_tlv_payload(payload: &[u8]) -> ControlTlvPayload {
     let mut body = None;
     let mut msg_id = None;
@@ -51,6 +53,7 @@ pub fn parse_tlv_payload(payload: &[u8]) -> ControlTlvPayload {
 }
 
 /// Build TLV-encoded response with route, optional message ID, and body
+#[allow(dead_code)]
 pub fn build_response(route: &str, msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
     let mut response = Vec::new();
 
@@ -77,6 +80,7 @@ pub fn build_response(route: &str, msg_id: Option<&str>, body: &[u8]) -> Vec<u8>
 }
 
 /// Build TLV-encoded error response
+#[allow(dead_code)]
 pub fn build_error_response(error_msg: &str) -> Vec<u8> {
     let mut response = Vec::new();
 
@@ -169,7 +173,7 @@ mod tests {
         assert_eq!(response[0], TAG_ROUTE);
         assert!(response.contains(&TAG_ID));
         assert!(response.contains(&TAG_BODY));
-        
+
         // Verify message ID is in response
         let id_bytes = msg_id.as_bytes();
         let windows = response.windows(id_bytes.len());

@@ -43,8 +43,16 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
-    pub fn new(inbox: Sender<EngineEvent>, domains: Arc<DomainRegistry>, registry: Arc<EngineConnectionRegistry>) -> Self {
-        Self { inbox, domains, registry }
+    pub fn new(
+        inbox: Sender<EngineEvent>,
+        domains: Arc<DomainRegistry>,
+        registry: Arc<EngineConnectionRegistry>,
+    ) -> Self {
+        Self {
+            inbox,
+            domains,
+            registry,
+        }
     }
 
     /// Called by WS reader task when a frame arrives.
@@ -83,8 +91,7 @@ impl EngineHandle {
         };
 
         // Domain dispatch (synchronous)
-        let response = self.domains
-            .dispatch(parsed.scheme.as_str(), ctx)?;
+        let response = self.domains.dispatch(parsed.scheme.as_str(), ctx)?;
 
         // Convert to bytes
         match response {
@@ -191,14 +198,13 @@ impl Engine {
         let channel_id = parsed_frame.header.channel_id;
 
         // Decode TLVs
-        let (route, payload, route_family) =
-            match crate::protocol::frame::decode(bytes) {
-                Ok((r, p, rf)) => (r, p, rf),
-                Err(e) => {
-                    self.send_error(conn_id, channel_id, &e);
-                    return;
-                }
-            };
+        let (route, payload, route_family) = match crate::protocol::frame::decode(bytes) {
+            Ok((r, p, rf)) => (r, p, rf),
+            Err(e) => {
+                self.send_error(conn_id, channel_id, &e);
+                return;
+            }
+        };
 
         // Parse route
         let parsed = match parse_route(&route) {
@@ -220,9 +226,7 @@ impl Engine {
         };
 
         // Domain dispatch (synchronous)
-        let response = self
-            .domains
-            .dispatch(parsed.scheme.as_str(), ctx);
+        let response = self.domains.dispatch(parsed.scheme.as_str(), ctx);
 
         // Write back
         match response {

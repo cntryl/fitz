@@ -25,7 +25,13 @@ impl SessionState {
             mux,
             engine,
             channel_id,
-            auth_state: Arc::new(tokio::sync::Mutex::new(if crate::config::load().auth.no_auth { Some("dev".to_string()) } else { None })),
+            auth_state: Arc::new(tokio::sync::Mutex::new(
+                if crate::config::load().auth.no_auth {
+                    Some("dev".to_string())
+                } else {
+                    None
+                },
+            )),
             inflight: Arc::new(tokio::sync::Mutex::new(0)),
             permits: Arc::new(tokio::sync::Semaphore::new(broker_cfg.ack_window)),
             ack_delay_ms: broker_cfg.test_ack_delay_ms,

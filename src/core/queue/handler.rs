@@ -106,190 +106,175 @@ impl Domain for QueueDomain {
         let service = self.service.read();
 
         match queue_operation {
-                QueueOperation::Enqueue => {
-                    let message_body = body.unwrap_or_default();
-                    let ttl = ttl_secs.unwrap_or(0);
-                    let _batch_size = 1; // Default to single message for now, could be extended
+            QueueOperation::Enqueue => {
+                let message_body = body.unwrap_or_default();
+                let ttl = ttl_secs.unwrap_or(0);
+                let _batch_size = 1; // Default to single message for now, could be extended
 
-                    match service
-                        .enqueue(realm, area, resource, message_body, Some(ttl), None)
-                    {
-                        Ok(message_id) => {
-                            let response = Self::build_enqueue_response(&[message_id]);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
-                }
-                QueueOperation::Subscribe => {
-                    // TODO: Implement subscribe operation - register for message availability notifications
-                    // For now, just return success
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
-                }
-                QueueOperation::Unsubscribe => {
-                    // TODO: Implement unsubscribe operation - remove message availability notifications
-                    // For now, just return success
-                    let response = Self::build_success_response();
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
-                }
-                QueueOperation::Reserve => {
-                    let lease_duration = lease_secs.unwrap_or(30);
-                    let batch_size = 10; // Default batch size
-
-                    match service
-                        .receive(realm, area, resource, batch_size, lease_duration)
-                    {
-                        Ok(messages) => {
-                            let message_data: Vec<(String, Vec<u8>, String)> = messages
-                                .into_iter()
-                                .map(|msg| (msg.id, msg.body, msg.lease_owner.unwrap_or_default()))
-                                .collect();
-                            let response = Self::build_reserve_response(&message_data);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
-                }
-                QueueOperation::ExtendLease => {
-                    let msg_id = message_id.unwrap_or_default();
-                    let token = delivery_token.unwrap_or_default();
-                    let additional_secs = lease_secs.unwrap_or(30);
-
-                    match service
-                        .extend_lease(realm, area, resource, &msg_id, &token, additional_secs)
-                    {
-                        Ok(()) => {
-                            let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
-                }
-                QueueOperation::Consume => {
-                    let msg_id = message_id.unwrap_or_default();
-                    let token = delivery_token.unwrap_or_default();
-
-                    match service
-                        .complete(realm, area, resource, &msg_id, &token)
-                    {
-                        Ok(()) => {
-                            let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
-                }
-                QueueOperation::Nack => {
-                    let msg_id = message_id.unwrap_or_default();
-                    let token = delivery_token.unwrap_or_default();
-
-                    match service.nack(realm, area, resource, &msg_id, &token) {
-                        Ok(()) => {
-                            let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
-                }
-                QueueOperation::Requeue => {
-                    let msg_id = message_id.unwrap_or_default();
-                    let token = delivery_token.unwrap_or_default();
-
-                    match service
-                        .requeue(realm, area, resource, &msg_id, &token)
-                    {
-                        Ok(()) => {
-                            let response = Self::build_success_response();
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                        Err(e) => {
-                            let response = Self::build_error_response(&e);
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                response,
-                            ))
-                        }
-                    }
-                }
-                QueueOperation::Get => {
-                    // Get operation not supported in no-peek design
-                    let response = Self::build_error_response("Get operation not supported");
-                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
-                }
-                QueueOperation::List => {
-                    // Handle different list patterns:
-                    // queue://realm/area/*/list -> list all queues in realm/area
-                    // queue://realm/*/*/list -> list all queues in realm
-                    if resource == "*" && area != "*" {
-                        // List all queues in this realm/area scope
-                        let queues = service
-                            .list_queues_in_scope(realm, area)
-                            .unwrap_or_else(|_| Vec::new());
-                        let response = Self::build_list_response(&queues);
+                match service.enqueue(realm, area, resource, message_body, Some(ttl), None) {
+                    Ok(message_id) => {
+                        let response = Self::build_enqueue_response(&[message_id]);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
-                    } else if resource == "*" && area == "*" {
-                        // List all queues in this realm (realm/*/*/list)
-                        let queues = service
-                            .list_queues_in_realm(realm)
-                            .unwrap_or_else(|_| Vec::new());
-                        let response = Self::build_list_response(&queues);
-                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                            response,
-                        ))
-                    } else {
-                        // List specific queue route
-                        let route = format!("{}/{}/{}", realm, area, resource);
-                        let queues = vec![route];
-                        let response = Self::build_list_response(&queues);
+                    }
+                    Err(e) => {
+                        let response = Self::build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                 }
-                QueueOperation::Config => {
-                    // TODO: Implement config operation
-                    let response = Self::build_success_response();
+            }
+            QueueOperation::Subscribe => {
+                // TODO: Implement subscribe operation - register for message availability notifications
+                // For now, just return success
+                let response = Self::build_success_response();
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+            }
+            QueueOperation::Unsubscribe => {
+                // TODO: Implement unsubscribe operation - remove message availability notifications
+                // For now, just return success
+                let response = Self::build_success_response();
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+            }
+            QueueOperation::Reserve => {
+                let lease_duration = lease_secs.unwrap_or(30);
+                let batch_size = 10; // Default batch size
+
+                match service.receive(realm, area, resource, batch_size, lease_duration) {
+                    Ok(messages) => {
+                        let message_data: Vec<(String, Vec<u8>, String)> = messages
+                            .into_iter()
+                            .map(|msg| (msg.id, msg.body, msg.lease_owner.unwrap_or_default()))
+                            .collect();
+                        let response = Self::build_reserve_response(&message_data);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => {
+                        let response = Self::build_error_response(&e);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                }
+            }
+            QueueOperation::ExtendLease => {
+                let msg_id = message_id.unwrap_or_default();
+                let token = delivery_token.unwrap_or_default();
+                let additional_secs = lease_secs.unwrap_or(30);
+
+                match service.extend_lease(realm, area, resource, &msg_id, &token, additional_secs)
+                {
+                    Ok(()) => {
+                        let response = Self::build_success_response();
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => {
+                        let response = Self::build_error_response(&e);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                }
+            }
+            QueueOperation::Consume => {
+                let msg_id = message_id.unwrap_or_default();
+                let token = delivery_token.unwrap_or_default();
+
+                match service.complete(realm, area, resource, &msg_id, &token) {
+                    Ok(()) => {
+                        let response = Self::build_success_response();
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => {
+                        let response = Self::build_error_response(&e);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                }
+            }
+            QueueOperation::Nack => {
+                let msg_id = message_id.unwrap_or_default();
+                let token = delivery_token.unwrap_or_default();
+
+                match service.nack(realm, area, resource, &msg_id, &token) {
+                    Ok(()) => {
+                        let response = Self::build_success_response();
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => {
+                        let response = Self::build_error_response(&e);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                }
+            }
+            QueueOperation::Requeue => {
+                let msg_id = message_id.unwrap_or_default();
+                let token = delivery_token.unwrap_or_default();
+
+                match service.requeue(realm, area, resource, &msg_id, &token) {
+                    Ok(()) => {
+                        let response = Self::build_success_response();
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                    Err(e) => {
+                        let response = Self::build_error_response(&e);
+                        DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                            response,
+                        ))
+                    }
+                }
+            }
+            QueueOperation::Get => {
+                // Get operation not supported in no-peek design
+                let response = Self::build_error_response("Get operation not supported");
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+            }
+            QueueOperation::List => {
+                // Handle different list patterns:
+                // queue://realm/area/*/list -> list all queues in realm/area
+                // queue://realm/*/*/list -> list all queues in realm
+                if resource == "*" && area != "*" {
+                    // List all queues in this realm/area scope
+                    let queues = service
+                        .list_queues_in_scope(realm, area)
+                        .unwrap_or_else(|_| Vec::new());
+                    let response = Self::build_list_response(&queues);
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                } else if resource == "*" && area == "*" {
+                    // List all queues in this realm (realm/*/*/list)
+                    let queues = service
+                        .list_queues_in_realm(realm)
+                        .unwrap_or_else(|_| Vec::new());
+                    let response = Self::build_list_response(&queues);
+                    DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                } else {
+                    // List specific queue route
+                    let route = format!("{}/{}/{}", realm, area, resource);
+                    let queues = vec![route];
+                    let response = Self::build_list_response(&queues);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
+            }
+            QueueOperation::Config => {
+                // TODO: Implement config operation
+                let response = Self::build_success_response();
+                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+            }
         }
     }
 

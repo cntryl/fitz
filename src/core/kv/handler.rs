@@ -215,8 +215,7 @@ impl Domain for KvDomain {
         let service = Arc::clone(&self.service);
 
         // Handle the operation
-        let result = service
-            .handle_operation(operation, &request.route_str, key, value);
+        let result = service.handle_operation(operation, &request.route_str, key, value);
 
         // Build and return response
         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(

@@ -3,15 +3,19 @@
 //! Handles parsing of TLV-encoded request payloads and building TLV-encoded responses
 //! for notice operations (subscribe, unsubscribe, publish).
 
-use crate::protocol::tags::{TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE};
+use crate::protocol::tags::{
+    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
+};
 use smallvec::SmallVec;
 
 /// Response buffer optimized for typical notice frames (<64 bytes)
 /// Uses stack allocation to avoid heap overhead for small messages
+#[allow(dead_code)]
 type ResponseBuf = SmallVec<[u8; 64]>;
 
 /// Notice operation type
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum NoticeOperation {
     Subscribe,
     Unsubscribe,
@@ -20,6 +24,7 @@ pub enum NoticeOperation {
 
 /// Parsed TLV payload for notice operations
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NoticeTlvPayload {
     pub operation: NoticeOperation,
     pub body: Option<Vec<u8>>,
@@ -28,6 +33,7 @@ pub struct NoticeTlvPayload {
 
 /// Parse TLV payload in a single pass
 /// Returns descriptive errors on malformed input instead of silently dropping bytes
+#[allow(dead_code)]
 pub fn parse_tlv_payload(payload: &[u8]) -> Result<NoticeTlvPayload, String> {
     let mut has_subscribe = false;
     let mut has_unsubscribe = false;
@@ -97,6 +103,7 @@ pub fn parse_tlv_payload(payload: &[u8]) -> Result<NoticeTlvPayload, String> {
 }
 
 /// Build TLV-encoded response using SmallVec for stack allocation
+#[allow(dead_code)]
 pub fn build_ack_response(route: &str) -> ResponseBuf {
     let route_bytes = route.as_bytes();
     let mut response = ResponseBuf::new();
@@ -109,6 +116,7 @@ pub fn build_ack_response(route: &str) -> ResponseBuf {
 }
 
 /// Build TLV-encoded publish response with route, optional message ID, and body
+#[allow(dead_code)]
 pub fn build_publish_response(route: &str, msg_id: Option<&str>, body: &[u8]) -> ResponseBuf {
     let mut response = ResponseBuf::new();
 
@@ -133,6 +141,7 @@ pub fn build_publish_response(route: &str, msg_id: Option<&str>, body: &[u8]) ->
 }
 
 /// Build TLV-encoded error response using SmallVec for stack allocation
+#[allow(dead_code)]
 pub fn build_error_response(error_msg: &str) -> ResponseBuf {
     let msg_bytes = error_msg.as_bytes();
     let mut response = ResponseBuf::new();

@@ -8,6 +8,7 @@ use crate::protocol::tags::{TAG_BODY, TAG_DELIVERY_TOKEN, TAG_ID, TAG_LEASE};
 
 /// Parsed TLV payload for lease operations
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LeaseTlvPayload {
     pub id: Option<String>,
     pub token: Option<String>,
@@ -16,6 +17,7 @@ pub struct LeaseTlvPayload {
 }
 
 /// Parse TLV payload to extract lease operation parameters
+#[allow(dead_code)]
 pub fn parse_tlv_payload(payload: &[u8]) -> LeaseTlvPayload {
     let mut id = None;
     let mut token = None;
@@ -72,6 +74,7 @@ pub fn parse_tlv_payload(payload: &[u8]) -> LeaseTlvPayload {
 }
 
 /// Build TLV response for lease grant
+#[allow(dead_code)]
 pub fn build_grant_response(grant: &LeaseGrant) -> Vec<u8> {
     let mut response = Vec::new();
 
@@ -219,7 +222,7 @@ mod tests {
         assert!(response.contains(&TAG_DELIVERY_TOKEN));
         assert!(response.contains(&TAG_LEASE));
         assert!(response.contains(&TAG_BODY));
-        
+
         // Verify body content is present
         let body_content = b"lease_data";
         let windows = response.windows(body_content.len());

@@ -35,7 +35,11 @@ impl LeaseDomain {
     fn build_grant_response(&self, grant: &LeaseGrant) -> Vec<u8> {
         let mut response = Vec::new();
         crate::protocol::frame::build_tlv(TAG_ID, grant.id.as_bytes(), &mut response);
-        crate::protocol::frame::build_tlv(TAG_DELIVERY_TOKEN, grant.token.as_bytes(), &mut response);
+        crate::protocol::frame::build_tlv(
+            TAG_DELIVERY_TOKEN,
+            grant.token.as_bytes(),
+            &mut response,
+        );
         crate::protocol::frame::build_tlv(TAG_LEASE, &grant.ttl_secs.to_be_bytes(), &mut response);
         if let Some(body) = &grant.body {
             crate::protocol::frame::build_tlv(TAG_BODY, body, &mut response);
@@ -72,9 +76,11 @@ impl Domain for LeaseDomain {
                 // Acquire requires TAG_LEASE (TTL)
                 match tlv::parse_u32(&payload, TAG_LEASE) {
                     Some(ttl) => match svc.acquire(rf, &key, ttl) {
-                        Ok(grant) => DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                            self.build_grant_response(&grant),
-                        )),
+                        Ok(grant) => {
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                self.build_grant_response(&grant),
+                            ))
+                        }
                         Err(e) => DomainResponse::Error(e),
                     },
                     None => DomainResponse::Error("acquire requires TAG_LEASE (TTL)".to_string()),
@@ -87,10 +93,13 @@ impl Domain for LeaseDomain {
                 let add = tlv::parse_u32(&payload, TAG_LEASE);
 
                 match (id, token, add) {
-                    (Some(id), Some(token), Some(add)) => match svc.renew(rf, &key, id, token, add) {
-                        Ok(grant) => DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                            self.build_grant_response(&grant),
-                        )),
+                    (Some(id), Some(token), Some(add)) => match svc.renew(rf, &key, id, token, add)
+                    {
+                        Ok(grant) => {
+                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
+                                self.build_grant_response(&grant),
+                            ))
+                        }
                         Err(e) => DomainResponse::Error(e),
                     },
                     _ => DomainResponse::Error(

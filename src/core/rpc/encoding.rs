@@ -11,10 +11,12 @@ use smallvec::SmallVec;
 
 /// Response buffer optimized for typical RPC frames (<64 bytes for control messages)
 /// Uses stack allocation to avoid heap overhead for small messages
+#[allow(dead_code)]
 type ResponseBuf = SmallVec<[u8; 64]>;
 
 /// RPC operation type
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum RpcOperation {
     Subscribe,
     Unsubscribe,
@@ -24,6 +26,7 @@ pub enum RpcOperation {
 
 /// Parsed TLV payload for RPC operations
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RpcTlvPayload {
     pub operation: RpcOperation,
     pub body: Option<Vec<u8>>,
@@ -35,6 +38,7 @@ pub struct RpcTlvPayload {
 
 /// Parse TLV payload in a single pass
 /// Returns descriptive errors on malformed input
+#[allow(dead_code)]
 pub fn parse_tlv_payload(payload: &[u8]) -> Result<RpcTlvPayload, String> {
     let mut has_subscribe = false;
     let mut has_unsubscribe = false;

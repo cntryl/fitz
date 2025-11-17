@@ -311,21 +311,20 @@ pub fn build_notification_frame_ex(
 /// Assumes frame header has already been parsed.
 pub fn decode(bytes: Vec<u8>) -> Result<(String, Vec<u8>, crate::routing::RouteFamilyId), String> {
     let parsed = parse_frame(&bytes).map_err(|e| format!("parse error: {:?}", e))?;
-    
+
     // Find route TLV
-    let route_bytes = find_tlv(parsed.payload, TAG_ROUTE)
-        .ok_or("missing route TLV")?;
+    let route_bytes = find_tlv(parsed.payload, TAG_ROUTE).ok_or("missing route TLV")?;
     let route = std::str::from_utf8(route_bytes)
         .map_err(|e| format!("invalid route UTF-8: {}", e))?
         .to_string();
-    
+
     // The payload is everything except the route TLV
     // For simplicity, return the full payload for now
     let payload = parsed.payload.to_vec();
-    
+
     // Route family from route parsing
     let route_family = crate::routing::RouteFamilyId::default(); // TODO: determine from route
-    
+
     Ok((route, payload, route_family))
 }
 

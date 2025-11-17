@@ -1,7 +1,7 @@
 // Moved from benches/hotpath/stream.rs — subsystem/service-level bench
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::core::stream::StreamService;
 use fitz::core::stream::types::StreamEvent;
+use fitz::core::stream::StreamService;
 use fitz::routing::DEFAULT_RF;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
@@ -16,12 +16,14 @@ fn rt() -> &'static Runtime {
 
 static STREAM_SERVICE: OnceLock<Arc<StreamService>> = OnceLock::new();
 fn stream_service() -> Arc<StreamService> {
-    STREAM_SERVICE.get_or_init(|| {
-        rt().block_on(async {
-            let store = fitz::storage::midge_adapter::create_memory_store().unwrap();
-            Arc::new(StreamService::new(store))
+    STREAM_SERVICE
+        .get_or_init(|| {
+            rt().block_on(async {
+                let store = fitz::storage::midge_adapter::create_memory_store().unwrap();
+                Arc::new(StreamService::new(store))
+            })
         })
-    }).clone()
+        .clone()
 }
 
 const MAX_ITERS: u64 = 2_000;
@@ -37,7 +39,6 @@ fn bench_stream_append_subsystem(c: &mut Criterion) {
                 for i in 0..MAX_ITERS {
                     let txn = svc
                         .begin_append(rf, "realm1", "area1", "resource1")
-                        .await
                         .expect("begin");
 
                     let event = StreamEvent {
@@ -50,11 +51,9 @@ fn bench_stream_append_subsystem(c: &mut Criterion) {
                         is_end: false,
                     };
 
-                    svc.append_event(txn, rf, event)
-                        .await
-                        .expect("append");
+                    svc.append_event(txn, rf, event).expect("append");
 
-                    let _ = svc.commit_append(txn, rf).await.expect("commit");
+                    let _ = svc.commit_append(txn, rf).expect("commit");
                 }
             });
             start.elapsed()

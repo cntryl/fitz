@@ -20,7 +20,9 @@ pub fn issue_token_for_client(client_id: &str, client_secret: &str) -> Option<St
         return Some("mock:dev".to_string());
     }
 
-    if let (Some(cfg_id), Some(cfg_secret)) = (cfg.auth.client_id.clone(), cfg.auth.client_secret.clone()) {
+    if let (Some(cfg_id), Some(cfg_secret)) =
+        (cfg.auth.client_id.clone(), cfg.auth.client_secret.clone())
+    {
         if client_id == cfg_id && client_secret == cfg_secret {
             let mut token = format!("mock:{}:control", client_id);
             if let Some(perms) = cfg.auth.client_permissions.clone() {
@@ -50,7 +52,10 @@ mod tests {
         std::env::remove_var("FITZ_NO_AUTH");
         std::env::set_var("FITZ_CLIENT_ID", "node-1");
         std::env::set_var("FITZ_CLIENT_SECRET", "s3cr3t");
-        std::env::set_var("FITZ_CLIENT_PERMISSIONS", "read:stream://acme/*,write:queue://acme/orders/*");
+        std::env::set_var(
+            "FITZ_CLIENT_PERMISSIONS",
+            "read:stream://acme/*,write:queue://acme/orders/*",
+        );
 
         // Act
         let token = issue_token_for_client("node-1", "s3cr3t");

@@ -36,7 +36,14 @@ fn large_routes(n: usize) -> &'static [String] {
 }
 
 fn make_subscription(id: u64, pattern: String, channel_id: u32) -> RtSubscription {
-    let (tx, _rx) = tokio::sync::mpsc::channel::<(String, Option<String>, Vec<u8>, Option<String>, Option<u32>, bool)>(1);
+    let (tx, _rx) = tokio::sync::mpsc::channel::<(
+        String,
+        Option<String>,
+        Vec<u8>,
+        Option<String>,
+        Option<u32>,
+        bool,
+    )>(1);
     RtSubscription {
         id,
         route_pattern: pattern,
@@ -182,11 +189,11 @@ fn bench_route_table_fanout_clone_cost(c: &mut Criterion) {
 
     c.bench_function("route_table_fanout_2k_clone_cost", {
         let table = Arc::clone(&table);
-            move |b| {
-                b.iter(|| {
-                    black_box(table.matching_subscribers(rf, &probe).collect::<Vec<_>>());
-                });
-            }
+        move |b| {
+            b.iter(|| {
+                black_box(table.matching_subscribers(rf, &probe).collect::<Vec<_>>());
+            });
+        }
     });
 }
 
@@ -209,7 +216,11 @@ fn bench_route_table_multi_rf_sharding(c: &mut Criterion) {
         let table = Arc::clone(&table);
         move |b| {
             b.iter(|| {
-                black_box(table.matching_subscribers(probe_rf, probe).collect::<Vec<_>>());
+                black_box(
+                    table
+                        .matching_subscribers(probe_rf, probe)
+                        .collect::<Vec<_>>(),
+                );
             });
         }
     });

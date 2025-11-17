@@ -363,11 +363,7 @@ impl KvService {
     }
 
     /// Handle begin transaction: start a new transaction for realm/area
-    fn handle_begin_transaction(
-        &self,
-        realm: &str,
-        area: &str,
-    ) -> Result<Option<Vec<u8>>, String> {
+    fn handle_begin_transaction(&self, realm: &str, area: &str) -> Result<Option<Vec<u8>>, String> {
         // Get next transaction ID
         let transaction_id = {
             let mut next_id = self.next_transaction_id.lock().unwrap();

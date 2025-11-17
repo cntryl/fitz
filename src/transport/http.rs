@@ -48,9 +48,7 @@ pub async fn handle_request(
     let path = req.uri().path();
 
     match path {
-        "/healthz" | "/livez" | "/startupz" | "/readyz" => {
-            Ok(Response::new(Body::from("ok")))
-        }
+        "/healthz" | "/livez" | "/startupz" | "/readyz" => Ok(Response::new(Body::from("ok"))),
 
         "/rpc/sys/token/issue" => handle_token_issue(req).await,
 
@@ -76,21 +74,19 @@ pub async fn handle_request(
             let engine_for_ws = engine.clone();
             tokio::spawn(async move {
                 match hyper::upgrade::on(req).await {
-                    Ok(upgraded) => {
-                        match tokio_tungstenite::accept_async(upgraded).await {
-                            Ok(ws_stream) => {
-                                if let Err(e) = crate::transport::ws::handle_upgraded_connection(
-                                    ws_stream,
-                                    engine_for_ws,
-                                )
-                                .await
-                                {
-                                    tracing::error!("ws error: {}", e);
-                                }
+                    Ok(upgraded) => match tokio_tungstenite::accept_async(upgraded).await {
+                        Ok(ws_stream) => {
+                            if let Err(e) = crate::transport::ws::handle_upgraded_connection(
+                                ws_stream,
+                                engine_for_ws,
+                            )
+                            .await
+                            {
+                                tracing::error!("ws error: {}", e);
                             }
-                            Err(e) => tracing::error!("ws handshake failed: {}", e),
                         }
-                    }
+                        Err(e) => tracing::error!("ws handshake failed: {}", e),
+                    },
                     Err(e) => tracing::error!("upgrade failed: {}", e),
                 }
             });
@@ -106,9 +102,7 @@ pub async fn handle_request(
     }
 }
 
-async fn handle_token_issue(
-    req: Request<Body>,
-) -> Result<Response<Body>, Infallible> {
+async fn handle_token_issue(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     use hyper::Method;
 
     if req.method() != Method::POST {
@@ -117,12 +111,16 @@ async fn handle_token_issue(
         return Ok(r);
     }
 
-    let body = hyper::body::to_bytes(req.into_body()).await.unwrap_or_default();
-    let v: serde_json::Value =
-        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    let body = hyper::body::to_bytes(req.into_body())
+        .await
+        .unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
 
     let client_id = v.get("client_id").and_then(|s| s.as_str()).unwrap_or("");
-    let client_secret = v.get("client_secret").and_then(|s| s.as_str()).unwrap_or("");
+    let client_secret = v
+        .get("client_secret")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
 
     if crate::config::load().auth.no_auth {
         return Ok(json_ok_token("mock:dev"));

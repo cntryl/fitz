@@ -1,7 +1,7 @@
 //! Hotpath microbenchmarks for TLV/frame helpers.
 use criterion::{criterion_group, criterion_main, Criterion};
-use fitz::protocol::frame::{build_tlv, find_tlv, build_frame, parse_frame};
-use fitz::protocol::tags::{TAG_ID, TAG_BODY};
+use fitz::protocol::frame::{build_frame, build_tlv, find_tlv, parse_frame};
+use fitz::protocol::tags::{TAG_BODY, TAG_ID};
 
 #[path = "../config.rs"]
 mod config;

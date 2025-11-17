@@ -30,7 +30,7 @@ fn service() -> Arc<LeaseService> {
     SERVICE
         .get_or_init(|| {
             env::set_var("FITZ_LEASE_SPAWN_EXPIRER", "0");
-            rt().block_on(async { LeaseService::new_no_expirer() })
+            LeaseService::new()
         })
         .clone()
 }
@@ -47,7 +47,7 @@ fn bench_acquire(c: &mut Criterion) {
             rt().block_on(async {
                 for i in 0..MAX_ITERS {
                     let key = format!("lease://bench/area/key_{:04}", i % 1024);
-                    let _ = svc.acquire(rf, &key, 30).await;
+                    let _ = svc.acquire(rf, &key, 30);
                 }
             });
             start.elapsed()
@@ -65,21 +65,22 @@ fn bench_renew(c: &mut Criterion) {
             rt().block_on(async {
                 // Pre-acquire leases for renewal
                 let mut grants = Vec::new();
-                for i in 0..(MAX_ITERS / 10) { // Fewer leases since renew is more targeted
+                for i in 0..(MAX_ITERS / 10) {
+                    // Fewer leases since renew is more targeted
                     let key = format!("lease://bench/renew/key_{:04}", i % 256);
-                    if let Ok(grant) = svc.acquire(rf, &key, 30).await {
+                    if let Ok(grant) = svc.acquire(rf, &key, 30) {
                         grants.push((key, grant));
                     }
                 }
 
                 // Now benchmark renews
                 for (key, grant) in &grants {
-                    let _ = svc.renew(rf, key, &grant.id, &grant.token, 30).await;
+                    let _ = svc.renew(rf, key, &grant.id, &grant.token, 30);
                 }
 
                 // Cleanup
-                for (key, grant) in grants {
-                    let _ = svc.surrender(rf, &key, &grant.id, &grant.token).await;
+                for (key, grant) in &grants {
+                    let _ = svc.surrender(rf, key, &grant.id, &grant.token);
                 }
             });
             start.elapsed()
@@ -99,14 +100,14 @@ fn bench_release(c: &mut Criterion) {
                 let mut grants = Vec::new();
                 for i in 0..(MAX_ITERS / 10) {
                     let key = format!("lease://bench/surrender/key_{:04}", i % 256);
-                    if let Ok(grant) = svc.acquire(rf, &key, 30).await {
+                    if let Ok(grant) = svc.acquire(rf, &key, 30) {
                         grants.push((key, grant));
                     }
                 }
 
                 // Benchmark surrenders
-                for (key, grant) in grants {
-                    let _ = svc.surrender(rf, &key, &grant.id, &grant.token).await;
+                for (key, grant) in &grants {
+                    let _ = svc.surrender(rf, key, &grant.id, &grant.token);
                 }
             });
             start.elapsed()
@@ -125,14 +126,14 @@ fn bench_contention(c: &mut Criterion) {
                 let contended_key = "lease://bench/contention/hot_resource";
 
                 // Acquire initial lease (will cause contention)
-                let holder = svc.acquire(rf, contended_key, 30).await.unwrap();
+                let holder = svc.acquire(rf, contended_key, 30).unwrap();
 
                 // Spawn multiple waiters
                 let mut waiters = Vec::new();
                 for _ in 0..10 {
                     let svc_clone = svc.clone();
                     let waiter = tokio::spawn(async move {
-                        let _ = svc_clone.acquire(rf, contended_key, 5).await;
+                        let _ = svc_clone.acquire(rf, contended_key, 5);
                     });
                     waiters.push(waiter);
                 }
@@ -141,7 +142,7 @@ fn bench_contention(c: &mut Criterion) {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
                 // Surrender to trigger grant to waiters
-                let _ = svc.surrender(rf, contended_key, &holder.id, &holder.token).await;
+                let _ = svc.surrender(rf, contended_key, &holder.id, &holder.token);
 
                 // Wait for all waiters to complete
                 for waiter in waiters {
@@ -170,13 +171,13 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                         let key = format!("lease://bench/concurrent/key_{:04}", i);
 
                         // Acquire
-                        let grant = svc_clone.acquire(rf, &key, 10).await.unwrap();
+                        let grant = svc_clone.acquire(rf, &key, 10).unwrap();
 
                         // Renew
-                        let _ = svc_clone.renew(rf, &key, &grant.id, &grant.token, 5).await;
+                        let _ = svc_clone.renew(rf, &key, &grant.id, &grant.token, 5);
 
                         // Surrender
-                        let _ = svc_clone.surrender(rf, &key, &grant.id, &grant.token).await;
+                        let _ = svc_clone.surrender(rf, &key, &grant.id, &grant.token);
                     });
                     tasks.push(task);
                 }

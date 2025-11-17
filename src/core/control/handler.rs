@@ -6,8 +6,8 @@ use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::notice::NoticeService;
 use crate::core::parsing::{response, tlv};
 use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE};
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ControlDomain {
@@ -107,8 +107,7 @@ impl Domain for ControlDomain {
 
                 // Build TLV-encoded response
                 // Echo the body back for pub/sub pattern
-                let response =
-                    self.build_tlv_response(&request.route_str, None, &response_body);
+                let response = self.build_tlv_response(&request.route_str, None, &response_body);
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
             }
             Err(err) => {

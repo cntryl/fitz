@@ -157,7 +157,7 @@ impl LeaseService {
             .expiry
             .saturating_duration_since(Instant::now())
             .as_secs() as u32;
-        
+
         Ok(LeaseGrant {
             id: lock.id.clone(),
             token: lock.token.clone(),
@@ -465,14 +465,13 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                &grant.id,
-                &grant.token,
-                0,
-            );
+        let result = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &grant.id,
+            &grant.token,
+            0,
+        );
 
         // Assert
         assert!(result.is_err());
@@ -488,14 +487,13 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                "wrong-id",
-                &grant.token,
-                5,
-            );
+        let result = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            "wrong-id",
+            &grant.token,
+            5,
+        );
 
         // Assert
         assert!(result.is_err());
@@ -511,14 +509,13 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                &grant.id,
-                "wrong-token",
-                5,
-            );
+        let result = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &grant.id,
+            "wrong-token",
+            5,
+        );
 
         // Assert
         assert!(result.is_err());
@@ -531,14 +528,13 @@ mod tests {
         let svc = new_test_service();
 
         // Act
-        let result = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/no-lease",
-                "fake-id",
-                "fake-token",
-                5,
-            );
+        let result = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/no-lease",
+            "fake-id",
+            "fake-token",
+            5,
+        );
 
         // Assert
         assert!(result.is_err());
@@ -554,13 +550,12 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = svc
-            .surrender(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                &grant.id,
-                &grant.token,
-            );
+        let result = svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &grant.id,
+            &grant.token,
+        );
 
         // Assert
         assert!(result.is_ok());
@@ -581,10 +576,10 @@ mod tests {
         )
         .unwrap();
 
-        // Act - try to acquire again
+        // Act
         let result = svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 5);
 
-        // Assert - should succeed because lease was removed
+        // Assert
         assert!(result.is_ok());
     }
 
@@ -597,13 +592,12 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = svc
-            .surrender(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                "wrong-id",
-                &grant.token,
-            );
+        let result = svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            "wrong-id",
+            &grant.token,
+        );
 
         // Assert
         assert!(result.is_err());
@@ -617,18 +611,17 @@ mod tests {
         let grant = svc
             .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
             .unwrap();
-        let _ = svc
-            .surrender(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                "wrong-id",
-                &grant.token,
-            );
+        let _ = svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            "wrong-id",
+            &grant.token,
+        );
 
-        // Act - try to acquire again
+        // Act
         let result = svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 5);
 
-        // Assert - should get lease_busy because lease still exists
+        // Assert
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "lease_busy");
     }
@@ -642,13 +635,12 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = svc
-            .surrender(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                &grant.id,
-                "wrong-token",
-            );
+        let result = svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &grant.id,
+            "wrong-token",
+        );
 
         // Assert
         assert!(result.is_err());
@@ -662,18 +654,17 @@ mod tests {
         let grant = svc
             .acquire(DEFAULT_RF, "lease://realm1/area1/res", 5)
             .unwrap();
-        let _ = svc
-            .surrender(
-                DEFAULT_RF,
-                "lease://realm1/area1/res",
-                &grant.id,
-                "wrong-token",
-            );
+        let _ = svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/res",
+            &grant.id,
+            "wrong-token",
+        );
 
-        // Act - try to acquire again
+        // Act
         let result = svc.acquire(DEFAULT_RF, "lease://realm1/area1/res", 5);
 
-        // Assert - should get lease_busy because lease still exists
+        // Assert
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "lease_busy");
     }
@@ -684,13 +675,12 @@ mod tests {
         let svc = new_test_service();
 
         // Act
-        let result = svc
-            .surrender(
-                DEFAULT_RF,
-                "lease://realm1/area1/no-lease",
-                "fake-id",
-                "fake-token",
-            );
+        let result = svc.surrender(
+            DEFAULT_RF,
+            "lease://realm1/area1/no-lease",
+            "fake-id",
+            "fake-token",
+        );
 
         // Assert
         assert!(result.is_err());
@@ -725,23 +715,21 @@ mod tests {
             .acquire(DEFAULT_RF, "lease://realm1/area1/key2", 5)
             .unwrap();
 
-        // Act - verify by trying to renew each
-        let renew1 = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/key1",
-                &grant1.id,
-                &grant1.token,
-                5,
-            );
-        let renew2 = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/key2",
-                &grant2.id,
-                &grant2.token,
-                5,
-            );
+        // Act
+        let renew1 = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/key1",
+            &grant1.id,
+            &grant1.token,
+            5,
+        );
+        let renew2 = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/key2",
+            &grant2.id,
+            &grant2.token,
+            5,
+        );
 
         // Assert
         assert!(renew1.is_ok());
@@ -768,24 +756,22 @@ mod tests {
         )
         .unwrap();
 
-        // Assert - key1 can be reacquired, key2 still held (returns busy)
-        let reacquire1 = svc
-            .acquire(DEFAULT_RF, "lease://realm1/area1/key1", 5);
+        // Assert
+        let reacquire1 = svc.acquire(DEFAULT_RF, "lease://realm1/area1/key1", 5);
         let try_acquire2 = svc.acquire(DEFAULT_RF, "lease://realm1/area1/key2", 5);
-        
+
         assert!(reacquire1.is_ok());
         assert!(try_acquire2.is_err());
         assert_eq!(try_acquire2.unwrap_err(), "lease_busy");
 
         // Verify key2 still responds to renew
-        let renew2 = svc
-            .renew(
-                DEFAULT_RF,
-                "lease://realm1/area1/key2",
-                &grant2.id,
-                &grant2.token,
-                5,
-            );
+        let renew2 = svc.renew(
+            DEFAULT_RF,
+            "lease://realm1/area1/key2",
+            &grant2.id,
+            &grant2.token,
+            5,
+        );
         assert!(renew2.is_ok());
     }
 
@@ -798,7 +784,7 @@ mod tests {
         let rf1: RouteFamilyId = 1;
         let rf2: RouteFamilyId = 2;
 
-        // Act - acquire same resource in different route families
+        // Act
         let grant1 = svc
             .acquire(rf1, "lease://realm1/area1/resource1", 10)
             .unwrap();
@@ -806,7 +792,7 @@ mod tests {
             .acquire(rf2, "lease://realm1/area1/resource1", 10)
             .unwrap();
 
-        // Assert - different leases
+        // Assert
         assert_ne!(grant1.id, grant2.id);
         assert_ne!(grant1.token, grant2.token);
     }
@@ -821,10 +807,10 @@ mod tests {
 
         let grant = svc.acquire(rf1, key, 10).unwrap();
 
-        // Act - try to renew lease from rf1 using rf2
+        // Act
         let result = svc.renew(rf2, key, &grant.id, &grant.token, 5);
 
-        // Assert - should fail (lease not found in rf2)
+        // Assert
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "lease_not_found");
     }
@@ -839,10 +825,10 @@ mod tests {
 
         let grant = svc.acquire(rf1, key, 10).unwrap();
 
-        // Act - try to surrender lease from rf1 using rf2
+        // Act
         let result = svc.surrender(rf2, key, &grant.id, &grant.token);
 
-        // Assert - should fail (lease not found in rf2)
+        // Assert
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "lease_not_found");
     }
@@ -856,12 +842,12 @@ mod tests {
         let rf3: RouteFamilyId = 3;
         let key = "lease://realm1/area1/database";
 
-        // Act - each tenant acquires same resource independently
+        // Act
         let grant1 = svc.acquire(rf1, key, 5).unwrap();
         let grant2 = svc.acquire(rf2, key, 5).unwrap();
         let grant3 = svc.acquire(rf3, key, 5).unwrap();
 
-        // Assert - all three leases coexist without interference
+        // Assert
         assert_ne!(grant1.id, grant2.id);
         assert_ne!(grant2.id, grant3.id);
         assert_ne!(grant1.id, grant3.id);
@@ -884,22 +870,19 @@ mod tests {
         let rf2: RouteFamilyId = 2;
         let key = "lease://realm1/area1/resource1";
 
-        // Act - tenant 1 acquires resource
         let grant_rf1 = svc.acquire(rf1, key, 10).unwrap();
 
-        // Act - tenant 2 should NOT block (different route family)
+        // Act
         let result_rf2 = svc.acquire(rf2, key, 5);
 
-        // Assert - tenant 2 gets immediate lease (no wait)
+        // Assert
         assert!(result_rf2.is_ok());
         let grant_rf2 = result_rf2.unwrap();
         assert_ne!(grant_rf1.id, grant_rf2.id);
 
         // Cleanup
-        let _ = svc
-            .surrender(rf1, key, &grant_rf1.id, &grant_rf1.token);
-        let _ = svc
-            .surrender(rf2, key, &grant_rf2.id, &grant_rf2.token);
+        let _ = svc.surrender(rf1, key, &grant_rf1.id, &grant_rf1.token);
+        let _ = svc.surrender(rf2, key, &grant_rf2.id, &grant_rf2.token);
     }
 
     #[test]
@@ -909,14 +892,14 @@ mod tests {
         let num_tenants = 10;
         let key = "lease://realm1/area1/shared_resource";
 
-        // Act - acquire lease in many route families
+        // Act
         let mut grants = Vec::new();
         for rf in 0..num_tenants {
             let grant = svc.acquire(rf, key, 30).unwrap();
             grants.push((rf, grant));
         }
 
-        // Assert - all leases are distinct
+        // Assert
         for i in 0..grants.len() {
             for j in (i + 1)..grants.len() {
                 assert_ne!(grants[i].1.id, grants[j].1.id);

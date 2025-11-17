@@ -5,8 +5,8 @@
 //! - UUID formatting
 //! - LeaseEntry state transitions
 
-use criterion::{criterion_group, criterion_main, Criterion};
 use base64::{engine::general_purpose, Engine as _};
+use criterion::{criterion_group, criterion_main, Criterion};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use uuid::Uuid;
@@ -70,7 +70,6 @@ fn bench_uuid_formatting(c: &mut Criterion) {
 }
 
 fn bench_lease_entry_state_transitions(c: &mut Criterion) {
-    
     struct LocalLeaseEntry {
         id: String,
         token: String,

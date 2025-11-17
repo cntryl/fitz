@@ -11,8 +11,7 @@ use super::types::ControlOperation;
 /// - Metrics: system health and performance reporting
 /// - Config: configuration updates from control plane
 #[derive(Debug, Clone)]
-pub struct ControlService {
-}
+pub struct ControlService {}
 
 impl ControlService {
     /// Create a new control service with the given node ID
@@ -100,8 +99,7 @@ mod tests {
         let body = b"{\"nodeId\":\"test-node\",\"timestamp\":1234567890}";
 
         // Act
-        let result = service
-            .handle_operation(ControlOperation::Heartbeat, body);
+        let result = service.handle_operation(ControlOperation::Heartbeat, body);
 
         // Assert
         assert!(result.is_ok());
@@ -115,8 +113,7 @@ mod tests {
         let body = b"{\"nodeId\":\"test-node\",\"reason\":\"maintenance\"}";
 
         // Act
-        let result = service
-            .handle_operation(ControlOperation::Shutdown, body);
+        let result = service.handle_operation(ControlOperation::Shutdown, body);
 
         // Assert
         assert!(result.is_ok());
@@ -130,8 +127,7 @@ mod tests {
         let body = b"{\"nodeId\":\"test-node\",\"active_connections\":42}";
 
         // Act
-        let result = service
-            .handle_operation(ControlOperation::Metrics, body);
+        let result = service.handle_operation(ControlOperation::Metrics, body);
 
         // Assert
         assert!(result.is_ok());
@@ -144,8 +140,7 @@ mod tests {
         let body = b"{\"ack_window\":100}";
 
         // Act
-        let result = service
-            .handle_operation(ControlOperation::Config, body);
+        let result = service.handle_operation(ControlOperation::Config, body);
 
         // Assert
         assert!(result.is_ok());

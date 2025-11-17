@@ -3,11 +3,11 @@
 //! Storage operations are performance-critical, especially for KV and queue operations.
 //! These benchmarks focus on the core storage primitives that are called frequently.
 
+use cntryl_midge::ColumnFamilyId;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::storage::midge_adapter;
 use fitz::storage::traits::KvStore;
 use std::sync::{Arc, OnceLock};
-use cntryl_midge::ColumnFamilyId;
 
 #[path = "../config.rs"]
 mod config;
@@ -20,29 +20,28 @@ const DEFAULT_CF: ColumnFamilyId = ColumnFamilyId(0);
 // ---------------------------------------------------------
 static MIDGE_STORE: OnceLock<Arc<dyn KvStore>> = OnceLock::new();
 fn midge_store() -> Arc<dyn KvStore> {
-    MIDGE_STORE.get_or_init(|| {
-        // Use in-memory Midge store for benches — avoids filesystem effects
-        midge_adapter::create_memory_store().expect("create memory store")
-    })
-    .clone()
+    MIDGE_STORE
+        .get_or_init(|| {
+            // Use in-memory Midge store for benches — avoids filesystem effects
+            midge_adapter::create_memory_store().expect("create memory store")
+        })
+        .clone()
 }
 
+#[allow(dead_code)]
 static TEST_KEYS: OnceLock<Vec<String>> = OnceLock::new();
+#[allow(dead_code)]
 fn test_keys() -> &'static [String] {
-    TEST_KEYS.get_or_init(|| {
-        (0..1000)
-            .map(|i| format!("key_{:04}", i))
-            .collect()
-    })
+    TEST_KEYS.get_or_init(|| (0..1000).map(|i| format!("key_{:04}", i)).collect())
 }
 
 static TEST_VALUES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 fn test_values() -> &'static [Vec<u8>] {
     TEST_VALUES.get_or_init(|| {
         vec![
-            vec![b'x'; 64],        // 64B
-            vec![b'x'; 1024],      // 1KB
-            vec![b'x'; 64 * 1024], // 64KB
+            vec![b'x'; 64],          // 64B
+            vec![b'x'; 1024],        // 1KB
+            vec![b'x'; 64 * 1024],   // 64KB
             vec![b'x'; 1024 * 1024], // 1MB
         ]
     })
@@ -168,7 +167,10 @@ fn bench_midge_batch_put(c: &mut Criterion) {
             || {
                 let mut batch = Vec::new();
                 for i in 0..10 {
-                    batch.push((format!("batch_key_{}", i).into_bytes(), test_values()[0].clone()));
+                    batch.push((
+                        format!("batch_key_{}", i).into_bytes(),
+                        test_values()[0].clone(),
+                    ));
                 }
                 batch
             },

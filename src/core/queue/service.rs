@@ -9,10 +9,7 @@
 //! - 0x02 0x03 {realm} {area} {resource} → Queue configuration
 
 use crate::core::queue::encoding::{
-    decode_lease_info,
-    decode_stored_queue_message,
-    encode_lease_info,
-    encode_stored_queue_message,
+    decode_lease_info, decode_stored_queue_message, encode_lease_info, encode_stored_queue_message,
 };
 use crate::core::queue::types::{LeaseInfo, QueueMessage, StoredQueueMessage};
 use crate::storage::markers::{queue as queue_prefixes, QUEUE_DOMAIN_PREFIX};
@@ -109,14 +106,14 @@ impl QueueService {
         // The lexkey encoding puts each u8 into an 8-byte encoded block.
         // Structure: [DOMAIN_PREFIX encoded (8 bytes)][IDX encoded (8 bytes)][rest...]
         // We need to change the IDX byte which is at a specific position in the second block.
-        
+
         // Minimum length check: need at least 2 encoded blocks (16 bytes)
         if lease_key.len() < 16 {
             return None;
         }
-        
+
         let mut key = lease_key.to_vec();
-        
+
         // Find where IDX_LEASE byte is located
         // Based on the debug output, lexkey encodes u8 values with leading zeros
         // and the actual value at the end of each 8-byte block
@@ -129,7 +126,7 @@ impl QueueService {
                 break;
             }
         }
-        
+
         if found {
             Some(key)
         } else {
@@ -139,11 +136,7 @@ impl QueueService {
 
     /// List queues within a specific realm/area scope
     /// Returns queues that match the pattern: queue:{realm}/{area}/*
-    pub fn list_queues_in_scope(
-        &self,
-        realm: &str,
-        area: &str,
-    ) -> Result<Vec<String>, String> {
+    pub fn list_queues_in_scope(&self, realm: &str, area: &str) -> Result<Vec<String>, String> {
         use std::collections::HashSet;
 
         // Scan for queue keys in this scope: queue:{realm}/{area}/
@@ -254,13 +247,11 @@ impl QueueService {
         let lease_key = Self::key_lease(realm, area, resource, &message_id);
 
         // Write immutable message row then lease row
-        self
-            .kv_store
+        self.kv_store
             .put(DEFAULT_CF, &message_key, &message_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
-        self
-            .kv_store
+        self.kv_store
             .put(DEFAULT_CF, &lease_key, &lease_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
@@ -301,12 +292,10 @@ impl QueueService {
 
             let mut lease_info: LeaseInfo = match decode_lease_info(&lease_bytes) {
                 Ok(info) => info,
-                Err(_e) => {
-                    LeaseInfo {
-                        lease_expiry: None,
-                        lease_owner: None,
-                        delivery_count: 0,
-                    }
+                Err(_e) => LeaseInfo {
+                    lease_expiry: None,
+                    lease_owner: None,
+                    delivery_count: 0,
                 },
             };
 
@@ -321,12 +310,10 @@ impl QueueService {
 
             // derive message key
             let message_key = match Self::derive_message_key_from_lease(&lease_key_bytes) {
-                Some(k) => {
-                    k
-                },
+                Some(k) => k,
                 None => {
                     continue;
-                },
+                }
             };
 
             lease_info.delivery_count = lease_info.delivery_count.saturating_add(1);
@@ -345,32 +332,27 @@ impl QueueService {
             message_keys.into_iter().zip(staged_leases.into_iter())
         {
             let value_bytes = match self.kv_store.get(DEFAULT_CF, &message_key) {
-                Ok(Some(v)) => {
-                    v
-                },
+                Ok(Some(v)) => v,
                 Ok(None) => {
                     // Message missing: clean up orphaned lease
-                    self
-                        .kv_store
+                    self.kv_store
                         .delete(DEFAULT_CF, &lease_key)
                         .map_err(|e| format!("Storage error: {:?}", e))?;
                     continue;
                 }
                 Err(e) => {
                     return Err(format!("Storage error: {:?}", e));
-                },
+                }
             };
 
             let stored: StoredQueueMessage = match decode_stored_queue_message(&value_bytes) {
                 Ok(m) => m,
                 Err(_) => {
                     // Corrupted message: best-effort cleanup
-                    self
-                        .kv_store
+                    self.kv_store
                         .delete(DEFAULT_CF, &lease_key)
                         .map_err(|e| format!("Storage error: {:?}", e))?;
-                    self
-                        .kv_store
+                    self.kv_store
                         .delete(DEFAULT_CF, &message_key)
                         .map_err(|e| format!("Storage error: {:?}", e))?;
                     continue;
@@ -381,12 +363,10 @@ impl QueueService {
             if let Some(ttl) = stored.ttl_secs {
                 let expiry_ts = stored.created_at.saturating_add(ttl);
                 if expiry_ts <= now {
-                    self
-                        .kv_store
+                    self.kv_store
                         .delete(DEFAULT_CF, &lease_key)
                         .map_err(|e| format!("Storage error: {:?}", e))?;
-                    self
-                        .kv_store
+                    self.kv_store
                         .delete(DEFAULT_CF, &message_key)
                         .map_err(|e| format!("Storage error: {:?}", e))?;
                     continue;
@@ -427,8 +407,7 @@ impl QueueService {
         // Phase 3: commit new leases
         for (lease_key, lease_info) in lease_updates {
             let data = encode_lease_info(&lease_info);
-            self
-                .kv_store
+            self.kv_store
                 .put(DEFAULT_CF, &lease_key, &data)
                 .map_err(|e| format!("Storage error: {:?}", e))?;
         }
@@ -465,12 +444,10 @@ impl QueueService {
 
         // Delete both message and lease records
         let message_key = Self::key_message(realm, area, resource, message_id);
-        self
-            .kv_store
+        self.kv_store
             .delete(DEFAULT_CF, &message_key)
             .map_err(|e| format!("Storage error: {:?}", e))?;
-        self
-            .kv_store
+        self.kv_store
             .delete(DEFAULT_CF, &lease_key)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
@@ -514,8 +491,7 @@ impl QueueService {
 
         // Update lease record
         let updated_data = encode_lease_info(&lease_info);
-        self
-            .kv_store
+        self.kv_store
             .put(DEFAULT_CF, &lease_key, &updated_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
@@ -614,8 +590,7 @@ impl QueueService {
         }
 
         // Delete lease record to release lease
-        self
-            .kv_store
+        self.kv_store
             .delete(DEFAULT_CF, &lease_key)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
@@ -658,8 +633,7 @@ impl QueueService {
 
         // Update lease record
         let updated_data = encode_lease_info(&updated_lease);
-        self
-            .kv_store
+        self.kv_store
             .put(DEFAULT_CF, &lease_key, &updated_data)
             .map_err(|e| format!("Storage error: {:?}", e))?;
 
@@ -688,12 +662,25 @@ impl QueueService {
         lease_expiry: u64,
         delivery_count: u32,
     ) -> String {
-        self.generate_delivery_token(realm, area, resource, message_id, lease_expiry, delivery_count)
+        self.generate_delivery_token(
+            realm,
+            area,
+            resource,
+            message_id,
+            lease_expiry,
+            delivery_count,
+        )
     }
 
     /// Synchronous version of key building for benchmarking
     /// Measures key encoding performance for domain operations
-    pub fn bench_key_building(&self, realm: &str, area: &str, resource: &str, message_id: &str) -> Vec<u8> {
+    pub fn bench_key_building(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: &str,
+    ) -> Vec<u8> {
         Self::key_message(realm, area, resource, message_id)
     }
 }
@@ -783,12 +770,12 @@ mod tests {
         let service = create_test_service();
         let test_body = b"test message body".to_vec();
 
-        // Act & Assert - Enqueue
+        // Act
         let message_id = service
             .enqueue("test", "realm", "queue", test_body.clone(), None, None)
             .expect("Enqueue should succeed");
 
-        // Debug: Check if message is stored
+        // Assert
         let key = QueueService::key_message("test", "realm", "queue", &message_id);
         let stored_data = service
             .kv_store
@@ -802,7 +789,6 @@ mod tests {
             "Stored message ID should match"
         );
 
-        // Act & Assert - Receive
         let messages = service
             .receive("test", "realm", "queue", 1, 30)
             .expect("Reserve should succeed");
@@ -824,18 +810,19 @@ mod tests {
 
         let delivery_token = reserved_message.lease_owner.as_ref().unwrap().clone();
 
-        // Act & Assert - Complete
         service
             .complete("test", "realm", "queue", &message_id, &delivery_token)
             .expect("Complete should succeed");
 
-        // Verify message is gone: direct KV lookup
         let key = QueueService::key_message("test", "realm", "queue", &message_id);
         let stored = service
             .kv_store
             .get(DEFAULT_CF, &key)
             .expect("Storage get should succeed");
-        assert!(stored.is_none(), "Message should be deleted after completion");
+        assert!(
+            stored.is_none(),
+            "Message should be deleted after completion"
+        );
     }
 
     #[test]
@@ -844,7 +831,6 @@ mod tests {
         let service = create_test_service();
         let test_body = b"test message".to_vec();
 
-        // Enqueue a message
         let message_id = service
             .enqueue("test", "realm", "queue", test_body.clone(), None, None)
             .expect("Enqueue should succeed");
@@ -878,11 +864,12 @@ mod tests {
             .put(DEFAULT_CF, &lease_key, &updated_data)
             .expect("Storage put should succeed");
 
-        // Act - Reserve again (should get the same message)
+        // Act
         let redelivered_messages = service
             .receive("test", "realm", "queue", 1, 30)
             .expect("Reserve should succeed after lease expiry");
 
+        // Assert
         assert_eq!(redelivered_messages.len(), 1);
         assert_eq!(
             redelivered_messages[0].id, message_id,
@@ -897,7 +884,8 @@ mod tests {
     #[test]
     fn should_generate_message_id() {
         // Arrange
-        let store = crate::storage::midge_adapter::create_memory_store().expect("Failed to create memory store");
+        let store = crate::storage::midge_adapter::create_memory_store()
+            .expect("Failed to create memory store");
         let svc = QueueService::new(store);
 
         // Act
@@ -911,17 +899,18 @@ mod tests {
     #[test]
     fn should_generate_delivery_token() {
         // Arrange
-        let store = crate::storage::midge_adapter::create_memory_store().expect("Failed to create memory store");
+        let store = crate::storage::midge_adapter::create_memory_store()
+            .expect("Failed to create memory store");
         let svc = QueueService::new(store);
 
         // Act
         let token = svc.bench_delivery_token_generation(
             "realm1",
-            "area1", 
+            "area1",
             "resource1",
             "msg_123",
             1234567890,
-            5
+            5,
         );
 
         // Assert
@@ -933,7 +922,8 @@ mod tests {
     #[test]
     fn should_build_queue_key() {
         // Arrange
-        let store = crate::storage::midge_adapter::create_memory_store().expect("Failed to create memory store");
+        let store = crate::storage::midge_adapter::create_memory_store()
+            .expect("Failed to create memory store");
         let svc = QueueService::new(store);
 
         // Act

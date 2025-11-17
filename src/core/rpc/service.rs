@@ -169,7 +169,10 @@ impl RpcService {
     /// Hot path: called for every RPC request
     #[inline]
     pub fn matching_handlers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
-        self.handler_routes.matching_subscribers(rf, route).cloned().collect()
+        self.handler_routes
+            .matching_subscribers(rf, route)
+            .cloned()
+            .collect()
     }
 
     /// Get matching inbox subscribers for a reply route
@@ -179,7 +182,10 @@ impl RpcService {
         rf: RouteFamilyId,
         inbox_route: &str,
     ) -> Vec<RtSubscription> {
-        self.inbox_routes.matching_subscribers(rf, inbox_route).cloned().collect()
+        self.inbox_routes
+            .matching_subscribers(rf, inbox_route)
+            .cloned()
+            .collect()
     }
 
     /// Check if a channel can publish to an inbox (only handlers of active requests)
@@ -335,7 +341,7 @@ impl RpcService {
 
         // Use std::sync primitives for pure sync benchmarking
         let mut active_requests = FxHashMap::with_capacity_and_hasher(32, Default::default());
-        
+
         // Simulate registering requests
         for i in 0..10 {
             let corr_id = format!("req-{}", i);
@@ -343,13 +349,13 @@ impl RpcService {
             let reply_route = format!("inbox://inbox-{}", i);
             active_requests.insert(corr_id, (handler_route, reply_route));
         }
-        
+
         // Simulate deregistering some
         for i in 0..5 {
             let corr_id = format!("req-{}", i);
             active_requests.remove(&corr_id);
         }
-        
+
         active_requests.len()
     }
 }
