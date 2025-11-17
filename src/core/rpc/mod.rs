@@ -1,5 +1,6 @@
 //! RPC domain - request/reply messaging
 
+mod encoding;
 mod handler;
 mod service;
 mod types;

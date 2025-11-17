@@ -1,5 +1,6 @@
 //! KV domain - simple key-value storage
 
+mod encoding;
 mod handler;
 mod service;
 mod types;

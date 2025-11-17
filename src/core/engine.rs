@@ -116,6 +116,12 @@ pub struct EngineConnectionRegistry {
     conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
 }
 
+impl Default for EngineConnectionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineConnectionRegistry {
     pub fn new() -> Self {
         Self {

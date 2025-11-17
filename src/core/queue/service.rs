@@ -311,14 +311,8 @@ impl QueueService {
             };
 
             let available = match lease_info.lease_expiry {
-                Some(expiry) => {
-                    let avail = expiry <= now;
-                    avail
-                },
-                None => {
-                    let avail = lease_info.lease_owner.is_none();
-                    avail
-                },
+                Some(expiry) => expiry <= now,
+                None => lease_info.lease_owner.is_none(),
             };
 
             if !available {

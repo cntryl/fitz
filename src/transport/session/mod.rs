@@ -1077,7 +1077,7 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                 None => DEFAULT_RF,
             }
         };
-        let _ = engine_clone.cleanup_channel(channel, route_family);
+        engine_clone.cleanup_channel(channel, route_family);
     });
 }
 

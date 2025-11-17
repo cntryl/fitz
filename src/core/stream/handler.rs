@@ -40,7 +40,7 @@ impl StreamDomain {
 
     /// Subscribe to availability notifications for a route pattern
     /// Returns subscription ID for later unsubscribe
-    pub async fn subscribe(
+    pub fn subscribe(
         &self,
         rf: crate::routing::RouteFamilyId,
         route_pattern: String,
@@ -53,7 +53,7 @@ impl StreamDomain {
 
     /// Unsubscribe from availability notifications
     /// Returns true if subscription was found and removed
-    pub async fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
+    pub fn unsubscribe(&self, subscription_id: u64) -> Result<bool, String> {
         let mut service = self.service.write();
         Ok(service.unsubscribe(subscription_id))
     }

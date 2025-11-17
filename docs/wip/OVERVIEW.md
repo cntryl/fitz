@@ -69,6 +69,86 @@ Fitz is a transport-agnostic, multi-tenant message broker providing unified **no
 
 ---
 
+## Async/Sync Architecture
+
+Fitz treats **async as a boundary concern**, not an internal design constraint. The system performs best when **external I/O is async**, but **core domain logic stays fully synchronous**.
+
+### Architectural Split
+
+#### **Async at the Edges**
+
+Async is used only where it buys real wins:
+
+* Network I/O (WS, TCP, HTTP)
+* Storage I/O (flush futures, WAL fsync, cloud ops)
+* Timers, heartbeats
+* Background tasks that await OS operations
+
+This keeps the broker responsive and cheap under load.
+
+#### **Sync in the Hotpath**
+
+All routing, parsing, domain dispatch, lease/queue logic, and KV interactions run as **pure synchronous code**:
+
+* No `.await` inside handlers
+* No async state machines in hot loops
+* No locking-based reactors
+
+This guarantees predictable scheduling, lower latency, and stable tail performance.
+
+### Why Not Async All the Way Down?
+
+In .NET, "async all the way down" removes hidden threadpool blocking. In Fitz, the model is inverted:
+
+* Rust async **adds overhead** inside tight paths (state machines, pollers, wakeups).
+* Fitz hotpaths are CPU-bound and memory-bound, not I/O-bound.
+* Sync code runs immediately on the executor without context switching.
+
+Async is still used for I/O, but once a message reaches the domain layer, it should already be in memory. The domain logic is pure compute; async would only slow it down.
+
+### Domain Handler Rules
+
+**Before the handler:**
+
+* Perform all async work (fetch remote state, load KV rows, read WAL, etc.)
+* Prepare a full `DomainContext`
+* Parse route, TLV, and metadata
+
+**Inside the handler:**
+
+* Pure synchronous logic
+* Deterministic state transitions
+* No `.await`
+* No external calls
+
+**After the handler:**
+
+* Publish followup events (async)
+* Persist results (async)
+* Trigger notifications (async)
+
+By the time the handler runs, everything it needs should already be in memory and ready.
+
+### Benefits
+
+* **Lower latency** (no async state-machine overhead)
+* **Stronger determinism** in core logic
+* **Cleaner testing** (everything is synchronous and pure)
+* **More modular** separation between domain logic and I/O orchestration
+* **Higher throughput** because executor threads aren't constantly parked/unparked
+
+### Mental Model
+
+Think of Fitz like this:
+
+* **Async → transport & plumbing**
+* **Sync → domain & semantics**
+
+You only "await" when talking to the outside world.
+Inside Fitz, logic is synchronous and fast, like Go or .NET ValueTasks but without allocs or hidden blocking.
+
+---
+
 ## Route Semantics
 
 Fitz uses a unified route space with scheme-based dispatch:

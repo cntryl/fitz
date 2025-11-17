@@ -451,7 +451,7 @@ mod tests {
 
         // Assert
         assert!(
-            remaining >= added,
+            remaining.ttl_secs >= added,
             "remaining should be at least the added seconds"
         );
     }

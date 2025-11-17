@@ -49,7 +49,7 @@ pub async fn handle_request(
 
     match path {
         "/healthz" | "/livez" | "/startupz" | "/readyz" => {
-            return Ok(Response::new(Body::from("ok")));
+            Ok(Response::new(Body::from("ok")))
         }
 
         "/rpc/sys/token/issue" => handle_token_issue(req).await,

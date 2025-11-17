@@ -1,5 +1,6 @@
 //! Notice domain - ephemeral pub/sub notifications
 
+mod encoding;
 mod handler;
 mod service;
 mod types;

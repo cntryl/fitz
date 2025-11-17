@@ -506,14 +506,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_reject_missing_operation_in_resource_path() {
+    #[test]
+    fn should_reject_missing_operation_in_resource_path() {
         // Arrange
-        let handler = create_test_handler().await;
+        let handler = create_test_handler();
         let context = create_test_context("queue://test_realm/test_area/resource1", vec![]);
 
         // Act
-        let result = handler.handle(context).await;
+        let result = handler.handle(context);
 
         // Assert
         match result {

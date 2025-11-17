@@ -1,5 +1,6 @@
 //! Control domain - system control plane
 
+mod encoding;
 mod handler;
 mod service;
 mod types;

@@ -18,10 +18,6 @@ const SHARD_MASK: usize = SHARD_COUNT - 1;
 /// Max segments we care about in a route (`scheme://realm/area/resource/op`)
 const MAX_SEGMENTS: usize = 8;
 
-/// Max matches we'll return per lookup without reallocating.
-/// In practice, most routes have < 16 subscribers.
-const MAX_MATCHES: usize = 256;
-
 /// Type alias for subscriber slabs
 type SubSlab = Arc<[RtSubscription]>;
 
@@ -32,41 +28,6 @@ pub struct RtSubscription {
     pub route_pattern: String,
     pub channel_id: u32,
     pub sender: SubSender,
-}
-
-/// Compact subscription list:
-/// - Inline up to 4 IDs (no heap)
-/// - Spills to heap only when needed (big fan-out tenants)
-#[derive(Debug, Clone, Default)]
-struct SubList {
-    ids: SmallVec<[u64; 4]>,
-}
-
-impl SubList {
-    #[inline]
-    fn insert_if_absent(&mut self, id: u64) {
-        if !self.ids.contains(&id) {
-            self.ids.push(id);
-        }
-    }
-
-    #[inline]
-    fn retain<F>(&mut self, mut f: F)
-    where
-        F: FnMut(u64) -> bool,
-    {
-        self.ids.retain(|id| f(*id));
-    }
-
-    #[inline]
-    fn is_empty(&self) -> bool {
-        self.ids.is_empty()
-    }
-
-    #[inline]
-    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
-        self.ids.iter().copied()
-    }
 }
 
 /// One node in the route trie:
@@ -82,15 +43,7 @@ struct TrieNode {
     wildcard_child: Option<Box<TrieNode>>,
 }
 
-impl TrieNode {
-    /// Is this node completely empty (used for pruning)
-    fn is_empty(&self) -> bool {
-        self.exact_subs.is_none()
-            && self.trailing_wildcard_subs.is_none()
-            && self.children.is_empty()
-            && self.wildcard_child.is_none()
-    }
-}
+impl TrieNode {}
 
 /// Fanout result: zero-allocation iterator over matched subscribers
 #[derive(Debug)]
@@ -98,16 +51,6 @@ pub struct Fanout<'a> {
     slabs: Vec<&'a SubSlab>,
     slab_index: usize,
     item_index: usize,
-}
-
-impl<'a> Fanout<'a> {
-    fn new() -> Self {
-        Self {
-            slabs: Vec::new(),
-            slab_index: 0,
-            item_index: 0,
-        }
-    }
 }
 
 impl<'a> Iterator for Fanout<'a> {
@@ -407,7 +350,7 @@ impl RouteTable {
     }
 
     /// Zero-alloc hot path: return iterator over matched subscribers
-    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Fanout {
+    pub fn matching_subscribers(&self, rf: RouteFamilyId, route: &str) -> Fanout<'_> {
         // Split route once into stack-backed array
         let mut segs: [&str; MAX_SEGMENTS] = [""; MAX_SEGMENTS];
         let mut seg_len = 0;

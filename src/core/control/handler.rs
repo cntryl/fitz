@@ -158,8 +158,8 @@ mod tests {
         assert_eq!(response[0], TAG_ROUTE);
     }
 
-    #[tokio::test]
-    async fn should_handle_heartbeat_operation() {
+    #[test]
+    fn should_handle_heartbeat_operation() {
         // Arrange
         let domain = ControlDomain::new();
         let mut payload = Vec::new();
@@ -185,7 +185,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {
@@ -196,8 +196,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_shutdown_operation() {
+    #[test]
+    fn should_handle_shutdown_operation() {
         // Arrange
         let domain = ControlDomain::new();
         let mut payload = Vec::new();
@@ -234,8 +234,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_return_error_when_body_missing() {
+    #[test]
+    fn should_return_error_when_body_missing() {
         // Arrange
         let domain = ControlDomain::new();
         let payload = Vec::new(); // Empty payload

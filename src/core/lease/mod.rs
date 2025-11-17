@@ -1,5 +1,6 @@
 //! Lease domain - ephemeral resource locks
 
+mod encoding;
 mod handler;
 mod service;
 mod types;

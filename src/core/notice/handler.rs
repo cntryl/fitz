@@ -296,8 +296,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_subscribe_request() {
+    #[test]
+    fn should_handle_subscribe_request() {
         // Arrange
         let domain = NoticeDomain::new();
         let payload = vec![TAG_SUBSCRIBE, 0];
@@ -319,7 +319,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {
@@ -330,8 +330,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_handle_publish_request() {
+    #[test]
+    fn should_handle_publish_request() {
         // Arrange
         let domain = NoticeDomain::new();
         let mut payload = Vec::new();
@@ -361,7 +361,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {
@@ -372,8 +372,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_reject_publish_without_complete_route() {
+    #[test]
+    fn should_reject_publish_without_complete_route() {
         // Arrange
         let domain = NoticeDomain::new();
         let mut payload = Vec::new();
@@ -399,7 +399,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {
@@ -414,8 +414,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_reject_subscription_without_realm() {
+    #[test]
+    fn should_reject_subscription_without_realm() {
         // Arrange
         let domain = NoticeDomain::new();
         let payload = vec![TAG_SUBSCRIBE, 0];
@@ -437,7 +437,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {
@@ -452,8 +452,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn should_accept_valid_subscription_with_wildcard() {
+    #[test]
+    fn should_accept_valid_subscription_with_wildcard() {
         // Arrange
         let domain = NoticeDomain::new();
         let payload = vec![TAG_SUBSCRIBE, 0];
@@ -475,7 +475,7 @@ mod tests {
         };
 
         // Act
-        let response = domain.handle(request).await;
+        let response = domain.handle(request);
 
         // Assert
         match response {

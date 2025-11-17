@@ -2,9 +2,11 @@ use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::lease::service::LeaseService;
 use crate::core::lease::types::{LeaseGrant, LeaseOperation};
 use crate::core::parsing::tlv;
-use crate::protocol::frame::build_tlv;
 use crate::protocol::tags::*;
 use std::sync::Arc;
+
+#[cfg(test)]
+use crate::protocol::frame::build_tlv;
 
 /// Lease domain handler - routes all lease:// operations
 ///
@@ -85,7 +87,7 @@ impl Domain for LeaseDomain {
                 let add = tlv::parse_u32(&payload, TAG_LEASE);
 
                 match (id, token, add) {
-                    (Some(id), Some(token), Some(add)) => match svc.renew(rf, &key, &id, &token, add) {
+                    (Some(id), Some(token), Some(add)) => match svc.renew(rf, &key, id, token, add) {
                         Ok(grant) => DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             self.build_grant_response(&grant),
                         )),
@@ -102,7 +104,7 @@ impl Domain for LeaseDomain {
                 let token = tlv::parse_string(&payload, TAG_DELIVERY_TOKEN);
 
                 match (id, token) {
-                    (Some(id), Some(token)) => match svc.surrender(rf, &key, &id, &token) {
+                    (Some(id), Some(token)) => match svc.surrender(rf, &key, id, token) {
                         Ok(()) => DomainResponse::Ok,
                         Err(e) => DomainResponse::Error(e),
                     },
