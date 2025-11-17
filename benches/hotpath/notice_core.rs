@@ -14,11 +14,26 @@ use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::notice::NoticeDomain;
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::route::Route;
-use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_SUBSCRIBE};
+use fitz::protocol::tags::{TAG_BODY, TAG_ID, TAG_NO_ACK, TAG_SUBSCRIBE};
 use std::sync::Arc;
 
 #[path = "../config.rs"]
 mod config;
+
+#[derive(Copy, Clone)]
+enum AckMode {
+    Ack,
+    NoAck,
+}
+
+impl AckMode {
+    fn label(&self) -> &'static str {
+        match self {
+            AckMode::Ack => "ack",
+            AckMode::NoAck => "no_ack",
+        }
+    }
+}
 
 /// Build TLV payload for subscribe
 #[allow(dead_code)]
@@ -29,6 +44,33 @@ fn build_subscribe_payload() -> Vec<u8> {
 /// Build TLV payload for publish
 fn build_publish_payload(msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
+
+    if let Some(id) = msg_id {
+        payload.push(TAG_ID);
+        payload.push(id.len() as u8);
+        payload.extend_from_slice(id.as_bytes());
+    }
+
+    payload.push(TAG_BODY);
+    if body.len() <= 254 {
+        payload.push(body.len() as u8);
+        payload.extend_from_slice(body);
+    } else {
+        payload.push(255);
+        payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        payload.extend_from_slice(body);
+    }
+
+    payload
+}
+
+/// Build TLV payload for publish with no-ACK
+fn build_publish_payload_no_ack(msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+
+    // Signal no-ACK desired
+    payload.push(TAG_NO_ACK);
+    payload.push(0);
 
     if let Some(id) = msg_id {
         payload.push(TAG_ID);
@@ -68,31 +110,38 @@ fn bench_sequential_publish_no_subscribers(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("notice_sequential_publish_no_subs");
 
-    for count in [100, 1000, 10000] {
-        group.throughput(Throughput::Elements(count));
-        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
-            b.iter(|| {
-                for i in 0..count {
-                    let body = format!("message_{}", i).into_bytes();
-                    let payload = build_publish_payload(Some(&format!("msg_{}", i)), &body);
-                    let route = build_route("realm1", "area1", "alerts", "critical");
+    for mode in [AckMode::Ack, AckMode::NoAck] {
+        for count in [100, 1000, 10000] {
+            group.throughput(Throughput::Elements(count));
+            group.bench_with_input(BenchmarkId::new(mode.label(), count), &count, |b, &count| {
+                b.iter(|| {
+                    for i in 0..count {
+                        let body = format!("message_{}", i).into_bytes();
+                        let payload = match mode {
+                            AckMode::Ack => build_publish_payload(Some(&format!("msg_{}", i)), &body),
+                            AckMode::NoAck => build_publish_payload_no_ack(Some(&format!("msg_{}", i)), &body),
+                        };
+                        let route = build_route("realm1", "area1", "alerts", "critical");
 
-                    let ctx = DomainContext {
-                        route,
-                        route_str: "notice://realm1/area1/alerts/critical".to_string(),
-                        payload,
-                        channel_id: 1,
-                        route_family: 0,
-                    };
+                        let ctx = DomainContext {
+                            route,
+                            route_str: "notice://realm1/area1/alerts/critical".to_string(),
+                            payload,
+                            channel_id: 1,
+                            route_family: 0,
+                        };
 
-                    black_box(domain.handle(ctx));
-                }
+                        black_box(domain.handle(ctx));
+                    }
+                });
             });
-        });
+        }
     }
 
     group.finish();
 }
+
+/// (Removed) Separate no-ACK variant merged into loop above
 
 /// Test message size impact
 fn bench_message_sizes(c: &mut Criterion) {
@@ -228,19 +277,26 @@ fn bench_engine_dispatch_publish(c: &mut Criterion) {
     let engine = EngineHandle::new(tx, domains, registry);
 
     let mut group = c.benchmark_group("notice_engine_dispatch_publish");
-    for &size in &[64usize, 1024, 16_384] {
-        group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            b.iter(|| {
-                let body = vec![0u8; size];
-                let payload = build_publish_payload(Some("id"), &body);
-                let route = "notice://realm1/area1/stream/data".to_string();
-                let _ = black_box(engine.dispatch(route, payload, 1, 0));
+    for mode in [AckMode::Ack, AckMode::NoAck] {
+        for &size in &[64usize, 1024, 16_384] {
+            group.throughput(Throughput::Bytes(size as u64));
+            group.bench_with_input(BenchmarkId::new(mode.label(), size), &size, |b, &size| {
+                b.iter(|| {
+                    let body = vec![0u8; size];
+                    let payload = match mode {
+                        AckMode::Ack => build_publish_payload(Some("id"), &body),
+                        AckMode::NoAck => build_publish_payload_no_ack(Some("id"), &body),
+                    };
+                    let route = "notice://realm1/area1/stream/data".to_string();
+                    let _ = black_box(engine.dispatch(route, payload, 1, 0));
+                });
             });
-        });
+        }
     }
     group.finish();
 }
+
+/// (Removed) Separate engine no-ACK variant merged into loop above
 
 /// EXTREME: Broadcast fanout - 1 publish delivered to many subscribers
 fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
@@ -371,7 +427,7 @@ criterion_group!(
         bench_concurrent_multitenant_publish,
         bench_wildcard_matching,
         bench_high_frequency_publish,
-    bench_engine_dispatch_publish,
+        bench_engine_dispatch_publish,
         bench_extreme_broadcast_fanout,
         bench_extreme_subscription_churn,
         bench_extreme_wildcard_explosion

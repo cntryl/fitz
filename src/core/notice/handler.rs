@@ -10,7 +10,7 @@ use super::encoding;
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
-    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
+    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_NO_ACK, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -44,6 +44,7 @@ impl NoticeDomain {
         let mut has_unsubscribe = false;
         let mut body_range: Option<(usize, usize)> = None;
         let mut id_range: Option<(usize, usize)> = None;
+        let mut no_ack = false;
 
         let mut offset = 0;
         while offset + 2 <= payload.len() {
@@ -67,6 +68,7 @@ impl NoticeDomain {
                 TAG_UNSUBSCRIBE => has_unsubscribe = true,
                 TAG_BODY => body_range = Some((value_start, length)),
                 TAG_ID => id_range = Some((value_start, length)),
+                TAG_NO_ACK => no_ack = true,
                 _ => {
                     // Unknown tag - skip it but don't error (forward compatibility)
                 }
@@ -101,6 +103,7 @@ impl NoticeDomain {
             operation,
             body_range,
             id_range,
+            no_ack,
         })
     }
 
@@ -133,6 +136,7 @@ struct TlvParseResult {
     operation: NoticeOp,
     body_range: Option<(usize, usize)>,
     id_range: Option<(usize, usize)>,
+    no_ack: bool,
 }
 
 impl Default for NoticeDomain {
@@ -233,19 +237,27 @@ impl Domain for NoticeDomain {
                 let notification_frame =
                     encoding::build_notification_frame(&request.route_str, msg_id, body);
 
-                // Build ACK frame with subscriber count
-                let ack_frame = match encoding::build_ack_frame_with_count(
-                    &request.route_str,
-                    msg_id,
-                    result.subscribers.len() as u32,
-                ) {
-                    Some(frame) => frame,
-                    None => {
-                        // Route too long - return error
-                        let error_response = self.build_error_response("Route too long");
-                        return DomainResponse::Frame(
-                            crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
-                        );
+                // Build ACK frame with subscriber count unless TAG_NO_ACK is present
+                let ack_frame_opt = if parse_result.no_ack {
+                    None
+                } else {
+                    match encoding::build_ack_frame_with_count(
+                        &request.route_str,
+                        msg_id,
+                        result.subscribers.len() as u32,
+                    ) {
+                        Some(frame) => Some(
+                            crate::protocol::frame::PooledFrame::from_vec(frame),
+                        ),
+                        None => {
+                            // Route too long - return error
+                            let error_response = self.build_error_response("Route too long");
+                            return DomainResponse::Frame(
+                                crate::protocol::frame::PooledFrame::from_vec(
+                                    error_response.to_vec(),
+                                ),
+                            );
+                        }
                     }
                 };
 
@@ -253,7 +265,7 @@ impl Domain for NoticeDomain {
                 DomainResponse::NoticeDelivery {
                     subscribers: result.subscribers,
                     notification_frame,
-                    ack_frame: crate::protocol::frame::PooledFrame::from_vec(ack_frame),
+                    ack_frame: ack_frame_opt,
                 }
             }
         }
@@ -379,7 +391,10 @@ mod tests {
             }
             DomainResponse::NoticeDelivery { ack_frame, .. } => {
                 // New behavior: returns NoticeDelivery with fanout instructions
-                assert!(!ack_frame.as_ref().is_empty());
+                match ack_frame {
+                    Some(frame) => assert!(!frame.as_ref().is_empty()),
+                    None => panic!("Expected ACK frame to be present"),
+                }
             }
             _ => panic!("Expected Frame or NoticeDelivery response"),
         }
@@ -495,6 +510,45 @@ mod tests {
                 assert!(!content.contains(&TAG_ERR_MSG));
             }
             _ => panic!("Expected Frame response"),
+        }
+    }
+
+    #[test]
+    fn should_publish_with_no_ack_flag() {
+        // Arrange
+        let domain = NoticeDomain::new();
+        let mut payload = Vec::new();
+        payload.push(TAG_NO_ACK);
+        payload.push(0);
+        payload.push(TAG_BODY);
+        let body = b"hello world";
+        payload.push(body.len() as u8);
+        payload.extend_from_slice(body);
+
+        let request = DomainContext {
+            route: Route {
+                scheme: crate::protocol::route::Scheme::Notice,
+                realm: Some("realm1".to_string()),
+                area: Some("area1".to_string()),
+                resource: Some("resource1".to_string()),
+                operation: Some("alerts".to_string()),
+                raw: "notice://realm1/area1/resource1/alerts".to_string(),
+            },
+            route_str: "notice://realm1/area1/resource1/alerts".to_string(),
+            payload,
+            channel_id: 1,
+            route_family: 0,
+        };
+
+        // Act
+        let response = domain.handle(request);
+
+        // Assert
+        match response {
+            DomainResponse::NoticeDelivery { ack_frame, .. } => {
+                assert!(ack_frame.is_none());
+            }
+            _ => panic!("Expected NoticeDelivery response"),
         }
     }
 }

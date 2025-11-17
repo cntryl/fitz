@@ -72,6 +72,11 @@ pub const TAG_UNSUBSCRIBE: u8 = 0x91;
 /// subscription notification.
 pub const TAG_NOTIFICATION: u8 = 0x92;
 
+/// Suppress ACK for publish operations (empty TLV flag). When present in a
+/// notice publish payload, the server will not send an ACK back to the
+/// publisher. Fanout still occurs.
+pub const TAG_NO_ACK: u8 = 0x93;
+
 // ---------------------------------------------------------------------------
 // Stream (OCC and metadata) TLVs
 // ---------------------------------------------------------------------------

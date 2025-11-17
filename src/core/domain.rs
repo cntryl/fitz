@@ -51,8 +51,8 @@ pub enum DomainResponse {
         subscribers: smallvec::SmallVec<[(u32, u64); 8]>,
         /// Pre-built notification frame payload (TLV: route + id + body)
         notification_frame: Vec<u8>,
-        /// Acknowledgment frame to send back to publisher
-        ack_frame: crate::protocol::frame::PooledFrame,
+        /// Optional acknowledgment frame to send back to publisher
+        ack_frame: Option<crate::protocol::frame::PooledFrame>,
     },
 }
 

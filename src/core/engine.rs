@@ -124,7 +124,7 @@ impl EngineHandle {
                 // 3. Send notification_frame via connection's outbound channel
                 // 4. Handle backpressure per connection
                 let _ = (subscribers, notification_frame); // Suppress unused warning
-                Ok(ack_frame.into_vec())
+                Ok(match ack_frame { Some(f) => f.into_vec(), None => vec![] })
             }
         }
     }
@@ -296,8 +296,8 @@ impl Engine {
                     // Full implementation requires tracking channel_id -> conn_id mapping
                     let _ = (subscriber_channel_id, &notification_frame);
                 }
-                // Send ACK back to publisher
-                self.registry.send(conn_id, ack_frame.into_vec());
+                // Send ACK back to publisher if present
+                if let Some(f) = ack_frame { self.registry.send(conn_id, f.into_vec()); }
             }
             Err(e) => {
                 self.send_error(conn_id, channel_id, &e);
