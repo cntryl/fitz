@@ -221,6 +221,166 @@ fn bench_high_frequency_publish(c: &mut Criterion) {
     });
 }
 
+/// EXTREME: Broadcast fanout - 1 publish delivered to many subscribers
+fn bench_extreme_broadcast_fanout(c: &mut Criterion) {
+    use tokio::sync::mpsc;
+    
+    let mut group = c.benchmark_group("notice_extreme_broadcast_fanout");
+    
+    for subscriber_count in [10, 100, 1000] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}_subscribers", subscriber_count)),
+            &subscriber_count,
+            |b, &subscriber_count| {
+                b.iter(|| {
+                    let domain = NoticeDomain::new();
+                    
+                    // Subscribe many channels to the same route
+                    let sub_payload = build_subscribe_payload();
+                    for channel_id in 0..subscriber_count {
+                        let (tx, _rx) = mpsc::channel(100);
+                        let route = build_route("realm1", "area1", "broadcast", "alert");
+                        let ctx = DomainContext {
+                            route,
+                            route_str: "notice://realm1/area1/broadcast/alert".to_string(),
+                            payload: sub_payload.clone(),
+                            channel_id: channel_id as u32,
+                            route_family: 0,
+                            sender: Some(tx),
+                        };
+                        let _ = domain.handle(ctx);
+                    }
+                    
+                    // Now publish once - should fan out to all subscribers
+                    let body = vec![0u8; 256];
+                    let payload = build_publish_payload(Some("broadcast_msg"), &body);
+                    let route = build_route("realm1", "area1", "broadcast", "alert");
+                    let ctx = DomainContext {
+                        route,
+                        route_str: "notice://realm1/area1/broadcast/alert".to_string(),
+                        payload,
+                        channel_id: 9999,
+                        route_family: 0,
+                        sender: None,
+                    };
+                    
+                    black_box(domain.handle(ctx));
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
+/// EXTREME: Subscription churn - rapid subscribe/unsubscribe operations
+fn bench_extreme_subscription_churn(c: &mut Criterion) {
+    use tokio::sync::mpsc;
+    
+    let mut group = c.benchmark_group("notice_extreme_subscription_churn");
+    
+    for churn_count in [100, 1000] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}_cycles", churn_count)),
+            &churn_count,
+            |b, &churn_count| {
+                b.iter(|| {
+                    let domain = NoticeDomain::new();
+                    let sub_payload = build_subscribe_payload();
+                    
+                    // Rapidly add and implicitly remove (via domain recreation) subscriptions
+                    for i in 0..churn_count {
+                        let (tx, _rx) = mpsc::channel(100);
+                        let route = build_route(
+                            "realm1",
+                            "area1",
+                            &format!("resource_{}", i % 10),
+                            "update",
+                        );
+                        let route_str = format!(
+                            "notice://realm1/area1/resource_{}/update",
+                            i % 10
+                        );
+                        let ctx = DomainContext {
+                            route,
+                            route_str,
+                            payload: sub_payload.clone(),
+                            channel_id: i as u32,
+                            route_family: 0,
+                            sender: Some(tx),
+                        };
+                        black_box(domain.handle(ctx));
+                    }
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
+/// EXTREME: Wildcard explosion - many overlapping wildcard patterns
+fn bench_extreme_wildcard_explosion(c: &mut Criterion) {
+    use std::sync::mpsc;
+    
+    let mut group = c.benchmark_group("notice_extreme_wildcard_explosion");
+    
+    for wildcard_count in [10, 100] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}_wildcards", wildcard_count)),
+            &wildcard_count,
+            |b, &wildcard_count| {
+                b.iter(|| {
+                    let domain = NoticeDomain::new();
+                    let sub_payload = build_subscribe_payload();
+                    
+                    // Create many overlapping wildcard subscriptions
+                    for i in 0..wildcard_count {
+                        let (tx, _rx) = mpsc::channel();
+                        
+                        // Mix of wildcard patterns that could all match the same publish
+                        let (area, resource) = match i % 4 {
+                            0 => ("*", "*"),
+                            1 => ("area1", "*"),
+                            2 => ("*", "events"),
+                            _ => ("area1", "events"),
+                        };
+                        
+                        let route = build_route("realm1", area, resource, "update");
+                        let route_str = format!("notice://realm1/{}/{}/update", area, resource);
+                        let ctx = DomainContext {
+                            route,
+                            route_str,
+                            payload: sub_payload.clone(),
+                            channel_id: i as u32,
+                            route_family: 0,
+                            sender: Some(tx),
+                        };
+                        let _ = domain.handle(ctx);
+                    }
+                    
+                    // Publish to a route that matches ALL wildcards
+                    let body = vec![0u8; 128];
+                    let payload = build_publish_payload(Some("wildcard_test"), &body);
+                    let route = build_route("realm1", "area1", "events", "update");
+                    let ctx = DomainContext {
+                        route,
+                        route_str: "notice://realm1/area1/events/update".to_string(),
+                        payload,
+                        channel_id: 9999,
+                        route_family: 0,
+                        sender: None,
+                    };
+                    
+                    black_box(domain.handle(ctx));
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
 criterion_group!(
     name = hotpath_notice_core;
     config = config::criterion_config();
@@ -229,6 +389,9 @@ criterion_group!(
         bench_message_sizes,
         bench_concurrent_multitenant_publish,
         bench_wildcard_matching,
-        bench_high_frequency_publish
+        bench_high_frequency_publish,
+        bench_extreme_broadcast_fanout,
+        bench_extreme_subscription_churn,
+        bench_extreme_wildcard_explosion
 );
 criterion_main!(hotpath_notice_core);
