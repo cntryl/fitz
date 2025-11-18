@@ -7,7 +7,7 @@
 //!
 //! This layer is just the async->sync boundary.
 
-use crate::core::engine::EngineHandle;
+use crate::core::engine::EnginePool;
 use hyper::{
     service::{make_service_fn, service_fn},
     Body, Request, Response, Server, StatusCode,
@@ -17,11 +17,11 @@ use std::{convert::Infallible, net::SocketAddr};
 #[derive(Clone)]
 pub struct HttpTransport {
     addr: SocketAddr,
-    engine: EngineHandle,
+    engine: EnginePool,
 }
 
 impl HttpTransport {
-    pub fn new(addr: SocketAddr, engine: EngineHandle) -> Self {
+    pub fn new(addr: SocketAddr, engine: EnginePool) -> Self {
         Self { addr, engine }
     }
 
@@ -43,7 +43,7 @@ impl HttpTransport {
 
 pub async fn handle_request(
     req: Request<Body>,
-    engine: EngineHandle,
+    engine: EnginePool,
 ) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path();
 

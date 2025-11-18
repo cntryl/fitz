@@ -4,7 +4,7 @@
 //! - Engine stays 100% synchronous.
 //! - Per-connection outbound queue is a Tokio MPSC sender the engine can `try_send` into.
 
-use crate::core::engine::EngineHandle;
+use crate::core::engine::EnginePool;
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,11 +19,11 @@ type ConnectionId = u64;
 #[derive(Clone)]
 pub struct WsTransport {
     pub addr: SocketAddr,
-    pub engine: EngineHandle,
+    pub engine: EnginePool,
 }
 
 impl WsTransport {
-    pub fn new(addr: SocketAddr, engine: EngineHandle) -> Self {
+    pub fn new(addr: SocketAddr, engine: EnginePool) -> Self {
         Self { addr, engine }
     }
 
@@ -60,18 +60,23 @@ async fn handle_connection(
     conn_id: ConnectionId,
     stream: TcpStream,
     peer: SocketAddr,
-    engine: EngineHandle,
+    engine_pool: EnginePool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     crate::transport::inc_active_connections();
     tracing::debug!("ws connection {conn_id} accepted from {peer}");
+
+    // For plain WS without auth, use default route_family
+    // In production, JWT should be in first frame or upgrade headers
+    let route_family = "default";
+    let engine = engine_pool.get_handle(route_family);
 
     // If you need TLS, wrap `stream` here before `accept_async`.
     let ws_stream = accept_async(stream).await?;
     let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
-    // Outbound queue for this connection.
+    // Outbound queue for this connection (bounded for backpressure).
     // Engine will hold this and call `try_send` from its sync thread.
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(256);
 
     // Register with engine (engine stores outbound_tx for this conn_id).
     engine.register_connection(conn_id, outbound_tx);
@@ -124,18 +129,21 @@ async fn handle_connection(
 
 pub async fn handle_upgraded_connection(
     ws_stream: WebSocketStream<hyper::upgrade::Upgraded>,
-    engine: EngineHandle,
+    engine_pool: EnginePool,
     session_auth: crate::authz::SessionAuth,
-    _route_family: String,
+    route_family: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     crate::transport::inc_active_connections();
     let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!("ws upgraded connection {conn_id} accepted for subject: {}", session_auth.subject);
+    tracing::debug!("ws upgraded connection {conn_id} accepted for subject: {} route_family: {}", session_auth.subject, route_family);
+
+    // Select engine shard based on route_family (tenant)
+    let engine = engine_pool.get_handle(&route_family);
 
     let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
-    // Outbound queue for this connection.
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    // Outbound queue for this connection (bounded for backpressure).
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(256);
 
     // Register session and connection with engine
     engine.register_session(conn_id, session_auth);

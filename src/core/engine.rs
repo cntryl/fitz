@@ -24,11 +24,58 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 pub type ConnectionId = u64;
 pub type ChannelId = u32;
 
+/// Number of engine shards (power of 2 for efficient hashing)
+pub const NUM_SHARDS: usize = 8;
+
 /// Engine inbox capacity (bounded to prevent memory exhaustion)
 const ENGINE_INBOX_CAPACITY: usize = 1024;
 
 /// Per-connection outbound queue capacity
 const OUTBOUND_QUEUE_CAPACITY: usize = 256;
+
+/// Choose which engine shard should handle a given route_family (tenant).
+/// This ensures all connections for a tenant go to the same shard for consistency.
+pub fn choose_shard(route_family: &str) -> usize {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    route_family.hash(&mut hasher);
+    let hash = hasher.finish();
+    (hash as usize) % NUM_SHARDS
+}
+
+/// Pool of engine handles for sharded architecture.
+/// Transports use this to route connections to the appropriate shard.
+#[derive(Clone, Debug)]
+pub struct EnginePool {
+    shards: Arc<[EngineHandle; NUM_SHARDS]>,
+}
+
+impl EnginePool {
+    /// Create a new engine pool from an array of handles
+    pub fn new(shards: [EngineHandle; NUM_SHARDS]) -> Self {
+        Self {
+            shards: Arc::new(shards),
+        }
+    }
+    
+    /// Get the handle for a specific route_family (tenant)
+    pub fn get_handle(&self, route_family: &str) -> &EngineHandle {
+        let shard_id = choose_shard(route_family);
+        &self.shards[shard_id]
+    }
+    
+    /// Get handle by explicit shard index (for testing/admin)
+    pub fn get_handle_by_index(&self, shard_id: usize) -> Option<&EngineHandle> {
+        self.shards.get(shard_id)
+    }
+    
+    /// Get all handles (for broadcast/cleanup operations)
+    pub fn all_handles(&self) -> &Arc<[EngineHandle; NUM_SHARDS]> {
+        &self.shards
+    }
+}
 
 pub enum EngineEvent {
     Frame {
@@ -473,4 +520,45 @@ impl Engine {
         // Build frame with header (frame_type=FRAME_DAT, flags=0)
         crate::protocol::frame::build_frame(FRAME_DAT, 0, channel_id, &payload)
     }
+}
+
+/// Start NUM_SHARDS engine threads and return an EnginePool.
+/// Each engine runs in its own OS thread for deterministic, non-blocking processing.
+pub fn start_engine_pool() -> EnginePool {
+    use std::array;
+    
+    tracing::info!("starting {} engine shards", NUM_SHARDS);
+    
+    // Create domain registry (shared across all shards for now)
+    let domains = Arc::new(DomainRegistry::new());
+    
+    // Create shards
+    let handles: [EngineHandle; NUM_SHARDS] = array::from_fn(|shard_id| {
+        // Create bounded channel for this shard
+        let (tx, rx) = crossbeam_channel::bounded(ENGINE_INBOX_CAPACITY);
+        
+        // Create per-shard registry
+        let registry = Arc::new(EngineConnectionRegistry::new());
+        
+        // Create engine
+        let engine = Engine::new(rx, Arc::clone(&registry), Arc::clone(&domains));
+        
+        // Spawn engine thread
+        let thread_name = format!("engine-shard-{}", shard_id);
+        std::thread::Builder::new()
+            .name(thread_name.clone())
+            .spawn(move || {
+                tracing::info!("{} started", thread_name);
+                engine.run();
+                tracing::info!("{} stopped", thread_name);
+            })
+            .expect("failed to spawn engine thread");
+        
+        // Return handle for this shard
+        EngineHandle::new(tx, Arc::clone(&domains), registry)
+    });
+    
+    tracing::info!("all {} engine shards started", NUM_SHARDS);
+    
+    EnginePool::new(handles)
 }

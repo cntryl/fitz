@@ -4,16 +4,16 @@ use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-use crate::core::engine::EngineHandle;
+use crate::core::engine::EnginePool;
 
 #[derive(Debug, Clone)]
 pub struct TcpTransport {
     pub addr: SocketAddr,
-    pub engine: EngineHandle,
+    pub engine: EnginePool,
 }
 
 impl TcpTransport {
-    pub fn new(addr: SocketAddr, engine: EngineHandle) -> Self {
+    pub fn new(addr: SocketAddr, engine: EnginePool) -> Self {
         Self { addr, engine }
     }
 
@@ -26,30 +26,35 @@ impl TcpTransport {
         tracing::info!("tcp listening on {}", self.addr);
         
         while let Ok((stream, peer)) = listener.accept().await {
-            let engine = self.engine.clone();
+            let engine_pool = self.engine.clone();
             tokio::spawn(async move {
                 tracing::debug!("tcp connection accepted from {}", peer);
                 
                 // TCP requires authentication via first frame or pre-shared config
                 // For now, create a default dev session if NO_AUTH is enabled
-                let session_auth = if crate::authn::no_auth_enabled() {
-                    crate::authz::SessionAuth {
+                let (route_family, session_auth) = if crate::authn::no_auth_enabled() {
+                    let rf = "dev".to_string();
+                    let session = crate::authz::SessionAuth {
                         subject: "tcp-client".to_string(),
-                        route_family: "dev".to_string(),
+                        route_family: rf.clone(),
                         scopes: vec!["*".to_string()],
-                        grants: crate::authz::PermissionGrants::from_scopes("dev", &["*".to_string()]),
-                    }
+                        grants: crate::authz::PermissionGrants::from_scopes(&rf, &["*".to_string()]),
+                    };
+                    (rf, session)
                 } else {
                     tracing::warn!("tcp connection from {} rejected: authentication not implemented for TCP", peer);
                     return;
                 };
                 
+                // Select engine shard based on route_family
+                let engine = engine_pool.get_handle(&route_family);
+                
                 // Assign connection ID
                 static NEXT_CONN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
                 let conn_id = NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 
-                // Create outbound channel
-                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                // Create outbound channel (bounded for backpressure)
+                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
                 
                 // Register session and connection with engine
                 engine.register_session(conn_id, session_auth);
@@ -92,7 +97,11 @@ impl TcpTransport {
                                 }
                                 let frame_bytes: Vec<u8> = inbuf.drain(0..total_len).collect();
                                 // Send frame to engine for processing
-                                engine.on_frame(conn_id, frame_bytes);
+                                // If backpressure detected (false return), close connection
+                                if !engine.on_frame(conn_id, frame_bytes) {
+                                    tracing::warn!("tcp {conn_id} closing due to engine backpressure");
+                                    break;
+                                }
                             }
                         }
                         Err(_) => break,
@@ -121,29 +130,34 @@ impl TcpTransport {
         let listener = TcpListener::bind(self.addr).await?;
         while let Ok((stream, _peer)) = listener.accept().await {
             let acceptor = acceptor.clone();
-            let engine = self.engine.clone();
+            let engine_pool = self.engine.clone();
             tokio::spawn(async move {
                 match acceptor.accept(stream).await {
                     Ok(tls_stream) => {
                         // Create default session for NO_AUTH mode
-                        let session_auth = if crate::authn::no_auth_enabled() {
-                            crate::authz::SessionAuth {
+                        let (route_family, session_auth) = if crate::authn::no_auth_enabled() {
+                            let rf = "dev".to_string();
+                            let session = crate::authz::SessionAuth {
                                 subject: "tls-client".to_string(),
-                                route_family: "dev".to_string(),
+                                route_family: rf.clone(),
                                 scopes: vec!["*".to_string()],
-                                grants: crate::authz::PermissionGrants::from_scopes("dev", &["*".to_string()]),
-                            }
+                                grants: crate::authz::PermissionGrants::from_scopes(&rf, &["*".to_string()]),
+                            };
+                            (rf, session)
                         } else {
                             tracing::warn!("tls connection rejected: authentication not implemented for TLS");
                             return;
                         };
                         
+                        // Select engine shard based on route_family
+                        let engine = engine_pool.get_handle(&route_family);
+                        
                         // Assign connection ID
                         static NEXT_CONN_ID_TLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000000);
                         let conn_id = NEXT_CONN_ID_TLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         
-                        // Create outbound channel
-                        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                        // Create outbound channel (bounded for backpressure)
+                        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
                         
                         // Register session and connection
                         engine.register_session(conn_id, session_auth);
@@ -185,7 +199,11 @@ impl TcpTransport {
                                         let frame_bytes: Vec<u8> =
                                             inbuf.drain(0..total_len).collect();
                                         // Send frame to engine for processing
-                                        engine.on_frame(conn_id, frame_bytes);
+                                        // If backpressure detected (false return), close connection
+                                        if !engine.on_frame(conn_id, frame_bytes) {
+                                            tracing::warn!("tcp tls {conn_id} closing due to engine backpressure");
+                                            break;
+                                        }
                                     }
                                 }
                                 Err(_) => break,
