@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use std::sync::Arc;
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
@@ -76,7 +77,7 @@ async fn handle_connection(
 
     // Outbound queue for this connection (bounded for backpressure).
     // Engine will hold this and call `try_send` from its sync thread.
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(256);
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Arc<Vec<u8>>>(256);
 
     // Register with engine (engine stores outbound_tx for this conn_id).
     engine.register_connection(conn_id, outbound_tx);
@@ -112,8 +113,8 @@ async fn handle_connection(
 
             // Outbound frames: engine → WS
             Some(frame) = outbound_rx.recv() => {
-                // Best-effort write; if it fails, tear down the connection.
-                if let Err(e) = ws_sink.send(Message::Binary(frame)).await {
+                // Best-effort write; clone underlying buffer for tungstenite send
+                if let Err(e) = ws_sink.send(Message::Binary((*frame).clone())).await {
                     tracing::debug!("ws {conn_id} write error: {e}");
                     break;
                 }
@@ -143,7 +144,7 @@ pub async fn handle_upgraded_connection(
     let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
     // Outbound queue for this connection (bounded for backpressure).
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(256);
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Arc<Vec<u8>>>(256);
 
     // Register session and connection with engine
     engine.register_session(conn_id, session_auth);
@@ -177,7 +178,7 @@ pub async fn handle_upgraded_connection(
 
             // Outbound frames: engine → WS
             Some(frame) = outbound_rx.recv() => {
-                if let Err(e) = ws_sink.send(Message::Binary(frame)).await {
+                if let Err(e) = ws_sink.send(Message::Binary((*frame).clone())).await {
                     tracing::debug!("ws {conn_id} write error: {e}");
                     break;
                 }

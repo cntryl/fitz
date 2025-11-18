@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::core::engine::EnginePool;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct TcpTransport {
@@ -54,7 +55,7 @@ impl TcpTransport {
                 let conn_id = NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 
                 // Create outbound channel (bounded for backpressure)
-                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(256);
                 
                 // Register session and connection with engine
                 engine.register_session(conn_id, session_auth);
@@ -157,7 +158,7 @@ impl TcpTransport {
                         let conn_id = NEXT_CONN_ID_TLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         
                         // Create outbound channel (bounded for backpressure)
-                        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+                        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(256);
                         
                         // Register session and connection
                         engine.register_session(conn_id, session_auth);

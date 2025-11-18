@@ -38,7 +38,7 @@ impl NoticeDomain {
     }
 
     /// Parse TLV-encoded payload and extract all relevant fields in one pass
-    /// Returns descriptive errors on malformed input instead of silently dropping bytes
+    /// Uses canonical [tag][len u16 BE][value] format
     fn parse_tlv_single_pass(&self, payload: &[u8]) -> Result<TlvParseResult, String> {
         let mut has_subscribe = false;
         let mut has_unsubscribe = false;
@@ -47,10 +47,10 @@ impl NoticeDomain {
         let mut no_ack = false;
 
         let mut offset = 0;
-        while offset + 2 <= payload.len() {
+        while offset + 3 <= payload.len() {
             let tag = payload[offset];
-            let length = payload[offset + 1] as usize;
-            let value_start = offset + 2;
+            let length = u16::from_be_bytes([payload[offset + 1], payload[offset + 2]]) as usize;
+            let value_start = offset + 3;
 
             // Validate that we have enough bytes for the advertised length
             if value_start + length > payload.len() {
@@ -206,15 +206,24 @@ impl Domain for NoticeDomain {
 
                 // Dispatch to subscribers - get fanout list
                 let service = self.service.read();
-                let result =
-                    service.publish(request.route_family, &request.route_str, msg_id, body);
+                let result = service.publish(request.route_family, &request.route_str, msg_id, body);
 
-                // Build notification frame using encoding module (always needed)
-                let notification_frame =
-                    encoding::build_notification_frame(&request.route_str, msg_id, body);
+                // Early exit: no subscribers + no-ack => nothing to deliver or confirm
+                if result.subscribers.is_empty() && parse_result.no_ack {
+                    return DomainResponse::Ok;
+                }
 
-                // Build ACK frame with subscriber count unless TAG_NO_ACK is present OR no subscribers
-                // Optimization: Skip ACK construction when no one is listening
+                // Only build notification frame if we have subscribers; early exit on no-subs + no-ack
+                let notification_frame = if !result.subscribers.is_empty() {
+                    encoding::build_notification_frame(&request.route_str, msg_id, body)
+                } else {
+                    if parse_result.no_ack {
+                        return DomainResponse::Ok;
+                    }
+                    encoding::build_notification_frame(&request.route_str, msg_id, body)
+                };
+
+                // ACK frame only when ack requested and subscribers > 0
                 let ack_frame_opt = if parse_result.no_ack || result.subscribers.is_empty() {
                     None
                 } else {
@@ -225,7 +234,6 @@ impl Domain for NoticeDomain {
                     )
                 };
 
-                // Return fanout delivery instruction
                 DomainResponse::NoticeDelivery {
                     subscribers: result.subscribers,
                     notification_frame,

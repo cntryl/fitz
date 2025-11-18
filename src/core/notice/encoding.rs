@@ -106,13 +106,10 @@ pub fn parse_tlv_payload(payload: &[u8]) -> Result<NoticeTlvPayload, String> {
 /// Build TLV-encoded response using SmallVec for stack allocation
 #[allow(dead_code)]
 pub fn build_ack_response(route: &str) -> ResponseBuf {
-    let route_bytes = route.as_bytes();
     let mut response = ResponseBuf::new();
-
-    response.push(TAG_ROUTE);
-    response.push(route_bytes.len() as u8);
-    response.extend_from_slice(route_bytes);
-
+    let mut tmp = Vec::new();
+    crate::protocol::frame::build_tlv(TAG_ROUTE, route.as_bytes(), &mut tmp);
+    response.extend_from_slice(&tmp);
     response
 }
 
@@ -120,37 +117,23 @@ pub fn build_ack_response(route: &str) -> ResponseBuf {
 #[allow(dead_code)]
 pub fn build_publish_response(route: &str, msg_id: Option<&str>, body: &[u8]) -> ResponseBuf {
     let mut response = ResponseBuf::new();
-
-    // TAG_ROUTE
-    response.push(TAG_ROUTE);
-    response.push(route.len() as u8);
-    response.extend_from_slice(route.as_bytes());
-
-    // TAG_ID (optional)
+    let mut tmp = Vec::new();
+    crate::protocol::frame::build_tlv(TAG_ROUTE, route.as_bytes(), &mut tmp);
     if let Some(id) = msg_id {
-        response.push(TAG_ID);
-        response.push(id.len() as u8);
-        response.extend_from_slice(id.as_bytes());
+        crate::protocol::frame::build_tlv(TAG_ID, id.as_bytes(), &mut tmp);
     }
-
-    // TAG_BODY
-    response.push(TAG_BODY);
-    response.push(body.len() as u8);
-    response.extend_from_slice(body);
-
+    crate::protocol::frame::build_tlv(TAG_BODY, body, &mut tmp);
+    response.extend_from_slice(&tmp);
     response
 }
 
 /// Build TLV-encoded error response using SmallVec for stack allocation
 #[allow(dead_code)]
 pub fn build_error_response(error_msg: &str) -> ResponseBuf {
-    let msg_bytes = error_msg.as_bytes();
     let mut response = ResponseBuf::new();
-
-    response.push(TAG_ERR_MSG);
-    response.push(msg_bytes.len() as u8);
-    response.extend_from_slice(msg_bytes);
-
+    let mut tmp = Vec::new();
+    crate::protocol::frame::build_tlv(TAG_ERR_MSG, error_msg.as_bytes(), &mut tmp);
+    response.extend_from_slice(&tmp);
     response
 }
 
@@ -167,42 +150,11 @@ pub fn build_error_response(error_msg: &str) -> ResponseBuf {
 /// Complete TLV-encoded frame ready to send to subscribers (uses pooled buffer)
 pub fn build_notification_frame(route: &str, msg_id: Option<&str>, body: &[u8]) -> PooledFrame {
     let mut frame = take_buf();
-
-    // TAG_ROUTE (always present)
-    frame.push(TAG_ROUTE);
-    let route_bytes = route.as_bytes();
-    if route_bytes.len() <= 255 {
-        frame.push(route_bytes.len() as u8);
-        frame.extend_from_slice(route_bytes);
-    } else {
-        // Route > 255 bytes - use extended length encoding
-        frame.push(255);
-        frame.extend_from_slice(&(route_bytes.len() as u32).to_be_bytes());
-        frame.extend_from_slice(route_bytes);
-    }
-
-    // TAG_ID (optional)
+    crate::protocol::frame::build_tlv(TAG_ROUTE, route.as_bytes(), &mut frame);
     if let Some(id) = msg_id {
-        let id_bytes = id.as_bytes();
-        if id_bytes.len() <= 255 {
-            frame.push(TAG_ID);
-            frame.push(id_bytes.len() as u8);
-            frame.extend_from_slice(id_bytes);
-        }
+        crate::protocol::frame::build_tlv(TAG_ID, id.as_bytes(), &mut frame);
     }
-
-    // TAG_BODY (always present)
-    frame.push(TAG_BODY);
-    if body.len() <= 254 {
-        frame.push(body.len() as u8);
-        frame.extend_from_slice(body);
-    } else {
-        // Body > 254 bytes - use extended length encoding (255 signals 4-byte length follows)
-        frame.push(255);
-        frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        frame.extend_from_slice(body);
-    }
-
+    crate::protocol::frame::build_tlv(TAG_BODY, body, &mut frame);
     PooledFrame::from_vec(frame)
 }
 
@@ -224,32 +176,11 @@ pub fn build_ack_frame_with_count(
 ) -> Option<PooledFrame> {
     let mut frame = take_buf();
 
-    // TAG_ROUTE (always present)
-    frame.push(TAG_ROUTE);
-    let route_bytes = route.as_bytes();
-    if route_bytes.len() <= 255 {
-        frame.push(route_bytes.len() as u8);
-        frame.extend_from_slice(route_bytes);
-    } else {
-        // Route > 255 bytes - extremely unlikely, return None to signal error
-        return None;
-    }
-
-    // TAG_ID (optional - echo back if provided)
+    crate::protocol::frame::build_tlv(TAG_ROUTE, route.as_bytes(), &mut frame);
     if let Some(id) = msg_id {
-        let id_bytes = id.as_bytes();
-        if id_bytes.len() <= 255 {
-            frame.push(TAG_ID);
-            frame.push(id_bytes.len() as u8);
-            frame.extend_from_slice(id_bytes);
-        }
+        crate::protocol::frame::build_tlv(TAG_ID, id.as_bytes(), &mut frame);
     }
-
-    // TAG_COUNT (always present in ACK)
-    frame.push(TAG_COUNT);
-    frame.push(4); // u32 = 4 bytes
-    frame.extend_from_slice(&subscriber_count.to_be_bytes());
-
+    crate::protocol::frame::build_tlv(TAG_COUNT, &subscriber_count.to_be_bytes(), &mut frame);
     Some(PooledFrame::from_vec(frame))
 }
 

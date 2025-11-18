@@ -12,7 +12,7 @@
 //!   async WS edges → sync engine → async WS edges.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+// (Arc already imported above for shards/domain registry)
 
 use crate::authz::SessionAuth;
 use crate::core::domain::{DomainContext, DomainResponse};
@@ -20,6 +20,7 @@ use crate::core::registry::DomainRegistry;
 use crate::protocol::route::parse_route;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError};
+use std::sync::Arc;
 
 pub type ConnectionId = u64;
 pub type ChannelId = u32;
@@ -218,7 +219,7 @@ impl EngineHandle {
     pub fn register_connection(
         &self,
         conn_id: ConnectionId,
-        outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
+        outbound: tokio::sync::mpsc::Sender<Arc<Vec<u8>>>,
     ) {
         self.registry.register(conn_id, outbound);
     }
@@ -234,7 +235,7 @@ impl EngineHandle {
 #[derive(Debug)]
 pub struct EngineConnectionRegistry {
     /// conn_id → outbound SPSC producer (bounded for backpressure)
-    conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::Sender<Vec<u8>>>>,
+    conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::Sender<Arc<Vec<u8>>>>>,
     /// conn_id → session authentication/authorization state
     sessions: parking_lot::RwLock<HashMap<ConnectionId, SessionAuth>>,
     /// channel_id → conn_id (for routing replies/notifications)
@@ -272,7 +273,7 @@ impl EngineConnectionRegistry {
         self.channel_to_conn.read().get(&channel_id).copied()
     }
 
-    pub fn register(&self, conn_id: ConnectionId, tx: tokio::sync::mpsc::Sender<Vec<u8>>) {
+    pub fn register(&self, conn_id: ConnectionId, tx: tokio::sync::mpsc::Sender<Arc<Vec<u8>>>) {
         self.conns.write().insert(conn_id, tx);
     }
 
@@ -303,8 +304,8 @@ impl EngineConnectionRegistry {
 
     pub fn send(&self, conn_id: ConnectionId, bytes: Vec<u8>) {
         if let Some(tx) = self.conns.read().get(&conn_id) {
-            // Use try_send for non-blocking operation (engine is sync)
-            match tx.try_send(bytes) {
+            let arc_bytes = Arc::new(bytes);
+            match tx.try_send(arc_bytes) {
                 Ok(_) => {},
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                     tracing::warn!("outbound queue full for conn {}, dropping frame", conn_id);
@@ -419,10 +420,7 @@ impl Engine {
             }
             Ok(DomainResponse::Ok) => {
                 // empty response allowed
-                self.registry.send(
-                    conn_id,
-                    crate::protocol::frame::PooledFrame::from_vec(vec![]).into_vec(),
-                );
+                self.registry.send(conn_id, crate::protocol::frame::PooledFrame::from_vec(vec![]).into_vec());
             }
             Ok(DomainResponse::Error(err)) => {
                 self.send_error(conn_id, channel_id, &err);
@@ -455,6 +453,7 @@ impl Engine {
                 for (sub_channel_id, _sub_id) in &subscribers {
                     // Lookup: channel_id \u2192 conn_id \u2192 outbound queue
                     if let Some(sub_conn_id) = self.registry.get_conn_for_channel(*sub_channel_id) {
+                        // Send cloned Vec (registry wraps in Arc); cloning here unavoidable per subscriber until segment ref implementation
                         self.registry.send(sub_conn_id, bytes.clone());
                     }
                 }

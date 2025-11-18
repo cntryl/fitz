@@ -79,9 +79,9 @@ harness = false
 path = "benches/hotpath/lease_core.rs"
 
 [[bench]]
-name = "hotpath_notice_core"
+name = "hotpath_notice"
 harness = false
-path = "benches/hotpath/notice_core.rs"
+path = "benches/hotpath/notice.rs"
 
 [[bench]]
 name = "hotpath_queue_core"
@@ -118,3 +118,9 @@ path = "benches/hotpath/route_table.rs"
 name = "hotpath_tlv_core"
 harness = false
 path = "benches/hotpath/tlv_core.rs"
+
+# Subsystem benchmarks (full stack: frame → engine → domain → response)
+[[bench]]
+name = "subsystem_notice"
+harness = false
+path = "benches/subsystem/notice.rs"
