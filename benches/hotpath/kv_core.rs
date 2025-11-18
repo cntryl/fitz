@@ -8,7 +8,6 @@
 //! Goal: Understand where KV performance degrades and optimize accordingly
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::kv::KvDomain;
@@ -82,7 +81,7 @@ fn bench_sequential_put(c: &mut Criterion) {
 
                         let ctx = DomainContext {
                             route,
-                            route_str: format!("kv://realm1/area1/put"),
+                            route_str: "kv://realm1/area1/put".to_string(),
                             payload,
                             channel_id: 1,
                             route_family: 0,
@@ -112,7 +111,7 @@ fn bench_sequential_get(c: &mut Criterion) {
         let route = build_route("put");
         let ctx = DomainContext {
             route,
-            route_str: format!("kv://realm1/area1/put"),
+            route_str: "kv://realm1/area1/put".to_string(),
             payload,
             channel_id: 1,
             route_family: 0,
@@ -133,7 +132,7 @@ fn bench_sequential_get(c: &mut Criterion) {
 
                     let ctx = DomainContext {
                         route,
-                        route_str: format!("kv://realm1/area1/get"),
+                        route_str: "kv://realm1/area1/get".to_string(),
                         payload,
                         channel_id: 1,
                         route_family: 0,
@@ -161,7 +160,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
         let route = build_route("put");
         let ctx = DomainContext {
             route,
-            route_str: format!("kv://realm1/area1/put"),
+            route_str: "kv://realm1/area1/put".to_string(),
             payload,
             channel_id: 1,
             route_family: 0,
@@ -182,7 +181,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
                     let route = build_route("get");
                     let ctx = DomainContext {
                         route,
-                        route_str: format!("kv://realm1/area1/get"),
+                        route_str: "kv://realm1/area1/get".to_string(),
                         payload,
                         channel_id: (i % 10) as u32,
                         route_family: 0,
@@ -195,7 +194,7 @@ fn bench_concurrent_mixed(c: &mut Criterion) {
                     let route = build_route("put");
                     let ctx = DomainContext {
                         route,
-                        route_str: format!("kv://realm1/area1/put"),
+                        route_str: "kv://realm1/area1/put".to_string(),
                         payload,
                         channel_id: (i % 10) as u32,
                         route_family: 0,
@@ -227,7 +226,7 @@ fn bench_payload_sizes(c: &mut Criterion) {
 
                     let ctx = DomainContext {
                         route,
-                        route_str: format!("kv://realm1/area1/put"),
+                        route_str: "kv://realm1/area1/put".to_string(),
                         payload,
                         channel_id: 1,
                         route_family: 0,

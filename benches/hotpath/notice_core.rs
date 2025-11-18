@@ -7,7 +7,6 @@
 //! - pure handler cost
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::sync::Arc;
 
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::notice::NoticeDomain;

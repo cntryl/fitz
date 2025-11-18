@@ -343,10 +343,7 @@ mod tests {
     #[test]
     fn should_reject_trailing_bytes() {
         // Arrange
-        let mut payload = Vec::new();
-        payload.push(TAG_SUBSCRIBE);
-        payload.push(0);
-        payload.push(0xFF); // Garbage byte
+        let payload = vec![TAG_SUBSCRIBE, 0, 0xFF]; // Garbage byte
 
         // Act
         let result = parse_tlv_payload(&payload);

@@ -4,7 +4,6 @@
 //! and notice service integration.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crossbeam_channel;
 use fitz::core::control::ControlDomain;
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};

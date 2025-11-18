@@ -4,7 +4,6 @@
 //! and concurrent writer patterns.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::registry::DomainRegistry;

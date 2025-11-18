@@ -28,7 +28,7 @@ pub struct PermissionGrants {
 
 impl PermissionGrants {
     /// Create grants from scopes for a given route_family/realm
-    pub fn from_scopes(route_family: &str, scopes: &[String]) -> Self {
+    pub fn from_scopes(route_family: &str, _scopes: &[String]) -> Self {
         // For now, create wildcard grants for the route_family
         // TODO: Parse scopes and create fine-grained grants
         let grants = permissions::derive_grants_for_realm(route_family);

@@ -21,6 +21,7 @@ pub struct NoticeService {
 }
 
 /// Matched subscription for a publish operation
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MatchedSubscription {
     pub id: u64,

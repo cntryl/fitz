@@ -5,7 +5,6 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::lease::LeaseDomain;

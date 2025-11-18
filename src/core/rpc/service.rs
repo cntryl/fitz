@@ -338,6 +338,51 @@ impl Default for RpcService {
     }
 }
 
+// --- Sync Benchmark Methods ---
+// These demonstrate the core domain logic without async overhead for performance analysis
+
+impl RpcService {
+    /// Synchronous version of inbox route generation for benchmarking
+    /// Measures pure CPU/memory operations without async runtime noise
+    pub fn bench_inbox_allocation(&self) -> String {
+        // Generate cryptographically secure random route using UUID v4
+        // Pre-allocate with exact capacity: "inbox://" (8) + UUID (36) = 44 bytes
+        let mut inbox_route = String::with_capacity(44);
+        inbox_route.push_str("inbox://");
+
+        // Format UUID directly into the string to avoid intermediate allocation
+        use std::fmt::Write;
+        let _ = write!(&mut inbox_route, "{}", uuid::Uuid::new_v4());
+
+        inbox_route
+    }
+
+    /// Synchronous version of correlation tracking for benchmarking
+    /// Demonstrates core domain logic: request registration/deregistration
+    pub fn bench_request_tracking(&self) -> usize {
+        use fxhash::FxHashMap;
+
+        // Use std::sync primitives for pure sync benchmarking
+        let mut active_requests = FxHashMap::with_capacity_and_hasher(32, Default::default());
+
+        // Simulate registering requests
+        for i in 0..10 {
+            let corr_id = format!("req-{}", i);
+            let handler_route = format!("rpc://test/svc/op{}", i);
+            let reply_route = format!("inbox://inbox-{}", i);
+            active_requests.insert(corr_id, (handler_route, reply_route));
+        }
+
+        // Simulate deregistering some
+        for i in 0..5 {
+            let corr_id = format!("req-{}", i);
+            active_requests.remove(&corr_id);
+        }
+
+        active_requests.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,50 +458,5 @@ mod tests {
 
         // Assert
         assert_eq!(remaining, 5); // 10 registered, 5 deregistered, 5 remaining
-    }
-}
-
-// --- Sync Benchmark Methods ---
-// These demonstrate the core domain logic without async overhead for performance analysis
-
-impl RpcService {
-    /// Synchronous version of inbox route generation for benchmarking
-    /// Measures pure CPU/memory operations without async runtime noise
-    pub fn bench_inbox_allocation(&self) -> String {
-        // Generate cryptographically secure random route using UUID v4
-        // Pre-allocate with exact capacity: "inbox://" (8) + UUID (36) = 44 bytes
-        let mut inbox_route = String::with_capacity(44);
-        inbox_route.push_str("inbox://");
-
-        // Format UUID directly into the string to avoid intermediate allocation
-        use std::fmt::Write;
-        let _ = write!(&mut inbox_route, "{}", uuid::Uuid::new_v4());
-
-        inbox_route
-    }
-
-    /// Synchronous version of correlation tracking for benchmarking
-    /// Demonstrates core domain logic: request registration/deregistration
-    pub fn bench_request_tracking(&self) -> usize {
-        use fxhash::FxHashMap;
-
-        // Use std::sync primitives for pure sync benchmarking
-        let mut active_requests = FxHashMap::with_capacity_and_hasher(32, Default::default());
-
-        // Simulate registering requests
-        for i in 0..10 {
-            let corr_id = format!("req-{}", i);
-            let handler_route = format!("rpc://test/svc/op{}", i);
-            let reply_route = format!("inbox://inbox-{}", i);
-            active_requests.insert(corr_id, (handler_route, reply_route));
-        }
-
-        // Simulate deregistering some
-        for i in 0..5 {
-            let corr_id = format!("req-{}", i);
-            active_requests.remove(&corr_id);
-        }
-
-        active_requests.len()
     }
 }

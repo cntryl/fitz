@@ -49,6 +49,8 @@ fn test_claims() -> &'static Claims {
                 "write:rpc://acme/auth/*".to_string(),
                 "*::kv://acme/config/*".to_string(),
             ]),
+            scope: None,
+            roles: None,
         }
     })
 }
@@ -160,6 +162,8 @@ fn bench_install_claim_grants(c: &mut Criterion) {
                     "read:stream://bench/*".to_string(),
                     "write:queue://bench/*".to_string(),
                 ]),
+                scope: None,
+                roles: None,
             },
             |claims| {
                 let rt = test_runtime();

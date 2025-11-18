@@ -4,7 +4,6 @@
 //! and handler registration/matching performance.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crossbeam_channel;
 use fitz::core::domain::{Domain, DomainContext};
 use fitz::core::engine::{EngineConnectionRegistry, EngineHandle};
 use fitz::core::registry::DomainRegistry;
@@ -133,7 +132,7 @@ fn bench_request_tracking(c: &mut Criterion) {
                 for i in 0..count {
                     let mut svc = service.write();
                     let corr_id = format!("corr-{}", i);
-                    let handler_route = format!("rpc://realm/area/handler");
+                    let handler_route = "rpc://realm/area/handler".to_string();
                     let reply_route = format!("rpc://realm/area/inbox-{}", i);
                     svc.register_request(corr_id.clone(), handler_route, reply_route);
 
