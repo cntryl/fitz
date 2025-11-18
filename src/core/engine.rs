@@ -116,15 +116,27 @@ impl EngineHandle {
                 notification_frame,
                 ack_frame,
             } => {
-                // TODO: Implement actual fanout via transport connection registry
-                // For now, just return ACK with subscriber count
-                // Full implementation needs:
-                // 1. For each (channel_id, _sub_id) in subscribers
-                // 2. Look up channel_id -> connection mapping
-                // 3. Send notification_frame via connection's outbound channel
-                // 4. Handle backpressure per connection
+                // TODO: Cross-domain coordination for control->notice fanout
+                // Engine should query notice service for matching subscribers when
+                // subscribers list is empty (e.g., from control domain).
+                // This requires engine to have access to notice service reference.
+                //
+                // For now, NoticeDelivery from control will have empty subscribers
+                // and no fanout will occur (same as before, but with cleaner separation).
+                //
+                // Future implementation:
+                // 1. Extract route from notification_frame (TAG_ROUTE)
+                // 2. Call notice_service.publish() to get matching subscribers
+                // 3. For each (channel_id, _sub_id) in subscribers
+                // 4. Look up channel_id -> connection mapping
+                // 5. Send notification_frame via connection's outbound channel
+                // 6. Handle backpressure per connection
+
                 let _ = (subscribers, notification_frame); // Suppress unused warning
-                Ok(match ack_frame { Some(f) => f.into_vec(), None => vec![] })
+                Ok(match ack_frame {
+                    Some(f) => f.into_vec(),
+                    None => vec![],
+                })
             }
         }
     }

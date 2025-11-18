@@ -1,61 +1,37 @@
 // Control domain handler - routes all control:// operations
+//
+// This handler is the protocol adapter layer between the engine and ControlService.
+// Responsibilities:
+// - Parse TLV payload to extract control operation body
+// - Determine operation from route
+// - Call service to process control operation
+// - Return NoticeDelivery for pub/sub fanout (engine coordinates)
+//
+// The handler NO LONGER directly calls the notice service - this is now
+// coordinated through the engine to maintain proper domain isolation.
 
 use super::service::ControlService;
 use super::types::ControlOperation;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
-use crate::core::notice::NoticeService;
-use crate::core::parsing::{response, tlv};
-use crate::protocol::frame::find_tlv;
+use crate::core::parsing::{response::ResponseBuilder, tlv};
 use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE};
-use parking_lot::RwLock;
 use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ControlDomain {
-    service: ControlService,
-    // Control domain uses notice service for pub/sub
-    notice_service: Arc<RwLock<NoticeService>>,
+    service: Arc<ControlService>,
 }
 
 impl ControlDomain {
     pub fn new() -> Self {
         Self {
-            service: ControlService::new(),
-            notice_service: Arc::new(RwLock::new(NoticeService::new())),
+            service: Arc::new(ControlService::new()),
         }
     }
 
-    pub fn with_notice_service(notice_service: Arc<RwLock<NoticeService>>) -> Self {
-        Self {
-            service: ControlService::new(),
-            notice_service,
-        }
-    }
-
-    /// Build TLV-encoded response
-    fn build_tlv_response(&self, route: &str, msg_id: Option<&str>, body: &[u8]) -> Vec<u8> {
-        let mut response = Vec::new();
-
-        // TAG_ROUTE
-        let route_bytes = route.as_bytes();
-        response.push(TAG_ROUTE);
-        response.push(route_bytes.len() as u8);
-        response.extend_from_slice(route_bytes);
-
-        // TAG_ID (if present)
-        if let Some(id) = msg_id {
-            let id_bytes = id.as_bytes();
-            response.push(TAG_ID);
-            response.push(id_bytes.len() as u8);
-            response.extend_from_slice(id_bytes);
-        }
-
-        // TAG_BODY
-        response.push(TAG_BODY);
-        response.push(body.len() as u8);
-        response.extend_from_slice(body);
-
-        response
+    /// Get the shared control service
+    pub fn get_service(&self) -> Arc<ControlService> {
+        Arc::clone(&self.service)
     }
 }
 
@@ -67,14 +43,11 @@ impl Default for ControlDomain {
 
 impl Domain for ControlDomain {
     fn handle(&self, request: DomainContext) -> DomainResponse {
-        // Parse body from TLV payload (zero-copy borrow)
-        let body = match find_tlv(&request.payload, TAG_BODY) {
+        // Parse body from TLV payload
+        let body = match tlv::parse_bytes(&request.payload, TAG_BODY) {
             Some(b) => b,
             None => {
-                let error_response = response::error("Missing body in request");
-                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                    error_response,
-                ));
+                return DomainResponse::Error("Missing body in request".to_string());
             }
         };
 
@@ -82,54 +55,43 @@ impl Domain for ControlDomain {
         let operation = match ControlOperation::from_route(&request.route_str) {
             Ok(op) => op,
             Err(e) => {
-                let error_response = response::error(&e);
-                return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                    error_response,
-                ));
+                return DomainResponse::Error(e);
             }
         };
 
-        // Handle the control operation
-        match self.service.handle_operation(operation, &body) {
+        // Handle the control operation - service processes and returns response body
+        match self.service.handle_operation(operation, body) {
             Ok(response_body) => {
-                // Dispatch to subscribers (pub/sub pattern)
-                let msg_id_string =
-                    tlv::parse_string(&request.payload, TAG_ID).map(|s| s.to_string());
-                let msg_id = msg_id_string.as_deref();
+                // Build notification frame for pub/sub fanout
+                let notification_frame = ResponseBuilder::new()
+                    .add_string(TAG_ROUTE, &request.route_str)
+                    .add_optional_string(TAG_ID, tlv::parse_string(&request.payload, TAG_ID))
+                    .add_bytes(TAG_BODY, &response_body)
+                    .build_frame();
 
-                let notice_service = self.notice_service.read();
-                let _ = notice_service.publish(
-                    request.route_family,
-                    &request.route_str,
-                    msg_id,
-                    &response_body,
-                );
-                drop(notice_service);
+                // Build acknowledgment frame for requester (echo back the body)
+                let ack_frame = ResponseBuilder::new()
+                    .add_bytes(TAG_BODY, &response_body)
+                    .build_frame();
 
-                // Build TLV-encoded response
-                // Echo the body back for pub/sub pattern
-                let response = self.build_tlv_response(&request.route_str, None, &response_body);
-                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
+                // Return NoticeDelivery - engine will coordinate fanout to subscribers
+                // This maintains proper domain isolation - control domain doesn't directly
+                // call notice service, instead returns routing instruction to engine
+                DomainResponse::NoticeDelivery {
+                    subscribers: smallvec::SmallVec::new(), // Engine will fill this in
+                    notification_frame,
+                    ack_frame: Some(ack_frame),
+                }
             }
-            Err(err) => {
-                let error_response = response::error(&err);
-                DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                    error_response,
-                ))
-            }
+            Err(err) => DomainResponse::Error(err),
         }
-    }
-
-    /// Cleanup all subscriptions for a channel (delegates to notice service)
-    fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {
-        let mut service = self.notice_service.write();
-        service.cleanup_channel(rf, channel_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::find_tlv;
     use crate::protocol::route::Route;
 
     #[test]
@@ -146,27 +108,12 @@ mod tests {
     }
 
     #[test]
-    fn should_build_tlv_response_with_route_and_body() {
-        // Arrange
-        let domain = ControlDomain::new();
-
-        // Act
-        let response = domain.build_tlv_response("control://heartbeat", None, b"test");
-
-        // Assert
-        assert!(!response.is_empty());
-        assert_eq!(response[0], TAG_ROUTE);
-    }
-
-    #[test]
     fn should_handle_heartbeat_operation() {
         // Arrange
         let domain = ControlDomain::new();
-        let mut payload = Vec::new();
-        payload.push(TAG_BODY);
         let body = b"{\"nodeId\":\"test-node\",\"timestamp\":1234567890}";
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
+        let mut payload = Vec::new();
+        crate::protocol::frame::build_tlv(TAG_BODY, body, &mut payload);
 
         let request = DomainContext {
             route: Route {
@@ -188,10 +135,17 @@ mod tests {
 
         // Assert
         match response {
-            DomainResponse::Frame(_frame) => {
-                // Success
+            DomainResponse::NoticeDelivery {
+                notification_frame,
+                ack_frame,
+                ..
+            } => {
+                // Success - control now returns NoticeDelivery for pub/sub fanout
+                assert!(!notification_frame.as_slice().is_empty());
+                assert!(ack_frame.is_some());
             }
-            _ => panic!("Expected Frame response"),
+            DomainResponse::Error(e) => panic!("Got Error instead of NoticeDelivery: {}", e),
+            other => panic!("Expected NoticeDelivery response, got {:?}", other),
         }
     }
 
@@ -199,11 +153,9 @@ mod tests {
     fn should_handle_shutdown_operation() {
         // Arrange
         let domain = ControlDomain::new();
-        let mut payload = Vec::new();
-        payload.push(TAG_BODY);
         let body = b"{\"nodeId\":\"test-node\",\"reason\":\"maintenance\"}";
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
+        let mut payload = Vec::new();
+        crate::protocol::frame::build_tlv(TAG_BODY, body, &mut payload);
 
         let request = DomainContext {
             route: Route {
@@ -225,10 +177,16 @@ mod tests {
 
         // Assert
         match response {
-            DomainResponse::Frame(_) => {
-                // Success
+            DomainResponse::NoticeDelivery {
+                notification_frame,
+                ack_frame,
+                ..
+            } => {
+                // Success - control now returns NoticeDelivery for pub/sub fanout
+                assert!(!notification_frame.as_slice().is_empty());
+                assert!(ack_frame.is_some());
             }
-            _ => panic!("Expected Frame response"),
+            _ => panic!("Expected NoticeDelivery response"),
         }
     }
 
@@ -258,10 +216,11 @@ mod tests {
 
         // Assert
         match response {
-            DomainResponse::Frame(_frame) => {
-                // Success - error frame returned
+            DomainResponse::Error(msg) => {
+                // Success - error response for missing body
+                assert!(msg.contains("Missing body"));
             }
-            _ => panic!("Expected Frame response with error"),
+            _ => panic!("Expected Error response"),
         }
     }
 }

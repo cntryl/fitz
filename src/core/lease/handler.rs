@@ -1,7 +1,7 @@
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::core::lease::service::LeaseService;
 use crate::core::lease::types::{LeaseGrant, LeaseOperation};
-use crate::core::parsing::tlv;
+use crate::core::parsing::{response::ResponseBuilder, tlv};
 use crate::protocol::tags::*;
 use std::sync::Arc;
 
@@ -9,6 +9,14 @@ use std::sync::Arc;
 use crate::protocol::frame::build_tlv;
 
 /// Lease domain handler - routes all lease:// operations
+///
+/// This handler is the protocol adapter layer between the engine and LeaseService.
+/// Responsibilities:
+/// - Parse TLV payload to extract lease parameters (TTL, ID, token)
+/// - Determine operation from route (acquire/renew/surrender)
+/// - Validate required TLV tags per operation
+/// - Call appropriate service method
+/// - Build TLV response frames
 ///
 /// Architecture:
 /// - Instance-owned LeaseService for per-domain isolation
@@ -31,20 +39,14 @@ impl LeaseDomain {
         Arc::clone(&self.service)
     }
 
-    /// Build TLV response for lease grant
-    fn build_grant_response(&self, grant: &LeaseGrant) -> Vec<u8> {
-        let mut response = Vec::new();
-        crate::protocol::frame::build_tlv(TAG_ID, grant.id.as_bytes(), &mut response);
-        crate::protocol::frame::build_tlv(
-            TAG_DELIVERY_TOKEN,
-            grant.token.as_bytes(),
-            &mut response,
-        );
-        crate::protocol::frame::build_tlv(TAG_LEASE, &grant.ttl_secs.to_be_bytes(), &mut response);
-        if let Some(body) = &grant.body {
-            crate::protocol::frame::build_tlv(TAG_BODY, body, &mut response);
-        }
-        response
+    /// Build TLV response for lease grant using ResponseBuilder
+    fn build_grant_response(&self, grant: &LeaseGrant) -> crate::protocol::frame::PooledFrame {
+        ResponseBuilder::new()
+            .add_string(TAG_ID, &grant.id)
+            .add_string(TAG_DELIVERY_TOKEN, &grant.token)
+            .add_u32(TAG_LEASE, grant.ttl_secs)
+            .add_optional_bytes(TAG_BODY, grant.body.as_deref())
+            .build_frame()
     }
 }
 
@@ -76,11 +78,7 @@ impl Domain for LeaseDomain {
                 // Acquire requires TAG_LEASE (TTL)
                 match tlv::parse_u32(&payload, TAG_LEASE) {
                     Some(ttl) => match svc.acquire(rf, &key, ttl) {
-                        Ok(grant) => {
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                self.build_grant_response(&grant),
-                            ))
-                        }
+                        Ok(grant) => DomainResponse::Frame(self.build_grant_response(&grant)),
                         Err(e) => DomainResponse::Error(e),
                     },
                     None => DomainResponse::Error("acquire requires TAG_LEASE (TTL)".to_string()),
@@ -95,11 +93,7 @@ impl Domain for LeaseDomain {
                 match (id, token, add) {
                     (Some(id), Some(token), Some(add)) => match svc.renew(rf, &key, id, token, add)
                     {
-                        Ok(grant) => {
-                            DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
-                                self.build_grant_response(&grant),
-                            ))
-                        }
+                        Ok(grant) => DomainResponse::Frame(self.build_grant_response(&grant)),
                         Err(e) => DomainResponse::Error(e),
                     },
                     _ => DomainResponse::Error(

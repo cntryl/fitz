@@ -15,6 +15,21 @@ pub mod tlv {
         find_tlv(payload, tag).and_then(|b| std::str::from_utf8(b).ok())
     }
 
+    /// Parse a String (owned) from a TLV tag
+    pub fn parse_string_owned(payload: &[u8], tag: u8) -> Option<String> {
+        parse_string(payload, tag).map(|s| s.to_string())
+    }
+
+    /// Parse bytes from a TLV tag
+    pub fn parse_bytes(payload: &[u8], tag: u8) -> Option<&[u8]> {
+        find_tlv(payload, tag)
+    }
+
+    /// Parse bytes (owned) from a TLV tag
+    pub fn parse_bytes_owned(payload: &[u8], tag: u8) -> Option<Vec<u8>> {
+        find_tlv(payload, tag).map(|b| b.to_vec())
+    }
+
     /// Parse a u32 from a TLV tag (big-endian)
     pub fn parse_u32(payload: &[u8], tag: u8) -> Option<u32> {
         find_tlv(payload, tag).and_then(|b| {
@@ -52,11 +67,154 @@ pub mod tlv {
     pub fn has_tag(payload: &[u8], tag: u8) -> bool {
         find_tlv(payload, tag).is_some()
     }
+
+    /// Parse all occurrences of a tag (for repeated tags)
+    pub fn parse_all_bytes(payload: &[u8], tag: u8) -> Vec<Vec<u8>> {
+        let mut results = Vec::new();
+        let mut offset = 0;
+
+        while offset + 2 <= payload.len() {
+            let current_tag = payload[offset];
+            let len_byte = payload[offset + 1];
+            let mut value_start = offset + 2;
+
+            // Handle extended length encoding
+            let len = if len_byte == 255 {
+                if value_start + 4 > payload.len() {
+                    break;
+                }
+                let len_bytes = [
+                    payload[value_start],
+                    payload[value_start + 1],
+                    payload[value_start + 2],
+                    payload[value_start + 3],
+                ];
+                value_start += 4;
+                u32::from_be_bytes(len_bytes) as usize
+            } else {
+                len_byte as usize
+            };
+
+            if value_start + len > payload.len() {
+                break;
+            }
+
+            if current_tag == tag {
+                results.push(payload[value_start..value_start + len].to_vec());
+            }
+
+            offset = value_start + len;
+        }
+
+        results
+    }
 }
 
 /// Common response building utilities for domain handlers
 pub mod response {
     use super::*;
+
+    /// ResponseBuilder provides a fluent API for building TLV responses
+    /// Avoids repetitive code in domain handlers
+    pub struct ResponseBuilder {
+        buffer: Vec<u8>,
+    }
+
+    impl ResponseBuilder {
+        /// Create a new response builder
+        pub fn new() -> Self {
+            Self { buffer: Vec::new() }
+        }
+
+        /// Create with pre-allocated capacity
+        pub fn with_capacity(capacity: usize) -> Self {
+            Self {
+                buffer: Vec::with_capacity(capacity),
+            }
+        }
+
+        /// Add a string tag
+        pub fn add_string(mut self, tag: u8, value: &str) -> Self {
+            build_tlv(tag, value.as_bytes(), &mut self.buffer);
+            self
+        }
+
+        /// Add a bytes tag
+        pub fn add_bytes(mut self, tag: u8, value: &[u8]) -> Self {
+            build_tlv(tag, value, &mut self.buffer);
+            self
+        }
+
+        /// Add a u32 tag (big-endian)
+        pub fn add_u32(mut self, tag: u8, value: u32) -> Self {
+            build_tlv(tag, &value.to_be_bytes(), &mut self.buffer);
+            self
+        }
+
+        /// Add a u64 tag (big-endian)
+        pub fn add_u64(mut self, tag: u8, value: u64) -> Self {
+            build_tlv(tag, &value.to_be_bytes(), &mut self.buffer);
+            self
+        }
+
+        /// Add a boolean flag tag (no value)
+        pub fn add_flag(mut self, tag: u8) -> Self {
+            build_tlv(tag, &[], &mut self.buffer);
+            self
+        }
+
+        /// Add an optional string tag
+        pub fn add_optional_string(self, tag: u8, value: Option<&str>) -> Self {
+            if let Some(v) = value {
+                self.add_string(tag, v)
+            } else {
+                self
+            }
+        }
+
+        /// Add an optional bytes tag
+        pub fn add_optional_bytes(self, tag: u8, value: Option<&[u8]>) -> Self {
+            if let Some(v) = value {
+                self.add_bytes(tag, v)
+            } else {
+                self
+            }
+        }
+
+        /// Add an optional u32 tag
+        pub fn add_optional_u32(self, tag: u8, value: Option<u32>) -> Self {
+            if let Some(v) = value {
+                self.add_u32(tag, v)
+            } else {
+                self
+            }
+        }
+
+        /// Add an optional u64 tag
+        pub fn add_optional_u64(self, tag: u8, value: Option<u64>) -> Self {
+            if let Some(v) = value {
+                self.add_u64(tag, v)
+            } else {
+                self
+            }
+        }
+
+        /// Build the final response and consume the builder
+        pub fn build(self) -> Vec<u8> {
+            self.buffer
+        }
+
+        /// Build into a PooledFrame
+        pub fn build_frame(self) -> crate::protocol::frame::PooledFrame {
+            crate::protocol::frame::PooledFrame::from_vec(self.buffer)
+        }
+    }
+
+    impl Default for ResponseBuilder {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 
     /// Build a simple success response with optional body
     pub fn success(body: Option<&[u8]>) -> Vec<u8> {

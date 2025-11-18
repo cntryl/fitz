@@ -1,4 +1,14 @@
 // Queue domain handler - routes all queue:// operations
+//
+// This handler is the protocol adapter layer between the engine and QueueService.
+// Responsibilities:
+// - Parse TLV payload to extract queue operation parameters
+// - Determine operation from route
+// - Call appropriate service method
+// - Build TLV response frames
+//
+// The handler has NO business logic - that lives in QueueService.
+// Response building still uses queue/encoding.rs for backward compatibility.
 
 use super::encoding::{
     build_enqueue_response, build_error_response, build_list_response, build_reserve_response,
@@ -27,42 +37,12 @@ impl QueueDomain {
     pub fn get_service(&self) -> Arc<RwLock<QueueService>> {
         Arc::clone(&self.service)
     }
-
-    /// Parse TLV payload to extract queue operation parameters
-    fn parse_tlv_payload(payload: &[u8]) -> super::encoding::QueueTlvPayload {
-        parse_tlv_payload(payload)
-    }
-
-    /// Build TLV response for enqueue operation
-    fn build_enqueue_response(message_ids: &[String]) -> Vec<u8> {
-        build_enqueue_response(message_ids)
-    }
-
-    /// Build TLV response for reserve operation
-    fn build_reserve_response(messages: &[(String, Vec<u8>, String)]) -> Vec<u8> {
-        build_reserve_response(messages)
-    }
-
-    /// Build TLV response for list operation
-    fn build_list_response(queues: &[String]) -> Vec<u8> {
-        build_list_response(queues)
-    }
-
-    /// Build TLV response for successful operations (consume, extend-lease, config)
-    fn build_success_response() -> Vec<u8> {
-        build_success_response()
-    }
-
-    /// Build TLV error response
-    fn build_error_response(error_msg: &str) -> Vec<u8> {
-        build_error_response(error_msg)
-    }
 }
 
 impl Domain for QueueDomain {
     fn handle(&self, request: DomainContext) -> DomainResponse {
-        // Parse TLV payload
-        let parsed = Self::parse_tlv_payload(&request.payload);
+        // Parse TLV payload using encoding module
+        let parsed = parse_tlv_payload(&request.payload);
         let message_id = parsed.message_id.clone();
         let body = parsed.body.clone();
         let lease_secs = parsed.lease_secs;
@@ -70,7 +50,7 @@ impl Domain for QueueDomain {
         let ttl_secs = parsed.ttl_secs;
         let _config = parsed.config;
 
-        // Extract realm, area, resource, and operation from Route
+        // Extract realm, area, resource from route
         let realm = match &request.route.realm {
             Some(r) => r.as_str(),
             None => return DomainResponse::Error("Missing realm in route".to_string()),
@@ -84,19 +64,16 @@ impl Domain for QueueDomain {
             None => return DomainResponse::Error("Missing resource in route".to_string()),
         };
 
-        // Determine queue operation
+        // Determine queue operation from route
         let queue_operation = match QueueOperation::from_route(&request.route) {
             Ok(op) => op,
             Err(e) => {
-                // For malformed or unknown operations return a TLV error frame so
-                // the engine and client receive an encoded error (consistent with
-                // other domains like `notice` which return error frames).
-                // If the operation is missing entirely, return a DomainResponse::Error
-                // so callers can inspect that condition explicitly (tests expect this)
+                // If operation is missing entirely, return Error for explicit handling
                 if e.contains("Missing operation") {
                     return DomainResponse::Error(e);
                 }
-                let response = Self::build_error_response(&e);
+                // For malformed operations, return error frame
+                let response = build_error_response(&e);
                 return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response,
                 ));
@@ -113,13 +90,13 @@ impl Domain for QueueDomain {
 
                 match service.enqueue(realm, area, resource, message_body, Some(ttl), None) {
                     Ok(message_id) => {
-                        let response = Self::build_enqueue_response(&[message_id]);
+                        let response = build_enqueue_response(&[message_id]);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                     Err(e) => {
-                        let response = Self::build_error_response(&e);
+                        let response = build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
@@ -129,13 +106,13 @@ impl Domain for QueueDomain {
             QueueOperation::Subscribe => {
                 // TODO: Implement subscribe operation - register for message availability notifications
                 // For now, just return success
-                let response = Self::build_success_response();
+                let response = build_success_response();
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
             }
             QueueOperation::Unsubscribe => {
                 // TODO: Implement unsubscribe operation - remove message availability notifications
                 // For now, just return success
-                let response = Self::build_success_response();
+                let response = build_success_response();
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
             }
             QueueOperation::Reserve => {
@@ -148,13 +125,13 @@ impl Domain for QueueDomain {
                             .into_iter()
                             .map(|msg| (msg.id, msg.body, msg.lease_owner.unwrap_or_default()))
                             .collect();
-                        let response = Self::build_reserve_response(&message_data);
+                        let response = build_reserve_response(&message_data);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                     Err(e) => {
-                        let response = Self::build_error_response(&e);
+                        let response = build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
@@ -169,13 +146,13 @@ impl Domain for QueueDomain {
                 match service.extend_lease(realm, area, resource, &msg_id, &token, additional_secs)
                 {
                     Ok(()) => {
-                        let response = Self::build_success_response();
+                        let response = build_success_response();
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                     Err(e) => {
-                        let response = Self::build_error_response(&e);
+                        let response = build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
@@ -188,13 +165,13 @@ impl Domain for QueueDomain {
 
                 match service.complete(realm, area, resource, &msg_id, &token) {
                     Ok(()) => {
-                        let response = Self::build_success_response();
+                        let response = build_success_response();
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                     Err(e) => {
-                        let response = Self::build_error_response(&e);
+                        let response = build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
@@ -207,13 +184,13 @@ impl Domain for QueueDomain {
 
                 match service.nack(realm, area, resource, &msg_id, &token) {
                     Ok(()) => {
-                        let response = Self::build_success_response();
+                        let response = build_success_response();
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                     Err(e) => {
-                        let response = Self::build_error_response(&e);
+                        let response = build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
@@ -226,13 +203,13 @@ impl Domain for QueueDomain {
 
                 match service.requeue(realm, area, resource, &msg_id, &token) {
                     Ok(()) => {
-                        let response = Self::build_success_response();
+                        let response = build_success_response();
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
                     }
                     Err(e) => {
-                        let response = Self::build_error_response(&e);
+                        let response = build_error_response(&e);
                         DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                             response,
                         ))
@@ -241,7 +218,7 @@ impl Domain for QueueDomain {
             }
             QueueOperation::Get => {
                 // Get operation not supported in no-peek design
-                let response = Self::build_error_response("Get operation not supported");
+                let response = build_error_response("Get operation not supported");
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
             }
             QueueOperation::List => {
@@ -253,26 +230,26 @@ impl Domain for QueueDomain {
                     let queues = service
                         .list_queues_in_scope(realm, area)
                         .unwrap_or_else(|_| Vec::new());
-                    let response = Self::build_list_response(&queues);
+                    let response = build_list_response(&queues);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 } else if resource == "*" && area == "*" {
                     // List all queues in this realm (realm/*/*/list)
                     let queues = service
                         .list_queues_in_realm(realm)
                         .unwrap_or_else(|_| Vec::new());
-                    let response = Self::build_list_response(&queues);
+                    let response = build_list_response(&queues);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 } else {
                     // List specific queue route
                     let route = format!("{}/{}/{}", realm, area, resource);
                     let queues = vec![route];
-                    let response = Self::build_list_response(&queues);
+                    let response = build_list_response(&queues);
                     DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
                 }
             }
             QueueOperation::Config => {
                 // TODO: Implement config operation
-                let response = Self::build_success_response();
+                let response = build_success_response();
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(response))
             }
         }
@@ -533,7 +510,7 @@ mod tests {
         let payload = vec![];
 
         // Act
-        let parsed = QueueDomain::parse_tlv_payload(&payload);
+        let parsed = parse_tlv_payload(&payload);
         let message_id = parsed.message_id;
         let body = parsed.body;
         let lease_secs = parsed.lease_secs;
@@ -556,7 +533,7 @@ mod tests {
         // No setup needed for success response
 
         // Act
-        let response = QueueDomain::build_success_response();
+        let response = build_success_response();
 
         // Assert
         assert!(response.is_empty());
@@ -568,7 +545,7 @@ mod tests {
         let error_msg = "Test error";
 
         // Act
-        let response = QueueDomain::build_error_response(error_msg);
+        let response = build_error_response(error_msg);
 
         // Assert
         assert!(!response.is_empty());
@@ -583,7 +560,7 @@ mod tests {
         let message_ids = vec!["msg1".to_string(), "msg2".to_string()];
 
         // Act
-        let response = QueueDomain::build_enqueue_response(&message_ids);
+        let response = build_enqueue_response(&message_ids);
 
         // Assert
         assert!(!response.is_empty());
@@ -597,7 +574,7 @@ mod tests {
         let queues = vec!["queue1".to_string(), "queue2".to_string()];
 
         // Act
-        let response = QueueDomain::build_list_response(&queues);
+        let response = build_list_response(&queues);
 
         // Assert
         assert!(!response.is_empty());
@@ -614,7 +591,7 @@ mod tests {
         ];
 
         // Act
-        let response = QueueDomain::build_reserve_response(&messages);
+        let response = build_reserve_response(&messages);
 
         // Assert
         assert!(!response.is_empty());

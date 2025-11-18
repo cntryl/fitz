@@ -1,4 +1,15 @@
-// Stream domain handler - routes all stream:// operations
+//! Stream domain handler - protocol adapter for stream:// operations
+//!
+//! ## Handler Responsibilities
+//! - Parse TLV payloads for stream append/read operations
+//! - Route operations to StreamService
+//! - Build TLV responses (assigned sequences, event batches, watermarks)
+//! - Handle extended-length encoding for large payloads
+//!
+//! ## Architecture
+//! - Handler (this) = Protocol adapter (TLV ↔ service calls)
+//! - Service = Business logic (sequencing, storage, indexing)
+//! - Pure synchronous operation (no async, no I/O)
 
 use super::service::StreamService;
 use super::types::StreamEvent;

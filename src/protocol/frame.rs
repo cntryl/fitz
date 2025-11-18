@@ -119,9 +119,10 @@ impl AsRef<[u8]> for PooledFrame {
 
 impl Drop for PooledFrame {
     fn drop(&mut self) {
-        if let Some(b) = self.buf.take() {
+        if let Some(mut b) = self.buf.take() {
             // Return buffer to pool (best-effort)
             if b.capacity() <= 8 * 1024 {
+                b.clear(); // CRITICAL: Clear contents before returning to pool
                 if let Ok(mut pool) = BUF_POOL.lock() {
                     pool.push(b);
                 }

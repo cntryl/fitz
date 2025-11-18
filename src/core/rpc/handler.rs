@@ -1,11 +1,15 @@
-// RPC domain handler - routes all rpc:// operations
-//
-// Architecture:
-// - Instance-owned RpcService for per-domain isolation
-// - Shared Arc<RwLock<RpcService>> for subscribe/publish operations requiring mutation
-// - Single-pass TLV parsing with detailed error reporting
-// - SmallVec stack allocation for typical <64B control frame responses
-// - Inbox allocation with cryptographic uniqueness and ownership enforcement
+//! RPC domain handler - protocol adapter for rpc:// operations
+//!
+//! ## Handler Responsibilities
+//! - Parse TLV-encoded RPC payloads
+//! - Route requests/replies via RpcService
+//! - Build TLV responses using encoding module
+//! - Register correlation IDs for inbox authorization
+//!
+//! ## Architecture
+//! - Handler (this) = Protocol adapter (TLV ↔ service calls)
+//! - Service = Business logic (routing, inbox management, authorization)
+//! - Pure synchronous operation (no async, no I/O)
 
 use super::encoding;
 use super::service::RpcService;
@@ -28,21 +32,6 @@ impl RpcDomain {
     /// Get the shared RPC service
     pub fn get_service(&self) -> Arc<RwLock<RpcService>> {
         Arc::clone(&self.service)
-    }
-
-    /// Parse TLV-encoded payload using encoding module
-    fn parse_tlv_payload(&self, payload: &[u8]) -> Result<encoding::RpcTlvPayload, String> {
-        encoding::parse_tlv_payload(payload)
-    }
-
-    /// Build TLV response for subscription acknowledgment
-    fn build_subscribe_response(&self, route: &str) -> Vec<u8> {
-        encoding::build_subscribe_response(route).to_vec()
-    }
-
-    /// Build TLV error response
-    fn build_error_response(&self, error_msg: &str) -> Vec<u8> {
-        encoding::build_error_response(error_msg).to_vec()
     }
 
     /// Handle RPC request (client sending request to handler)
@@ -94,10 +83,10 @@ impl Domain for RpcDomain {
         let payload = &request.payload;
 
         // Parse TLV payload
-        let parsed = match self.parse_tlv_payload(payload) {
+        let parsed = match encoding::parse_tlv_payload(payload) {
             Ok(result) => result,
             Err(error_msg) => {
-                let response_data = self.build_error_response(&error_msg);
+                let response_data = encoding::build_error_response(&error_msg).to_vec();
                 return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response_data,
                 ));
@@ -116,7 +105,7 @@ impl Domain for RpcDomain {
         if parsed.operation == encoding::RpcOperation::Subscribe {
             // Subscribe operation - actual subscription happens via Domain::subscribe trait method
             // Handler just acknowledges
-            let response_data = self.build_subscribe_response(route);
+            let response_data = encoding::build_subscribe_response(route).to_vec();
             return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                 response_data,
             ));
@@ -125,7 +114,7 @@ impl Domain for RpcDomain {
         if parsed.operation == encoding::RpcOperation::Unsubscribe {
             // Unsubscribe operation - actual unsubscription happens via Domain::unsubscribe trait method
             // Handler just acknowledges
-            let response_data = self.build_subscribe_response(route);
+            let response_data = encoding::build_subscribe_response(route).to_vec();
             return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                 response_data,
             ));
@@ -177,14 +166,14 @@ impl Domain for RpcDomain {
             } => {
                 // Error - return error frame
                 let error_frame = crate::protocol::frame::PooledFrame::from_vec(
-                    self.build_error_response(&err_msg),
+                    encoding::build_error_response(&err_msg).to_vec(),
                 );
                 DomainResponse::Frame(error_frame)
             }
             _ => {
                 // Shouldn't happen, but handle gracefully
                 let error_frame = crate::protocol::frame::PooledFrame::from_vec(
-                    self.build_error_response("Internal routing error"),
+                    encoding::build_error_response("Internal routing error").to_vec(),
                 );
                 DomainResponse::Frame(error_frame)
             }

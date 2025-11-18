@@ -72,8 +72,8 @@ impl DomainRegistry {
         let queue = Arc::new(QueueDomain::new(Arc::clone(&kv_store)));
         let kv = Arc::new(KvDomain::new(kv_store));
 
-        // Control shares notice service
-        let control = Arc::new(ControlDomain::with_notice_service(notice.get_service()));
+        // Control domain is now isolated - engine coordinates cross-domain interactions
+        let control = Arc::new(ControlDomain::new());
 
         Self {
             notice,
@@ -84,6 +84,11 @@ impl DomainRegistry {
             stream,
             kv,
         }
+    }
+
+    /// Get notice domain for engine coordination (control domain fanout)
+    pub fn get_notice_domain(&self) -> Arc<dyn Domain> {
+        Arc::clone(&self.notice)
     }
 }
 

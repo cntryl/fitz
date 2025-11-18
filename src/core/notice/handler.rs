@@ -1,24 +1,24 @@
-// Notice domain handler - routes all notice:// operations
-//
-// Architecture:
-// - Instance-owned NoticeService for per-domain isolation
-// - Shared Arc<RwLock<NoticeService>> for publish operations requiring mutation
-// - Single-pass TLV parsing with detailed error reporting
-// - SmallVec stack allocation for typical <64B response frames
+//! Notice domain handler - protocol adapter for notice:// operations
+//!
+//! ## Handler Responsibilities
+//! - Parse TLV payloads for subscribe/unsubscribe/publish operations
+//! - Route operations to NoticeService
+//! - Build TLV responses using encoding module (SmallVec-optimized)
+//! - Single-pass parsing for efficiency
+//!
+//! ## Architecture
+//! - Handler (this) = Protocol adapter (TLV ↔ service calls)
+//! - Service = Business logic (subscription management, fanout coordination)
+//! - Pure synchronous operation (no async, no I/O)
 
 use super::encoding;
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use crate::protocol::tags::{
-    TAG_BODY, TAG_ERR_MSG, TAG_ID, TAG_NO_ACK, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
+    TAG_BODY, TAG_ID, TAG_NO_ACK, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
 use parking_lot::RwLock;
-use smallvec::SmallVec;
 use std::sync::Arc;
-
-/// Response buffer optimized for typical notice frames (<64 bytes)
-/// Uses stack allocation to avoid heap overhead for small messages
-type ResponseBuf = SmallVec<[u8; 64]>;
 
 #[derive(Debug)]
 pub struct NoticeDomain {
@@ -106,30 +106,6 @@ impl NoticeDomain {
             no_ack,
         })
     }
-
-    /// Build TLV-encoded response using SmallVec for stack allocation
-    fn build_tlv_response(&self, route: &str) -> ResponseBuf {
-        let route_bytes = route.as_bytes();
-        let mut response = ResponseBuf::new();
-
-        response.push(TAG_ROUTE);
-        response.push(route_bytes.len() as u8);
-        response.extend_from_slice(route_bytes);
-
-        response
-    }
-
-    /// Build TLV-encoded error response using SmallVec for stack allocation
-    fn build_error_response(&self, error_msg: &str) -> ResponseBuf {
-        let msg_bytes = error_msg.as_bytes();
-        let mut response = ResponseBuf::new();
-
-        response.push(TAG_ERR_MSG);
-        response.push(msg_bytes.len() as u8);
-        response.extend_from_slice(msg_bytes);
-
-        response
-    }
 }
 
 struct TlvParseResult {
@@ -157,7 +133,7 @@ impl Domain for NoticeDomain {
         let parse_result = match self.parse_tlv_single_pass(&request.payload) {
             Ok(result) => result,
             Err(e) => {
-                let error_response = self.build_error_response(&e);
+                let error_response = encoding::build_error_response(&e);
                 return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     error_response.to_vec(),
                 ));
@@ -170,7 +146,7 @@ impl Domain for NoticeDomain {
                 if let Err(e) =
                     crate::protocol::route::validate_notice_subscription(&request.route_str)
                 {
-                    let error_response = self.build_error_response(e);
+                    let error_response = encoding::build_error_response(e);
                     return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                         error_response.to_vec(),
                     ));
@@ -184,7 +160,7 @@ impl Domain for NoticeDomain {
                     request.channel_id,
                 );
 
-                let response = self.build_tlv_response(&request.route_str);
+                let response = encoding::build_ack_response(&request.route_str);
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response.to_vec(),
                 ))
@@ -197,7 +173,7 @@ impl Domain for NoticeDomain {
                 let mut service = self.service.write();
                 service.cleanup_channel(request.route_family, request.channel_id);
 
-                let response = self.build_tlv_response(&request.route_str);
+                let response = encoding::build_ack_response(&request.route_str);
                 DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                     response.to_vec(),
                 ))
@@ -206,7 +182,7 @@ impl Domain for NoticeDomain {
             NoticeOp::Publish => {
                 // Validate publish route format
                 if let Err(e) = crate::protocol::route::validate_notice_publish(&request.route) {
-                    let error_response = self.build_error_response(e);
+                    let error_response = encoding::build_error_response(e);
                     return DomainResponse::Frame(crate::protocol::frame::PooledFrame::from_vec(
                         error_response.to_vec(),
                     ));
@@ -216,7 +192,7 @@ impl Domain for NoticeDomain {
                 let body = match parse_result.body_range {
                     Some((start, len)) => &request.payload[start..start + len],
                     None => {
-                        let error_response = self.build_error_response("Missing body in publish");
+                        let error_response = encoding::build_error_response("Missing body in publish");
                         return DomainResponse::Frame(
                             crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
                         );
@@ -270,6 +246,7 @@ impl Domain for NoticeDomain {
 mod tests {
     use super::*;
     use crate::protocol::route::Route;
+    use crate::protocol::tags::TAG_ERR_MSG;
 
     #[test]
     fn should_parse_subscribe_operation() {
