@@ -213,20 +213,47 @@ fn verify_jwt_and_build_session(jwt: &str) -> Result<(String, crate::authz::Sess
     // Extract subject
     let subject = claims.sub.clone();
     
-    // Extract scopes from claims
-    let scopes: Vec<String> = claims.scope
-        .as_ref()
-        .map(|s| s.split_whitespace().map(|s| s.to_string()).collect())
-        .unwrap_or_default();
+    // Extract permissions from both scopes and roles
+    let mut permissions = Vec::new();
     
-    // Build permission grants from scopes
-    let grants = crate::authz::PermissionGrants::from_scopes(&route_family, &scopes);
+    // Add from scope (space-separated string)
+    if let Some(scope_str) = &claims.scope {
+        permissions.extend(
+            scope_str.split_whitespace()
+                .map(|s| s.to_string())
+        );
+    }
+    
+    // Add from roles (array of strings)
+    if let Some(roles) = &claims.roles {
+        permissions.extend(roles.iter().cloned());
+    }
+    
+    // Filter permissions to only those matching expected patterns:
+    // - read:scheme://realm/...
+    // - write:scheme://realm/...
+    // - *:scheme://realm/...
+    // - scheme://realm/...
+    let filtered_permissions: Vec<String> = permissions
+        .into_iter()
+        .filter(|perm| {
+            // Check if it matches permission patterns
+            perm.contains("://") ||                           // route-like: kv://...
+            perm.starts_with("read:") ||                      // intent: read:...
+            perm.starts_with("write:") ||                     // intent: write:...
+            perm.starts_with("*:") ||                         // wildcard intent
+            perm == "*"                                       // full wildcard
+        })
+        .collect();
+    
+    // Build permission grants from filtered permissions
+    let grants = crate::authz::PermissionGrants::from_scopes(&route_family, &filtered_permissions);
     
     // Create session
     let session = crate::authz::SessionAuth {
         subject,
         route_family: route_family.clone(),
-        scopes,
+        scopes: filtered_permissions,
         grants,
     };
     
