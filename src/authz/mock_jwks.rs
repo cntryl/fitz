@@ -6,6 +6,7 @@ pub struct Claims {
     pub aud: Option<String>,
     pub exp: Option<u64>,
     pub perms: Option<Vec<String>>,
+    pub scope: Option<String>,  // Space-separated scopes
 }
 
 /// A tiny mock validator that accepts any token of the form "mock:<subject>[:<aud>]"
@@ -23,16 +24,21 @@ pub fn validate_mock_token(token: &str) -> Option<Claims> {
     let parts: Vec<&str> = head.split(':').collect();
     let sub = parts.first()?.to_string();
     let aud = parts.get(1).map(|s| s.to_string());
-    let perms = perms_opt.map(|p| {
+    let perms = perms_opt.as_ref().map(|p| {
         p.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
     });
+    
+    // Build scope string from perms
+    let scope = perms_opt.map(|p| p.replace(',', " "));
+    
     Some(Claims {
         sub,
         aud,
         exp: None,
         perms,
+        scope,
     })
 }

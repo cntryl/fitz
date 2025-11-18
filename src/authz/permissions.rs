@@ -8,6 +8,124 @@
 //! Note: tenant (authorization/user context) and realm (route namespace) are separate concepts,
 //! though tenants typically have access to a default realm.
 
+/// Internal grant structure (exposed for PermissionGrants)
+#[derive(Debug, Clone)]
+pub struct InternalGrant {
+    intent: Option<String>, // read, write, * for any intent
+    scheme: Option<&'static str>,
+    realm: Option<String>,
+    area: Option<String>,
+    resource: Option<String>,
+    operation: Option<String>, // specific operation, None means any operation within intent
+    wildcard: bool,            // when true, descendants under resource are allowed
+}
+
+impl InternalGrant {
+    /// Create a new grant with the specified parameters
+    pub fn new(
+        intent: Option<String>,
+        operation: Option<String>,
+        scheme: Option<&'static str>,
+        realm: Option<String>,
+        area: Option<String>,
+        resource: Option<String>,
+        wildcard: bool,
+    ) -> Self {
+        Self {
+            intent,
+            operation,
+            scheme,
+            realm,
+            area,
+            resource,
+            wildcard,
+        }
+    }
+
+    /// Create a wildcard grant for all operations within a realm
+    pub fn wildcard_for_realm(realm: &str, scheme: Option<&'static str>) -> Self {
+        Self::new(
+            None,
+            None,
+            scheme,
+            Some(realm.to_string()),
+            None,
+            None,
+            true,
+        )
+    }
+
+    fn matches(&self, route: &crate::protocol::route::Route) -> bool {
+        // Check intent/operation
+        if let Some(intent) = &self.intent {
+            if let Some(route_op) = &route.operation {
+                // Route has an operation, check if it matches the intent
+                let allowed = match intent.as_str() {
+                    "*" => true,
+                    "read" => matches!(route_op.as_str(), "get" | "subscribe" | "consume" | "read"),
+                    "write" => matches!(
+                        route_op.as_str(),
+                        "put" | "publish" | "produce" | "append" | "write"
+                    ),
+                    _ => false,
+                };
+                if !allowed {
+                    return false;
+                }
+            }
+        }
+
+        // Check operation if specified
+        if let Some(grant_op) = &self.operation {
+            if let Some(route_op) = &route.operation {
+                if grant_op != route_op {
+                    return false;
+                }
+            } else {
+                // Grant specifies operation but route doesn't - deny
+                return false;
+            }
+        }
+
+        if let Some(s) = self.scheme {
+            if route.scheme.as_str() != s {
+                return false;
+            }
+        }
+        // control/inbox are bypassed elsewhere; but if present here, accept
+        if route.scheme == crate::protocol::route::Scheme::Control
+            || route.scheme == crate::protocol::route::Scheme::Inbox
+        {
+            return true;
+        }
+        if let Some(gr) = &self.realm {
+            match &route.realm {
+                Some(r) if r == gr => {}
+                _ => return false,
+            }
+        }
+        if let Some(ga) = &self.area {
+            match &route.area {
+                Some(a) if a == ga => {}
+                _ => return false,
+            }
+        }
+        if let Some(grc) = &self.resource {
+            match &route.resource {
+                Some(r) if r == grc => {}
+                Some(r) if self.wildcard => {
+                    // wildcard covers descendants under this resource name; op is ignored here
+                    if r != grc {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Grant {
     intent: Option<String>, // read, write, * for any intent
@@ -129,7 +247,32 @@ impl Grant {
     }
 }
 
-fn derive_grants_for_realm(realm: &str) -> Vec<Grant> {
+/// Derive baseline grants for a realm (public for SessionAuth)
+pub fn derive_grants_for_realm(realm: &str) -> Vec<InternalGrant> {
+    // Baseline: allow all actions on any scheme within this realm, wildcard under any area/resource
+    // Note: realm is the route namespace for which we're creating baseline permissions
+    use crate::protocol::route::Scheme;
+    let mut grants = Vec::new();
+    let schemes = [Scheme::Notice, Scheme::Stream, Scheme::Queue, Scheme::Rpc];
+    for sch in schemes {
+        grants.push(InternalGrant::wildcard_for_realm(realm, Some(sch.as_str())));
+    }
+    grants
+}
+
+/// Check if grants allow a route (public for PermissionGrants)
+pub fn check_grants(grants: &[InternalGrant], route: &crate::protocol::route::Route) -> bool {
+    // Control and inbox routes are always allowed
+    if route.scheme == crate::protocol::route::Scheme::Control
+        || route.scheme == crate::protocol::route::Scheme::Inbox
+    {
+        return true;
+    }
+    
+    grants.iter().any(|g| g.matches(route))
+}
+
+fn derive_grants_for_realm_internal(realm: &str) -> Vec<Grant> {
     // Baseline: allow all actions on any scheme within this realm, wildcard under any area/resource
     // Note: realm is the route namespace for which we're creating baseline permissions
     use crate::protocol::route::Scheme;
@@ -326,7 +469,7 @@ fn check_grants_if_available(tenant: &str, route_str: &str) -> bool {
             None
         }
     }
-    .unwrap_or_else(|| derive_grants_for_realm(tenant));
+    .unwrap_or_else(|| derive_grants_for_realm_internal(tenant));
 
     // Check if any grant allows this route
     grants_vec.into_iter().any(|g| g.matches(&parsed))

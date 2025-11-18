@@ -125,17 +125,20 @@ async fn handle_connection(
 pub async fn handle_upgraded_connection(
     ws_stream: WebSocketStream<hyper::upgrade::Upgraded>,
     engine: EngineHandle,
+    session_auth: crate::authz::SessionAuth,
+    _route_family: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     crate::transport::inc_active_connections();
     let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!("ws upgraded connection {conn_id} accepted");
+    tracing::debug!("ws upgraded connection {conn_id} accepted for subject: {}", session_auth.subject);
 
     let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
     // Outbound queue for this connection.
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-    // Register with engine (engine stores outbound_tx for this conn_id).
+    // Register session and connection with engine
+    engine.register_session(conn_id, session_auth);
     engine.register_connection(conn_id, outbound_tx);
 
     // Single task handles both reading from WS and writing outbound frames.

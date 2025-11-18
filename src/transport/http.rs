@@ -53,12 +53,34 @@ pub async fn handle_request(
         "/rpc/sys/token/issue" => handle_token_issue(req).await,
 
         "/connect" => {
-            // --- WebSocket Upgrade ---
+            // --- WebSocket Upgrade with JWT Authentication ---
             if !is_websocket_request(&req) {
                 let mut r = Response::new(Body::from("upgrade required"));
                 *r.status_mut() = StatusCode::UPGRADE_REQUIRED;
                 return Ok(r);
             }
+
+            // Extract JWT from Authorization header or Sec-WebSocket-Protocol
+            let token = extract_jwt_from_request(&req);
+            let (route_family, session_auth) = match token {
+                Some(jwt) => {
+                    // Verify JWT and extract claims
+                    match verify_jwt_and_build_session(&jwt) {
+                        Ok((rf, session)) => (rf, session),
+                        Err(e) => {
+                            tracing::warn!("JWT verification failed: {}", e);
+                            let mut r = Response::new(Body::from("authentication failed"));
+                            *r.status_mut() = StatusCode::UNAUTHORIZED;
+                            return Ok(r);
+                        }
+                    }
+                }
+                None => {
+                    let mut r = Response::new(Body::from("missing authentication token"));
+                    *r.status_mut() = StatusCode::UNAUTHORIZED;
+                    return Ok(r);
+                }
+            };
 
             let accept_header = ws_accept_key(&req);
             let mut response = Response::new(Body::empty());
@@ -79,6 +101,8 @@ pub async fn handle_request(
                             if let Err(e) = crate::transport::ws::handle_upgraded_connection(
                                 ws_stream,
                                 engine_for_ws,
+                                session_auth,
+                                route_family,
                             )
                             .await
                             {
@@ -148,6 +172,65 @@ fn json_ok_token(token: &str) -> Response<Body> {
         hyper::header::HeaderValue::from_static("application/json"),
     );
     resp
+}
+
+/// Extract JWT from request - tries Authorization header first, then WebSocket protocol
+fn extract_jwt_from_request(req: &Request<Body>) -> Option<String> {
+    // Try Authorization: Bearer <token> header
+    if let Some(auth_header) = req.headers().get(hyper::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    // Try Sec-WebSocket-Protocol: bearer,<token> or similar
+    if let Some(protocol_header) = req.headers().get("Sec-WebSocket-Protocol") {
+        if let Ok(protocol_str) = protocol_header.to_str() {
+            // Parse "bearer,<token>" or "Bearer <token>"
+            for part in protocol_str.split(',') {
+                let trimmed = part.trim();
+                if trimmed.starts_with("bearer ") || trimmed.starts_with("Bearer ") {
+                    return Some(trimmed[7..].to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Verify JWT and build SessionAuth
+fn verify_jwt_and_build_session(jwt: &str) -> Result<(String, crate::authz::SessionAuth), String> {
+    // Parse JWT and extract claims
+    let claims = crate::authz::mock_jwks::validate_mock_token(jwt)
+        .ok_or_else(|| "invalid token format".to_string())?;
+
+    // Extract route_family (tenant) from claims
+    let route_family = claims.aud.clone().unwrap_or_else(|| claims.sub.clone());
+    
+    // Extract subject
+    let subject = claims.sub.clone();
+    
+    // Extract scopes from claims
+    let scopes: Vec<String> = claims.scope
+        .as_ref()
+        .map(|s| s.split_whitespace().map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+    
+    // Build permission grants from scopes
+    let grants = crate::authz::PermissionGrants::from_scopes(&route_family, &scopes);
+    
+    // Create session
+    let session = crate::authz::SessionAuth {
+        subject,
+        route_family: route_family.clone(),
+        scopes,
+        grants,
+    };
+    
+    Ok((route_family, session))
 }
 
 fn is_websocket_request(req: &Request<Body>) -> bool {

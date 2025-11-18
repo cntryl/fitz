@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::authz::SessionAuth;
 use crate::core::domain::{DomainContext, DomainResponse};
 use crate::core::registry::DomainRegistry;
 use crate::protocol::route::parse_route;
@@ -21,6 +22,7 @@ use crate::protocol::route::parse_route;
 use crossbeam_channel::{Receiver, Sender};
 
 pub type ConnectionId = u64;
+pub type ChannelId = u32;
 
 pub enum EngineEvent {
     Frame {
@@ -141,6 +143,12 @@ impl EngineHandle {
         }
     }
 
+    /// Register session authentication state for a connection.
+    /// Called once during WebSocket setup after JWT verification.
+    pub fn register_session(&self, conn_id: ConnectionId, session: SessionAuth) {
+        self.registry.register_session(conn_id, session);
+    }
+
     /// Called when the connection is established to register its outbound queue.
     pub fn register_connection(
         &self,
@@ -156,11 +164,16 @@ impl EngineHandle {
     }
 }
 
-/// Stores per-connection outbound queues.
+/// Stores per-connection outbound queues, sessions, and channel routing.
 /// Engine pushes outbound frames via these.
 #[derive(Debug)]
 pub struct EngineConnectionRegistry {
+    /// conn_id → outbound SPSC producer
     conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
+    /// conn_id → session authentication/authorization state
+    sessions: parking_lot::RwLock<HashMap<ConnectionId, SessionAuth>>,
+    /// channel_id → conn_id (for routing replies/notifications)
+    channel_to_conn: parking_lot::RwLock<HashMap<ChannelId, ConnectionId>>,
 }
 
 impl Default for EngineConnectionRegistry {
@@ -173,15 +186,50 @@ impl EngineConnectionRegistry {
     pub fn new() -> Self {
         Self {
             conns: parking_lot::RwLock::new(HashMap::new()),
+            sessions: parking_lot::RwLock::new(HashMap::new()),
+            channel_to_conn: parking_lot::RwLock::new(HashMap::new()),
         }
+    }
+
+    pub fn register_session(&self, conn_id: ConnectionId, session: SessionAuth) {
+        self.sessions.write().insert(conn_id, session);
+    }
+
+    pub fn get_session(&self, conn_id: ConnectionId) -> Option<SessionAuth> {
+        self.sessions.read().get(&conn_id).cloned()
+    }
+
+    pub fn register_channel(&self, channel_id: ChannelId, conn_id: ConnectionId) {
+        self.channel_to_conn.write().entry(channel_id).or_insert(conn_id);
+    }
+
+    pub fn get_conn_for_channel(&self, channel_id: ChannelId) -> Option<ConnectionId> {
+        self.channel_to_conn.read().get(&channel_id).copied()
     }
 
     pub fn register(&self, conn_id: ConnectionId, tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) {
         self.conns.write().insert(conn_id, tx);
     }
 
-    pub fn remove(&self, conn_id: ConnectionId) {
+    pub fn remove(&self, conn_id: ConnectionId) -> Vec<ChannelId> {
         self.conns.write().remove(&conn_id);
+        self.sessions.write().remove(&conn_id);
+        
+        // Collect orphaned channels
+        let orphaned: Vec<ChannelId> = self.channel_to_conn
+            .read()
+            .iter()
+            .filter(|(_, &cid)| cid == conn_id)
+            .map(|(&ch, _)| ch)
+            .collect();
+        
+        // Remove channel mappings
+        let mut channel_map = self.channel_to_conn.write();
+        for ch in &orphaned {
+            channel_map.remove(ch);
+        }
+        
+        orphaned
     }
 
     pub fn send(&self, conn_id: ConnectionId, bytes: Vec<u8>) {
@@ -237,6 +285,9 @@ impl Engine {
         };
         let channel_id = parsed_frame.header.channel_id;
 
+        // Register channel \u2192 connection mapping (if first frame from this channel)
+        self.registry.register_channel(channel_id, conn_id);
+
         // Decode TLVs
         let (route, payload, route_family) = match crate::protocol::frame::decode(bytes) {
             Ok((r, p, rf)) => (r, p, rf),
@@ -254,6 +305,21 @@ impl Engine {
                 return;
             }
         };
+
+        // Look up session for authorization
+        let session = match self.registry.get_session(conn_id) {
+            Some(s) => s,
+            None => {
+                self.send_error(conn_id, channel_id, "no session found for connection");
+                return;
+            }
+        };
+
+        // Authorization check (before domain dispatch)
+        if !session.grants.allows(&parsed) {
+            self.send_error(conn_id, channel_id, "authorization denied");
+            return;
+        }
 
         // Build domain request context
         let ctx = DomainContext {
@@ -287,13 +353,15 @@ impl Engine {
                 message,
                 ack_frame,
             }) => {
-                // TODO: Implement RPC message delivery via transport layer
-                // For now, just send the acknowledgment back to requester
-                // Transport needs to:
-                // 1. Look up target_channel_id -> connection mapping
-                // 2. Serialize message as frame
-                // 3. Send via target connection's outbound channel with backpressure
-                let _ = (target_channel_id, message); // Suppress unused warning
+                // 1. Send RPC message to target inbox owner
+                //    Lookup: channel_id \u2192 conn_id \u2192 outbound queue
+                if let Some(target_conn_id) = self.registry.get_conn_for_channel(target_channel_id) {
+                    // Serialize RpcMessage to frame bytes
+                    let message_bytes = self.serialize_rpc_message(target_channel_id, message);
+                    self.registry.send(target_conn_id, message_bytes);
+                }
+                
+                // 2. Send ack back to requester (on their connection)
                 self.registry.send(conn_id, ack_frame.into_vec());
             }
             Ok(DomainResponse::NoticeDelivery {
@@ -301,15 +369,21 @@ impl Engine {
                 notification_frame,
                 ack_frame,
             }) => {
-                // Fan out notification to all subscribers
-                for (subscriber_channel_id, _sub_id) in &subscribers {
-                    // TODO: Look up subscriber_channel_id -> connection mapping
-                    // For now, we don't have that mapping, so fanout is incomplete
-                    // Full implementation requires tracking channel_id -> conn_id mapping
-                    let _ = (subscriber_channel_id, &notification_frame);
+                let bytes = notification_frame.into_vec();
+                
+                // Fanout to all subscribers
+                // Each subscriber is identified by their channel_id
+                for (sub_channel_id, _sub_id) in &subscribers {
+                    // Lookup: channel_id \u2192 conn_id \u2192 outbound queue
+                    if let Some(sub_conn_id) = self.registry.get_conn_for_channel(*sub_channel_id) {
+                        self.registry.send(sub_conn_id, bytes.clone());
+                    }
                 }
+                
                 // Send ACK back to publisher if present
-                if let Some(f) = ack_frame { self.registry.send(conn_id, f.into_vec()); }
+                if let Some(f) = ack_frame {
+                    self.registry.send(conn_id, f.into_vec());
+                }
             }
             Err(e) => {
                 self.send_error(conn_id, channel_id, &e);
@@ -318,12 +392,57 @@ impl Engine {
     }
 
     fn handle_disconnect(&self, conn_id: ConnectionId) {
-        self.registry.remove(conn_id);
-        // TODO: cleanup channels - need to track which channels belong to which connection
+        // Remove connection and get orphaned channels
+        let orphaned_channels = self.registry.remove(conn_id);
+        
+        // Cleanup each orphaned channel in all domains
+        for channel_id in orphaned_channels {
+            // We need route_family for cleanup, but we don't have it here
+            // For now, cleanup will be called from domains without route_family check
+            // TODO: Store route_family with session and pass it here
+            // Workaround: Use a sentinel route_family or update cleanup_channel signature
+            self.domains.cleanup_channel(crate::routing::RouteFamilyId::default(), channel_id);
+        }
     }
 
     fn send_error(&self, conn_id: ConnectionId, channel_id: u32, err: &str) {
         let frame = crate::protocol::frame::make_error(channel_id, err);
         self.registry.send(conn_id, frame.to_vec());
+    }
+
+    fn serialize_rpc_message(
+        &self,
+        channel_id: u32,
+        message: crate::core::rpc::RpcMessage,
+    ) -> Vec<u8> {
+        use crate::protocol::frame::build_tlv;
+        use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE, TAG_ROUTE_REPLY, TAG_SEQ, TAG_STREAM_END, FRAME_DAT};
+        
+        // Build TLVs for the message
+        let mut payload = Vec::new();
+        build_tlv(TAG_ROUTE, message.route.as_bytes(), &mut payload);
+        
+        if let Some(corr_id) = message.correlation_id {
+            build_tlv(TAG_ID, corr_id.as_bytes(), &mut payload);
+        }
+        
+        if !message.body.is_empty() {
+            build_tlv(TAG_BODY, &message.body, &mut payload);
+        }
+        
+        if let Some(reply_route) = message.reply_route {
+            build_tlv(TAG_ROUTE_REPLY, reply_route.as_bytes(), &mut payload);
+        }
+        
+        if let Some(seq) = message.seq {
+            build_tlv(TAG_SEQ, &seq.to_be_bytes(), &mut payload);
+        }
+        
+        if message.is_stream_end {
+            build_tlv(TAG_STREAM_END, &[], &mut payload);
+        }
+        
+        // Build frame with header (frame_type=FRAME_DAT, flags=0)
+        crate::protocol::frame::build_frame(FRAME_DAT, 0, channel_id, &payload)
     }
 }

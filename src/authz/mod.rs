@@ -4,6 +4,43 @@ pub mod mock_jwks;
 pub mod permissions;
 pub mod tokens;
 
+/// Session authentication and authorization state.
+/// Created once per connection at WebSocket upgrade time.
+#[derive(Debug, Clone)]
+pub struct SessionAuth {
+    /// Subject (user/client identifier) from JWT
+    pub subject: String,
+    /// Route family (tenant/realm) from JWT - used for sharding and multi-tenancy
+    pub route_family: String,
+    /// Scopes/roles from JWT claims
+    pub scopes: Vec<String>,
+    /// Resolved permission grants from scopes
+    pub grants: PermissionGrants,
+}
+
+/// Permission grants resolved from JWT claims.
+/// Built once at connection time and used for per-frame authorization.
+#[derive(Debug, Clone)]
+pub struct PermissionGrants {
+    /// Internal grant list (may be refactored to use permissions module)
+    pub(crate) grants: Vec<permissions::InternalGrant>,
+}
+
+impl PermissionGrants {
+    /// Create grants from scopes for a given route_family/realm
+    pub fn from_scopes(route_family: &str, scopes: &[String]) -> Self {
+        // For now, create wildcard grants for the route_family
+        // TODO: Parse scopes and create fine-grained grants
+        let grants = permissions::derive_grants_for_realm(route_family);
+        Self { grants }
+    }
+
+    /// Check if a route is authorized
+    pub fn allows(&self, route: &crate::protocol::route::Route) -> bool {
+        permissions::check_grants(&self.grants, route)
+    }
+}
+
 /// Validate a token using the mock JWKS validator. Returns Some(tenant) on success.
 pub fn validate_token(token: &str) -> Option<String> {
     // If NO_AUTH is enabled, accept every token as belonging to the dev tenant.
