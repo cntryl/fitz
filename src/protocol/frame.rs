@@ -329,9 +329,17 @@ pub fn decode(bytes: Vec<u8>) -> Result<(String, Vec<u8>, crate::routing::RouteF
     Ok((route, payload, route_family))
 }
 
-/// Make an error frame
+/// Make an error frame with just a message (for backward compatibility)
 pub fn make_error(channel_id: u32, err: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     build_tlv(TAG_ERR_MSG, err.as_bytes(), &mut payload);
+    build_frame(FRAME_ERR, 0, channel_id, &payload)
+}
+
+/// Make an error frame with error code and message (structured errors)
+pub fn make_error_with_code(channel_id: u32, err_code: u32, err_msg: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    build_tlv(TAG_ERR_CODE, &err_code.to_be_bytes(), &mut payload);
+    build_tlv(TAG_ERR_MSG, err_msg.as_bytes(), &mut payload);
     build_frame(FRAME_ERR, 0, channel_id, &payload)
 }

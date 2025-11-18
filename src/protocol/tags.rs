@@ -114,6 +114,46 @@ pub const TAG_ERR_CODE: u8 = 0x40;
 /// Human readable error message (UTF-8 string).
 pub const TAG_ERR_MSG: u8 = 0x41;
 
+// ---------------------------------------------------------------------------
+// Standard error codes (u32 values for TAG_ERR_CODE)
+// ---------------------------------------------------------------------------
+
+// Authentication/Authorization errors (1000-1999)
+/// Authentication failed (invalid or missing JWT)
+pub const ERR_AUTHN_FAILED: u32 = 1000;
+/// Authorization denied (valid JWT but insufficient permissions)
+pub const ERR_AUTHZ_DENIED: u32 = 1001;
+
+// Protocol errors (2000-2999)
+/// Invalid route format
+pub const ERR_ROUTE_INVALID: u32 = 2000;
+/// Malformed TLV data
+pub const ERR_TLV_INVALID: u32 = 2001;
+/// Malformed frame header
+pub const ERR_FRAME_INVALID: u32 = 2002;
+/// Unsupported scheme
+pub const ERR_SCHEME_UNSUPPORTED: u32 = 2003;
+
+// Domain/Business logic errors (3000-3999)
+/// Resource not found
+pub const ERR_NOT_FOUND: u32 = 3000;
+/// Resource already exists (conflict)
+pub const ERR_CONFLICT: u32 = 3001;
+/// Resource limit exceeded
+pub const ERR_LIMIT_EXCEEDED: u32 = 3002;
+/// Operation not allowed on this resource
+pub const ERR_OPERATION_NOT_ALLOWED: u32 = 3003;
+/// Invalid operation parameters
+pub const ERR_INVALID_PARAMS: u32 = 3004;
+
+// Engine/System errors (4000-4999)
+/// Unknown session for connection
+pub const ERR_ENGINE_UNKNOWN_SESSION: u32 = 4000;
+/// Engine backpressure (inbox full)
+pub const ERR_ENGINE_BACKPRESSURE: u32 = 4001;
+/// Internal engine error
+pub const ERR_ENGINE_INTERNAL: u32 = 4002;
+
 /// Optional request identifier (opaque) that can be echoed in replies.
 pub const TAG_REQ_ID: u8 = 0x72;
 

@@ -28,10 +28,10 @@ pub type ChannelId = u32;
 pub const NUM_SHARDS: usize = 8;
 
 /// Engine inbox capacity (bounded to prevent memory exhaustion)
-const ENGINE_INBOX_CAPACITY: usize = 1024;
+pub const ENGINE_INBOX_CAPACITY: usize = 1024;
 
-/// Per-connection outbound queue capacity
-const OUTBOUND_QUEUE_CAPACITY: usize = 256;
+/// Per-connection outbound queue capacity (used by transports)
+pub const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 
 /// Choose which engine shard should handle a given route_family (tenant).
 /// This ensures all connections for a tenant go to the same shard for consistency.
@@ -276,9 +276,13 @@ impl EngineConnectionRegistry {
         self.conns.write().insert(conn_id, tx);
     }
 
-    pub fn remove(&self, conn_id: ConnectionId) -> Vec<ChannelId> {
+    pub fn remove(&self, conn_id: ConnectionId) -> (Option<String>, Vec<ChannelId>) {
         self.conns.write().remove(&conn_id);
-        self.sessions.write().remove(&conn_id);
+        
+        // Get route_family from session before removing it
+        let route_family = self.sessions.write()
+            .remove(&conn_id)
+            .map(|session| session.route_family);
         
         // Collect orphaned channels
         let orphaned: Vec<ChannelId> = self.channel_to_conn
@@ -294,7 +298,7 @@ impl EngineConnectionRegistry {
             channel_map.remove(ch);
         }
         
-        orphaned
+        (route_family, orphaned)
     }
 
     pub fn send(&self, conn_id: ConnectionId, bytes: Vec<u8>) {
@@ -467,22 +471,48 @@ impl Engine {
     }
 
     fn handle_disconnect(&self, conn_id: ConnectionId) {
-        // Remove connection and get orphaned channels
-        let orphaned_channels = self.registry.remove(conn_id);
+        // Remove connection and get route_family + orphaned channels
+        let (route_family_opt, orphaned_channels) = self.registry.remove(conn_id);
+        
+        // Convert route_family to RouteFamilyId
+        // Use hash of the string to get the ID (matching what RouteTable does)
+        let route_family_id = if let Some(rf) = route_family_opt {
+            // Simple hash to RouteFamilyId (matching routing module)
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            rf.hash(&mut hasher);
+            hasher.finish() as crate::routing::RouteFamilyId
+        } else {
+            // Fallback to default if no session found
+            crate::routing::RouteFamilyId::default()
+        };
         
         // Cleanup each orphaned channel in all domains
         for channel_id in orphaned_channels {
-            // We need route_family for cleanup, but we don't have it here
-            // For now, cleanup will be called from domains without route_family check
-            // TODO: Store route_family with session and pass it here
-            // Workaround: Use a sentinel route_family or update cleanup_channel signature
-            self.domains.cleanup_channel(crate::routing::RouteFamilyId::default(), channel_id);
+            self.domains.cleanup_channel(route_family_id, channel_id);
         }
     }
 
     fn send_error(&self, conn_id: ConnectionId, channel_id: u32, err: &str) {
-        let frame = crate::protocol::frame::make_error(channel_id, err);
-        self.registry.send(conn_id, frame.to_vec());
+        // Try to map error string to error code
+        use crate::protocol::tags::*;
+        let err_code = if err.contains("authorization") || err.contains("authz") {
+            ERR_AUTHZ_DENIED
+        } else if err.contains("session") || err.contains("unknown") {
+            ERR_ENGINE_UNKNOWN_SESSION
+        } else if err.contains("invalid route") || err.contains("route:") {
+            ERR_ROUTE_INVALID
+        } else if err.contains("parse") || err.contains("TLV") || err.contains("frame") {
+            ERR_FRAME_INVALID
+        } else if err.contains("scheme") || err.contains("unsupported") {
+            ERR_SCHEME_UNSUPPORTED
+        } else {
+            ERR_ENGINE_INTERNAL
+        };
+        
+        let frame = crate::protocol::frame::make_error_with_code(channel_id, err_code, err);
+        self.registry.send(conn_id, frame);
     }
 
     fn serialize_rpc_message(
