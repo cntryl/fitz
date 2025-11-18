@@ -58,19 +58,6 @@ Fitz supports multiple transport protocols, all following the same async-edge/sy
 - **Use Case**: Native clients, low-overhead backend services
 - **Port**: Configurable via `FITZ_TCP_PORT` (default: 7070)
 
-### QUIC Transport (`quic.rs`) ⭐ **Recommended**
-- **Protocol**: QUIC (UDP-based) with native stream multiplexing
-- **Authentication**: JWT in ALPN extension or first frame, optional mTLS
-- **Multiplexing**: Native QUIC streams (stream ID = channel_id)
-- **Benefits**:
-  - No head-of-line blocking (per-stream ordering)
-  - Connection migration (survive IP/port changes)
-  - 0-RTT reconnection (resume sessions instantly)
-  - Built-in encryption (TLS 1.3)
-  - NAT-friendly (UDP-based)
-- **Use Case**: Production services, mobile clients, edge deployments
-- **Port**: Configurable via `FITZ_QUIC_PORT` (default: 9090)
-
 ### Transport Comparison
 
 | Feature | WebSocket | TCP | QUIC |

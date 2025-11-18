@@ -19,10 +19,16 @@ use crate::core::domain::{DomainContext, DomainResponse};
 use crate::core::registry::DomainRegistry;
 use crate::protocol::route::parse_route;
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 
 pub type ConnectionId = u64;
 pub type ChannelId = u32;
+
+/// Engine inbox capacity (bounded to prevent memory exhaustion)
+const ENGINE_INBOX_CAPACITY: usize = 1024;
+
+/// Per-connection outbound queue capacity
+const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 
 pub enum EngineEvent {
     Frame {
@@ -58,13 +64,25 @@ impl EngineHandle {
     }
 
     /// Called by WS reader task when a frame arrives.
-    pub fn on_frame(&self, conn_id: ConnectionId, bytes: Vec<u8>) {
-        let _ = self.inbox.send(EngineEvent::Frame { conn_id, bytes });
+    /// Returns false if inbox is full (backpressure - caller should close connection).
+    pub fn on_frame(&self, conn_id: ConnectionId, bytes: Vec<u8>) -> bool {
+        match self.inbox.try_send(EngineEvent::Frame { conn_id, bytes }) {
+            Ok(_) => true,
+            Err(TrySendError::Full(_)) => {
+                tracing::warn!("engine inbox full for conn {}, dropping frame", conn_id);
+                false
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                tracing::error!("engine inbox disconnected for conn {}", conn_id);
+                false
+            }
+        }
     }
 
     /// Called by WS task at disconnect.
     pub fn on_disconnect(&self, conn_id: ConnectionId) {
-        let _ = self.inbox.send(EngineEvent::Disconnect { conn_id });
+        // Disconnect events have priority, but still use try_send to avoid blocking
+        let _ = self.inbox.try_send(EngineEvent::Disconnect { conn_id });
     }
 
     /// Synchronous dispatch for transport layer.
@@ -153,7 +171,7 @@ impl EngineHandle {
     pub fn register_connection(
         &self,
         conn_id: ConnectionId,
-        outbound: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) {
         self.registry.register(conn_id, outbound);
     }
@@ -168,8 +186,8 @@ impl EngineHandle {
 /// Engine pushes outbound frames via these.
 #[derive(Debug)]
 pub struct EngineConnectionRegistry {
-    /// conn_id → outbound SPSC producer
-    conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
+    /// conn_id → outbound SPSC producer (bounded for backpressure)
+    conns: parking_lot::RwLock<HashMap<ConnectionId, tokio::sync::mpsc::Sender<Vec<u8>>>>,
     /// conn_id → session authentication/authorization state
     sessions: parking_lot::RwLock<HashMap<ConnectionId, SessionAuth>>,
     /// channel_id → conn_id (for routing replies/notifications)
@@ -207,7 +225,7 @@ impl EngineConnectionRegistry {
         self.channel_to_conn.read().get(&channel_id).copied()
     }
 
-    pub fn register(&self, conn_id: ConnectionId, tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) {
+    pub fn register(&self, conn_id: ConnectionId, tx: tokio::sync::mpsc::Sender<Vec<u8>>) {
         self.conns.write().insert(conn_id, tx);
     }
 
@@ -234,7 +252,17 @@ impl EngineConnectionRegistry {
 
     pub fn send(&self, conn_id: ConnectionId, bytes: Vec<u8>) {
         if let Some(tx) = self.conns.read().get(&conn_id) {
-            let _ = tx.send(bytes);
+            // Use try_send for non-blocking operation (engine is sync)
+            match tx.try_send(bytes) {
+                Ok(_) => {},
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("outbound queue full for conn {}, dropping frame", conn_id);
+                    // TODO: Consider marking connection for closure
+                },
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    tracing::debug!("outbound queue closed for conn {}", conn_id);
+                }
+            }
         }
     }
 }
