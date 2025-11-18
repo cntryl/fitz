@@ -24,7 +24,9 @@ pub struct TlsConfig {
 pub struct TransportConfig {
     pub ws_port: u16,
     pub tcp_port: u16,
+    pub quic_port: u16,
     pub tls: Option<TlsConfig>,
+    pub quic_tls: Option<TlsConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +71,12 @@ pub fn load() -> AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(7070),
+            quic_port: env::var(vars::FITZ_QUIC_PORT)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(9090),
             tls: load_tls_from_env(),
+            quic_tls: load_tls_from_env(), // Reuse same TLS config or add separate FITZ_QUIC_TLS_* vars
         },
         control: ControlConfig {
             route: env::var(vars::CONTROL_ROUTE).unwrap_or_else(|_| "self".to_string()),

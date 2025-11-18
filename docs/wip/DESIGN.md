@@ -40,6 +40,57 @@ Before diving into architecture, let's establish precise terminology:
 
 ---
 
+## Transport Layer Options
+
+Fitz supports multiple transport protocols, all following the same async-edge/sync-core pattern:
+
+### WebSocket Transport (`ws.rs`)
+- **Protocol**: HTTP upgrade to WebSocket with FTZ binary frames
+- **Authentication**: JWT in `Authorization` header or `Sec-WebSocket-Protocol` field
+- **Multiplexing**: Manual via FTZ channel_id in frame headers
+- **Use Case**: Web browsers, HTTP-compatible environments
+- **Port**: Configurable via `FITZ_WS_PORT` (default: 8080)
+
+### TCP Transport (`tcp.rs`)
+- **Protocol**: Direct TCP with FTZ framing (length-prefixed)
+- **Authentication**: NO_AUTH mode or first-frame auth (TLS optional)
+- **Multiplexing**: Manual via FTZ channel_id in frame headers
+- **Use Case**: Native clients, low-overhead backend services
+- **Port**: Configurable via `FITZ_TCP_PORT` (default: 7070)
+
+### QUIC Transport (`quic.rs`) ⭐ **Recommended**
+- **Protocol**: QUIC (UDP-based) with native stream multiplexing
+- **Authentication**: JWT in ALPN extension or first frame, optional mTLS
+- **Multiplexing**: Native QUIC streams (stream ID = channel_id)
+- **Benefits**:
+  - No head-of-line blocking (per-stream ordering)
+  - Connection migration (survive IP/port changes)
+  - 0-RTT reconnection (resume sessions instantly)
+  - Built-in encryption (TLS 1.3)
+  - NAT-friendly (UDP-based)
+- **Use Case**: Production services, mobile clients, edge deployments
+- **Port**: Configurable via `FITZ_QUIC_PORT` (default: 9090)
+
+### Transport Comparison
+
+| Feature | WebSocket | TCP | QUIC |
+|---------|-----------|-----|------|
+| Browser support | ✅ Native | ❌ No | ⚠️ WebTransport |
+| Multiplexing | Manual (FTZ) | Manual (FTZ) | **Native** |
+| Head-of-line blocking | Yes (TCP) | Yes | **No** |
+| Connection migration | No | No | **Yes** |
+| 0-RTT reconnection | No | No | **Yes** |
+| Encryption | TLS upgrade | Optional | **Built-in** |
+| NAT traversal | Good | Good | **Better (UDP)** |
+
+### All Transports Share:
+- Same `EngineHandle::on_frame(conn_id, bytes)` interface
+- Identical session registration flow
+- Per-frame authorization in engine core
+- Transport-agnostic domain handlers
+
+---
+
 ## Inbound Data Flow (Client → Server)
 
 ```

@@ -23,29 +23,49 @@ impl TcpTransport {
             return self.run_tls(tls).await;
         }
         let listener = TcpListener::bind(self.addr).await?;
-        while let Ok((stream, _peer)) = listener.accept().await {
+        tracing::info!("tcp listening on {}", self.addr);
+        
+        while let Ok((stream, peer)) = listener.accept().await {
             let engine = self.engine.clone();
             tokio::spawn(async move {
-                // For TCP, we use the same mux model with a writer queue
-                let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
-                let mux = crate::transport::mux::Muxer::new(writer_tx.clone());
+                tracing::debug!("tcp connection accepted from {}", peer);
+                
+                // TCP requires authentication via first frame or pre-shared config
+                // For now, create a default dev session if NO_AUTH is enabled
+                let session_auth = if crate::authn::no_auth_enabled() {
+                    crate::authz::SessionAuth {
+                        subject: "tcp-client".to_string(),
+                        route_family: "dev".to_string(),
+                        scopes: vec!["*".to_string()],
+                        grants: crate::authz::PermissionGrants::from_scopes("dev", &["*".to_string()]),
+                    }
+                } else {
+                    tracing::warn!("tcp connection from {} rejected: authentication not implemented for TCP", peer);
+                    return;
+                };
+                
+                // Assign connection ID
+                static NEXT_CONN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                let conn_id = NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                
+                // Create outbound channel
+                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                
+                // Register session and connection with engine
+                engine.register_session(conn_id, session_auth);
+                engine.register_connection(conn_id, outbound_tx);
 
                 // Split stream into read/write halves
                 let (mut reader, mut writer) = stream.into_split();
 
-                // Writer task: send FTZ frames back to client
-                tokio::spawn(async move {
-                    while let Some(frame_bytes) = writer_rx.recv().await {
-                        // Write full frame bytes
+                // Writer task: send frames back to client
+                let writer_handle = tokio::spawn(async move {
+                    while let Some(frame_bytes) = outbound_rx.recv().await {
                         if writer.write_all(&frame_bytes).await.is_err() {
                             break;
                         }
                     }
                 });
-
-                // Register default channel on mux
-                crate::transport::session::register_default_channel(mux.clone(), engine.clone(), 1)
-                    .await;
 
                 // Read loop with length-based reassembly of FTZ frames
                 const MAX_PAYLOAD: usize = 16 * 1024 * 1024; // 16 MiB guard
@@ -71,14 +91,17 @@ impl TcpTransport {
                                     break;
                                 }
                                 let frame_bytes: Vec<u8> = inbuf.drain(0..total_len).collect();
-                                mux.demux_incoming(frame_bytes).await;
+                                // Send frame to engine for processing
+                                engine.on_frame(conn_id, frame_bytes);
                             }
                         }
                         Err(_) => break,
                     }
                 }
 
-                // Cleanup handled at session layer with proper channel_id and route_family context
+                // Cleanup: notify engine of disconnect
+                engine.on_disconnect(conn_id);
+                writer_handle.abort();
             });
         }
         Ok(())
@@ -102,25 +125,41 @@ impl TcpTransport {
             tokio::spawn(async move {
                 match acceptor.accept(stream).await {
                     Ok(tls_stream) => {
-                        // Writer queue and mux same as plain TCP path
-                        let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
-                        let mux = crate::transport::mux::Muxer::new(writer_tx.clone());
+                        // Create default session for NO_AUTH mode
+                        let session_auth = if crate::authn::no_auth_enabled() {
+                            crate::authz::SessionAuth {
+                                subject: "tls-client".to_string(),
+                                route_family: "dev".to_string(),
+                                scopes: vec!["*".to_string()],
+                                grants: crate::authz::PermissionGrants::from_scopes("dev", &["*".to_string()]),
+                            }
+                        } else {
+                            tracing::warn!("tls connection rejected: authentication not implemented for TLS");
+                            return;
+                        };
+                        
+                        // Assign connection ID
+                        static NEXT_CONN_ID_TLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000000);
+                        let conn_id = NEXT_CONN_ID_TLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        
+                        // Create outbound channel
+                        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                        
+                        // Register session and connection
+                        engine.register_session(conn_id, session_auth);
+                        engine.register_connection(conn_id, outbound_tx);
+                        
                         // Split TLS stream
                         use tokio::io::{AsyncReadExt, AsyncWriteExt};
                         let (mut reader, mut writer) = tokio::io::split(tls_stream);
-                        tokio::spawn(async move {
-                            while let Some(frame_bytes) = writer_rx.recv().await {
+                        
+                        let writer_handle = tokio::spawn(async move {
+                            while let Some(frame_bytes) = outbound_rx.recv().await {
                                 if writer.write_all(&frame_bytes).await.is_err() {
                                     break;
                                 }
                             }
                         });
-                        crate::transport::session::register_default_channel(
-                            mux.clone(),
-                            engine.clone(),
-                            1,
-                        )
-                        .await;
                         const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
                         let mut inbuf: Vec<u8> = Vec::with_capacity(8 * 1024);
                         let mut tmp = [0u8; 8192];
@@ -138,20 +177,23 @@ impl TcpTransport {
                                         ])
                                             as usize;
                                         if total_len == 0 || total_len > MAX_PAYLOAD + 1024 * 1024 {
-                                            return;
+                                            break;
                                         }
                                         if inbuf.len() < total_len {
                                             break;
                                         }
                                         let frame_bytes: Vec<u8> =
                                             inbuf.drain(0..total_len).collect();
-                                        mux.demux_incoming(frame_bytes).await;
+                                        // Send frame to engine for processing
+                                        engine.on_frame(conn_id, frame_bytes);
                                     }
                                 }
                                 Err(_) => break,
                             }
                         }
-                        // Cleanup handled at session layer with proper channel_id and route_family context
+                        // Cleanup: notify engine of disconnect
+                        engine.on_disconnect(conn_id);
+                        writer_handle.abort();
                     }
                     Err(e) => {
                         tracing::error!("tls accept failed: {}", e);
