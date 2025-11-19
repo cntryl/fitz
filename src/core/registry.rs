@@ -69,11 +69,11 @@ impl DomainRegistry {
             control::ControlDomain, kv::KvDomain, lease::LeaseDomain, notice::NoticeDomain,
             queue::QueueDomain, rpc::RpcDomain, stream::StreamDomain,
         };
-        // use crate::routing::GlobalInternTable;
+        use crate::routing::GlobalInternTable;
         use crate::storage::midge_adapter;
 
         // Shared string interner for lease keys
-        //let interner = Arc::new(GlobalInternTable::new());
+        let interner = Arc::new(GlobalInternTable::new());
 
         // Shared storage backend
         let kv_store = midge_adapter::create_memory_store().expect("memory store init failed");
@@ -81,7 +81,7 @@ impl DomainRegistry {
         // Domains (Notice/RPC/Lease have no storage deps)
         let notice = Arc::new(NoticeDomain::new());
         let rpc = Arc::new(RpcDomain::new());
-        let lease = Arc::new(LeaseDomain::new());
+        let lease = Arc::new(LeaseDomain::new(Arc::clone(&interner)));
         let control = Arc::new(ControlDomain::new());
 
         // Storage-backed domains

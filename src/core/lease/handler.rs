@@ -29,9 +29,9 @@ pub struct LeaseDomain {
 
 impl LeaseDomain {
     /// Default constructor: owns its own LeaseService instance.
-    pub fn new() -> Self {
+    pub fn new(interner: Arc<crate::routing::GlobalInternTable>) -> Self {
         Self {
-            service: LeaseService::new(),
+            service: LeaseService::new(interner),
         }
     }
 
@@ -58,7 +58,8 @@ impl LeaseDomain {
 
 impl Default for LeaseDomain {
     fn default() -> Self {
-        Self::new()
+        use crate::routing::GlobalInternTable;
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 }
 
@@ -191,7 +192,8 @@ mod tests {
 
     #[test]
     fn should_build_tlv_response_for_acquire() {
-        let domain = LeaseDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = LeaseDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
         let req = make_request("lease://realm1/area1/test/acquire", payload);
@@ -216,7 +218,8 @@ mod tests {
 
     #[test]
     fn should_return_error_when_missing_required_tlv_for_acquire() {
-        let domain = LeaseDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = LeaseDomain::new(Arc::new(GlobalInternTable::new()));
         let payload = Vec::new(); // missing TAG_LEASE
         let req = make_request("lease://realm1/area1/test/acquire", payload);
 
@@ -232,7 +235,8 @@ mod tests {
 
     #[test]
     fn should_return_error_for_unknown_route_operation() {
-        let domain = LeaseDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = LeaseDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
         let req = make_request("lease://realm1/area1/test/invalid", payload);

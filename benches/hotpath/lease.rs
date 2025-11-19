@@ -10,6 +10,8 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::core::lease::LeaseService;
+use fitz::routing::GlobalInternTable;
+use std::sync::Arc;
 
 #[path = "../config.rs"]
 mod config;
@@ -22,7 +24,7 @@ fn bench_hot_acquire(c: &mut Criterion) {
     let mut group = c.benchmark_group("lease_hot_acquire");
     group.bench_function("acquire", |b| {
         b.iter_batched(
-            || LeaseService::new(),
+            || LeaseService::new(Arc::new(GlobalInternTable::new())),
             |svc| {
                 svc.acquire(0, "lease://realm/area/resource", 300).unwrap();
             },
@@ -37,7 +39,7 @@ fn bench_hot_renew(c: &mut Criterion) {
     group.bench_function("renew", |b| {
         b.iter_batched(
             || {
-                let svc = LeaseService::new();
+                let svc = LeaseService::new(Arc::new(GlobalInternTable::new()));
                 let grant = svc.acquire(0, "lease://realm/area/resource", 300).unwrap();
                 (svc, grant)
             },
@@ -55,7 +57,7 @@ fn bench_hot_surrender(c: &mut Criterion) {
     group.bench_function("surrender", |b| {
         b.iter_batched(
             || {
-                let svc = LeaseService::new();
+                let svc = LeaseService::new(Arc::new(GlobalInternTable::new()));
                 let grant = svc.acquire(0, "lease://realm/area/resource", 300).unwrap();
                 (svc, grant)
             },

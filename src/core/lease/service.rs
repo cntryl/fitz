@@ -1,70 +1,94 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::types::*; // LeaseEntry, LeaseLock, etc.
-use crate::routing::RouteFamilyId;
-use base64::{engine::general_purpose, Engine as _};
+use crate::routing::{GlobalInternTable, InternId, RouteFamilyId};
 use dashmap::DashMap;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use uuid::Uuid;
+use parking_lot::RwLock;
 
-type HmacSha256 = Hmac<Sha256>;
-
-/// Per-tenant lease map within a shard:
-///   key: full lease key ("lease://realm/area/resource")
-///   val: LeaseLock (Arc<RwLock<LeaseEntry>>)
-type TenantMap = DashMap<String, LeaseLock>;
-
-/// A shard owns a set of tenants (route families), each with its own lease map.
-/// We still shard by (rf, realm) to keep contention low.
-#[derive(Debug)]
-struct Shard {
-    tenants: DashMap<RouteFamilyId, Arc<TenantMap>>,
+/// Composite key for flat lease map:
+/// (route_family, realm_id, area_id, resource_id)
+/// All strings are interned once, eliminating repeated parsing and hashing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LeaseKey {
+    rf: RouteFamilyId,
+    realm_id: InternId,
+    area_id: InternId,
+    resource_id: InternId,
 }
 
-impl Shard {
-    fn new() -> Self {
-        Self {
-            tenants: DashMap::new(),
-        }
-    }
-}
+/// Single flat map with composite keys - no nested structures.
+type LeaseMap = DashMap<LeaseKey, LeaseLock>;
 
 #[derive(Debug)]
 pub struct LeaseService {
-    shards: Vec<Arc<Shard>>, // sharded by (rf, realm)
-    secret: Arc<Vec<u8>>,    // HMAC key
+    /// Sharded flat maps for high concurrency
+    shards: Vec<Arc<LeaseMap>>,
+    /// String interner for lease key components
+    interner: Arc<GlobalInternTable>,
+    /// Fast inline UUID: rolling counter + random prefix
+    id_counter: AtomicU64,
+    id_prefix: u64,
+    /// SipHash keys for fast token generation (replaces HMAC)
+    token_key0: u64,
+    token_key1: u64,
 }
 
 // === Public API =============================================================
 
 impl LeaseService {
-    pub fn new() -> Arc<Self> {
-        let shard_count = std::cmp::max(4, num_cpus::get()); // CPU-scaled, stable
+    pub fn new(interner: Arc<GlobalInternTable>) -> Arc<Self> {
+        let shard_count = std::cmp::max(4, num_cpus::get());
+        
+        // Generate random prefix and SipHash keys once at startup
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        
+        let random_state = RandomState::new();
+        let mut hasher = random_state.build_hasher();
+        hasher.write_u64(now_unix_secs());
+        let id_prefix = hasher.finish();
+        
+        let mut hasher2 = random_state.build_hasher();
+        hasher2.write_u64(id_prefix.wrapping_add(1));
+        let token_key0 = hasher2.finish();
+        
+        let mut hasher3 = random_state.build_hasher();
+        hasher3.write_u64(id_prefix.wrapping_add(2));
+        let token_key1 = hasher3.finish();
+        
         Arc::new(Self {
-            shards: (0..shard_count).map(|_| Arc::new(Shard::new())).collect(),
-            secret: Arc::new(Uuid::new_v4().as_bytes().to_vec()),
+            shards: (0..shard_count).map(|_| Arc::new(LeaseMap::new())).collect(),
+            interner,
+            id_counter: AtomicU64::new(0),
+            id_prefix,
+            token_key0,
+            token_key1,
         })
     }
 
     #[cfg(test)]
     fn new_for_test() -> Arc<Self> {
-        Self::new()
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 
     #[inline]
-    /// UUID string generation with a single allocation.
-    fn new_uuid_string(&self) -> String {
-        let mut s = String::with_capacity(36);
-        use std::fmt::Write as _;
-        let u = Uuid::new_v4();
-        write!(&mut s, "{}", u).expect("writing uuid");
-        s
+    /// Fast inline ID generation: prefix + counter (no UUID library overhead)
+    fn new_id(&self) -> u64 {
+        let counter = self.id_counter.fetch_add(1, Ordering::Relaxed);
+        self.id_prefix.wrapping_add(counter)
+    }
+    
+    #[inline]
+    /// Format ID as hex string (faster than UUID formatting)
+    fn format_id(&self, id: u64) -> String {
+        format!("{:016x}", id)
     }
 
     /// Acquire `lease://{realm}/{area}/{resource}` (synchronous, returns error if busy).
     /// Leases are namespaced by route_family to prevent cross-tenant access.
+    /// Full-path interning eliminates repeated parsing and hashing.
     pub fn acquire(
         &self,
         rf: RouteFamilyId,
@@ -75,47 +99,39 @@ impl LeaseService {
             return Err("invalid_ttl".into());
         }
 
-        // Validate key and extract realm for sharding (no allocations here).
-        let (realm, _area, _resource) = parse_lease_key(key)?;
+        // Parse and intern key components once
+        let lease_key = self.parse_and_intern_key(rf, key)?;
+        let shard = self.pick_shard(lease_key);
 
-        let shard = self.pick_shard(rf, realm);
-
-        // Get or create the tenant map for this route family.
-        let tenant = shard
-            .tenants
-            .entry(rf)
-            .or_insert_with(|| Arc::new(TenantMap::new()))
-            .clone();
-
-        // Single map lookup: key is the *full* lease key string.
-        let lease_lock = tenant
-            .entry(key.to_owned())
-            .or_insert_with(|| Arc::new(parking_lot::RwLock::new(LeaseEntry::free())))
+        // Single flat map lookup with composite key
+        let lease_lock = shard
+            .entry(lease_key)
+            .or_insert_with(|| Arc::new(RwLock::new(LeaseEntry::free())))
             .clone();
 
         let mut lease = lease_lock.write();
         let now = Instant::now();
 
         if lease.is_active(now) {
-            // Busy → return immediately, no waiter logic in sync model.
             return Err("lease_busy".into());
         }
 
-        // Free/expired → take lease.
-        let id = self.new_uuid_string();
+        // Fast inline ID generation
+        let id = self.new_id();
         let expiry_instant = now + Duration::from_secs(ttl_secs as u64);
-
-        // Fast token path: avoid extra Instant plumbing; just use "now_unix + ttl"
         let expiry_unix = now_unix_secs() + ttl_secs as u64;
-        let token = self.compute_token_unix(key, &id, expiry_unix);
+        
+        // Fast SipHash token (replaces HMAC)
+        let token = self.compute_token_siphash(lease_key, id, expiry_unix);
+        let id_str = self.format_id(id);
 
-        lease.id = id.clone();
+        lease.id = id_str.clone();
         lease.token = token.clone();
         lease.expiry = expiry_instant;
-        let body = lease.body.clone(); // preserve existing body if any
+        let body = lease.body.clone();
 
         Ok(LeaseGrant {
-            id,
+            id: id_str,
             body,
             token,
             ttl_secs,
@@ -136,8 +152,9 @@ impl LeaseService {
             return Err("invalid_ttl".into());
         }
 
+        let lease_key = self.parse_and_intern_key(rf, key)?;
         let lease_lock = self
-            .get_entry(rf, key)
+            .get_entry(lease_key)
             .ok_or_else(|| "lease_not_found".to_string())?;
 
         let mut lease = lease_lock.write();
@@ -155,7 +172,6 @@ impl LeaseService {
             .saturating_duration_since(Instant::now())
             .as_secs() as u32;
 
-        // Note: token stays stable for the life of the lease; only expiry moves.
         Ok(LeaseGrant {
             id: lease.id.clone(),
             token: lease.token.clone(),
@@ -173,16 +189,10 @@ impl LeaseService {
         id: &str,
         token: &str,
     ) -> Result<(), String> {
-        let (realm, _area, _resource) = parse_lease_key(key)?;
-        let shard = self.pick_shard(rf, realm);
+        let lease_key = self.parse_and_intern_key(rf, key)?;
+        let shard = self.pick_shard(lease_key);
 
-        // Fast lookups: shard → tenant → lease entry.
-        let tenant_arc = match shard.tenants.get(&rf).map(|v| v.clone()) {
-            Some(t) => t,
-            None => return Err("lease_not_found".into()),
-        };
-
-        let lease_lock = match tenant_arc.get(key).map(|v| v.clone()) {
+        let lease_lock = match shard.get(&lease_key).map(|v| v.clone()) {
             Some(e) => e,
             None => return Err("lease_not_found".into()),
         };
@@ -193,86 +203,12 @@ impl LeaseService {
             return Err("invalid_token".into());
         }
 
-        // Clear entry and drop; then prune the map if empty to bound memory.
+        // Clear entry and remove from flat map
         *lease = LeaseEntry::free();
         drop(lease);
-
-        tenant_arc.remove(key);
-        if tenant_arc.is_empty() {
-            shard.tenants.remove(&rf);
-        }
+        shard.remove(&lease_key);
 
         Ok(())
-    }
-}
-
-// === Optional sync-only helpers for benches =================================
-
-impl LeaseService {
-    /// Synchronous version of token generation for benchmarking.
-    /// Keeps the old Instant-based signature but routes to the fast Unix path.
-    pub fn bench_token_generation(&self, key: &str, id: &str, expiry: Instant) -> String {
-        let expiry_unix =
-            now_unix_secs() + expiry.saturating_duration_since(Instant::now()).as_secs();
-        self.compute_token_unix(key, id, expiry_unix)
-    }
-
-    /// Synchronous version of lease state transitions for micro-benchmarks.
-    pub fn bench_lease_state_transitions(&self) -> u32 {
-        use std::sync::Mutex;
-
-        struct SyncLeaseEntry {
-            id: String,
-            token: String,
-            expiry: Instant,
-        }
-
-        impl SyncLeaseEntry {
-            fn free() -> Self {
-                Self {
-                    id: String::new(),
-                    token: String::new(),
-                    expiry: Instant::now(),
-                }
-            }
-
-            fn is_active(&self, now: Instant) -> bool {
-                !self.id.is_empty() && now < self.expiry
-            }
-        }
-
-        let entry = Mutex::new(SyncLeaseEntry::free());
-        let now = Instant::now();
-        let mut transitions = 0u32;
-
-        // acquire
-        {
-            let mut lock = entry.lock().unwrap();
-            lock.id = "id".to_string();
-            lock.token = "token".to_string();
-            lock.expiry = now + Duration::from_secs(30);
-            transitions += 1;
-        }
-
-        // check active
-        {
-            let lock = entry.lock().unwrap();
-            let _ = lock.is_active(now);
-            transitions += 1;
-        }
-
-        // expire/reset
-        {
-            let mut lock = entry.lock().unwrap();
-            *lock = SyncLeaseEntry::free();
-            transitions += 1;
-        }
-
-        transitions
-    }
-
-    pub fn bench_uuid_generation(&self) -> String {
-        self.new_uuid_string()
     }
 }
 
@@ -280,51 +216,51 @@ impl LeaseService {
 
 impl LeaseService {
     #[inline]
-    /// Pick a shard based on route_family and realm for consistent sharding.
-    /// route_family provides tenant isolation, realm provides distribution.
-    fn pick_shard(&self, rf: RouteFamilyId, realm: &str) -> &Arc<Shard> {
+    /// Parse lease key and intern all components
+    fn parse_and_intern_key(&self, rf: RouteFamilyId, key: &str) -> Result<LeaseKey, String> {
+        let (realm, area, resource) = parse_lease_key(key)?;
+        Ok(LeaseKey {
+            rf,
+            realm_id: self.interner.intern(realm),
+            area_id: self.interner.intern(area),
+            resource_id: self.interner.intern(resource),
+        })
+    }
+
+    #[inline]
+    /// Pick shard using composite key hash (single hash operation)
+    fn pick_shard(&self, key: LeaseKey) -> &Arc<LeaseMap> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-
+        
         let mut h = DefaultHasher::new();
-        rf.hash(&mut h);
-        h.write(realm.as_bytes());
+        key.hash(&mut h);
         &self.shards[(h.finish() as usize) % self.shards.len()]
     }
 
     #[inline]
-    fn compute_token_unix(&self, key: &str, id: &str, expiry_unix: u64) -> String {
-        let mut mac = HmacSha256::new_from_slice(&self.secret).expect("HMAC key");
-        mac.update(key.as_bytes());
-        mac.update(b"|");
-        mac.update(id.as_bytes());
-        mac.update(b"|");
-
-        // write digits of expiry without alloc
-        let mut buf = [0u8; 20];
-        let mut t = expiry_unix;
-        let mut len = 0;
-        if t == 0 {
-            buf[0] = b'0';
-            len = 1;
-        } else {
-            while t > 0 {
-                buf[len] = b'0' + (t % 10) as u8;
-                t /= 10;
-                len += 1;
-            }
-            buf[..len].reverse();
-        }
-        mac.update(&buf[..len]);
-        general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+    /// Fast SipHash-based token (replaces HMAC-SHA256)
+    fn compute_token_siphash(&self, key: LeaseKey, id: u64, expiry_unix: u64) -> String {
+        use std::hash::Hasher;
+        use std::collections::hash_map::DefaultHasher;
+        
+        let mut hasher = DefaultHasher::new();
+        hasher.write_u64(self.token_key0);
+        hasher.write_u64(self.token_key1);
+        hasher.write_u32(key.rf);
+        hasher.write_u32(key.realm_id);
+        hasher.write_u32(key.area_id);
+        hasher.write_u32(key.resource_id);
+        hasher.write_u64(id);
+        hasher.write_u64(expiry_unix);
+        
+        format!("{:016x}", hasher.finish())
     }
 
-    fn get_entry(&self, rf: RouteFamilyId, key: &str) -> Option<LeaseLock> {
-        let (realm, _area, _resource) = parse_lease_key(key).ok()?;
-        let shard = self.pick_shard(rf, realm);
-        let tenant = shard.tenants.get(&rf)?.clone();
-        let entry = tenant.get(key)?.clone();
-        Some(entry)
+    #[inline]
+    fn get_entry(&self, key: LeaseKey) -> Option<LeaseLock> {
+        let shard = self.pick_shard(key);
+        shard.get(&key).map(|v| v.clone())
     }
 }
 
