@@ -27,8 +27,7 @@ fn bench_hot_append(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let kv_store = midge_adapter::create_memory_store().unwrap();
-                let svc = Arc::new(RwLock::new(StreamService::new(kv_store)));
-                svc
+                Arc::new(RwLock::new(StreamService::new(kv_store)))
             },
             |svc| {
                 let service = svc.write();

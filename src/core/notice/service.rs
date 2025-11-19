@@ -122,7 +122,6 @@ impl NoticeService {
     /// The prefix layout matches encoding::build_notification_frame's initial segment.
     /// Route length >255 uses extended length encoding: length byte=255 then 4-byte BE u32.
     // (No cached prefix or cached builders; route TLV encoding is cheap enough.)
-
     /// Get count of active subscriptions
     pub fn subscription_count(&self) -> usize {
         self.route_table.len()

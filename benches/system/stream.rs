@@ -10,7 +10,6 @@
 //! This is the closest measurement to actual Fitz behavior.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use crossbeam_channel;
 use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};

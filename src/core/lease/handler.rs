@@ -99,7 +99,7 @@ impl Domain for LeaseDomain {
 
                 match (id, token, add) {
                     (Some(id), Some(token), Some(add)) => {
-                        match svc.renew(rf, key, &id, &token, add) {
+                        match svc.renew(rf, key, id, token, add) {
                             Ok(grant) => DomainResponse::Frame(self.build_grant_response(&grant)),
                             Err(e) => DomainResponse::Error(e),
                         }
@@ -115,7 +115,7 @@ impl Domain for LeaseDomain {
                 let token = tlv::parse_string(&payload, TAG_DELIVERY_TOKEN);
 
                 match (id, token) {
-                    (Some(id), Some(token)) => match svc.surrender(rf, key, &id, &token) {
+                    (Some(id), Some(token)) => match svc.surrender(rf, key, id, token) {
                         Ok(()) => DomainResponse::Ok,
                         Err(e) => DomainResponse::Error(e),
                     },

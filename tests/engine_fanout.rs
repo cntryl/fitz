@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    choose_shard, Engine, EngineConnectionRegistry, EngineEvent, EngineHandle, NUM_SHARDS,
+    Engine, EngineConnectionRegistry, EngineEvent, EngineHandle, NUM_SHARDS,
 };
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::frame::build_frame;
