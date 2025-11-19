@@ -1,6 +1,5 @@
 //! Lease domain types
 
-use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,9 +7,6 @@ use std::time::Instant;
 use crate::protocol::route::Route;
 
 pub(crate) type LeaseLock = Arc<RwLock<LeaseEntry>>;
-pub(crate) type ResourceMap = DashMap<String, LeaseLock>;
-pub(crate) type AreaMap = DashMap<String, Arc<ResourceMap>>;
-pub(crate) type RealmMap = DashMap<String, Arc<AreaMap>>;
 
 /// Lease operations following the route pattern: lease://{realm}/{area}/{resource}/{operation}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,6 +6,80 @@
 use crate::protocol::frame::{build_tlv, find_tlv};
 use crate::protocol::tags::*;
 
+/// Parse segments from a Fitz route string.
+///
+/// All domain routes follow the pattern: `scheme://realm/area/resource[/operation]`
+/// This function extracts the segments after the `://` delimiter.
+///
+/// Returns `(realm, area, resource)` where each is a borrowed string slice.
+///
+/// # Examples
+/// ```
+/// use fitz::core::parsing::parse_route_segments;
+///
+/// let (realm, area, resource) = parse_route_segments("lease://r1/a1/res1").unwrap();
+/// assert_eq!(realm, "r1");
+/// assert_eq!(area, "a1");
+/// assert_eq!(resource, "res1");
+/// ```
+#[inline]
+pub fn parse_route_segments(route: &str) -> Result<(&str, &str, &str), String> {
+    // Fast path: locate "://"
+    let bytes = route.as_bytes();
+    let mut i = 0;
+
+    // Find "://"
+    while i + 2 < bytes.len() {
+        if bytes[i] == b':' && bytes[i + 1] == b'/' && bytes[i + 2] == b'/' {
+            i += 3; // skip past "://"
+            break;
+        }
+        i += 1;
+    }
+
+    if i == 0 || i + 2 >= bytes.len() {
+        return Err("invalid_route".into());
+    }
+
+    // Now parse: realm/area/resource
+    let start_realm = i;
+
+    // realm
+    while i < bytes.len() && bytes[i] != b'/' {
+        i += 1;
+    }
+    if i == bytes.len() {
+        return Err("missing_area".into());
+    }
+    let realm = &route[start_realm..i];
+    i += 1;
+
+    // area
+    let start_area = i;
+    while i < bytes.len() && bytes[i] != b'/' {
+        i += 1;
+    }
+    if i == bytes.len() {
+        return Err("missing_resource".into());
+    }
+    let area = &route[start_area..i];
+    i += 1;
+
+    // resource
+    let start_res = i;
+    while i < bytes.len() && bytes[i] != b'/' {
+        i += 1;
+    }
+    // We intentionally don't care if operation exists
+    let resource = &route[start_res..i];
+
+    if realm.is_empty() || area.is_empty() || resource.is_empty() {
+        return Err("empty_segment".into());
+    }
+
+    Ok((realm, area, resource))
+}
+
 /// Common TLV parsing utilities for domain handlers
 pub mod tlv {
     use super::*;
@@ -311,6 +385,77 @@ pub mod validation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_parse_route_segments_correctly() {
+        // Arrange
+        let route = "lease://realm1/area1/resource1";
+
+        // Act
+        let result = parse_route_segments(route);
+
+        // Assert
+        assert!(result.is_ok());
+        let (realm, area, resource) = result.unwrap();
+        assert_eq!(realm, "realm1");
+        assert_eq!(area, "area1");
+        assert_eq!(resource, "resource1");
+    }
+
+    #[test]
+    fn should_parse_route_segments_with_operation() {
+        // Arrange
+        let route = "kv://realm1/area1/resource1/get";
+
+        // Act
+        let result = parse_route_segments(route);
+
+        // Assert
+        assert!(result.is_ok());
+        let (realm, area, resource) = result.unwrap();
+        assert_eq!(realm, "realm1");
+        assert_eq!(area, "area1");
+        assert_eq!(resource, "resource1"); // operation is ignored
+    }
+
+    #[test]
+    fn should_reject_route_without_scheme() {
+        // Arrange
+        let route = "realm1/area1/resource1";
+
+        // Act
+        let result = parse_route_segments(route);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "invalid_route");
+    }
+
+    #[test]
+    fn should_reject_route_missing_segments() {
+        // Arrange
+        let route = "lease://realm1/area1";
+
+        // Act
+        let result = parse_route_segments(route);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "missing_resource");
+    }
+
+    #[test]
+    fn should_reject_route_with_empty_segments() {
+        // Arrange
+        let route = "lease://realm1//resource1";
+
+        // Act
+        let result = parse_route_segments(route);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "empty_segment");
+    }
 
     #[test]
     fn should_parse_string_from_tlv() {
