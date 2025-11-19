@@ -64,55 +64,15 @@ serial_test = "0.5"
 
 # Domain benchmarks (full handler->service layer)
 [[bench]]
-name = "hotpath_control_core"
-harness = false
-path = "benches/hotpath/control_core.rs"
-
-[[bench]]
-name = "hotpath_kv_core"
-harness = false
-path = "benches/hotpath/kv_core.rs"
-
-[[bench]]
-name = "hotpath_lease_core"
-harness = false
-path = "benches/hotpath/lease_core.rs"
-
-[[bench]]
 name = "hotpath_notice"
 harness = false
 path = "benches/hotpath/notice.rs"
-
-[[bench]]
-name = "hotpath_queue_core"
-harness = false
-path = "benches/hotpath/queue_core.rs"
-
-[[bench]]
-name = "hotpath_rpc_core"
-harness = false
-path = "benches/hotpath/rpc_core.rs"
-
-[[bench]]
-name = "hotpath_stream_core"
-harness = false
-path = "benches/hotpath/stream_core.rs"
 
 # Infrastructure benchmarks
 [[bench]]
 name = "hotpath_permissions"
 harness = false
 path = "benches/hotpath/permissions.rs"
-
-[[bench]]
-name = "hotpath_route_core"
-harness = false
-path = "benches/hotpath/route_core.rs"
-
-[[bench]]
-name = "hotpath_route_table"
-harness = false
-path = "benches/hotpath/route_table.rs"
 
 [[bench]]
 name = "hotpath_tlv_core"

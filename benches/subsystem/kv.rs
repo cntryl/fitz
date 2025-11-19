@@ -18,7 +18,7 @@
 //!
 //! This is tier-2 (subsystem) in your 3-layer model.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::sync::Arc;
 
 use fitz::core::domain::DomainContext;

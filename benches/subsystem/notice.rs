@@ -153,7 +153,7 @@ fn bench_publish_fanout(c: &mut Criterion) {
         let h = BenchHarness::new();
 
         // Register N subscribers
-        for ch in 1..=count {
+        for _ch in 1..=count {
             let f = build_sub_frame("notice://realm/area/data/update");
             h.exec(&f);
         }

@@ -9,12 +9,12 @@
 //!
 //! This is the closest measurement to actual Fitz behavior.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    Engine, EngineConnectionRegistry, EngineEvent, EngineHandle, ENGINE_INBOX_CAPACITY,
+    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY,
     OUTBOUND_QUEUE_CAPACITY,
 };
 use fitz::core::registry::DomainRegistry;

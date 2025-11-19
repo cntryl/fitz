@@ -19,8 +19,6 @@ mod config;
 // -----------------------------------------------------------------------------
 
 fn bench_hot_acquire(c: &mut Criterion) {
-    let svc = LeaseService::new();
-
     let mut group = c.benchmark_group("lease_hot_acquire");
     group.bench_function("acquire", |b| {
         b.iter_batched(
@@ -35,10 +33,6 @@ fn bench_hot_acquire(c: &mut Criterion) {
 }
 
 fn bench_hot_renew(c: &mut Criterion) {
-    let svc = LeaseService::new();
-    // Pre-acquire a lease
-    let grant = svc.acquire(0, "lease://realm/area/resource", 300).unwrap();
-
     let mut group = c.benchmark_group("lease_hot_renew");
     group.bench_function("renew", |b| {
         b.iter_batched(
@@ -57,8 +51,6 @@ fn bench_hot_renew(c: &mut Criterion) {
 }
 
 fn bench_hot_surrender(c: &mut Criterion) {
-    let svc = LeaseService::new();
-
     let mut group = c.benchmark_group("lease_hot_surrender");
     group.bench_function("surrender", |b| {
         b.iter_batched(
@@ -68,7 +60,7 @@ fn bench_hot_surrender(c: &mut Criterion) {
                 (svc, grant)
             },
             |(svc, grant)| {
-                svc.surrender(0, "lease://realm/area/resource", grant.id, grant.token).unwrap();
+                svc.surrender(0, "lease://realm/area/resource", &grant.id, &grant.token).unwrap();
             },
             BatchSize::SmallInput,
         )

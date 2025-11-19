@@ -10,6 +10,7 @@
 //! This is the closest measurement to actual Fitz behavior.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use crossbeam_channel;
 use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
@@ -66,20 +67,36 @@ struct SystemHarness {
 
 impl SystemHarness {
     fn new() -> Self {
-        let mut registry = DomainRegistry::new();
-        registry.register_lease_domain();
+        // Shared domain registry
+        let domains = Arc::new(DomainRegistry::new());
+        let registry = Arc::new(EngineConnectionRegistry::new());
 
-        let (inbox_tx, inbox_rx) = crossbeam::channel::bounded(ENGINE_INBOX_CAPACITY);
-        let (outbound_tx, _outbound_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        // Bounded inbox for this shard
+        let (tx, rx) = crossbeam_channel::bounded(ENGINE_INBOX_CAPACITY);
 
-        let conn_registry = Arc::new(EngineConnectionRegistry::new());
+        // Engine instance
+        let engine = Engine::new(rx, Arc::clone(&registry), Arc::clone(&domains));
 
-        let engine = Engine::new(registry, conn_registry.clone());
+        // Spawn engine thread
         let join = std::thread::spawn(move || {
-            engine.run(inbox_rx, outbound_tx);
+            engine.run();
         });
 
-        let handle = EngineHandle::new(inbox_tx, conn_registry);
+        // Outbound mpsc queue (just drains into void)
+        let (_out_tx, mut out_rx) =
+            tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(OUTBOUND_QUEUE_CAPACITY);
+
+        // Spawn a background task to drain outbound messages
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                while let Some(_bytes) = out_rx.recv().await {
+                    // Drain outbound messages
+                }
+            });
+        });
+
+        let handle = EngineHandle::new(tx, Arc::clone(&domains), Arc::clone(&registry));
 
         // Register session for authz
         let session = SessionAuth {

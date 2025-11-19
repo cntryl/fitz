@@ -19,7 +19,6 @@
 //! This is tier-2 (subsystem) in your 3-layer model.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use std::sync::Arc;
 
 use fitz::core::domain::DomainContext;
 use fitz::core::registry::DomainRegistry;
@@ -66,9 +65,9 @@ struct BenchHarness {
 
 impl BenchHarness {
     fn new() -> Self {
-        let mut registry = DomainRegistry::new();
-        registry.register_lease_domain();
-        Self { registry }
+        Self {
+            registry: DomainRegistry::new(),
+        }
     }
 
     fn exec(&self, frame_bytes: &[u8]) {
