@@ -1,5 +1,49 @@
 # GitHub Copilot Instructions for Shale Project
 
+## Terminology Rules - STRICTLY ENFORCE
+
+**CRITICAL: Use correct Fitz terminology in ALL code, tests, documentation, and comments.**
+
+### Correct Terms
+
+- ✅ **realm** - The isolation boundary for resources (NOT "tenant")
+- ✅ **area** - Namespace within a realm
+- ✅ **resource** - Specific entity within an area
+- ✅ **operation** - Action performed on a resource
+
+### Forbidden Terms
+
+- ❌ **tenant** - NEVER use this term, always use "realm"
+- ❌ **namespace** - Use "area" instead (namespace is too generic)
+- ❌ **endpoint** - Use "route" for Fitz routing paths
+- ❌ **topic** - Use "route" for pub/sub patterns (in notice domain)
+- ❌ **channel** - This has a specific meaning (connection ID), don't use for routes
+
+### Examples
+
+```rust
+// ✅ CORRECT
+let realm = "realm123";
+let route = "ftz://realm123/kv/users/get";
+pub struct RealmMap { ... }
+
+// ❌ WRONG
+let tenant = "tenant123";
+let endpoint = "ftz://tenant123/kv/users/get";
+pub struct TenantMap { ... }
+```
+
+**This applies to:**
+- Variable names
+- Function names
+- Struct/enum names
+- Comments and documentation
+- Test names and descriptions
+- Error messages
+- Log statements
+
+---
+
 ## Test Writing Guidelines - STRICTLY ENFORCE
 
 When generating or suggesting tests, **ALWAYS** follow these rules:
