@@ -1,7 +1,9 @@
 //! RPC domain service - handles request/reply coordination and inbox management
 
-use crate::routing::{RouteFamilyId, RouteTable, RtSubscription};
+use crate::routing::{GlobalInternTable, RouteFamilyId, RouteTable, RtSubscription};
 use fxhash::FxHashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// RPC message to be delivered to a channel
 #[derive(Debug, Clone)]
@@ -55,10 +57,11 @@ struct InboxContext {
 /// - Inbox ownership enforcement (only owner can subscribe)
 /// - Handler authorization (only handlers can publish to client inboxes)
 /// - Automatic cleanup on session close
-#[derive(Debug)]
+/// - Lock-free subscription ID generation using atomics
+/// - String interning for route pattern deduplication
 pub struct RpcService {
-    /// Next subscription ID
-    next_sub_id: u64,
+    /// Next subscription ID (atomic for lock-free generation)
+    sub_id_counter: AtomicU64,
 
     /// Route table for RPC handler subscriptions (rpc://realm/area/resource/operation)
     handler_routes: RouteTable,
@@ -72,18 +75,27 @@ pub struct RpcService {
     /// Active RPC requests for correlation tracking
     /// Maps correlation_id -> (handler_route, reply_route)
     active_requests: FxHashMap<String, (String, String)>,
+
+    /// Shared string interner for route pattern deduplication
+    interner: Arc<GlobalInternTable>,
 }
 
 impl RpcService {
-    pub fn new() -> Self {
+    pub fn new(interner: Arc<GlobalInternTable>) -> Self {
         Self {
-            next_sub_id: 1,
+            sub_id_counter: AtomicU64::new(1),
             handler_routes: RouteTable::new(),
             inbox_routes: RouteTable::new(),
             // Pre-allocate capacity for typical workloads to reduce rehashing
             inboxes: FxHashMap::with_capacity_and_hasher(16, Default::default()),
             active_requests: FxHashMap::with_capacity_and_hasher(32, Default::default()),
+            interner,
         }
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 
     /// Allocate a cryptographically secure inbox route for a channel
@@ -118,8 +130,10 @@ impl RpcService {
         route_pattern: String,
         channel_id: u32,
     ) -> u64 {
-        let id = self.next_sub_id;
-        self.next_sub_id = self.next_sub_id.wrapping_add(1);
+        let id = self.sub_id_counter.fetch_add(1, Ordering::Relaxed);
+
+        // Intern the route pattern to deduplicate memory for common patterns
+        let _pattern_id = self.interner.intern(&route_pattern);
 
         let sub = RtSubscription {
             id,
@@ -142,8 +156,7 @@ impl RpcService {
         // Check if inbox exists and caller is owner
         match self.inboxes.get_mut(&inbox_route) {
             Some(ctx) if ctx.owner_channel_id == channel_id => {
-                let id = self.next_sub_id;
-                self.next_sub_id = self.next_sub_id.wrapping_add(1);
+                let id = self.sub_id_counter.fetch_add(1, Ordering::Relaxed);
 
                 let sub = RtSubscription {
                     id,
@@ -334,7 +347,7 @@ impl RpcService {
 
 impl Default for RpcService {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 }
 
@@ -391,7 +404,7 @@ mod tests {
     #[test]
     fn should_allocate_unique_inboxes_for_same_channel() {
         // Arrange
-        let mut service = RpcService::new();
+        let mut service = RpcService::new_for_test();
 
         // Act
         let inbox1 = service.allocate_inbox(1);
@@ -406,7 +419,7 @@ mod tests {
     #[test]
     fn should_enforce_inbox_ownership_across_channels() {
         // Arrange
-        let mut service = RpcService::new();
+        let mut service = RpcService::new_for_test();
         let inbox = service.allocate_inbox(1);
 
         // Act
@@ -421,7 +434,7 @@ mod tests {
     #[test]
     fn should_cleanup_channel_resources_when_channel_disconnects() {
         // Arrange
-        let mut service = RpcService::new();
+        let mut service = RpcService::new_for_test();
         let inbox = service.allocate_inbox(1);
         let _ = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
         let _handler_sub =
@@ -438,7 +451,7 @@ mod tests {
     #[test]
     fn should_generate_inbox_route() {
         // Arrange
-        let service = RpcService::new();
+        let service = RpcService::new_for_test();
 
         // Act
         let inbox = service.bench_inbox_allocation();
@@ -451,7 +464,7 @@ mod tests {
     #[test]
     fn should_track_requests_synchronously() {
         // Arrange
-        let service = RpcService::new();
+        let service = RpcService::new_for_test();
 
         // Act
         let remaining = service.bench_request_tracking();

@@ -14,18 +14,24 @@
 use super::encoding;
 use super::service::RpcService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
+use crate::routing::GlobalInternTable;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-#[derive(Debug)]
 pub struct RpcDomain {
     service: Arc<RwLock<RpcService>>,
 }
 
+impl std::fmt::Debug for RpcDomain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcDomain").finish()
+    }
+}
+
 impl RpcDomain {
-    pub fn new() -> Self {
+    pub fn new(interner: Arc<GlobalInternTable>) -> Self {
         Self {
-            service: Arc::new(RwLock::new(RpcService::new())),
+            service: Arc::new(RwLock::new(RpcService::new(interner))),
         }
     }
 
@@ -74,7 +80,7 @@ impl RpcDomain {
 
 impl Default for RpcDomain {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 }
 
