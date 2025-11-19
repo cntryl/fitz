@@ -148,3 +148,9 @@ path = "benches/system/stream.rs"
 name = "system_notice"
 harness = false
 path = "benches/system/notice.rs"
+
+
+[[bench]]
+name = "hotpath_parsing"
+harness = false
+path = "benches/hotpath/parsing.rs"
