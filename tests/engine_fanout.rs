@@ -13,12 +13,15 @@ use fitz::protocol::tags::{FRAME_DAT, TAG_BODY, TAG_ROUTE, TAG_SUBSCRIBE};
 // Helper to build a subscribe frame
 fn make_subscribe_frame(channel_id: u32, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
-    // TAG_ROUTE (1-byte length)
+    // TAG_ROUTE (2-byte length per new TLV spec)
     payload.push(TAG_ROUTE);
-    payload.push(route.len() as u8);
+    let rlen = route.len() as u16;
+    payload.push((rlen >> 8) as u8);
+    payload.push(rlen as u8);
     payload.extend_from_slice(route.as_bytes());
-    // TAG_SUBSCRIBE (empty value)
+    // TAG_SUBSCRIBE (empty value, 0 length encoded with two bytes)
     payload.push(TAG_SUBSCRIBE);
+    payload.push(0);
     payload.push(0);
     build_frame(FRAME_DAT, 0, channel_id, &payload)
 }
@@ -26,13 +29,17 @@ fn make_subscribe_frame(channel_id: u32, route: &str) -> Vec<u8> {
 // Helper to build a publish frame (route + body)
 fn make_publish_frame(channel_id: u32, route: &str, body: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
-    // TAG_ROUTE
+    // TAG_ROUTE (2-byte length)
     payload.push(TAG_ROUTE);
-    payload.push(route.len() as u8);
+    let rlen = route.len() as u16;
+    payload.push((rlen >> 8) as u8);
+    payload.push(rlen as u8);
     payload.extend_from_slice(route.as_bytes());
-    // TAG_BODY
+    // TAG_BODY (2-byte length)
     payload.push(TAG_BODY);
-    payload.push(body.len() as u8);
+    let blen = body.len() as u16;
+    payload.push((blen >> 8) as u8);
+    payload.push(blen as u8);
     payload.extend_from_slice(body);
     build_frame(FRAME_DAT, 0, channel_id, &payload)
 }
@@ -40,7 +47,7 @@ fn make_publish_frame(channel_id: u32, route: &str, body: &[u8]) -> Vec<u8> {
 #[test]
 fn should_fanout_notice_publish_to_all_subscribers() {
     // Arrange
-    let route = "notice://realm/area/topic/update";
+    let route = "notice://dev/area/topic/update";
     let registry = Arc::new(EngineConnectionRegistry::new());
     let domains = Arc::new(DomainRegistry::new());
 
@@ -117,13 +124,15 @@ fn should_fanout_notice_publish_to_all_subscribers() {
         "subscriber 2 did not receive any frames"
     );
 
-    let expected_min = 10 /*header*/ + 2 + route.len() + 2 + publish_body.len();
+    // Notification frames now include only body (route is implicit via subscription)
+    // Header (10) + (tag + 2 len bytes) for body + body bytes
+    let expected_min = 10 /*header*/ + 3 + publish_body.len();
     assert!(
-        received_sub1.iter().any(|f| f.len() >= expected_min),
+        received_sub1.iter().any(|f| f.len() >= expected_min && f.windows(publish_body.len()).any(|w| w == publish_body)),
         "no sufficiently sized notification frame for subscriber 1"
     );
     assert!(
-        received_sub2.iter().any(|f| f.len() >= expected_min),
+        received_sub2.iter().any(|f| f.len() >= expected_min && f.windows(publish_body.len()).any(|w| w == publish_body)),
         "no sufficiently sized notification frame for subscriber 2"
     );
 }

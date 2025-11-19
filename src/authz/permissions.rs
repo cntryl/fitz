@@ -1,12 +1,12 @@
 //! Permission handling with scope-based grants
 //!
 //! Grants are packed by scope to minimize comparisons: scheme + realm + optional area/resource,
-//! with wildcard matching for descendants. For the baseline, we derive grants from tenant's
-//! authorization context to allow all actions within that tenant's default realm.
+//! with wildcard matching for descendants. For the baseline, we derive grants from a realm's
+//! authorization context to allow all actions within that realm's default namespace.
 //! Later, wire JWT claims to build precise grants.
 //!
-//! Note: tenant (authorization/user context) and realm (route namespace) are separate concepts,
-//! though tenants typically have access to a default realm.
+//! Note: realm (isolation boundary) is the authoritative term; authorization subject maps to a
+//! realm for permission derivation. We avoid the deprecated term `tenant` entirely.
 
 /// Internal grant structure (exposed for PermissionGrants)
 #[derive(Debug, Clone)]
@@ -369,7 +369,7 @@ fn parse_route_scope(scope: &str) -> RouteScope {
     }
 }
 
-pub async fn install_claim_grants(tenant: &str, claims: &crate::authz::mock_jwks::Claims) {
+pub async fn install_claim_grants(subject_realm: &str, claims: &crate::authz::mock_jwks::Claims) {
     if let Some(perms) = &claims.perms {
         let mut grants: Vec<Grant> = Vec::new();
         for p in perms {
@@ -378,37 +378,35 @@ pub async fn install_claim_grants(tenant: &str, claims: &crate::authz::mock_jwks
                     let parsed = parse_route_scope(scope);
                     let intent = parsed.intent;
                     let scheme = parsed.scheme;
-                    let realm = parsed.realm;
+                    let realm_opt = parsed.realm;
                     let area = parsed.area;
                     let resource = parsed.resource;
                     let wildcard = parsed.wildcard;
-                    // If realm not specified in permission scope, use tenant's default realm
-                    // Note: tenant (authorization context) and realm (route namespace) are separate concepts
-                    let realm = realm.or_else(|| Some(tenant.to_string()));
+                    // If realm not specified in permission scope, use provided subject_realm as default
+                    let realm = realm_opt.or_else(|| Some(subject_realm.to_string()));
                     grants.push(Grant::new(
                         intent, None, scheme, realm, area, resource, wildcard,
                     ));
                 }
             }
         }
-        // Store under tenant key
+        // Store under realm key
         let reg = registry();
         let mut g = reg.lock().await;
-        g.insert(tenant.to_string(), grants);
+        g.insert(subject_realm.to_string(), grants);
     }
 }
 
-pub fn has_permission(tenant: &str, route_str: &str) -> bool {
-    check_route_authorization(tenant, route_str)
+pub fn has_permission(realm: &str, route_str: &str) -> bool {
+    check_route_authorization(realm, route_str)
 }
 
 /// Simplified authorization check that works directly with route strings.
 /// Routes carry the realm information, so we can do basic authorization without
 /// complex parsing for the common case.
 ///
-/// Note: tenant (user's authorization context) and realm (route namespace) are separate concepts,
-/// but this function assumes tenant-scoped access to matching realms for baseline security.
-pub fn check_route_authorization(tenant: &str, route_str: &str) -> bool {
+/// Baseline authorization: subject bound to a realm; routes must match that realm.
+pub fn check_route_authorization(realm: &str, route_str: &str) -> bool {
     let cfg = crate::config::load();
     if !cfg.broker.enforce_authz {
         return true; // permissive baseline when enforcement is disabled
@@ -424,10 +422,10 @@ pub fn check_route_authorization(tenant: &str, route_str: &str) -> bool {
         return true;
     }
 
-    // For scheme-based routes, check that realm matches tenant's allowed realm
-    // This provides baseline tenant isolation - tenants can only access routes in their realm
+    // For scheme-based routes, check that realm matches subject's allowed realm
+    // This provides baseline realm isolation - subjects only access routes in their realm
     if let Some(realm_part) = extract_realm_from_route(route_str) {
-        if realm_part != tenant {
+        if realm_part != realm {
             return false;
         }
     } else {
@@ -437,7 +435,7 @@ pub fn check_route_authorization(tenant: &str, route_str: &str) -> bool {
 
     // For advanced permission checking, fall back to grant-based system
     // This handles cases where we need more granular permissions beyond realm matching
-    check_grants_if_available(tenant, route_str)
+    check_grants_if_available(realm, route_str)
 }
 
 /// Extract realm from route string: scheme://realm/... -> realm
@@ -452,24 +450,24 @@ fn extract_realm_from_route(route_str: &str) -> Option<&str> {
 }
 
 /// Check detailed grants only when needed for advanced permissions
-fn check_grants_if_available(tenant: &str, route_str: &str) -> bool {
+fn check_grants_if_available(realm: &str, route_str: &str) -> bool {
     // Parse the route for grant matching
     let parsed = match crate::protocol::route::parse_route(route_str) {
         Ok(r) => r,
         Err(_) => return false,
     };
 
-    // Get grants for this tenant
+    // Get grants for this realm
     let grants_vec = {
         let reg = registry();
         let g = reg.try_lock();
         if let Ok(guard) = g {
-            guard.get(tenant).cloned()
+            guard.get(realm).cloned()
         } else {
             None
         }
     }
-    .unwrap_or_else(|| derive_grants_for_realm_internal(tenant));
+    .unwrap_or_else(|| derive_grants_for_realm_internal(realm));
 
     // Check if any grant allows this route
     grants_vec.into_iter().any(|g| g.matches(&parsed))

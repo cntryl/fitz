@@ -383,11 +383,14 @@ mod tests {
 
     #[test]
     fn should_allocate_unique_inboxes_for_same_channel() {
+        // Arrange
         let mut service = RpcService::new_for_test();
 
+        // Act
         let inbox1 = service.allocate_inbox(1);
         let inbox2 = service.allocate_inbox(1);
 
+        // Assert
         assert_ne!(inbox1, inbox2);
         assert!(inbox1.starts_with("inbox://"));
         assert!(inbox2.starts_with("inbox://"));
@@ -395,46 +398,57 @@ mod tests {
 
     #[test]
     fn should_enforce_inbox_ownership_across_channels() {
+        // Arrange
         let mut service = RpcService::new_for_test();
         let inbox = service.allocate_inbox(1);
 
+        // Act
         let result1 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
         let result2 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 2);
 
+        // Assert
         assert!(result1.is_ok());
         assert!(result2.is_err());
     }
 
     #[test]
     fn should_cleanup_channel_resources_when_channel_disconnects() {
+        // Arrange
         let mut service = RpcService::new_for_test();
         let inbox = service.allocate_inbox(1);
         let _ = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
-        let _handler_sub =
-            service.subscribe_handler(DEFAULT_RF, "rpc://test/svc/op".to_string(), 1);
+        let _handler_sub = service.subscribe_handler(DEFAULT_RF, "rpc://test/svc/op".to_string(), 1);
 
+        // Act
         service.cleanup_channel(DEFAULT_RF, 1);
 
+        // Assert
         assert_eq!(service.inbox_count(), 0);
         assert_eq!(service.handler_count(), 0);
     }
 
     #[test]
     fn should_generate_inbox_route() {
+        // Arrange
         let service = RpcService::new_for_test();
 
+        // Act
         let inbox = service.bench_inbox_allocation();
 
+        // Assert
         assert!(inbox.starts_with("inbox://"));
         assert_eq!(inbox.len(), 44);
     }
 
     #[test]
     fn should_track_requests_synchronously() {
+        // Arrange
         let service = RpcService::new_for_test();
 
+        // Act
         let remaining = service.bench_request_tracking();
 
+        // Assert
         assert_eq!(remaining, 5);
     }
 }

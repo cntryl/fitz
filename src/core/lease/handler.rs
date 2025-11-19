@@ -150,42 +150,66 @@ mod tests {
 
     #[test]
     fn should_parse_acquire_operation_from_route() {
+        // Arrange
         let route = parse_route("lease://realm1/area1/resource1/acquire").unwrap();
+
+        // Act
         let op = LeaseOperation::from_route(&route);
+
+        // Assert
         assert!(op.is_ok());
         assert_eq!(op.unwrap(), LeaseOperation::Acquire);
     }
 
     #[test]
     fn should_parse_renew_operation_from_route() {
+        // Arrange
         let route = parse_route("lease://realm1/area1/resource1/renew").unwrap();
+
+        // Act
         let op = LeaseOperation::from_route(&route);
+
+        // Assert
         assert!(op.is_ok());
         assert_eq!(op.unwrap(), LeaseOperation::Renew);
     }
 
     #[test]
     fn should_parse_surrender_operation_from_route() {
+        // Arrange
         let route = parse_route("lease://realm1/area1/resource1/surrender").unwrap();
+
+        // Act
         let op = LeaseOperation::from_route(&route);
+
+        // Assert
         assert!(op.is_ok());
         assert_eq!(op.unwrap(), LeaseOperation::Surrender);
     }
 
     #[test]
     fn should_default_to_acquire_when_no_operation_specified() {
+        // Arrange
         let route = parse_route("lease://realm1/area1/resource1").unwrap();
+
+        // Act
         let op = LeaseOperation::from_route(&route);
+
+        // Assert
         assert!(op.is_ok());
         assert_eq!(op.unwrap(), LeaseOperation::Acquire);
     }
 
     #[test]
     fn should_return_error_for_unknown_operation() {
+        // Arrange
         let mut route = parse_route("lease://realm1/area1/resource1").unwrap();
         route.operation = Some("invalid".to_string());
 
+        // Act
         let op = LeaseOperation::from_route(&route);
+
+        // Assert
         assert!(op.is_err());
         assert!(op.unwrap_err().contains("Unknown lease operation"));
     }
@@ -193,13 +217,16 @@ mod tests {
     #[test]
     fn should_build_tlv_response_for_acquire() {
         use crate::routing::GlobalInternTable;
+        // Arrange
         let domain = LeaseDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
         let req = make_request("lease://realm1/area1/test/acquire", payload);
 
+        // Act
         let resp = domain.handle(req);
 
+        // Assert
         match resp {
             DomainResponse::Frame(frame) => {
                 let id = find_tlv(frame.as_ref(), TAG_ID);
@@ -219,12 +246,15 @@ mod tests {
     #[test]
     fn should_return_error_when_missing_required_tlv_for_acquire() {
         use crate::routing::GlobalInternTable;
+        // Arrange
         let domain = LeaseDomain::new(Arc::new(GlobalInternTable::new()));
         let payload = Vec::new(); // missing TAG_LEASE
         let req = make_request("lease://realm1/area1/test/acquire", payload);
 
+        // Act
         let resp = domain.handle(req);
 
+        // Assert
         match resp {
             DomainResponse::Error(msg) => {
                 assert!(msg.contains("TAG_LEASE"));
@@ -236,13 +266,16 @@ mod tests {
     #[test]
     fn should_return_error_for_unknown_route_operation() {
         use crate::routing::GlobalInternTable;
+        // Arrange
         let domain = LeaseDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
         build_tlv(TAG_LEASE, &2u32.to_be_bytes(), &mut payload);
         let req = make_request("lease://realm1/area1/test/invalid", payload);
 
+        // Act
         let resp = domain.handle(req);
 
+        // Assert
         match resp {
             DomainResponse::Error(msg) => {
                 assert!(msg.contains("Unknown lease operation"));

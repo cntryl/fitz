@@ -68,6 +68,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::serial]
     fn should_accept_any_token_when_no_auth() {
         // Arrange
         std::env::set_var("FITZ_NO_AUTH", "1");
