@@ -6,8 +6,8 @@ pub struct Claims {
     pub aud: Option<String>,
     pub exp: Option<u64>,
     pub perms: Option<Vec<String>>,
-    pub scope: Option<String>,  // Space-separated scopes
-    pub roles: Option<Vec<String>>,  // Array of role strings
+    pub scope: Option<String>,      // Space-separated scopes
+    pub roles: Option<Vec<String>>, // Array of role strings
 }
 
 /// A tiny mock validator that accepts any token of the form "mock:<subject>[:<aud>]"
@@ -31,13 +31,13 @@ pub fn validate_mock_token(token: &str) -> Option<Claims> {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
     });
-    
+
     // Build scope string from perms
     let scope = perms_opt.map(|p| p.replace(',', " "));
-    
+
     // For mock tokens, roles same as perms
     let roles = perms.clone();
-    
+
     Some(Claims {
         sub,
         aud,

@@ -1,5 +1,5 @@
 //! Hotpath microbenchmarks for TLV/frame helpers and route parsing.
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fitz::core::parsing::parse_route_segments;
 use fitz::protocol::frame::{build_frame, build_tlv, find_tlv, parse_frame};
 use fitz::protocol::tags::{TAG_BODY, TAG_ID};

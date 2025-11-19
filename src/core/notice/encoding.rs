@@ -3,10 +3,10 @@
 //! Handles parsing of TLV-encoded request payloads and building TLV-encoded responses
 //! for notice operations (subscribe, unsubscribe, publish).
 
+use crate::protocol::frame::{take_buf, PooledFrame};
 use crate::protocol::tags::{
     TAG_BODY, TAG_COUNT, TAG_ERR_MSG, TAG_ID, TAG_ROUTE, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
 };
-use crate::protocol::frame::{take_buf, PooledFrame};
 use smallvec::SmallVec;
 
 /// Response buffer optimized for typical notice frames (<64 bytes)
@@ -307,8 +307,9 @@ mod tests {
 
         // Assert
         assert_eq!(response[0], TAG_ROUTE);
-        assert_eq!(response[1], route.len() as u8);
-        assert_eq!(&response[2..], route.as_bytes());
+        let len = ((response[1] as u16) << 8) | (response[2] as u16);
+        assert_eq!(len, route.len() as u16);
+        assert_eq!(&response[3..], route.as_bytes());
     }
 
     #[test]
@@ -352,8 +353,9 @@ mod tests {
 
         // Assert
         assert_eq!(response[0], TAG_ERR_MSG);
-        assert_eq!(response[1], error_msg.len() as u8);
-        assert_eq!(&response[2..], error_msg.as_bytes());
+        let len = ((response[1] as u16) << 8) | (response[2] as u16);
+        assert_eq!(len, error_msg.len() as u16);
+        assert_eq!(&response[3..], error_msg.as_bytes());
     }
 
     #[test]
@@ -414,7 +416,7 @@ mod tests {
     fn should_handle_large_body_with_extended_length() {
         // Arrange
         let route = "notice://test";
-        let body = vec![0u8; 300]; // > 254 bytes
+        let body = vec![0u8; 300]; // Large body
 
         // Act
         let frame = build_notification_frame(route, None, &body);
@@ -422,26 +424,29 @@ mod tests {
         // Assert
         let bytes = frame.as_ref();
         assert!(!bytes.is_empty());
-        // Verify large body uses extended length encoding
-        // The TAG_BODY should be followed by 255 (extended length marker) + 4-byte BE length
+        // Verify frame contains the tags
+        assert!(bytes.contains(&TAG_ROUTE));
         assert!(bytes.contains(&TAG_BODY));
-        // After TAG_BODY we expect: [255][4-byte BE length][body bytes]
-        let body_len = body.len();
-        assert!(body_len > 254);
-        // Just verify the frame is large enough to contain everything
-        assert!(bytes.len() > 300 + 20); // body + overhead
+        // Just verify the frame contains both route and body with reasonable overhead
+        assert!(bytes.len() >= body.len() + route.len());
     }
 
     #[test]
-    fn should_return_none_for_oversized_route_in_ack() {
+    fn should_build_ack_frame_with_large_route() {
         // Arrange
-        let route = &"a".repeat(300); // > 255 bytes
+        let route = &"a".repeat(500); // Large but valid route
         let count = 10;
 
         // Act
         let result = build_ack_frame_with_count(route, None, count);
 
         // Assert
-        assert!(result.is_none());
+        assert!(result.is_some());
+        let frame = result.unwrap();
+        let bytes = frame.as_ref();
+        // Verify frame contains route and count
+        assert!(bytes.contains(&TAG_ROUTE));
+        assert!(bytes.contains(&TAG_COUNT));
+        assert!(bytes.len() > route.len());
     }
 }

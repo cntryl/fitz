@@ -15,8 +15,7 @@ use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY,
-    OUTBOUND_QUEUE_CAPACITY,
+    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY, OUTBOUND_QUEUE_CAPACITY,
 };
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::frame::{build_frame, build_tlv};
@@ -126,7 +125,11 @@ impl SystemHarness {
 
 fn bench_sys_append(c: &mut Criterion) {
     let h = SystemHarness::new();
-    let f = append_frame("stream://realm/area/resource1/append", b"test event body", Some(b"metadata"));
+    let f = append_frame(
+        "stream://realm/area/resource1/append",
+        b"test event body",
+        Some(b"metadata"),
+    );
 
     let mut g = c.benchmark_group("stream_system_append");
     g.bench_function("append", |b| {

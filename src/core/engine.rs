@@ -39,7 +39,7 @@ pub const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 pub fn choose_shard(route_family: &str) -> usize {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     route_family.hash(&mut hasher);
     let hash = hasher.finish();
@@ -60,18 +60,18 @@ impl EnginePool {
             shards: Arc::new(shards),
         }
     }
-    
+
     /// Get the handle for a specific route_family (tenant)
     pub fn get_handle(&self, route_family: &str) -> &EngineHandle {
         let shard_id = choose_shard(route_family);
         &self.shards[shard_id]
     }
-    
+
     /// Get handle by explicit shard index (for testing/admin)
     pub fn get_handle_by_index(&self, shard_id: usize) -> Option<&EngineHandle> {
         self.shards.get(shard_id)
     }
-    
+
     /// Get all handles (for broadcast/cleanup operations)
     pub fn all_handles(&self) -> &Arc<[EngineHandle; NUM_SHARDS]> {
         &self.shards
@@ -266,7 +266,10 @@ impl EngineConnectionRegistry {
     }
 
     pub fn register_channel(&self, channel_id: ChannelId, conn_id: ConnectionId) {
-        self.channel_to_conn.write().entry(channel_id).or_insert(conn_id);
+        self.channel_to_conn
+            .write()
+            .entry(channel_id)
+            .or_insert(conn_id);
     }
 
     pub fn get_conn_for_channel(&self, channel_id: ChannelId) -> Option<ConnectionId> {
@@ -279,26 +282,29 @@ impl EngineConnectionRegistry {
 
     pub fn remove(&self, conn_id: ConnectionId) -> (Option<String>, Vec<ChannelId>) {
         self.conns.write().remove(&conn_id);
-        
+
         // Get route_family from session before removing it
-        let route_family = self.sessions.write()
+        let route_family = self
+            .sessions
+            .write()
             .remove(&conn_id)
             .map(|session| session.route_family);
-        
+
         // Collect orphaned channels
-        let orphaned: Vec<ChannelId> = self.channel_to_conn
+        let orphaned: Vec<ChannelId> = self
+            .channel_to_conn
             .read()
             .iter()
             .filter(|(_, &cid)| cid == conn_id)
             .map(|(&ch, _)| ch)
             .collect();
-        
+
         // Remove channel mappings
         let mut channel_map = self.channel_to_conn.write();
         for ch in &orphaned {
             channel_map.remove(ch);
         }
-        
+
         (route_family, orphaned)
     }
 
@@ -306,11 +312,11 @@ impl EngineConnectionRegistry {
         if let Some(tx) = self.conns.read().get(&conn_id) {
             let arc_bytes = Arc::new(bytes);
             match tx.try_send(arc_bytes) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                     tracing::warn!("outbound queue full for conn {}, dropping frame", conn_id);
                     // TODO: Consider marking connection for closure
-                },
+                }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     tracing::debug!("outbound queue closed for conn {}", conn_id);
                 }
@@ -420,7 +426,10 @@ impl Engine {
             }
             Ok(DomainResponse::Ok) => {
                 // empty response allowed
-                self.registry.send(conn_id, crate::protocol::frame::PooledFrame::from_vec(vec![]).into_vec());
+                self.registry.send(
+                    conn_id,
+                    crate::protocol::frame::PooledFrame::from_vec(vec![]).into_vec(),
+                );
             }
             Ok(DomainResponse::Error(err)) => {
                 self.send_error(conn_id, channel_id, &err);
@@ -432,12 +441,13 @@ impl Engine {
             }) => {
                 // 1. Send RPC message to target inbox owner
                 //    Lookup: channel_id \u2192 conn_id \u2192 outbound queue
-                if let Some(target_conn_id) = self.registry.get_conn_for_channel(target_channel_id) {
+                if let Some(target_conn_id) = self.registry.get_conn_for_channel(target_channel_id)
+                {
                     // Serialize RpcMessage to frame bytes
                     let message_bytes = self.serialize_rpc_message(target_channel_id, message);
                     self.registry.send(target_conn_id, message_bytes);
                 }
-                
+
                 // 2. Send ack back to requester (on their connection)
                 self.registry.send(conn_id, ack_frame.into_vec());
             }
@@ -447,7 +457,7 @@ impl Engine {
                 ack_frame,
             }) => {
                 let bytes = notification_frame.into_vec();
-                
+
                 // Fanout to all subscribers
                 // Each subscriber is identified by their channel_id
                 for (sub_channel_id, _sub_id) in &subscribers {
@@ -457,7 +467,7 @@ impl Engine {
                         self.registry.send(sub_conn_id, bytes.clone());
                     }
                 }
-                
+
                 // Send ACK back to publisher if present
                 if let Some(f) = ack_frame {
                     self.registry.send(conn_id, f.into_vec());
@@ -472,7 +482,7 @@ impl Engine {
     fn handle_disconnect(&self, conn_id: ConnectionId) {
         // Remove connection and get route_family + orphaned channels
         let (route_family_opt, orphaned_channels) = self.registry.remove(conn_id);
-        
+
         // Convert route_family to RouteFamilyId
         // Use hash of the string to get the ID (matching what RouteTable does)
         let route_family_id = if let Some(rf) = route_family_opt {
@@ -486,7 +496,7 @@ impl Engine {
             // Fallback to default if no session found
             crate::routing::RouteFamilyId::default()
         };
-        
+
         // Cleanup each orphaned channel in all domains
         for channel_id in orphaned_channels {
             self.domains.cleanup_channel(route_family_id, channel_id);
@@ -509,7 +519,7 @@ impl Engine {
         } else {
             ERR_ENGINE_INTERNAL
         };
-        
+
         let frame = crate::protocol::frame::make_error_with_code(channel_id, err_code, err);
         self.registry.send(conn_id, frame);
     }
@@ -520,32 +530,34 @@ impl Engine {
         message: crate::core::rpc::RpcMessage,
     ) -> Vec<u8> {
         use crate::protocol::frame::build_tlv;
-        use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_ROUTE, TAG_ROUTE_REPLY, TAG_SEQ, TAG_STREAM_END, FRAME_DAT};
-        
+        use crate::protocol::tags::{
+            FRAME_DAT, TAG_BODY, TAG_ID, TAG_ROUTE, TAG_ROUTE_REPLY, TAG_SEQ, TAG_STREAM_END,
+        };
+
         // Build TLVs for the message
         let mut payload = Vec::new();
         build_tlv(TAG_ROUTE, message.route.as_bytes(), &mut payload);
-        
+
         if let Some(corr_id) = message.correlation_id {
             build_tlv(TAG_ID, corr_id.as_bytes(), &mut payload);
         }
-        
+
         if !message.body.is_empty() {
             build_tlv(TAG_BODY, &message.body, &mut payload);
         }
-        
+
         if let Some(reply_route) = message.reply_route {
             build_tlv(TAG_ROUTE_REPLY, reply_route.as_bytes(), &mut payload);
         }
-        
+
         if let Some(seq) = message.seq {
             build_tlv(TAG_SEQ, &seq.to_be_bytes(), &mut payload);
         }
-        
+
         if message.is_stream_end {
             build_tlv(TAG_STREAM_END, &[], &mut payload);
         }
-        
+
         // Build frame with header (frame_type=FRAME_DAT, flags=0)
         crate::protocol::frame::build_frame(FRAME_DAT, 0, channel_id, &payload)
     }
@@ -555,23 +567,23 @@ impl Engine {
 /// Each engine runs in its own OS thread for deterministic, non-blocking processing.
 pub fn start_engine_pool() -> EnginePool {
     use std::array;
-    
+
     tracing::info!("starting {} engine shards", NUM_SHARDS);
-    
+
     // Create domain registry (shared across all shards for now)
     let domains = Arc::new(DomainRegistry::new());
-    
+
     // Create shards
     let handles: [EngineHandle; NUM_SHARDS] = array::from_fn(|shard_id| {
         // Create bounded channel for this shard
         let (tx, rx) = crossbeam_channel::bounded(ENGINE_INBOX_CAPACITY);
-        
+
         // Create per-shard registry
         let registry = Arc::new(EngineConnectionRegistry::new());
-        
+
         // Create engine
         let engine = Engine::new(rx, Arc::clone(&registry), Arc::clone(&domains));
-        
+
         // Spawn engine thread
         let thread_name = format!("engine-shard-{}", shard_id);
         std::thread::Builder::new()
@@ -582,12 +594,12 @@ pub fn start_engine_pool() -> EnginePool {
                 tracing::info!("{} stopped", thread_name);
             })
             .expect("failed to spawn engine thread");
-        
+
         // Return handle for this shard
         EngineHandle::new(tx, Arc::clone(&domains), registry)
     });
-    
+
     tracing::info!("all {} engine shards started", NUM_SHARDS);
-    
+
     EnginePool::new(handles)
 }

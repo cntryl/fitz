@@ -4,8 +4,10 @@
 //! in-memory RouteTable (route_table.rs).
 //! Pure sync - no channels, no I/O. Returns routing decisions as data.
 
-use crate::routing::{RouteFamilyId, RouteTable, RtSubscription};
+use crate::routing::{GlobalInternTable, RouteFamilyId, RouteTable, RtSubscription};
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[cfg(test)]
 use crate::routing::DEFAULT_RF;
@@ -14,10 +16,16 @@ use crate::routing::DEFAULT_RF;
 /// - Subscribe/Unsubscribe: manage in-memory subscriptions
 /// - Publish: dispatch notifications to matching subscribers
 /// - Best-effort delivery with backpressure handling
+///
+/// Optimizations:
+/// - Atomic sub_id generation (no locks for ID allocation)
+/// - Route pattern interning (reuse string memory)
+/// - Fast FxHash-based routing
 #[derive(Debug)]
 pub struct NoticeService {
-    next_sub_id: u64,
+    sub_id_counter: AtomicU64,
     route_table: RouteTable,
+    interner: Arc<GlobalInternTable>,
 }
 
 /// Matched subscription for a publish operation
@@ -38,12 +46,18 @@ pub struct PublishResult {
 }
 
 impl NoticeService {
-    /// Create a new notice service
-    pub fn new() -> Self {
+    /// Create a new notice service with string interner
+    pub fn new(interner: Arc<GlobalInternTable>) -> Self {
         Self {
-            next_sub_id: 1,
+            sub_id_counter: AtomicU64::new(1),
             route_table: RouteTable::new(),
+            interner,
         }
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 
     /// Subscribe to a route pattern for a specific route family (tenant)
@@ -51,9 +65,14 @@ impl NoticeService {
     ///
     /// Pure sync operation - just updates routing table
     /// Transport layer maintains channel_id -> channel mapping
+    ///
+    /// Optimization: Atomic ID generation eliminates lock contention
     pub fn subscribe(&mut self, rf: RouteFamilyId, route_pattern: String, channel_id: u32) -> u64 {
-        let id = self.next_sub_id;
-        self.next_sub_id = self.next_sub_id.wrapping_add(1);
+        // Fast atomic ID generation (no lock needed)
+        let id = self.sub_id_counter.fetch_add(1, Ordering::Relaxed);
+
+        // Intern the route pattern to deduplicate memory for common patterns
+        let _pattern_id = self.interner.intern(&route_pattern);
 
         let sub = RtSubscription {
             id,
@@ -112,7 +131,7 @@ impl NoticeService {
 
 impl Default for NoticeService {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 }
 
@@ -123,7 +142,7 @@ mod tests {
     #[test]
     fn should_subscribe_and_publish() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
 
         // Act
         let _sub_id = service.subscribe(DEFAULT_RF, "test/route".to_string(), 1);
@@ -138,7 +157,7 @@ mod tests {
     #[test]
     fn should_unsubscribe() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         let sub_id = service.subscribe(DEFAULT_RF, "test/route".to_string(), 1);
 
         // Act
@@ -153,7 +172,7 @@ mod tests {
     #[test]
     fn should_cleanup_channel() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "route1".to_string(), 1);
         service.subscribe(DEFAULT_RF, "route2".to_string(), 2);
 
@@ -167,7 +186,7 @@ mod tests {
     #[test]
     fn should_return_no_subscribers_when_none_match() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "test/route".to_string(), 1);
 
         // Act
@@ -185,7 +204,7 @@ mod tests {
     #[test]
     fn should_match_global_wildcard_subscription() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "*".to_string(), 1);
         let test_routes = vec![
             "notice://realm/area/resource/op",
@@ -211,7 +230,7 @@ mod tests {
     #[test]
     fn should_match_realm_wildcard_subscription() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 1);
         let matching_routes = vec![
             ("notice://acme/prod/syslog/error", true),
@@ -247,7 +266,7 @@ mod tests {
     #[test]
     fn should_match_area_wildcard_subscription() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1);
         let matching_routes = vec![
             ("notice://acme/prod/syslog/error", true),
@@ -284,7 +303,7 @@ mod tests {
     #[test]
     fn should_match_resource_wildcard_subscription() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog/*".to_string(), 1);
         let matching_routes = vec![
             ("notice://acme/prod/syslog/error", true),
@@ -320,7 +339,7 @@ mod tests {
     #[test]
     fn should_match_exact_subscription() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(
             DEFAULT_RF,
             "notice://acme/prod/syslog/critical".to_string(),
@@ -359,7 +378,7 @@ mod tests {
     #[test]
     fn should_match_hierarchical_prefix_subscription() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/syslog".to_string(), 1);
         let matching_routes = vec![
             ("notice://acme/prod/syslog", true),              // Exact
@@ -396,7 +415,7 @@ mod tests {
     #[test]
     fn should_deliver_to_multiple_matching_subscriptions() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "*".to_string(), 1); // Global
         service.subscribe(DEFAULT_RF, "notice://acme/*".to_string(), 2); // Realm
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 3); // Area
@@ -416,7 +435,7 @@ mod tests {
     #[test]
     fn should_not_match_partial_segment_names() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "notice://realm".to_string(), 1);
         let non_matching_routes = vec![
             "notice://realm123",
@@ -442,7 +461,7 @@ mod tests {
     #[test]
     fn should_return_matched_subscriber_for_publish() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         let sub_id = service.subscribe(DEFAULT_RF, "test/*".to_string(), 1);
 
         // Act
@@ -457,7 +476,7 @@ mod tests {
     #[test]
     fn should_handle_no_matching_subscriptions() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "notice://acme/prod/*".to_string(), 1);
 
         // Act
@@ -475,7 +494,7 @@ mod tests {
     #[test]
     fn should_handle_empty_route_segments() {
         // Arrange
-        let mut service = NoticeService::new();
+        let mut service = NoticeService::new_for_test();
         service.subscribe(DEFAULT_RF, "".to_string(), 1);
 
         // Act

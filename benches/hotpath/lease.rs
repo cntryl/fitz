@@ -44,7 +44,14 @@ fn bench_hot_renew(c: &mut Criterion) {
                 (svc, grant)
             },
             |(svc, grant)| {
-                svc.renew(0, "lease://realm/area/resource", &grant.id, &grant.token, 300).unwrap();
+                svc.renew(
+                    0,
+                    "lease://realm/area/resource",
+                    &grant.id,
+                    &grant.token,
+                    300,
+                )
+                .unwrap();
             },
             BatchSize::SmallInput,
         )
@@ -62,7 +69,8 @@ fn bench_hot_surrender(c: &mut Criterion) {
                 (svc, grant)
             },
             |(svc, grant)| {
-                svc.surrender(0, "lease://realm/area/resource", &grant.id, &grant.token).unwrap();
+                svc.surrender(0, "lease://realm/area/resource", &grant.id, &grant.token)
+                    .unwrap();
             },
             BatchSize::SmallInput,
         )

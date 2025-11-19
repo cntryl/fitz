@@ -28,7 +28,8 @@ fn bench_hot_subscribe(c: &mut Criterion) {
             || Arc::new(RwLock::new(RpcService::new())),
             |svc| {
                 let mut service = svc.write();
-                let _sub_id = service.subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
+                let _sub_id =
+                    service.subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
             },
             BatchSize::SmallInput,
         )
@@ -42,7 +43,9 @@ fn bench_hot_unsubscribe(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let svc = Arc::new(RwLock::new(RpcService::new()));
-                let sub_id = svc.write().subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
+                let sub_id =
+                    svc.write()
+                        .subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
                 (svc, sub_id)
             },
             |(svc, sub_id)| {
@@ -69,7 +72,13 @@ fn bench_hot_route_request(c: &mut Criterion) {
             },
             |svc| {
                 let service = svc.read();
-                let _result = service.route_request(0, "rpc://realm/area/handler", Some("corr123"), Some("inbox://reply"), b"test body");
+                let _result = service.route_request(
+                    0,
+                    "rpc://realm/area/handler",
+                    Some("corr123"),
+                    Some("inbox://reply"),
+                    b"test body",
+                );
             },
             BatchSize::SmallInput,
         )
@@ -86,13 +95,24 @@ fn bench_hot_route_reply(c: &mut Criterion) {
                 {
                     let mut service = svc.write();
                     let _ = service.subscribe_inbox(0, "inbox://client/inbox".to_string(), 2);
-                    service.register_request("corr123".to_string(), "rpc://realm/area/handler".to_string(), "inbox://client/inbox".to_string());
+                    service.register_request(
+                        "corr123".to_string(),
+                        "rpc://realm/area/handler".to_string(),
+                        "inbox://client/inbox".to_string(),
+                    );
                 }
                 svc
             },
             |svc| {
                 let service = svc.read();
-                let _result = service.route_reply(0, "inbox://client/inbox", Some("corr123"), b"reply body", None, false);
+                let _result = service.route_reply(
+                    0,
+                    "inbox://client/inbox",
+                    Some("corr123"),
+                    b"reply body",
+                    None,
+                    false,
+                );
             },
             BatchSize::SmallInput,
         )

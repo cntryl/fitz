@@ -50,6 +50,7 @@ mod tests {
     fn should_issue_token_when_client_creds_match_env() {
         // Arrange
         std::env::remove_var("FITZ_NO_AUTH");
+        std::env::remove_var("FITZ_OIDC_JWKS");
         std::env::set_var("FITZ_CLIENT_ID", "node-1");
         std::env::set_var("FITZ_CLIENT_SECRET", "s3cr3t");
         std::env::set_var(
@@ -65,15 +66,22 @@ mod tests {
         let t = token.unwrap();
         assert!(t.starts_with("mock:node-1:control"));
         assert!(t.contains("read:stream"));
+        
+        // Cleanup
+        std::env::remove_var("FITZ_CLIENT_ID");
+        std::env::remove_var("FITZ_CLIENT_SECRET");
+        std::env::remove_var("FITZ_CLIENT_PERMISSIONS");
     }
 
     #[test]
     #[serial_test::serial]
     fn should_not_issue_when_creds_invalid() {
         // Arrange
-        std::env::set_var("FITZ_NO_AUTH", "0");
+        std::env::remove_var("FITZ_NO_AUTH");
         std::env::remove_var("FITZ_CLIENT_ID");
         std::env::remove_var("FITZ_CLIENT_SECRET");
+        std::env::remove_var("FITZ_CLIENT_PERMISSIONS");
+        std::env::remove_var("FITZ_OIDC_JWKS");
 
         // Act
         let token = issue_token_for_client("x", "y");
@@ -89,12 +97,17 @@ mod tests {
         std::env::set_var("FITZ_NO_AUTH", "1");
         std::env::remove_var("FITZ_CLIENT_ID");
         std::env::remove_var("FITZ_CLIENT_SECRET");
+        std::env::remove_var("FITZ_CLIENT_PERMISSIONS");
+        std::env::remove_var("FITZ_OIDC_JWKS");
 
         // Act
         let token = issue_token_for_client("foo", "bar");
 
         // Assert
         assert_eq!(token, Some("mock:dev".to_string()));
+        
+        // Cleanup
+        std::env::remove_var("FITZ_NO_AUTH");
     }
 }
 // todo : the control plane will need to issue jwt to other nodes

@@ -13,7 +13,8 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
 use fitz::core::notice::NoticeService;
-use fitz::routing::DEFAULT_RF;
+use fitz::routing::{DEFAULT_RF, GlobalInternTable};
+use std::sync::Arc;
 
 #[path = "../config.rs"]
 mod config;
@@ -47,7 +48,7 @@ fn bench_hot_subscribe(c: &mut Criterion) {
 
     group.bench_function("subscribe", |b| {
         b.iter_batched(
-            || NoticeService::new(),
+            || NoticeService::new(Arc::new(GlobalInternTable::new())),
             |mut svc| {
                 subscribe(
                     &mut svc,
@@ -68,7 +69,7 @@ fn bench_hot_unsubscribe(c: &mut Criterion) {
     group.bench_function("unsubscribe", |b| {
         b.iter_batched(
             || {
-                let mut svc = NoticeService::new();
+                let mut svc = NoticeService::new(Arc::new(GlobalInternTable::new()));
                 let sub_id = subscribe(&mut svc, "notice://realm/area/events/update", CHANNEL_ID);
                 (svc, sub_id)
             },
@@ -83,7 +84,7 @@ fn bench_hot_unsubscribe(c: &mut Criterion) {
 }
 
 fn bench_hot_publish_no_subs(c: &mut Criterion) {
-    let svc = NoticeService::new();
+    let svc = NoticeService::new(Arc::new(GlobalInternTable::new()));
     let route = "notice://realm/area/events/no_subscribers";
 
     let mut group = c.benchmark_group("notice_hot_publish_no_subs");
@@ -97,7 +98,7 @@ fn bench_hot_publish_with_subs(c: &mut Criterion) {
     let mut group = c.benchmark_group("notice_hot_publish_with_subs");
 
     for &count in &[1, 10, 100, 1000] {
-        let mut svc = NoticeService::new();
+        let mut svc = NoticeService::new(Arc::new(GlobalInternTable::new()));
         let pattern = "notice://realm/area/broadcast/alert";
 
         for ch in 1..=count {
@@ -116,7 +117,7 @@ fn bench_hot_publish_with_subs(c: &mut Criterion) {
 }
 
 fn bench_hot_wildcards(c: &mut Criterion) {
-    let mut svc = NoticeService::new();
+    let mut svc = NoticeService::new(Arc::new(GlobalInternTable::new()));
 
     // wildcard patterns
     subscribe(&mut svc, "notice://realm/area/*/update", 10);

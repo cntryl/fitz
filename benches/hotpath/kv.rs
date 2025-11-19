@@ -9,8 +9,8 @@
 //! This is the true "business logic" bench.
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use fitz::core::kv::{KvOperation, KvService};
 use fitz::storage::midge_adapter;
-use fitz::core::kv::{KvService, KvOperation};
 
 #[path = "../config.rs"]
 mod config;
@@ -47,7 +47,8 @@ fn bench_hot_get(c: &mut Criterion) {
         "kv://realm/area/key1",
         Some("key1".to_string()),
         Some(b"value".to_vec()),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut group = c.benchmark_group("kv_hot_get");
     group.bench_function("get", |b| {
@@ -73,7 +74,8 @@ fn bench_hot_scan(c: &mut Criterion) {
             &format!("kv://realm/area/key{}", i),
             Some(format!("key{}", i)),
             Some(format!("value{}", i).into_bytes()),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     let mut group = c.benchmark_group("kv_hot_scan");

@@ -9,7 +9,7 @@
 //! This is the true "business logic" bench.
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use fitz::core::stream::{StreamService, types::StreamEvent};
+use fitz::core::stream::{types::StreamEvent, StreamService};
 use fitz::storage::midge_adapter;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -41,7 +41,9 @@ fn bench_hot_append(c: &mut Criterion) {
                     created_at: 1234567890,
                     is_end: false,
                 };
-                let txn_id = service.begin_append(0, "realm", "area", "resource1").unwrap();
+                let txn_id = service
+                    .begin_append(0, "realm", "area", "resource1")
+                    .unwrap();
                 service.append_event(txn_id, 0, event).unwrap();
                 service.commit_append(txn_id, 0).unwrap();
             },
@@ -71,7 +73,9 @@ fn bench_hot_read(c: &mut Criterion) {
                             created_at: 1234567890 + i as u64,
                             is_end: false,
                         };
-                        let txn_id = service.begin_append(0, "realm", "area", "resource1").unwrap();
+                        let txn_id = service
+                            .begin_append(0, "realm", "area", "resource1")
+                            .unwrap();
                         service.append_event(txn_id, 0, event).unwrap();
                         service.commit_append(txn_id, 0).unwrap();
                     }
@@ -80,7 +84,9 @@ fn bench_hot_read(c: &mut Criterion) {
             },
             |svc| {
                 let service = svc.read();
-                let _events = service.read(0, "realm", "area", "resource1", 0, 10).unwrap();
+                let _events = service
+                    .read(0, "realm", "area", "resource1", 0, 10)
+                    .unwrap();
             },
             BatchSize::SmallInput,
         )
@@ -109,7 +115,9 @@ fn bench_hot_read_area(c: &mut Criterion) {
                                 created_at: 1234567890 + (res * 10 + i) as u64,
                                 is_end: false,
                             };
-                            let txn_id = service.begin_append(0, "realm", "area", &format!("resource{}", res)).unwrap();
+                            let txn_id = service
+                                .begin_append(0, "realm", "area", &format!("resource{}", res))
+                                .unwrap();
                             service.append_event(txn_id, 0, event).unwrap();
                             service.commit_append(txn_id, 0).unwrap();
                         }

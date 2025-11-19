@@ -21,7 +21,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Start engine pool with sharded processing
     tracing::info!("starting engine shards...");
     let engine_pool = fitz::core::engine::start_engine_pool();
-    tracing::info!("engine pool started with {} shards", fitz::core::engine::NUM_SHARDS);
+    tracing::info!(
+        "engine pool started with {} shards",
+        fitz::core::engine::NUM_SHARDS
+    );
 
     // Load config
     let config = fitz::config::load();
@@ -52,7 +55,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     tracing::info!("Fitz ready:");
-    tracing::info!("  HTTP/WS:  http://{} (includes /connect for WS upgrade)", http_addr);
+    tracing::info!(
+        "  HTTP/WS:  http://{} (includes /connect for WS upgrade)",
+        http_addr
+    );
     tracing::info!("  TCP:      tcp://{}", tcp_addr);
     tracing::info!("  Shards:   {}", fitz::core::engine::NUM_SHARDS);
 

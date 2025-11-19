@@ -14,9 +14,7 @@
 use super::encoding;
 use super::service::NoticeService;
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
-use crate::protocol::tags::{
-    TAG_BODY, TAG_ID, TAG_NO_ACK, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE,
-};
+use crate::protocol::tags::{TAG_BODY, TAG_ID, TAG_NO_ACK, TAG_SUBSCRIBE, TAG_UNSUBSCRIBE};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -26,9 +24,9 @@ pub struct NoticeDomain {
 }
 
 impl NoticeDomain {
-    pub fn new() -> Self {
+    pub fn new(interner: Arc<crate::routing::GlobalInternTable>) -> Self {
         Self {
-            service: Arc::new(RwLock::new(NoticeService::new())),
+            service: Arc::new(RwLock::new(NoticeService::new(interner))),
         }
     }
 
@@ -117,7 +115,8 @@ struct TlvParseResult {
 
 impl Default for NoticeDomain {
     fn default() -> Self {
-        Self::new()
+        use crate::routing::GlobalInternTable;
+        Self::new(Arc::new(GlobalInternTable::new()))
     }
 }
 
@@ -192,7 +191,8 @@ impl Domain for NoticeDomain {
                 let body = match parse_result.body_range {
                     Some((start, len)) => &request.payload[start..start + len],
                     None => {
-                        let error_response = encoding::build_error_response("Missing body in publish");
+                        let error_response =
+                            encoding::build_error_response("Missing body in publish");
                         return DomainResponse::Frame(
                             crate::protocol::frame::PooledFrame::from_vec(error_response.to_vec()),
                         );
@@ -206,7 +206,8 @@ impl Domain for NoticeDomain {
 
                 // Dispatch to subscribers - get fanout list
                 let service = self.service.read();
-                let result = service.publish(request.route_family, &request.route_str, msg_id, body);
+                let result =
+                    service.publish(request.route_family, &request.route_str, msg_id, body);
 
                 // Early exit: no subscribers + no-ack => nothing to deliver or confirm
                 if result.subscribers.is_empty() && parse_result.no_ack {
@@ -256,11 +257,22 @@ mod tests {
     use crate::protocol::route::Route;
     use crate::protocol::tags::TAG_ERR_MSG;
 
+    // Helper to build proper TLV with 2-byte length
+    fn push_tlv(payload: &mut Vec<u8>, tag: u8, value: &[u8]) {
+        payload.push(tag);
+        let len = value.len() as u16;
+        payload.push((len >> 8) as u8); // high byte
+        payload.push(len as u8);        // low byte
+        payload.extend_from_slice(value);
+    }
+
     #[test]
     fn should_parse_subscribe_operation() {
         // Arrange
-        let domain = NoticeDomain::new();
-        let payload = vec![TAG_SUBSCRIBE, 0]; // empty value
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
+        // TLV format: [tag][len_hi][len_lo][value...]
+        let payload = vec![TAG_SUBSCRIBE, 0, 0]; // tag with 0-length value
 
         // Act
         let result = domain.parse_tlv_single_pass(&payload);
@@ -275,9 +287,12 @@ mod tests {
     #[test]
     fn should_parse_publish_operation() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
         payload.push(TAG_BODY);
+        // Length as u16 BE: 0x0005
+        payload.push(0);
         payload.push(5);
         payload.extend_from_slice(b"hello");
 
@@ -295,7 +310,8 @@ mod tests {
     #[test]
     fn should_handle_subscribe_request() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
         let payload = vec![TAG_SUBSCRIBE, 0];
 
         let request = DomainContext {
@@ -328,16 +344,11 @@ mod tests {
     #[test]
     fn should_handle_publish_request_with_no_subscribers() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
-        payload.push(TAG_ID);
-        let id = b"msg-1";
-        payload.push(id.len() as u8);
-        payload.extend_from_slice(id);
-        payload.push(TAG_BODY);
-        let body = b"hello world";
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
+        push_tlv(&mut payload, TAG_ID, b"msg-1");
+        push_tlv(&mut payload, TAG_BODY, b"hello world");
 
         let request = DomainContext {
             route: Route {
@@ -362,7 +373,11 @@ mod tests {
             DomainResponse::Frame(frame) => {
                 assert!(!frame.as_ref().is_empty());
             }
-            DomainResponse::NoticeDelivery { ack_frame, subscribers, .. } => {
+            DomainResponse::NoticeDelivery {
+                ack_frame,
+                subscribers,
+                ..
+            } => {
                 // Optimization: no subscribers = no ACK (lazy ACK)
                 assert!(subscribers.is_empty());
                 assert!(ack_frame.is_none());
@@ -374,9 +389,10 @@ mod tests {
     #[test]
     fn should_handle_publish_request_with_subscribers() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
         let service = domain.get_service();
-        
+
         // Subscribe first so we have subscribers
         {
             let mut svc = service.write();
@@ -384,14 +400,8 @@ mod tests {
         }
 
         let mut payload = Vec::new();
-        payload.push(TAG_ID);
-        let id = b"msg-1";
-        payload.push(id.len() as u8);
-        payload.extend_from_slice(id);
-        payload.push(TAG_BODY);
-        let body = b"hello world";
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
+        push_tlv(&mut payload, TAG_ID, b"msg-1");
+        push_tlv(&mut payload, TAG_BODY, b"hello world");
 
         let request = DomainContext {
             route: Route {
@@ -413,7 +423,11 @@ mod tests {
 
         // Assert
         match response {
-            DomainResponse::NoticeDelivery { ack_frame, subscribers, .. } => {
+            DomainResponse::NoticeDelivery {
+                ack_frame,
+                subscribers,
+                ..
+            } => {
                 // With subscribers: ACK should be present
                 assert!(!subscribers.is_empty());
                 match ack_frame {
@@ -428,12 +442,10 @@ mod tests {
     #[test]
     fn should_reject_publish_without_complete_route() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
         let mut payload = Vec::new();
-        payload.push(TAG_BODY);
-        let body = b"hello";
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
+        push_tlv(&mut payload, TAG_BODY, b"hello");
 
         let request = DomainContext {
             route: Route {
@@ -469,7 +481,8 @@ mod tests {
     #[test]
     fn should_reject_subscription_without_realm() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
         let payload = vec![TAG_SUBSCRIBE, 0];
 
         let request = DomainContext {
@@ -506,8 +519,10 @@ mod tests {
     #[test]
     fn should_accept_valid_subscription_with_wildcard() {
         // Arrange
-        let domain = NoticeDomain::new();
-        let payload = vec![TAG_SUBSCRIBE, 0];
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
+        let mut payload = Vec::new();
+        push_tlv(&mut payload, TAG_SUBSCRIBE, &[]);
 
         let request = DomainContext {
             route: Route {
@@ -541,14 +556,34 @@ mod tests {
     #[test]
     fn should_publish_with_no_ack_flag() {
         // Arrange
-        let domain = NoticeDomain::new();
+        use crate::routing::GlobalInternTable;
+        let domain = NoticeDomain::new(Arc::new(GlobalInternTable::new()));
+        
+        // First, create a subscriber so publish returns NoticeDelivery
+        let mut sub_payload = Vec::new();
+        push_tlv(&mut sub_payload, TAG_SUBSCRIBE, &[]);
+        
+        let sub_request = DomainContext {
+            route: Route {
+                scheme: crate::protocol::route::Scheme::Notice,
+                realm: Some("realm1".to_string()),
+                area: Some("area1".to_string()),
+                resource: Some("resource1".to_string()),
+                operation: Some("alerts".to_string()),
+                raw: "notice://realm1/area1/resource1/alerts".to_string(),
+            },
+            route_str: "notice://realm1/area1/resource1/alerts".to_string(),
+            payload: sub_payload,
+            channel_id: 2, // Different channel for subscriber
+            route_family: 0,
+        };
+        
+        let _ = domain.handle(sub_request);
+        
+        // Now publish with NO_ACK flag
         let mut payload = Vec::new();
-        payload.push(TAG_NO_ACK);
-        payload.push(0);
-        payload.push(TAG_BODY);
-        let body = b"hello world";
-        payload.push(body.len() as u8);
-        payload.extend_from_slice(body);
+        push_tlv(&mut payload, TAG_NO_ACK, &[]);
+        push_tlv(&mut payload, TAG_BODY, b"hello world");
 
         let request = DomainContext {
             route: Route {

@@ -54,7 +54,11 @@ fn build_get_frame(route: &str, key: &str) -> Vec<u8> {
 fn build_scan_frame(route: &str, start: &str, end: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
-    build_tlv(TAG_BODY, format!("{}\n{}", start, end).as_bytes(), &mut payload);
+    build_tlv(
+        TAG_BODY,
+        format!("{}\n{}", start, end).as_bytes(),
+        &mut payload,
+    );
     build_frame(FRAME_DAT, 0, CHANNEL_ID, &payload)
 }
 
@@ -134,7 +138,11 @@ fn bench_scan(c: &mut Criterion) {
     let h = BenchHarness::new();
     // Pre-populate some keys
     for i in 0..10 {
-        h.exec(&build_put_frame(&format!("kv://realm/area/key{}", i), &format!("key{}", i), &format!("value{}", i).into_bytes()));
+        h.exec(&build_put_frame(
+            &format!("kv://realm/area/key{}", i),
+            &format!("key{}", i),
+            &format!("value{}", i).into_bytes(),
+        ));
     }
 
     let f = build_scan_frame("kv://realm/area/", "key0", "key9");

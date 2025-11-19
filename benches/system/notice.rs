@@ -14,8 +14,7 @@ use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY,
-    OUTBOUND_QUEUE_CAPACITY,
+    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY, OUTBOUND_QUEUE_CAPACITY,
 };
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::frame::{build_frame, build_tlv};

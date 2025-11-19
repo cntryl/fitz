@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::types::*; // LeaseEntry, LeaseLock, etc.
@@ -40,26 +40,28 @@ pub struct LeaseService {
 impl LeaseService {
     pub fn new(interner: Arc<GlobalInternTable>) -> Arc<Self> {
         let shard_count = std::cmp::max(4, num_cpus::get());
-        
+
         // Generate random prefix and SipHash keys once at startup
         use std::collections::hash_map::RandomState;
         use std::hash::{BuildHasher, Hasher};
-        
+
         let random_state = RandomState::new();
         let mut hasher = random_state.build_hasher();
         hasher.write_u64(now_unix_secs());
         let id_prefix = hasher.finish();
-        
+
         let mut hasher2 = random_state.build_hasher();
         hasher2.write_u64(id_prefix.wrapping_add(1));
         let token_key0 = hasher2.finish();
-        
+
         let mut hasher3 = random_state.build_hasher();
         hasher3.write_u64(id_prefix.wrapping_add(2));
         let token_key1 = hasher3.finish();
-        
+
         Arc::new(Self {
-            shards: (0..shard_count).map(|_| Arc::new(LeaseMap::new())).collect(),
+            shards: (0..shard_count)
+                .map(|_| Arc::new(LeaseMap::new()))
+                .collect(),
             interner,
             id_counter: AtomicU64::new(0),
             id_prefix,
@@ -79,7 +81,7 @@ impl LeaseService {
         let counter = self.id_counter.fetch_add(1, Ordering::Relaxed);
         self.id_prefix.wrapping_add(counter)
     }
-    
+
     #[inline]
     /// Format ID as hex string (faster than UUID formatting)
     fn format_id(&self, id: u64) -> String {
@@ -120,7 +122,7 @@ impl LeaseService {
         let id = self.new_id();
         let expiry_instant = now + Duration::from_secs(ttl_secs as u64);
         let expiry_unix = now_unix_secs() + ttl_secs as u64;
-        
+
         // Fast SipHash token (replaces HMAC)
         let token = self.compute_token_siphash(lease_key, id, expiry_unix);
         let id_str = self.format_id(id);
@@ -232,7 +234,7 @@ impl LeaseService {
     fn pick_shard(&self, key: LeaseKey) -> &Arc<LeaseMap> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut h = DefaultHasher::new();
         key.hash(&mut h);
         &self.shards[(h.finish() as usize) % self.shards.len()]
@@ -241,9 +243,9 @@ impl LeaseService {
     #[inline]
     /// Fast SipHash-based token (replaces HMAC-SHA256)
     fn compute_token_siphash(&self, key: LeaseKey, id: u64, expiry_unix: u64) -> String {
-        use std::hash::Hasher;
         use std::collections::hash_map::DefaultHasher;
-        
+        use std::hash::Hasher;
+
         let mut hasher = DefaultHasher::new();
         hasher.write_u64(self.token_key0);
         hasher.write_u64(self.token_key1);
@@ -253,7 +255,7 @@ impl LeaseService {
         hasher.write_u32(key.resource_id);
         hasher.write_u64(id);
         hasher.write_u64(expiry_unix);
-        
+
         format!("{:016x}", hasher.finish())
     }
 

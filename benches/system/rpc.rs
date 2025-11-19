@@ -15,8 +15,7 @@ use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY,
-    OUTBOUND_QUEUE_CAPACITY,
+    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY, OUTBOUND_QUEUE_CAPACITY,
 };
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::frame::{build_frame, build_tlv};
@@ -153,7 +152,12 @@ fn bench_sys_unsubscribe(c: &mut Criterion) {
 
 fn bench_sys_route_request(c: &mut Criterion) {
     let h = SystemHarness::new();
-    let f = request_frame("rpc://realm/area/handler", "corr123", "inbox://client/inbox", b"test body");
+    let f = request_frame(
+        "rpc://realm/area/handler",
+        "corr123",
+        "inbox://client/inbox",
+        b"test body",
+    );
 
     let mut g = c.benchmark_group("rpc_system_route_request");
     g.bench_function("route_request", |b| {

@@ -14,8 +14,7 @@ use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY,
-    OUTBOUND_QUEUE_CAPACITY,
+    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY, OUTBOUND_QUEUE_CAPACITY,
 };
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::frame::{build_frame, build_tlv};
@@ -150,7 +149,11 @@ fn bench_sys_scan(c: &mut Criterion) {
     let h = SystemHarness::new();
     // Pre-populate some keys
     for i in 0..10 {
-        h.send(&put_frame(&format!("kv://realm/area/key{}", i), &format!("key{}", i), &format!("value{}", i).into_bytes()));
+        h.send(&put_frame(
+            &format!("kv://realm/area/key{}", i),
+            &format!("key{}", i),
+            &format!("value{}", i).into_bytes(),
+        ));
     }
 
     let f = scan_frame("kv://realm/area/", "key0", "key9");

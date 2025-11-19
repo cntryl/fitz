@@ -122,7 +122,12 @@ fn bench_renew(c: &mut Criterion) {
     h.exec(&acquire_frame);
     // For renew, we need to get the grant somehow - this is tricky in bench
     // Let's use dummy values for now
-    let f = build_renew_frame("lease://realm/area/resource/renew", "dummy_id", "dummy_token", 300);
+    let f = build_renew_frame(
+        "lease://realm/area/resource/renew",
+        "dummy_id",
+        "dummy_token",
+        300,
+    );
 
     let mut g = c.benchmark_group("lease_subsys_renew");
     g.bench_function("renew", |b| b.iter(|| h.exec(black_box(&f))));
@@ -136,7 +141,11 @@ fn bench_surrender(c: &mut Criterion) {
     h.exec(&acquire_frame);
     // For surrender, we need to get the grant somehow - this is tricky in bench
     // Let's use dummy values for now
-    let f = build_surrender_frame("lease://realm/area/resource/surrender", "dummy_id", "dummy_token");
+    let f = build_surrender_frame(
+        "lease://realm/area/resource/surrender",
+        "dummy_id",
+        "dummy_token",
+    );
 
     let mut g = c.benchmark_group("lease_subsys_surrender");
     g.bench_function("surrender", |b| b.iter(|| h.exec(black_box(&f))));

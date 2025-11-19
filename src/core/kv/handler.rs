@@ -102,7 +102,9 @@ impl Domain for KvDomain {
         let value = tlv::parse_bytes_owned(&request.payload, TAG_BODY);
 
         // Call service to handle the operation
-        let result = self.service.handle_operation(operation, &request.route_str, key, value);
+        let result = self
+            .service
+            .handle_operation(operation, &request.route_str, key, value);
 
         // Build response based on service result
         match result {

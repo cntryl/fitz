@@ -25,12 +25,12 @@ impl TcpTransport {
         }
         let listener = TcpListener::bind(self.addr).await?;
         tracing::info!("tcp listening on {}", self.addr);
-        
+
         while let Ok((stream, peer)) = listener.accept().await {
             let engine_pool = self.engine.clone();
             tokio::spawn(async move {
                 tracing::debug!("tcp connection accepted from {}", peer);
-                
+
                 // TCP requires authentication via first frame or pre-shared config
                 // For now, create a default dev session if NO_AUTH is enabled
                 let (route_family, session_auth) = if crate::authn::no_auth_enabled() {
@@ -39,24 +39,32 @@ impl TcpTransport {
                         subject: "tcp-client".to_string(),
                         route_family: rf.clone(),
                         scopes: vec!["*".to_string()],
-                        grants: crate::authz::PermissionGrants::from_scopes(&rf, &["*".to_string()]),
+                        grants: crate::authz::PermissionGrants::from_scopes(
+                            &rf,
+                            &["*".to_string()],
+                        ),
                     };
                     (rf, session)
                 } else {
-                    tracing::warn!("tcp connection from {} rejected: authentication not implemented for TCP", peer);
+                    tracing::warn!(
+                        "tcp connection from {} rejected: authentication not implemented for TCP",
+                        peer
+                    );
                     return;
                 };
-                
+
                 // Select engine shard based on route_family
                 let engine = engine_pool.get_handle(&route_family);
-                
+
                 // Assign connection ID
-                static NEXT_CONN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                static NEXT_CONN_ID: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(1);
                 let conn_id = NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                
+
                 // Create outbound channel (bounded for backpressure)
-                let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(256);
-                
+                let (outbound_tx, mut outbound_rx) =
+                    tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(256);
+
                 // Register session and connection with engine
                 engine.register_session(conn_id, session_auth);
                 engine.register_connection(conn_id, outbound_tx);
@@ -100,7 +108,9 @@ impl TcpTransport {
                                 // Send frame to engine for processing
                                 // If backpressure detected (false return), close connection
                                 if !engine.on_frame(conn_id, frame_bytes) {
-                                    tracing::warn!("tcp {conn_id} closing due to engine backpressure");
+                                    tracing::warn!(
+                                        "tcp {conn_id} closing due to engine backpressure"
+                                    );
                                     break;
                                 }
                             }
@@ -142,32 +152,40 @@ impl TcpTransport {
                                 subject: "tls-client".to_string(),
                                 route_family: rf.clone(),
                                 scopes: vec!["*".to_string()],
-                                grants: crate::authz::PermissionGrants::from_scopes(&rf, &["*".to_string()]),
+                                grants: crate::authz::PermissionGrants::from_scopes(
+                                    &rf,
+                                    &["*".to_string()],
+                                ),
                             };
                             (rf, session)
                         } else {
-                            tracing::warn!("tls connection rejected: authentication not implemented for TLS");
+                            tracing::warn!(
+                                "tls connection rejected: authentication not implemented for TLS"
+                            );
                             return;
                         };
-                        
+
                         // Select engine shard based on route_family
                         let engine = engine_pool.get_handle(&route_family);
-                        
+
                         // Assign connection ID
-                        static NEXT_CONN_ID_TLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000000);
-                        let conn_id = NEXT_CONN_ID_TLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        
+                        static NEXT_CONN_ID_TLS: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(1000000);
+                        let conn_id =
+                            NEXT_CONN_ID_TLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
                         // Create outbound channel (bounded for backpressure)
-                        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(256);
-                        
+                        let (outbound_tx, mut outbound_rx) =
+                            tokio::sync::mpsc::channel::<Arc<Vec<u8>>>(256);
+
                         // Register session and connection
                         engine.register_session(conn_id, session_auth);
                         engine.register_connection(conn_id, outbound_tx);
-                        
+
                         // Split TLS stream
                         use tokio::io::{AsyncReadExt, AsyncWriteExt};
                         let (mut reader, mut writer) = tokio::io::split(tls_stream);
-                        
+
                         let writer_handle = tokio::spawn(async move {
                             while let Some(frame_bytes) = outbound_rx.recv().await {
                                 if writer.write_all(&frame_bytes).await.is_err() {

@@ -15,8 +15,7 @@ use std::sync::Arc;
 
 use fitz::authz::{PermissionGrants, SessionAuth};
 use fitz::core::engine::{
-    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY,
-    OUTBOUND_QUEUE_CAPACITY,
+    Engine, EngineConnectionRegistry, EngineHandle, ENGINE_INBOX_CAPACITY, OUTBOUND_QUEUE_CAPACITY,
 };
 use fitz::core::registry::DomainRegistry;
 use fitz::protocol::frame::{build_frame, build_tlv};
@@ -137,7 +136,12 @@ fn bench_sys_renew(c: &mut Criterion) {
     let h = SystemHarness::new();
     // Pre-acquire to get id/token - but in system bench we can't easily get the response
     // Let's use dummy values for now
-    let f = renew_frame("lease://realm/area/resource/renew", "dummy_id", "dummy_token", 300);
+    let f = renew_frame(
+        "lease://realm/area/resource/renew",
+        "dummy_id",
+        "dummy_token",
+        300,
+    );
 
     let mut g = c.benchmark_group("lease_system_renew");
     g.bench_function("renew", |b| {
@@ -150,7 +154,11 @@ fn bench_sys_surrender(c: &mut Criterion) {
     let h = SystemHarness::new();
     // Pre-acquire to get id/token - but in system bench we can't easily get the response
     // Let's use dummy values for now
-    let f = surrender_frame("lease://realm/area/resource/surrender", "dummy_id", "dummy_token");
+    let f = surrender_frame(
+        "lease://realm/area/resource/surrender",
+        "dummy_id",
+        "dummy_token",
+    );
 
     let mut g = c.benchmark_group("lease_system_surrender");
     g.bench_function("surrender", |b| {

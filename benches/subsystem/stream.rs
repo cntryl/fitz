@@ -110,7 +110,11 @@ impl BenchHarness {
 
 fn bench_append(c: &mut Criterion) {
     let h = BenchHarness::new();
-    let f = build_append_frame("stream://realm/area/resource1/append", b"test event body", Some(b"metadata"));
+    let f = build_append_frame(
+        "stream://realm/area/resource1/append",
+        b"test event body",
+        Some(b"metadata"),
+    );
 
     let mut g = c.benchmark_group("stream_subsys_append");
     g.bench_function("append", |b| b.iter(|| h.exec(black_box(&f))));

@@ -209,26 +209,23 @@ fn verify_jwt_and_build_session(jwt: &str) -> Result<(String, crate::authz::Sess
 
     // Extract route_family (tenant) from claims
     let route_family = claims.aud.clone().unwrap_or_else(|| claims.sub.clone());
-    
+
     // Extract subject
     let subject = claims.sub.clone();
-    
+
     // Extract permissions from both scopes and roles
     let mut permissions = Vec::new();
-    
+
     // Add from scope (space-separated string)
     if let Some(scope_str) = &claims.scope {
-        permissions.extend(
-            scope_str.split_whitespace()
-                .map(|s| s.to_string())
-        );
+        permissions.extend(scope_str.split_whitespace().map(|s| s.to_string()));
     }
-    
+
     // Add from roles (array of strings)
     if let Some(roles) = &claims.roles {
         permissions.extend(roles.iter().cloned());
     }
-    
+
     // Filter permissions to only those matching expected patterns:
     // - read:scheme://realm/...
     // - write:scheme://realm/...
@@ -242,13 +239,13 @@ fn verify_jwt_and_build_session(jwt: &str) -> Result<(String, crate::authz::Sess
             perm.starts_with("read:") ||                      // intent: read:...
             perm.starts_with("write:") ||                     // intent: write:...
             perm.starts_with("*:") ||                         // wildcard intent
-            perm == "*"                                       // full wildcard
+            perm == "*" // full wildcard
         })
         .collect();
-    
+
     // Build permission grants from filtered permissions
     let grants = crate::authz::PermissionGrants::from_scopes(&route_family, &filtered_permissions);
-    
+
     // Create session
     let session = crate::authz::SessionAuth {
         subject,
@@ -256,7 +253,7 @@ fn verify_jwt_and_build_session(jwt: &str) -> Result<(String, crate::authz::Sess
         scopes: filtered_permissions,
         grants,
     };
-    
+
     Ok((route_family, session))
 }
 

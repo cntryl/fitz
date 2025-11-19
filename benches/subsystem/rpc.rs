@@ -49,7 +49,12 @@ fn build_unsubscribe_frame(route: &str) -> Vec<u8> {
     build_frame(FRAME_DAT, 0, CHANNEL_ID, &payload)
 }
 
-fn build_request_frame(route: &str, correlation_id: &str, reply_route: &str, body: &[u8]) -> Vec<u8> {
+fn build_request_frame(
+    route: &str,
+    correlation_id: &str,
+    reply_route: &str,
+    body: &[u8],
+) -> Vec<u8> {
     let mut payload = Vec::new();
     build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_ID, correlation_id.as_bytes(), &mut payload);
@@ -133,7 +138,12 @@ fn bench_unsubscribe(c: &mut Criterion) {
 
 fn bench_route_request(c: &mut Criterion) {
     let h = BenchHarness::new();
-    let f = build_request_frame("rpc://realm/area/handler", "corr123", "inbox://client/inbox", b"test body");
+    let f = build_request_frame(
+        "rpc://realm/area/handler",
+        "corr123",
+        "inbox://client/inbox",
+        b"test body",
+    );
 
     let mut g = c.benchmark_group("rpc_subsys_route_request");
     g.bench_function("route_request", |b| b.iter(|| h.exec(black_box(&f))));

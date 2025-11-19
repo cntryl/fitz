@@ -268,7 +268,7 @@ pub fn check_grants(grants: &[InternalGrant], route: &crate::protocol::route::Ro
     {
         return true;
     }
-    
+
     grants.iter().any(|g| g.matches(route))
 }
 

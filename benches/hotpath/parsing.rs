@@ -7,7 +7,7 @@
 //! No route struct creation, no interning,
 //! no engine, no domain, no validation beyond segmentation.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fitz::core::parsing::parse_route_segments;
 
 #[path = "../config.rs"]

@@ -72,14 +72,14 @@ impl DomainRegistry {
         use crate::routing::GlobalInternTable;
         use crate::storage::midge_adapter;
 
-        // Shared string interner for lease keys
+        // Shared string interner for lease/notice route patterns
         let interner = Arc::new(GlobalInternTable::new());
 
         // Shared storage backend
         let kv_store = midge_adapter::create_memory_store().expect("memory store init failed");
 
         // Domains (Notice/RPC/Lease have no storage deps)
-        let notice = Arc::new(NoticeDomain::new());
+        let notice = Arc::new(NoticeDomain::new(Arc::clone(&interner)));
         let rpc = Arc::new(RpcDomain::new());
         let lease = Arc::new(LeaseDomain::new(Arc::clone(&interner)));
         let control = Arc::new(ControlDomain::new());

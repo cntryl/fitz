@@ -8,9 +8,9 @@ use crate::core::engine::EnginePool;
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use std::sync::Arc;
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
@@ -136,7 +136,11 @@ pub async fn handle_upgraded_connection(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     crate::transport::inc_active_connections();
     let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!("ws upgraded connection {conn_id} accepted for subject: {} route_family: {}", session_auth.subject, route_family);
+    tracing::debug!(
+        "ws upgraded connection {conn_id} accepted for subject: {} route_family: {}",
+        session_auth.subject,
+        route_family
+    );
 
     // Select engine shard based on route_family (tenant)
     let engine = engine_pool.get_handle(&route_family);
