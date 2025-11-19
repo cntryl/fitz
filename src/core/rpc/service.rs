@@ -1,6 +1,11 @@
 //! RPC domain service - handles request/reply coordination and inbox management
+//!
+//! v3: numeric-backed interned inbox ids + string-backed correlation tracking,
+//! with first-match routing to avoid per-call Vec allocations.
 
-use crate::routing::{GlobalInternTable, RouteFamilyId, RouteTable, RtSubscription};
+use crate::routing::{
+    GlobalInternTable, InternId, RouteFamilyId, RouteTable, RtSubscription, DEFAULT_RF,
+};
 use fxhash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -55,10 +60,10 @@ struct InboxContext {
 /// Key features:
 /// - Cryptographically secure inbox routes
 /// - Inbox ownership enforcement (only owner can subscribe)
-/// - Handler authorization (only handlers can publish to client inboxes)
+/// - Handler authorization (only handlers of active requests can publish to client inboxes)
 /// - Automatic cleanup on session close
 /// - Lock-free subscription ID generation using atomics
-/// - String interning for route pattern deduplication
+/// - String interning for route pattern + inbox routes
 pub struct RpcService {
     /// Next subscription ID (atomic for lock-free generation)
     sub_id_counter: AtomicU64,
@@ -69,14 +74,16 @@ pub struct RpcService {
     /// Route table for inbox subscriptions (inbox://*)
     inbox_routes: RouteTable,
 
-    /// Inbox ownership tracking (inbox_route -> context)
-    inboxes: FxHashMap<String, InboxContext>,
+    /// Inbox ownership tracking (interned inbox_id -> context)
+    inboxes: FxHashMap<InternId, InboxContext>,
 
     /// Active RPC requests for correlation tracking
     /// Maps correlation_id -> (handler_route, reply_route)
+    ///
+    /// We keep these as Strings to avoid extra interner lookups on the hot reply path.
     active_requests: FxHashMap<String, (String, String)>,
 
-    /// Shared string interner for route pattern deduplication
+    /// Shared string interner for route pattern + inbox routes
     interner: Arc<GlobalInternTable>,
 }
 
@@ -94,25 +101,26 @@ impl RpcService {
     }
 
     #[cfg(test)]
-    fn new_for_test() -> Self {
+    pub(crate) fn new_for_test() -> Self {
         Self::new(Arc::new(GlobalInternTable::new()))
     }
 
     /// Allocate a cryptographically secure inbox route for a channel
-    /// Returns the inbox route (e.g., "inbox://a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    /// Returns the inbox route (e.g., "inbox://<uuid>")
     pub fn allocate_inbox(&mut self, channel_id: u32) -> String {
         // Generate cryptographically secure random route using UUID v4
-        // Pre-allocate with exact capacity: "inbox://" (8) + UUID (36) = 44 bytes
+        // "inbox://" (8) + UUID (36) = 44 bytes
         let mut inbox_route = String::with_capacity(44);
         inbox_route.push_str("inbox://");
 
-        // Format UUID directly into the string to avoid intermediate allocation
         use std::fmt::Write;
         let _ = write!(&mut inbox_route, "{}", uuid::Uuid::new_v4());
 
-        // Register inbox ownership
+        // Intern once and store by ID
+        let inbox_id = self.interner.intern(&inbox_route);
+
         self.inboxes.insert(
-            inbox_route.clone(),
+            inbox_id,
             InboxContext {
                 owner_channel_id: channel_id,
                 subscription_id: None,
@@ -132,7 +140,7 @@ impl RpcService {
     ) -> u64 {
         let id = self.sub_id_counter.fetch_add(1, Ordering::Relaxed);
 
-        // Intern the route pattern to deduplicate memory for common patterns
+        // Intern the route pattern for global deduplication (helps other tables / metrics)
         let _pattern_id = self.interner.intern(&route_pattern);
 
         let sub = RtSubscription {
@@ -153,14 +161,16 @@ impl RpcService {
         inbox_route: String,
         channel_id: u32,
     ) -> Result<u64, String> {
-        // Check if inbox exists and caller is owner
-        match self.inboxes.get_mut(&inbox_route) {
+        // Resolve intern ID for this inbox route
+        let inbox_id = self.interner.intern(&inbox_route);
+
+        match self.inboxes.get_mut(&inbox_id) {
             Some(ctx) if ctx.owner_channel_id == channel_id => {
                 let id = self.sub_id_counter.fetch_add(1, Ordering::Relaxed);
 
                 let sub = RtSubscription {
                     id,
-                    route_pattern: inbox_route, // Move instead of clone
+                    route_pattern: inbox_route, // moved in
                     channel_id,
                 };
 
@@ -170,7 +180,7 @@ impl RpcService {
                 Ok(id)
             }
             Some(_) => Err("Permission denied: not inbox owner".to_string()),
-            None => Err(format!("Inbox not found: {}", inbox_route)),
+            None => Err(format!("Inbox not found: {}", inbox_id)),
         }
     }
 
@@ -183,8 +193,9 @@ impl RpcService {
 
         // Try inbox routes
         if let Some(sub) = self.inbox_routes.remove(rf, sub_id) {
-            // Clear subscription ID in inbox context
-            if let Some(ctx) = self.inboxes.get_mut(&sub.route_pattern) {
+            // Clear subscription ID in inbox context via interned ID
+            let inbox_id = self.interner.intern(&sub.route_pattern);
+            if let Some(ctx) = self.inboxes.get_mut(&inbox_id) {
                 ctx.subscription_id = None;
             }
             return true;
@@ -205,39 +216,17 @@ impl RpcService {
     }
 
     /// Deregister an RPC request (on completion or timeout)
+    /// Returns the original (handler_route, reply_route)
     pub fn deregister_request(&mut self, correlation_id: &str) -> Option<(String, String)> {
         self.active_requests.remove(correlation_id)
     }
 
-    /// Get matching handler subscribers for a route
-    /// Hot path: called for every RPC request
-    #[inline]
-    pub fn matching_handlers(&self, rf: RouteFamilyId, route: &str) -> Vec<RtSubscription> {
-        self.handler_routes
-            .matching_subscribers(rf, route)
-            .cloned()
-            .collect()
-    }
-
-    /// Get matching inbox subscribers for a reply route
-    #[inline]
-    pub fn matching_inbox_subscribers(
-        &self,
-        rf: RouteFamilyId,
-        inbox_route: &str,
-    ) -> Vec<RtSubscription> {
-        self.inbox_routes
-            .matching_subscribers(rf, inbox_route)
-            .cloned()
-            .collect()
-    }
-
-    /// Check if a channel can publish to an inbox (only handlers of active requests)
-    /// Hot path: called for every RPC reply to validate authorization
+    /// Check if a reply is allowed to publish into an inbox
+    /// Hot path: called for every RPC reply
     #[inline]
     pub fn can_publish_to_inbox(&self, inbox_route: &str, correlation_id: &str) -> bool {
-        // Check if this correlation_id has an active request pointing to this inbox
-        // Direct equality check without dereferencing is faster
+        // Just compare the stored reply route to this inbox_route.
+        // This avoids interner lookups on the hot reply path.
         self.active_requests
             .get(correlation_id)
             .map(|(_, reply_route)| reply_route.as_str() == inbox_route)
@@ -254,15 +243,11 @@ impl RpcService {
         reply_route: Option<&str>,
         body: &[u8],
     ) -> RpcDeliveryResult {
-        // Find matching handlers
-        let handlers = self.matching_handlers(rf, route);
-
-        if handlers.is_empty() {
+        // Find first matching handler without allocating a Vec
+        let mut it = self.handler_routes.matching_subscribers(rf, route);
+        let Some(handler) = it.next() else {
             return RpcDeliveryResult::error("No handlers available".to_string());
-        }
-
-        // Use first available handler (simple dispatch)
-        let handler = &handlers[0];
+        };
 
         let message = RpcMessage {
             route: route.to_string(),
@@ -287,7 +272,7 @@ impl RpcService {
         seq: Option<u64>,
         is_stream_end: bool,
     ) -> RpcDeliveryResult {
-        // Authorization: check if correlation_id allows publishing to this inbox
+        // Authorization: require correlation id
         let Some(corr_id) = correlation_id else {
             return RpcDeliveryResult::error("Missing correlation ID for reply".to_string());
         };
@@ -296,14 +281,11 @@ impl RpcService {
             return RpcDeliveryResult::error("Unauthorized inbox access".to_string());
         }
 
-        // Find inbox subscriber
-        let subscribers = self.matching_inbox_subscribers(rf, inbox_route);
-
-        if subscribers.is_empty() {
+        // Find first inbox subscriber without allocating a Vec
+        let mut it = self.inbox_routes.matching_subscribers(rf, inbox_route);
+        let Some(subscriber) = it.next() else {
             return RpcDeliveryResult::error("Inbox not found".to_string());
-        }
-
-        let subscriber = &subscribers[0];
+        };
 
         let message = RpcMessage {
             route: inbox_route.to_string(),
@@ -329,9 +311,7 @@ impl RpcService {
         self.inboxes
             .retain(|_, ctx| ctx.owner_channel_id != channel_id);
 
-        // Remove active requests (correlation tracking)
-        // Note: We don't track which channel initiated which request here,
-        // but in a real implementation you'd want to track and clean those up too
+        // Note: active_requests is not keyed by channel today; we keep behavior consistent.
     }
 
     /// Get handler route table size (for metrics)
@@ -351,19 +331,14 @@ impl Default for RpcService {
     }
 }
 
-// --- Sync Benchmark Methods ---
-// These demonstrate the core domain logic without async overhead for performance analysis
+// --- Sync Benchmark Helpers ---------------------------------------------------
 
 impl RpcService {
     /// Synchronous version of inbox route generation for benchmarking
-    /// Measures pure CPU/memory operations without async runtime noise
     pub fn bench_inbox_allocation(&self) -> String {
-        // Generate cryptographically secure random route using UUID v4
-        // Pre-allocate with exact capacity: "inbox://" (8) + UUID (36) = 44 bytes
         let mut inbox_route = String::with_capacity(44);
         inbox_route.push_str("inbox://");
 
-        // Format UUID directly into the string to avoid intermediate allocation
         use std::fmt::Write;
         let _ = write!(&mut inbox_route, "{}", uuid::Uuid::new_v4());
 
@@ -375,10 +350,8 @@ impl RpcService {
     pub fn bench_request_tracking(&self) -> usize {
         use fxhash::FxHashMap;
 
-        // Use std::sync primitives for pure sync benchmarking
         let mut active_requests = FxHashMap::with_capacity_and_hasher(32, Default::default());
 
-        // Simulate registering requests
         for i in 0..10 {
             let corr_id = format!("req-{}", i);
             let handler_route = format!("rpc://test/svc/op{}", i);
@@ -386,7 +359,6 @@ impl RpcService {
             active_requests.insert(corr_id, (handler_route, reply_route));
         }
 
-        // Simulate deregistering some
         for i in 0..5 {
             let corr_id = format!("req-{}", i);
             active_requests.remove(&corr_id);
@@ -399,18 +371,14 @@ impl RpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::DEFAULT_RF;
 
     #[test]
     fn should_allocate_unique_inboxes_for_same_channel() {
-        // Arrange
         let mut service = RpcService::new_for_test();
 
-        // Act
         let inbox1 = service.allocate_inbox(1);
         let inbox2 = service.allocate_inbox(1);
 
-        // Assert
         assert_ne!(inbox1, inbox2);
         assert!(inbox1.starts_with("inbox://"));
         assert!(inbox2.starts_with("inbox://"));
@@ -418,58 +386,46 @@ mod tests {
 
     #[test]
     fn should_enforce_inbox_ownership_across_channels() {
-        // Arrange
         let mut service = RpcService::new_for_test();
         let inbox = service.allocate_inbox(1);
 
-        // Act
         let result1 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
         let result2 = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 2);
 
-        // Assert
         assert!(result1.is_ok());
         assert!(result2.is_err());
     }
 
     #[test]
     fn should_cleanup_channel_resources_when_channel_disconnects() {
-        // Arrange
         let mut service = RpcService::new_for_test();
         let inbox = service.allocate_inbox(1);
         let _ = service.subscribe_inbox(DEFAULT_RF, inbox.clone(), 1);
         let _handler_sub =
             service.subscribe_handler(DEFAULT_RF, "rpc://test/svc/op".to_string(), 1);
 
-        // Act
         service.cleanup_channel(DEFAULT_RF, 1);
 
-        // Assert
         assert_eq!(service.inbox_count(), 0);
         assert_eq!(service.handler_count(), 0);
     }
 
     #[test]
     fn should_generate_inbox_route() {
-        // Arrange
         let service = RpcService::new_for_test();
 
-        // Act
         let inbox = service.bench_inbox_allocation();
 
-        // Assert
         assert!(inbox.starts_with("inbox://"));
-        assert_eq!(inbox.len(), 44); // "inbox://" + 36 char UUID
+        assert_eq!(inbox.len(), 44);
     }
 
     #[test]
     fn should_track_requests_synchronously() {
-        // Arrange
         let service = RpcService::new_for_test();
 
-        // Act
         let remaining = service.bench_request_tracking();
 
-        // Assert
-        assert_eq!(remaining, 5); // 10 registered, 5 deregistered, 5 remaining
+        assert_eq!(remaining, 5);
     }
 }

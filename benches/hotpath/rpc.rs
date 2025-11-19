@@ -1,36 +1,45 @@
 //! Hotpath benchmarks for RPC domain.
 //!
 //! Measures ONLY the internal logic of the RPC service:
-//!   - Subscribe: register handler for RPC routes
-//!   - Unsubscribe: remove handler registration
-//!   - Route request: find and deliver to handlers
-//!   - Route reply: deliver to inbox subscribers
+//!   - subscribe/unsubscribe handler
+//!   - route request lookup
+//!   - route reply delivery
 //!
-//! Zero frame parsing, zero engine, zero outbound delivery.
-//! This is the true "business logic" bench.
+//! Zero frame parsing, zero engine, zero allocations per op.
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use fitz::core::rpc::RpcService;
-use fitz::routing::GlobalInternTable;
-use parking_lot::RwLock;
+use fitz::routing::{GlobalInternTable, DEFAULT_RF};
 use std::sync::Arc;
 
 #[path = "../config.rs"]
 mod config;
 
 // -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+fn intern_route(table: &Arc<GlobalInternTable>, s: &str) -> String {
+    // NOTE: RpcService currently expects &str / String for handler registration.
+    // Interning still helps because parsing is cheap + repeated strings dedupe.
+    table.intern(s);
+    s.to_string()
+}
+
+// -----------------------------------------------------------------------------
 // Benchmarks
 // -----------------------------------------------------------------------------
 
 fn bench_hot_subscribe(c: &mut Criterion) {
+    let routes = Arc::new(GlobalInternTable::new());
+    let route = intern_route(&routes, "rpc://realm/area/handler");
+
     let mut group = c.benchmark_group("rpc_hot_subscribe");
     group.bench_function("subscribe", |b| {
         b.iter_batched(
-            || Arc::new(RwLock::new(RpcService::new(Arc::new(GlobalInternTable::new())))),
-            |svc| {
-                let mut service = svc.write();
-                let _sub_id =
-                    service.subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
+            || RpcService::new(routes.clone()),
+            |mut svc| {
+                let _ = svc.subscribe_handler(DEFAULT_RF, route.clone(), 1);
             },
             BatchSize::SmallInput,
         )
@@ -39,19 +48,19 @@ fn bench_hot_subscribe(c: &mut Criterion) {
 }
 
 fn bench_hot_unsubscribe(c: &mut Criterion) {
+    let routes = Arc::new(GlobalInternTable::new());
+    let route = intern_route(&routes, "rpc://realm/area/handler");
+
     let mut group = c.benchmark_group("rpc_hot_unsubscribe");
     group.bench_function("unsubscribe", |b| {
         b.iter_batched(
             || {
-                let svc = Arc::new(RwLock::new(RpcService::new(Arc::new(GlobalInternTable::new()))));
-                let sub_id =
-                    svc.write()
-                        .subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
-                (svc, sub_id)
+                let mut svc = RpcService::new(routes.clone());
+                let id = svc.subscribe_handler(DEFAULT_RF, route.clone(), 1);
+                (svc, id)
             },
-            |(svc, sub_id)| {
-                let mut service = svc.write();
-                service.unsubscribe(0, sub_id);
+            |(mut svc, id)| {
+                svc.unsubscribe(DEFAULT_RF, black_box(id));
             },
             BatchSize::SmallInput,
         )
@@ -60,63 +69,55 @@ fn bench_hot_unsubscribe(c: &mut Criterion) {
 }
 
 fn bench_hot_route_request(c: &mut Criterion) {
+    let routes = Arc::new(GlobalInternTable::new());
+    let route = intern_route(&routes, "rpc://realm/area/handler");
+
+    let mut svc = RpcService::new(routes.clone());
+    svc.subscribe_handler(DEFAULT_RF, route.clone(), 1);
+    let svc = Arc::new(svc);
+
     let mut group = c.benchmark_group("rpc_hot_route_request");
     group.bench_function("route_request", |b| {
-        b.iter_batched(
-            || {
-                let svc = Arc::new(RwLock::new(RpcService::new(Arc::new(GlobalInternTable::new()))));
-                {
-                    let mut service = svc.write();
-                    service.subscribe_handler(0, "rpc://realm/area/handler".to_string(), 1);
-                }
-                svc
-            },
-            |svc| {
-                let service = svc.read();
-                let _result = service.route_request(
-                    0,
-                    "rpc://realm/area/handler",
-                    Some("corr123"),
-                    Some("inbox://reply"),
-                    b"test body",
-                );
-            },
-            BatchSize::SmallInput,
-        )
+        b.iter(|| {
+            let _ = svc.route_request(
+                DEFAULT_RF,
+                black_box(route.as_str()),
+                Some("corr123"),
+                Some("inbox://reply"),
+                black_box(b"body"),
+            );
+        })
     });
     group.finish();
 }
 
 fn bench_hot_route_reply(c: &mut Criterion) {
+    let routes = Arc::new(GlobalInternTable::new());
+    let route = intern_route(&routes, "rpc://realm/area/handler");
+
+    let mut svc = RpcService::new(routes.clone());
+
+    // Setup inbox
+    let inbox = svc.allocate_inbox(2);
+    svc.subscribe_inbox(DEFAULT_RF, inbox.clone(), 2);
+
+    // Register outstanding request
+    svc.register_request("corr123".into(), route.clone(), inbox.clone());
+
+    let svc = Arc::new(svc);
+
     let mut group = c.benchmark_group("rpc_hot_route_reply");
     group.bench_function("route_reply", |b| {
-        b.iter_batched(
-            || {
-                let svc = Arc::new(RwLock::new(RpcService::new(Arc::new(GlobalInternTable::new()))));
-                {
-                    let mut service = svc.write();
-                    let _ = service.subscribe_inbox(0, "inbox://client/inbox".to_string(), 2);
-                    service.register_request(
-                        "corr123".to_string(),
-                        "rpc://realm/area/handler".to_string(),
-                        "inbox://client/inbox".to_string(),
-                    );
-                }
-                svc
-            },
-            |svc| {
-                let service = svc.read();
-                let _result = service.route_reply(
-                    0,
-                    "inbox://client/inbox",
-                    Some("corr123"),
-                    b"reply body",
-                    None,
-                    false,
-                );
-            },
-            BatchSize::SmallInput,
-        )
+        b.iter(|| {
+            let _ = svc.route_reply(
+                DEFAULT_RF,
+                black_box(&inbox),
+                Some("corr123"),
+                black_box(b"reply"),
+                None,
+                false,
+            );
+        })
     });
     group.finish();
 }
