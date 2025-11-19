@@ -71,7 +71,7 @@ impl TryFrom<&str> for Scheme {
 pub struct Route {
     /// The parsed scheme
     pub scheme: Scheme,
-    /// Optional tenant realm (present for tenant-scoped schemes)
+    /// Optional realm (present for realm-scoped schemes)
     pub realm: Option<String>,
     /// Optional area segment
     pub area: Option<String>,
@@ -86,7 +86,7 @@ pub struct Route {
 /// Parse a route string into a `Route` structure.
 ///
 /// Returns `Err(&'static str)` when the input fails minimal validation (for
-/// example missing scheme delimiter or missing realm for tenant-scoped
+/// example missing scheme delimiter or missing realm for realm-scoped
 /// schemes).
 ///
 /// `control://` routes may omit the realm; other schemes require a realm
@@ -114,7 +114,7 @@ pub fn parse_route(s: &str) -> Result<Route, &'static str> {
             resource = parts.next().map(|s| s.to_string());
             operation = parts.next().map(|s| s.to_string());
         } else {
-            // realm required for tenant-scoped schemes
+            // realm required for realm-scoped schemes
             match parts.next() {
                 Some(r) => realm = Some(r.to_string()),
                 None => return Err("missing realm"),

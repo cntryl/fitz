@@ -34,8 +34,8 @@ pub const ENGINE_INBOX_CAPACITY: usize = 1024;
 /// Per-connection outbound queue capacity (used by transports)
 pub const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 
-/// Choose which engine shard should handle a given route_family (tenant).
-/// This ensures all connections for a tenant go to the same shard for consistency.
+/// Choose which engine shard should handle a given route_family (realm).
+/// This ensures all connections for a realm go to the same shard for consistency.
 pub fn choose_shard(route_family: &str) -> usize {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -61,7 +61,7 @@ impl EnginePool {
         }
     }
 
-    /// Get the handle for a specific route_family (tenant)
+    /// Get the handle for a specific route_family (realm)
     pub fn get_handle(&self, route_family: &str) -> &EngineHandle {
         let shard_id = choose_shard(route_family);
         &self.shards[shard_id]

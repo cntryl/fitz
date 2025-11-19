@@ -60,7 +60,7 @@ impl NoticeService {
         Self::new(Arc::new(GlobalInternTable::new()))
     }
 
-    /// Subscribe to a route pattern for a specific route family (tenant)
+    /// Subscribe to a route pattern for a specific route family (realm)
     /// Returns subscription ID
     ///
     /// Pure sync operation - just updates routing table
@@ -85,18 +85,18 @@ impl NoticeService {
         id
     }
 
-    /// Unsubscribe by subscription ID for a specific route family (tenant)
+    /// Unsubscribe by subscription ID for a specific route family (realm)
     /// Returns true if subscription was found and removed
     pub fn unsubscribe(&mut self, rf: RouteFamilyId, sub_id: u64) -> bool {
         self.route_table.remove(rf, sub_id).is_some()
     }
 
-    /// Cleanup all subscriptions for a channel in a specific route family (tenant)
+    /// Cleanup all subscriptions for a channel in a specific route family (realm)
     pub fn cleanup_channel(&mut self, rf: RouteFamilyId, channel_id: u32) {
         self.route_table.cleanup_channel(rf, channel_id);
     }
 
-    /// Publish a notification to all matching subscribers in a specific route family (tenant)
+    /// Publish a notification to all matching subscribers in a specific route family (realm)
     /// Returns list of matched subscriptions - Transport layer handles actual delivery
     ///
     /// Pure sync operation - no I/O, no channels, no waiting

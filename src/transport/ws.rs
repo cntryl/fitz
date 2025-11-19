@@ -142,7 +142,7 @@ pub async fn handle_upgraded_connection(
         route_family
     );
 
-    // Select engine shard based on route_family (tenant)
+    // Select engine shard based on route_family (realm)
     let engine = engine_pool.get_handle(&route_family);
 
     let (mut ws_sink, mut ws_stream) = ws_stream.split();

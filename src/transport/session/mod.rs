@@ -8,14 +8,14 @@ use crate::transport::mux::Muxer;
 mod state;
 pub use state::SessionState;
 
-/// Convert a tenant name to a route family ID
+/// Convert a realm name to a route family ID
 /// For now, uses a simple hash-based approach
-fn tenant_to_route_family(tenant: &str) -> RouteFamilyId {
+fn realm_to_route_family(realm: &str) -> RouteFamilyId {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
-    tenant.hash(&mut hasher);
+    realm.hash(&mut hasher);
     let hash = hasher.finish();
     (hash % 256) as RouteFamilyId // Limit to 256 route families
 }
@@ -90,11 +90,11 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                         tokio::time::sleep(std::time::Duration::from_millis(ack_delay_ms)).await;
                     }
 
-                    // Get route family from tenant
+                    // Get route family from realm
                     let route_family = {
-                        let tenant_opt = auth_task.lock().await;
-                        match tenant_opt.as_ref() {
-                            Some(tenant) => tenant_to_route_family(tenant),
+                        let realm_opt = auth_task.lock().await;
+                        match realm_opt.as_ref() {
+                            Some(realm) => realm_to_route_family(realm),
                             None => DEFAULT_RF,
                         }
                     };
@@ -106,9 +106,9 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                 // Client -> Broker: accept TAG_TOKEN here (HELLO) per SPEC note; negotiate ack_window (future)
                                 if let Some(token_b) = fr::find_tlv(parsed.payload, fr::TAG_TOKEN) {
                                     let token = String::from_utf8_lossy(token_b).to_string();
-                                    if let Some(tenant) = crate::authz::validate_token(&token) {
+                                    if let Some(realm) = crate::authz::validate_token(&token) {
                                         let mut g = auth_task.lock().await;
-                                        *g = Some(tenant);
+                                        *g = Some(realm);
                                         // install claim grants if available from mock token
                                         if let Some(claims) =
                                             crate::authz::mock_jwks::validate_mock_token(&token)
@@ -169,9 +169,9 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                 let token = fr::find_tlv(parsed.payload, fr::TAG_TOKEN)
                                     .map(|b| String::from_utf8_lossy(b).to_string());
                                 if let Some(token) = token {
-                                    if let Some(tenant) = crate::authz::validate_token(&token) {
+                                    if let Some(realm) = crate::authz::validate_token(&token) {
                                         let mut g = auth_task.lock().await;
-                                        *g = Some(tenant);
+                                        *g = Some(realm);
                                         if let Some(claims) =
                                             crate::authz::mock_jwks::validate_mock_token(&token)
                                         {
@@ -309,11 +309,11 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     }
                                 }
 
-                                let tenant_opt = {
+                                let realm_opt = {
                                     let g = auth_task.lock().await;
                                     g.clone()
                                 };
-                                if tenant_opt.is_none() {
+                                if realm_opt.is_none() {
                                     let _ = send_err_chan(
                                         mux_task.clone(),
                                         parsed.header.channel_id,
@@ -368,10 +368,10 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                                     // Parse route or allow bare dev routes for notice and rpc reply for backward-compat
                                     let parsed_route = route_mod::parse_route(&route_str);
                                     if let Ok(_r) = parsed_route {
-                                        let tenant = tenant_opt.clone().unwrap();
+                                        let realm = realm_opt.clone().unwrap();
                                         // Simplified: routes carry realm, so just check authorization
                                         if !permissions::check_route_authorization(
-                                            &tenant, &route_str,
+                                            &realm, &route_str,
                                         ) {
                                             let _ = send_err_chan(
                                                 mux_task.clone(),
@@ -591,11 +591,11 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
                             }
 
                             x if x == fr::FRAME_REG => {
-                                let tenant_opt = {
+                                let realm_opt = {
                                     let g = auth_task.lock().await;
                                     g.clone()
                                 };
-                                if tenant_opt.is_none() {
+                                if realm_opt.is_none() {
                                     let _ = send_err_chan(
                                         mux_task.clone(),
                                         parsed.header.channel_id,
@@ -626,10 +626,10 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
 
                                         // Accept either full scheme route or bare dev notice/rpc reply routes
                                         if route_mod::parse_route(&route).is_ok() {
-                                            let tenant = tenant_opt.clone().unwrap();
+                                            let realm = realm_opt.clone().unwrap();
                                             // Simplified: routes carry realm, check authorization directly
                                             if !permissions::check_route_authorization(
-                                                &tenant, &route,
+                                                &realm, &route,
                                             ) {
                                                 let _ = send_err_chan(
                                                     mux_task.clone(),
@@ -750,9 +750,9 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
 
                                 // Realm enforcement for scheme routes only
                                 if route_mod::parse_route(&route).is_ok() {
-                                    let tenant = auth_opt.clone().unwrap();
+                                    let realm = auth_opt.clone().unwrap();
                                     // Simplified: routes carry realm, check authorization directly
-                                    if !permissions::check_route_authorization(&tenant, &route) {
+                                    if !permissions::check_route_authorization(&realm, &route) {
                                         let _ = send_err_chan(
                                             mux_task.clone(),
                                             parsed.header.channel_id,
@@ -1087,9 +1087,9 @@ pub async fn register_default_channel(mux: Arc<Muxer>, engine: EngineHandle, cha
 
         // Connection dropped: notify all domains to cleanup resources for this channel
         let route_family = {
-            let tenant_opt = auth_state.lock().await;
-            match tenant_opt.as_ref() {
-                Some(tenant) => tenant_to_route_family(tenant),
+            let realm_opt = auth_state.lock().await;
+            match realm_opt.as_ref() {
+                Some(realm) => realm_to_route_family(realm),
                 None => DEFAULT_RF,
             }
         };

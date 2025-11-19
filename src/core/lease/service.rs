@@ -89,7 +89,7 @@ impl LeaseService {
     }
 
     /// Acquire `lease://{realm}/{area}/{resource}` (synchronous, returns error if busy).
-    /// Leases are namespaced by route_family to prevent cross-tenant access.
+    /// Leases are namespaced by route_family to prevent cross-realm access.
     /// Full-path interning eliminates repeated parsing and hashing.
     pub fn acquire(
         &self,
@@ -141,7 +141,7 @@ impl LeaseService {
     }
 
     /// Extend by `add_secs`; returns remaining seconds (synchronous).
-    /// Leases are namespaced by route_family to prevent cross-tenant access.
+    /// Leases are namespaced by route_family to prevent cross-realm access.
     pub fn renew(
         &self,
         rf: RouteFamilyId,
@@ -183,7 +183,7 @@ impl LeaseService {
     }
 
     /// Release; clear and prune maps (synchronous, no waiter handoff).
-    /// Leases are namespaced by route_family to prevent cross-tenant access.
+    /// Leases are namespaced by route_family to prevent cross-realm access.
     pub fn surrender(
         &self,
         rf: RouteFamilyId,
@@ -697,7 +697,7 @@ mod tests {
         assert!(renew2.is_ok());
     }
 
-    // --- Multi-tenant/route-family isolation tests ---
+    // --- Multi-realm/route-family isolation tests ---
 
     #[test]
     fn should_isolate_leases_between_different_route_families() {
@@ -720,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn should_prevent_cross_tenant_renew() {
+    fn should_prevent_cross_realm_renew() {
         // Arrange
         let svc = new_test_service();
         let rf1: RouteFamilyId = 1;
@@ -738,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn should_prevent_cross_tenant_surrender() {
+    fn should_prevent_cross_realm_surrender() {
         // Arrange
         let svc = new_test_service();
         let rf1: RouteFamilyId = 1;
@@ -774,7 +774,7 @@ mod tests {
         assert_ne!(grant2.id, grant3.id);
         assert_ne!(grant1.id, grant3.id);
 
-        // Verify each tenant can renew their own lease
+        // Verify each realm can renew their own lease
         let renew1 = svc.renew(rf1, key, &grant1.id, &grant1.token, 2);
         let renew2 = svc.renew(rf2, key, &grant2.id, &grant2.token, 2);
         let renew3 = svc.renew(rf3, key, &grant3.id, &grant3.token, 2);
@@ -832,7 +832,7 @@ mod tests {
         // Verify each lease can be renewed independently
         for (rf, grant) in &grants {
             let renew = svc.renew(*rf, key, &grant.id, &grant.token, 5);
-            assert!(renew.is_ok(), "tenant {} should be able to renew", rf);
+            assert!(renew.is_ok(), "realm {} should be able to renew", rf);
         }
 
         // Cleanup

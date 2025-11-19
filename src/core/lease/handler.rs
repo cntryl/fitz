@@ -20,7 +20,7 @@ use crate::protocol::frame::build_tlv;
 ///
 /// Architecture:
 /// - Instance-owned LeaseService for per-domain isolation
-/// - Shared Arc<LeaseService> allows multi-tenant access via route_family
+/// - Shared Arc<LeaseService> allows multi-realm access via route_family
 /// - Internal DashMap concurrency in LeaseService (no extra locks needed)
 #[derive(Debug)]
 pub struct LeaseDomain {

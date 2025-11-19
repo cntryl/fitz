@@ -2,7 +2,7 @@ use fxhash::FxHashMap;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
-/// Route Family identifier (tenant / shard / CF boundary)
+/// Route Family identifier (realm / shard / CF boundary)
 pub type RouteFamilyId = u32;
 
 /// Default route family for tests / legacy callers
@@ -1454,7 +1454,7 @@ mod tests {
         const CF_TENANT_ACME: u32 = 1;
         const CF_TENANT_WIDGETS: u32 = 2;
 
-        // ACME tenant subscriptions
+        // ACME realm subscriptions
         rt.insert(
             CF_TENANT_ACME,
             RtSubscription {
@@ -1473,7 +1473,7 @@ mod tests {
             },
         );
 
-        // WIDGETS tenant subscriptions
+        // WIDGETS realm subscriptions
         rt.insert(
             CF_TENANT_WIDGETS,
             RtSubscription {
@@ -1492,7 +1492,7 @@ mod tests {
             },
         );
 
-        // Cross-tenant subscription (both have generic monitoring)
+        // Cross-realm subscription (both have generic monitoring)
         rt.insert(
             CF_TENANT_ACME,
             RtSubscription {
@@ -1543,7 +1543,7 @@ mod tests {
         assert!(widget_ids.contains(&3));
         assert!(widget_ids.contains(&4));
 
-        // WIDGETS tenant should NOT see ACME routes (even though ACME has global wildcard)
+        // WIDGETS realm should NOT see ACME routes (even though ACME has global wildcard)
         assert_eq!(
             widgets_other.len(),
             0,

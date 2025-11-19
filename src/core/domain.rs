@@ -16,7 +16,7 @@ pub struct DomainContext {
     pub payload: Vec<u8>,
     /// Channel ID from frame (for tracking subscriptions/sessions)
     pub channel_id: u32,
-    /// Storage route family (for namespacing/multi-tenant operations)
+    /// Storage route family (for namespacing/multi-realm operations)
     pub route_family: RouteFamilyId,
 }
 

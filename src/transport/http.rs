@@ -207,7 +207,7 @@ fn verify_jwt_and_build_session(jwt: &str) -> Result<(String, crate::authz::Sess
     let claims = crate::authz::mock_jwks::validate_mock_token(jwt)
         .ok_or_else(|| "invalid token format".to_string())?;
 
-    // Extract route_family (tenant) from claims
+    // Extract route_family (realm) from claims
     let route_family = claims.aud.clone().unwrap_or_else(|| claims.sub.clone());
 
     // Extract subject

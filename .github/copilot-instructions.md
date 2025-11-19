@@ -1,4 +1,4 @@
-# GitHub Copilot Instructions for Shale Project
+# GitHub Copilot Instructions for Fitz Project
 
 ## Terminology Rules - STRICTLY ENFORCE
 
@@ -635,3 +635,233 @@ pub fn get_value(&self, key: &[u8]) -> Result<Vec<u8>, String> {
     Ok(guard.get(key).cloned())
 }
 ```
+
+---
+
+## Benchmark Guidelines - STRICTLY ENFORCE
+
+**CRITICAL: All benchmarks must follow Pebble-quality microbenching standards.**
+
+### Benchmark Philosophy
+
+All benchmarks MUST:
+
+- Measure **only the hot path** (service logic, no setup)
+- Avoid **all allocations** in measured loop
+- Avoid RNG inside hot path
+- Avoid thread creation inside hot path
+- Precompute keys/values/data outside loops
+- Use deterministic seeds when randomness needed
+- Use `SamplingMode::Flat` for consistent measurements
+- Run fast (hotpath <1s, subsystem <3s, system <10s)
+
+### Benchmark Structure (MANDATORY)
+
+Every benchmark file must:
+
+1. Import from criterion: `criterion::{black_box, criterion_group, criterion_main, Criterion}`
+2. Use shared `criterion_config()` from `benches/config.rs`
+3. Put **all setup outside** the `b.iter()` or `b.iter_batched()` call
+4. Terminate with proper criterion group/main
+
+Example structure:
+
+```rust
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use fitz::routing::GlobalInternTable;
+use std::sync::Arc;
+
+#[path = "../config.rs"]
+mod config;
+
+fn bench_operation(c: &mut Criterion) {
+    // Setup OUTSIDE the benchmark
+    let interner = Arc::new(GlobalInternTable::new());
+    let mut service = MyService::new(interner);
+    service.setup_test_data();
+
+    let mut group = c.benchmark_group("my_operation");
+    group.bench_function("operation_name", |b| {
+        b.iter(|| {
+            // ONLY hot path here
+            let _result = service.do_operation(black_box("input"));
+        })
+    });
+    group.finish();
+}
+
+criterion_group! {
+    name = benches;
+    config = config::criterion_config();
+    targets = bench_operation
+}
+criterion_main!(benches);
+```
+
+### Service Initialization Pattern
+
+For service benchmarks (notice, lease, rpc):
+
+```rust
+// ✅ CORRECT - Service created once outside loop
+fn bench_publish(c: &mut Criterion) {
+    let mut svc = NoticeService::new(Arc::new(GlobalInternTable::new()));
+    svc.subscribe(0, "notice://realm/area/events".to_string(), 1);
+
+    let mut group = c.benchmark_group("notice_publish");
+    group.bench_function("publish", |b| {
+        b.iter(|| {
+            let _result = svc.publish(0, black_box("notice://realm/area/events"), None, &[]);
+        })
+    });
+    group.finish();
+}
+
+// ❌ WRONG - Service created in every iteration
+fn bench_publish_wrong(c: &mut Criterion) {
+    let mut group = c.benchmark_group("notice_publish");
+    group.bench_function("publish", |b| {
+        b.iter(|| {
+            let mut svc = NoticeService::new(Arc::new(GlobalInternTable::new())); // ❌
+            let _result = svc.publish(0, "notice://realm/area/events", None, &[]);
+        })
+    });
+    group.finish();
+}
+```
+
+### Precomputation Patterns
+
+#### Fixed Key/Value Buffers
+
+```rust
+fn make_fixed_data(n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| format!("route://realm/area/res{}", i))
+        .collect()
+}
+
+fn bench_with_precomputed(c: &mut Criterion) {
+    let routes = make_fixed_data(1000); // Outside benchmark
+    let mut svc = MyService::new();
+
+    c.bench_function("operation", |b| {
+        b.iter(|| {
+            for route in &routes {
+                svc.process(black_box(route));
+            }
+        })
+    });
+}
+```
+
+#### Deterministic Shuffle
+
+```rust
+fn shuffle_indices(len: usize) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..len).collect();
+    let mut seed = 0xDEADBEEFCAFEBABE_u64;
+    for i in (1..len).rev() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        let j = (seed as usize) % (i + 1);
+        idx.swap(i, j);
+    }
+    idx
+}
+```
+
+### Using iter_batched
+
+When setup is needed per iteration but shouldn't be measured:
+
+```rust
+use criterion::BatchSize;
+
+group.bench_function("subscribe", |b| {
+    b.iter_batched(
+        || NoticeService::new(Arc::new(GlobalInternTable::new())), // Setup
+        |mut svc| {
+            svc.subscribe(0, black_box("route"), 1); // Measured
+        },
+        BatchSize::SmallInput,
+    )
+});
+```
+
+### Required API Usage
+
+Copilot must always include:
+
+```rust
+group.sampling_mode(SamplingMode::Flat);
+group.throughput(Throughput::Elements(N as u64));
+```
+
+### Benchmark Quality Checklist
+
+Before generating a benchmark, verify:
+
+- [ ] All data precomputed outside hot path
+- [ ] No allocations in measured loop
+- [ ] No string formatting in measured loop
+- [ ] No Vec::push in measured loop
+- [ ] No thread spawns in measured loop
+- [ ] Uses `black_box()` for inputs
+- [ ] Uses real Fitz types
+- [ ] Fast execution (<3s for subsystem, <1s for hotpath)
+- [ ] Uses `config::criterion_config()`
+- [ ] Proper criterion_group/criterion_main structure
+
+### Hot-Path Benchmarks to Generate
+
+For each domain service:
+
+- Subscribe/register operation
+- Unsubscribe/cleanup operation
+- Core routing/matching logic
+- Fanout/delivery path
+
+### Benchmark Tiers
+
+**Hotpath** (benches/hotpath/*):
+- Pure service logic
+- No Arc/RwLock overhead
+- Measures <100ns to <10µs operations
+- Target: <1s total runtime
+
+**Subsystem** (benches/subsystem/*):
+- Service + handler coordination
+- TLV parsing included
+- No engine/transport
+- Target: <3s total runtime
+
+**System** (benches/system/*):
+- Full engine pipeline
+- Frame parsing, routing, authorization
+- Most realistic measurement
+- Target: <10s total runtime
+
+### Examples from Codebase
+
+See these files for excellent benchmark patterns:
+
+- `benches/hotpath/notice.rs` - Service-level benchmarks
+- `benches/hotpath/lease.rs` - Proper precomputation
+- `benches/subsystem/rpc.rs` - Handler integration
+- `benches/system/notice.rs` - Full pipeline
+
+### Why These Rules?
+
+1. **Accuracy**: Measure only what matters (hot path)
+2. **Stability**: Deterministic, reproducible results
+3. **CI-Friendly**: Fast enough for CI pipelines
+4. **Debuggability**: Clear what's being measured
+5. **Comparability**: Consistent methodology across benchmarks
+
+---
+
+**REMEMBER: Benchmarks should be allocation-free, deterministic, and fast!**
+
+---
