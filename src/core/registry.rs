@@ -1,10 +1,14 @@
-// New DomainRegistry pattern - cleaner orchestration
-
 use crate::core::domain::{Domain, DomainContext, DomainResponse};
 use std::sync::Arc;
 
-/// A registry that knows how to route to domains without HashMap lookups
-/// This is compiled/optimized at startup, not interpreted at runtime
+/// Static, branch-predicted domain registry
+/// Zero HashMap lookups and zero string→domain indirection.
+/// Engine calls straight into domain handlers.
+///
+/// This is the highest-performance arrangement for Fitz:
+/// - fully synchronous domain calls
+/// - deterministic dispatch path
+/// - predictable branch behavior
 #[derive(Debug)]
 pub struct DomainRegistry {
     notice: Arc<dyn Domain>,
@@ -23,26 +27,30 @@ impl Default for DomainRegistry {
 }
 
 impl DomainRegistry {
-    /// Route a request to the appropriate domain handler
+    /// Dispatch synchronously to the correct domain.
     ///
-    /// Returns Ok(response) if domain found and handled successfully
-    /// Returns Err if scheme not found or domain returns error
+    /// Returns:
+    /// - `Ok(DomainResponse)` on success
+    /// - `Err(String)` if scheme is unsupported or handler errors
+    #[inline(always)]
     pub fn dispatch(&self, scheme: &str, request: DomainContext) -> Result<DomainResponse, String> {
-        match scheme {
-            "notice" => Ok(self.notice.handle(request)),
-            "rpc" => Ok(self.rpc.handle(request)),
-            "queue" => Ok(self.queue.handle(request)),
-            "lease" => Ok(self.lease.handle(request)),
-            "control" => Ok(self.control.handle(request)),
-            "stream" => Ok(self.stream.handle(request)),
-            "kv" => Ok(self.kv.handle(request)),
-            _ => Err(format!("unsupported scheme: {}", scheme)),
-        }
+        let out = match scheme {
+            "notice" => self.notice.handle(request),
+            "rpc" => self.rpc.handle(request),
+            "queue" => self.queue.handle(request),
+            "lease" => self.lease.handle(request),
+            "control" => self.control.handle(request),
+            "stream" => self.stream.handle(request),
+            "kv" => self.kv.handle(request),
+            _ => return Err(format!("unsupported scheme: {}", scheme)),
+        };
+
+        Ok(out)
     }
 
-    /// Cleanup a channel across all domains
-    /// Domains use this to cleanup subscriptions, inboxes, resources, etc.
-    pub fn cleanup_channel(&self, rf: crate::storage::RouteFamilyId, channel_id: u32) {
+    /// Dispatch cleanup to each domain.
+    /// Called by engine when connections drop or channels orphan.
+    pub fn cleanup_channel(&self, rf: crate::routing::RouteFamilyId, channel_id: u32) {
         self.notice.cleanup_channel(rf, channel_id);
         self.rpc.cleanup_channel(rf, channel_id);
         self.queue.cleanup_channel(rf, channel_id);
@@ -52,7 +60,10 @@ impl DomainRegistry {
         self.kv.cleanup_channel(rf, channel_id);
     }
 
-    /// Create a new registry with all domains initialized
+    /// Initialize registry with domain instances.
+    ///
+    /// ***CRITICAL NOTE:***
+    /// Stream/Queue/KV must share the same backing store.
     pub fn new() -> Self {
         use crate::core::{
             control::ControlDomain, kv::KvDomain, lease::LeaseDomain, notice::NoticeDomain,
@@ -60,20 +71,19 @@ impl DomainRegistry {
         };
         use crate::storage::midge_adapter;
 
-        // Initialize domains
+        // Shared storage backend
+        let kv_store = midge_adapter::create_memory_store().expect("memory store init failed");
+
+        // Domains (Notice/RPC/Lease have no storage deps)
         let notice = Arc::new(NoticeDomain::new());
         let rpc = Arc::new(RpcDomain::new());
         let lease = Arc::new(LeaseDomain::new());
+        let control = Arc::new(ControlDomain::new());
 
-        // Create storage backend for stream, queue, and kv domains
-        let kv_store = midge_adapter::create_memory_store()
-            .expect("Failed to create memory store for domains");
+        // Storage-backed domains
         let stream = Arc::new(StreamDomain::new(Arc::clone(&kv_store)));
         let queue = Arc::new(QueueDomain::new(Arc::clone(&kv_store)));
         let kv = Arc::new(KvDomain::new(kv_store));
-
-        // Control domain is now isolated - engine coordinates cross-domain interactions
-        let control = Arc::new(ControlDomain::new());
 
         Self {
             notice,
@@ -86,20 +96,8 @@ impl DomainRegistry {
         }
     }
 
-    /// Get notice domain for engine coordination (control domain fanout)
+    /// Expose notice domain for engine fanout (control → notice)
     pub fn get_notice_domain(&self) -> Arc<dyn Domain> {
         Arc::clone(&self.notice)
     }
 }
-
-// Usage in engine.rs:
-//
-// Instead of:
-//   let mut domains: HashMap<&'static str, Arc<dyn Domain>> = HashMap::new();
-//   domains.insert("notice", Arc::clone(&notice_domain) as Arc<dyn Domain>);
-//   // ... etc
-//   let domain = domains.get(scheme_str)?;
-//
-// Now:
-//   let registry = DomainRegistry::new();
-//   let response = registry.dispatch(scheme, request).await?;

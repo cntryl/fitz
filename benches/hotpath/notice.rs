@@ -9,7 +9,9 @@
 //! Zero frame parsing, zero engine, zero outbound delivery.
 //! This is the true "business logic" bench.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use fitz::core::notice::NoticeService;
 use fitz::routing::DEFAULT_RF;
 
@@ -31,7 +33,9 @@ fn unsubscribe(svc: &mut NoticeService, sub_id: u64) -> bool {
 }
 
 fn publish_lookup(svc: &NoticeService, route: &str) {
-    let _result = svc.publish(DEFAULT_RF, route, Some("msg-1"), b"test");
+    // publish is a thin wrapper over RouteTable::matching_subscribers,
+    // msg_id/body are ignored in the current implementation.
+    let _result = svc.publish(DEFAULT_RF, route, None, &[]);
 }
 
 // -----------------------------------------------------------------------------
@@ -40,20 +44,27 @@ fn publish_lookup(svc: &NoticeService, route: &str) {
 
 fn bench_hot_subscribe(c: &mut Criterion) {
     let mut group = c.benchmark_group("notice_hot_subscribe");
+
     group.bench_function("subscribe", |b| {
         b.iter_batched(
             || NoticeService::new(),
             |mut svc| {
-                subscribe(&mut svc, black_box("notice://realm/area/events/update"), CHANNEL_ID)
+                subscribe(
+                    &mut svc,
+                    black_box("notice://realm/area/events/update"),
+                    CHANNEL_ID,
+                )
             },
-            criterion::BatchSize::SmallInput,
+            BatchSize::SmallInput,
         )
     });
+
     group.finish();
 }
 
 fn bench_hot_unsubscribe(c: &mut Criterion) {
     let mut group = c.benchmark_group("notice_hot_unsubscribe");
+
     group.bench_function("unsubscribe", |b| {
         b.iter_batched(
             || {
@@ -61,10 +72,13 @@ fn bench_hot_unsubscribe(c: &mut Criterion) {
                 let sub_id = subscribe(&mut svc, "notice://realm/area/events/update", CHANNEL_ID);
                 (svc, sub_id)
             },
-            |(mut svc, sub_id)| unsubscribe(&mut svc, black_box(sub_id)),
-            criterion::BatchSize::SmallInput,
+            |(mut svc, sub_id)| {
+                unsubscribe(&mut svc, black_box(sub_id));
+            },
+            BatchSize::SmallInput,
         )
     });
+
     group.finish();
 }
 

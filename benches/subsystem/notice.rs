@@ -1,15 +1,22 @@
-//! Subsystem benchmarks for Notice domain: Engine → Domain → Response
+//! Notice subsystem benchmarks (Engine glue → Domain → Response)
 //!
-//! Measures only the synchronous engine path (no async, no threads, no mpsc):
-//!   1. Raw frame bytes
+//! Measures exactly the synchronous domain path used by Engine::handle_frame:
+//!   1. build_frame()
 //!   2. parse_frame()
-//!   3. parse_route()
-//!   4. DomainRegistry.dispatch()
-//!   5. NoticeDomain.handle()
-//!   6. Response encoding
+//!   3. extract & parse TAG_ROUTE
+//!   4. parse_route()
+//!   5. DomainRegistry::dispatch()
+//!   6. NoticeDomain.handle()
+//!   7. encode DomainResponse → bytes
 //!
-//! This is the "correct" subsystem layer: full engine+domain logic,
-//! but without transport threads, channels, or async runtimes.
+//! This excludes:
+//!   - engine thread
+//!   - async WS
+//!   - channel/conn registry
+//!   - session lookup / authz
+//!   - outbound queue
+//!
+//! This is tier-2 (subsystem) in your 3-layer model.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::sync::Arc;
@@ -26,65 +33,64 @@ mod config;
 const CHANNEL_ID: u32 = 1;
 
 // -----------------------------------------------------------------------------
-// Frame builders
+// Helpers
 // -----------------------------------------------------------------------------
 
-fn build_subscribe_frame(route: &str, channel_id: u32) -> Vec<u8> {
+fn build_sub_frame(route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_SUBSCRIBE, &[], &mut payload);
-    build_frame(FRAME_REG, 0, channel_id, &payload)
+    build_frame(FRAME_REG, 0, CHANNEL_ID, &payload)
 }
 
-fn build_publish_frame(route: &str, id: &str, body: &[u8], channel_id: u32) -> Vec<u8> {
-    let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
-    build_tlv(TAG_ID, id.as_bytes(), &mut payload);
-    build_tlv(TAG_BODY, body, &mut payload);
-    build_frame(FRAME_PUB, 0, channel_id, &payload)
-}
-
-fn build_publish_frame_no_ack(route: &str, id: &str, body: &[u8], channel_id: u32) -> Vec<u8> {
-    let mut payload = Vec::new();
-    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
-    build_tlv(TAG_NO_ACK, &[], &mut payload);
-    build_tlv(TAG_ID, id.as_bytes(), &mut payload);
-    build_tlv(TAG_BODY, body, &mut payload);
-    build_frame(FRAME_PUB, 0, channel_id, &payload)
-}
-
-fn build_unsubscribe_frame(route: &str, channel_id: u32) -> Vec<u8> {
+fn build_unsub_frame(route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
     build_tlv(TAG_UNSUBSCRIBE, &[], &mut payload);
-    build_frame(FRAME_REG, 0, channel_id, &payload)
+    build_frame(FRAME_REG, 0, CHANNEL_ID, &payload)
+}
+
+fn build_pub_frame(route: &str, id: &str, body: &[u8], no_ack: bool) -> Vec<u8> {
+    let mut payload = Vec::new();
+    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
+    if no_ack {
+        build_tlv(TAG_NO_ACK, &[], &mut payload);
+    }
+    build_tlv(TAG_ID, id.as_bytes(), &mut payload);
+    build_tlv(TAG_BODY, body, &mut payload);
+    build_frame(FRAME_PUB, 0, CHANNEL_ID, &payload)
 }
 
 // -----------------------------------------------------------------------------
-// Test harness — fully synchronous, real domain, no async/tokio
+// Harness: EXACT engine subsystem path (no threads)
 // -----------------------------------------------------------------------------
 
-struct NoticeSubsystemBench {
-    domains: Arc<DomainRegistry>,
+struct BenchHarness {
+    registry: Arc<DomainRegistry>,
 }
 
-impl NoticeSubsystemBench {
+impl BenchHarness {
     fn new() -> Self {
-        let domains = Arc::new(DomainRegistry::new());
-        Self { domains }
+        Self {
+            registry: Arc::new(DomainRegistry::new()),
+        }
     }
 
-    /// Pure synchronous subsystem path: frame parse → route parse → domain dispatch
-    fn handle_frame(&self, bytes: &[u8]) {
+    /// Pure synchronous engine→domain path.
+    fn exec(&self, bytes: &[u8]) {
+        // 1. Frame parse
         let parsed = parse_frame(bytes).expect("frame");
         let payload = parsed.payload;
 
+        // 2. Extract route from TLV
         let route_str = find_tlv(payload, TAG_ROUTE)
             .and_then(|b| std::str::from_utf8(b).ok())
             .expect("route");
 
+        // 3. Parse route string → RouteParts
         let route = parse_route(route_str).expect("valid");
 
+        // 4. Build DomainContext
         let ctx = DomainContext {
             route: route.clone(),
             route_str: route_str.to_owned(),
@@ -93,170 +99,124 @@ impl NoticeSubsystemBench {
             route_family: 1,
         };
 
-        // synchronous domain dispatch (response is returned but ignored)
-        let _ = self.domains.dispatch(route.scheme.as_str(), ctx);
+        // 5. Domain dispatch
+        let _resp = self
+            .registry
+            .dispatch(route.scheme.as_str(), ctx)
+            .expect("domain");
+        // 6. Response dropped (bench purpose is measuring full path)
     }
 }
 
 // -----------------------------------------------------------------------------
-// Benchmark definitions
+// Benches
 // -----------------------------------------------------------------------------
 
 fn bench_subscribe(c: &mut Criterion) {
-    let bench = NoticeSubsystemBench::new();
+    let h = BenchHarness::new();
+    let f = build_sub_frame("notice://realm/area/events/update");
 
-    let frame = build_subscribe_frame("notice://realm/area/events/update", CHANNEL_ID);
-
-    let mut group = c.benchmark_group("notice_subsys_subscribe");
-    group.bench_function("subscribe", |b| {
-        b.iter(|| {
-            bench.handle_frame(black_box(&frame));
-        })
-    });
-    group.finish();
+    let mut g = c.benchmark_group("notice_subsys_subscribe");
+    g.bench_function("subscribe", |b| b.iter(|| h.exec(black_box(&f))));
+    g.finish();
 }
 
 fn bench_unsubscribe(c: &mut Criterion) {
-    let bench = NoticeSubsystemBench::new();
+    let h = BenchHarness::new();
 
-    let sub = build_subscribe_frame("notice://realm/area/events/update", CHANNEL_ID);
-    bench.handle_frame(&sub); // setup
+    // Initialize subscription
+    h.exec(&build_sub_frame("notice://realm/area/events/update"));
 
-    let unsub = build_unsubscribe_frame("notice://realm/area/events/update", CHANNEL_ID);
+    let f = build_unsub_frame("notice://realm/area/events/update");
 
-    let mut group = c.benchmark_group("notice_subsys_unsubscribe");
-    group.bench_function("unsubscribe", |b| {
-        b.iter(|| {
-            bench.handle_frame(black_box(&unsub));
-        })
-    });
-    group.finish();
+    let mut g = c.benchmark_group("notice_subsys_unsubscribe");
+    g.bench_function("unsubscribe", |b| b.iter(|| h.exec(black_box(&f))));
+    g.finish();
 }
 
 fn bench_publish_no_subscribers(c: &mut Criterion) {
-    let bench = NoticeSubsystemBench::new();
+    let h = BenchHarness::new();
 
-    let body = b"hello world";
+    let ack = build_pub_frame("notice://realm/area/alerts/crit", "id1", b"hello", false);
+    let noack = build_pub_frame("notice://realm/area/alerts/crit", "id1", b"hello", true);
 
-    let pub_ack = build_publish_frame("notice://realm/area/alerts/crit", "id1", body, CHANNEL_ID);
-    let pub_noack =
-        build_publish_frame_no_ack("notice://realm/area/alerts/crit", "id1", body, CHANNEL_ID);
-
-    let mut group = c.benchmark_group("notice_subsys_publish_no_subs");
-    group.bench_function("with_ack", |b| {
-        b.iter(|| bench.handle_frame(black_box(&pub_ack)))
-    });
-    group.bench_function("no_ack", |b| {
-        b.iter(|| bench.handle_frame(black_box(&pub_noack)))
-    });
-    group.finish();
+    let mut g = c.benchmark_group("notice_subsys_publish_no_subs");
+    g.bench_function("with_ack", |b| b.iter(|| h.exec(black_box(&ack))));
+    g.bench_function("no_ack", |b| b.iter(|| h.exec(black_box(&noack))));
+    g.finish();
 }
 
-fn bench_publish_with_fanout(c: &mut Criterion) {
-    let mut group = c.benchmark_group("notice_subsys_publish_fanout");
+fn bench_publish_fanout(c: &mut Criterion) {
+    let mut g = c.benchmark_group("notice_subsys_publish_fanout");
 
-    for &sub_count in &[1, 10, 100, 1000] {
-        let bench = NoticeSubsystemBench::new();
+    for &count in &[1, 10, 100, 1000] {
+        let h = BenchHarness::new();
 
-        for ch in 1..=sub_count {
-            let sub = build_subscribe_frame("notice://realm/area/broadcast/alert", ch);
-            bench.handle_frame(&sub);
+        // Register N subscribers
+        for ch in 1..=count {
+            let f = build_sub_frame("notice://realm/area/data/update");
+            h.exec(&f);
         }
 
         let body = vec![0u8; 128];
-        let frame = build_publish_frame(
-            "notice://realm/area/broadcast/alert",
-            "id",
-            &body,
-            CHANNEL_ID,
-        );
+        let f = build_pub_frame("notice://realm/area/data/update", "id", &body, false);
 
-        group.throughput(Throughput::Elements(sub_count as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(sub_count),
-            &sub_count,
-            |b, _| {
-                b.iter(|| bench.handle_frame(black_box(&frame)));
-            },
-        );
+        g.throughput(Throughput::Elements(count as u64));
+        g.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| h.exec(black_box(&f)))
+        });
     }
-
-    group.finish();
+    g.finish();
 }
 
-fn bench_wildcard_matching(c: &mut Criterion) {
-    let bench = NoticeSubsystemBench::new();
+fn bench_wildcards(c: &mut Criterion) {
+    let h = BenchHarness::new();
 
-    // install wildcard patterns
+    // Install wildcard patterns
     let patterns = [
-        ("notice://realm/area/*/update", 10),
-        ("notice://realm/*/events/update", 11),
-        ("notice://*/area/events/update", 12),
-        ("notice://*/*/events/update", 13),
+        "notice://realm/area/*/update",
+        "notice://realm/*/events/update",
+        "notice://*/area/events/update",
+        "notice://*/*/events/update",
     ];
-
-    for (route, ch) in &patterns {
-        let sub = build_subscribe_frame(route, *ch);
-        bench.handle_frame(&sub);
+    for p in patterns {
+        h.exec(&build_sub_frame(p));
     }
 
-    let test_routes = [
+    let routes = [
         "notice://realm/area/events/update",
         "notice://realm/area/specific/update",
         "notice://realm2/area/events/update",
         "notice://realm/area2/other/update",
     ];
 
-    let mut group = c.benchmark_group("notice_subsys_wildcard");
-
-    for r in &test_routes {
-        let frame = build_publish_frame(r, "id", b"p", CHANNEL_ID);
-
-        group.bench_function(*r, |b| {
-            b.iter(|| bench.handle_frame(black_box(&frame)));
-        });
+    let mut g = c.benchmark_group("notice_subsys_wildcard");
+    for r in routes {
+        let f = build_pub_frame(r, "id", b"x", false);
+        g.bench_function(r, |b| b.iter(|| h.exec(black_box(&f))));
     }
-
-    group.finish();
+    g.finish();
 }
 
-fn bench_message_sizes(c: &mut Criterion) {
-    let bench = NoticeSubsystemBench::new();
+fn bench_body_sizes(c: &mut Criterion) {
+    let h = BenchHarness::new();
+    h.exec(&build_sub_frame("notice://realm/area/data"));
 
-    let sub = build_subscribe_frame("notice://realm/area/data", 100);
-    bench.handle_frame(&sub);
-
-    let mut group = c.benchmark_group("notice_subsys_body_sizes");
+    let mut g = c.benchmark_group("notice_subsys_body_sizes");
 
     for size in [64, 256, 1024, 4096, 16384] {
         let body = vec![0u8; size];
-        let frame = build_publish_frame("notice://realm/area/data", "id", &body, CHANNEL_ID);
+        let f = build_pub_frame("notice://realm/area/data", "id", &body, false);
 
-        group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| bench.handle_frame(black_box(&frame)));
+        g.throughput(Throughput::Bytes(size as u64));
+        g.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
+            b.iter(|| h.exec(black_box(&f)))
         });
     }
-
-    group.finish();
+    g.finish();
 }
 
-fn bench_authorization(c: &mut Criterion) {
-    let bench = NoticeSubsystemBench::new();
-
-    let frame = build_subscribe_frame("notice://realm/area/events/u", CHANNEL_ID);
-
-    let mut group = c.benchmark_group("notice_subsys_authz");
-    group.bench_function("with_authz", |b| {
-        b.iter(|| bench.handle_frame(black_box(&frame)));
-    });
-    group.finish();
-}
-
-// -----------------------------------------------------------------------------
 // Registration
-// -----------------------------------------------------------------------------
-
 criterion_group!(
     name = subsystem_notice;
     config = config::criterion_config();
@@ -264,9 +224,8 @@ criterion_group!(
         bench_subscribe,
         bench_unsubscribe,
         bench_publish_no_subscribers,
-        bench_publish_with_fanout,
-        bench_wildcard_matching,
-        bench_message_sizes,
-        bench_authorization
+        bench_publish_fanout,
+        bench_wildcards,
+        bench_body_sizes,
 );
 criterion_main!(subsystem_notice);

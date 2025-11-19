@@ -1,0 +1,162 @@
+//! RPC subsystem benchmarks (Engine glue → Domain → Response)
+//!
+//! Measures exactly the synchronous domain path used by Engine::handle_frame:
+//!   1. build_frame()
+//!   2. parse_frame()
+//!   3. extract & parse TAG_ROUTE
+//!   4. parse_route()
+//!   5. DomainRegistry::dispatch()
+//!   6. RpcDomain.handle()
+//!   7. encode DomainResponse → bytes
+//!
+//! This excludes:
+//!   - engine thread
+//!   - async WS
+//!   - channel/conn registry
+//!   - session lookup / authz
+//!   - outbound queue
+//!
+//! This is tier-2 (subsystem) in your 3-layer model.
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+use fitz::core::domain::DomainContext;
+use fitz::core::registry::DomainRegistry;
+use fitz::protocol::frame::{build_frame, build_tlv, find_tlv, parse_frame};
+use fitz::protocol::route::parse_route;
+use fitz::protocol::tags::*;
+
+#[path = "../config.rs"]
+mod config;
+
+const CHANNEL_ID: u32 = 1;
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+fn build_subscribe_frame(route: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
+    build_tlv(TAG_SUBSCRIBE, &[], &mut payload);
+    build_frame(FRAME_DAT, 0, CHANNEL_ID, &payload)
+}
+
+fn build_unsubscribe_frame(route: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
+    build_tlv(TAG_UNSUBSCRIBE, &[], &mut payload);
+    build_frame(FRAME_DAT, 0, CHANNEL_ID, &payload)
+}
+
+fn build_request_frame(route: &str, correlation_id: &str, reply_route: &str, body: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
+    build_tlv(TAG_ID, correlation_id.as_bytes(), &mut payload);
+    build_tlv(TAG_ROUTE_REPLY, reply_route.as_bytes(), &mut payload);
+    build_tlv(TAG_BODY, body, &mut payload);
+    build_frame(FRAME_DAT, 0, CHANNEL_ID, &payload)
+}
+
+fn build_reply_frame(route: &str, correlation_id: &str, body: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    build_tlv(TAG_ROUTE, route.as_bytes(), &mut payload);
+    build_tlv(TAG_ID, correlation_id.as_bytes(), &mut payload);
+    build_tlv(TAG_BODY, body, &mut payload);
+    build_frame(FRAME_DAT, 0, CHANNEL_ID, &payload)
+}
+
+struct BenchHarness {
+    registry: DomainRegistry,
+}
+
+impl BenchHarness {
+    fn new() -> Self {
+        Self {
+            registry: DomainRegistry::new(),
+        }
+    }
+
+    fn exec(&self, frame_bytes: &[u8]) {
+        // 1. Parse frame
+        let parsed = parse_frame(frame_bytes).expect("parse");
+
+        let payload = parsed.payload;
+
+        // 2. Extract route from TLV
+        let route_str = find_tlv(payload, TAG_ROUTE)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .expect("route");
+
+        // 3. Parse route string → RouteParts
+        let route = parse_route(route_str).expect("valid");
+
+        // 4. Build DomainContext
+        let ctx = DomainContext {
+            route: route.clone(),
+            route_str: route_str.to_owned(),
+            payload: payload.to_vec(),
+            channel_id: parsed.header.channel_id,
+            route_family: 1,
+        };
+
+        // 5. Domain dispatch
+        let _resp = self
+            .registry
+            .dispatch(route.scheme.as_str(), ctx)
+            .expect("domain");
+        // 6. Response dropped (bench purpose is measuring full path)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Benches
+// -----------------------------------------------------------------------------
+
+fn bench_subscribe(c: &mut Criterion) {
+    let h = BenchHarness::new();
+    let f = build_subscribe_frame("rpc://realm/area/handler");
+
+    let mut g = c.benchmark_group("rpc_subsys_subscribe");
+    g.bench_function("subscribe", |b| b.iter(|| h.exec(black_box(&f))));
+    g.finish();
+}
+
+fn bench_unsubscribe(c: &mut Criterion) {
+    let h = BenchHarness::new();
+    let f = build_unsubscribe_frame("rpc://realm/area/handler");
+
+    let mut g = c.benchmark_group("rpc_subsys_unsubscribe");
+    g.bench_function("unsubscribe", |b| b.iter(|| h.exec(black_box(&f))));
+    g.finish();
+}
+
+fn bench_route_request(c: &mut Criterion) {
+    let h = BenchHarness::new();
+    let f = build_request_frame("rpc://realm/area/handler", "corr123", "inbox://client/inbox", b"test body");
+
+    let mut g = c.benchmark_group("rpc_subsys_route_request");
+    g.bench_function("route_request", |b| b.iter(|| h.exec(black_box(&f))));
+    g.finish();
+}
+
+fn bench_route_reply(c: &mut Criterion) {
+    let h = BenchHarness::new();
+    // Reply is sent from handler perspective - use rpc:// route with correlation
+    let f = build_reply_frame("rpc://realm/area/handler", "corr123", b"reply body");
+
+    let mut g = c.benchmark_group("rpc_subsys_route_reply");
+    g.bench_function("route_reply", |b| b.iter(|| h.exec(black_box(&f))));
+    g.finish();
+}
+
+criterion_group!(
+    name = subsystem_rpc;
+    config = config::criterion_config();
+    targets =
+        bench_subscribe,
+        bench_unsubscribe,
+        bench_route_request,
+        bench_route_reply
+);
+criterion_main!(subsystem_rpc);

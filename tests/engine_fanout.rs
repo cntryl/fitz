@@ -83,7 +83,7 @@ fn should_fanout_notice_publish_to_all_subscribers() {
     shard.on_frame(conn_sub1, frame_sub1);
     shard.on_frame(conn_sub2, frame_sub2);
 
-    // Act: publish frame on publisher channel
+    // Act
     let publish_body = b"hello-world";
     let frame_pub = make_publish_frame(30, route, publish_body);
     shard.on_frame(conn_pub, frame_pub);
