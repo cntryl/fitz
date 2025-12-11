@@ -1,13 +1,13 @@
-//! Storage module - integrates Midge as the storage backend
+//! Integration with Midge for durable storage.
+//!
+//! Only one actor touches Midge: MidgeActor.
+//! All persistence flows through messages to MidgeActor,
+//! keeping the hot path (other actors) purely in-memory.
 
-pub mod markers;
-pub mod midge_adapter;
-pub mod traits;
+pub mod midge_actor;
+pub mod api;
+pub mod types;
 
-pub use crate::routing::RouteFamilyId;
-pub use traits::{KvStore, KvTransaction};
-
-/// Initialize storage subsystem (stub)
-pub fn init() {
-    // TODO: initialize storage backends
-}
+pub use midge_actor::MidgeActor;
+pub use api::{DurableApi, StreamOp, QueueOp, KvOp};
+pub use types::{StreamRecord, QueueRecord, KvItem};

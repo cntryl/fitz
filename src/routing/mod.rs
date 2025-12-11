@@ -1,7 +1,11 @@
-//! Shared routing infrastructure for pub/sub and RPC patterns
+//! Route parsing and matching DSL.
+//!
+//! Provides:
+//! - Route path parser (scheme://realm/area/resource/operation)
+//! - Wildcard and variable matching
+//! - Match tree for efficient routing
+//! - Static route registry for RouterActor
 
-mod intern;
-mod route_table;
-
-pub use intern::{GlobalInternTable, InternId};
-pub use route_table::{RouteFamilyId, RouteTable, RtSubscription, DEFAULT_RF};
+pub mod path;
+pub mod matcher;
+pub mod registry;
