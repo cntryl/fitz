@@ -39,7 +39,6 @@ pub mod personas;
 pub mod storage;
 pub mod transport;
 pub mod routing;
-pub mod kv;
 pub mod metrics;
 pub mod api;
 pub mod config;
