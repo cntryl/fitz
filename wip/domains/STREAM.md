@@ -599,5 +599,5 @@ async fn process_order_events() {
 
 ---
 
-*See OVERVIEW.md for system-level context and other domain specifications.*</content>
+*See ARCHITECTURE.md for system-level context and other domain specifications.*</content>
 <parameter name="filePath">d:\repos\cntryl\fitz\docs\STREAM_SPEC.md

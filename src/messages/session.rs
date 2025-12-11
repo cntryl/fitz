@@ -1,7 +1,5 @@
 //! SessionActor messages.
 
-use crate::actor::ActorRef;
-
 /// Messages for SessionActor.
 #[derive(Debug)]
 pub enum SessionMsg {

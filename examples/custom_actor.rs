@@ -12,6 +12,7 @@ use fitz::prelude::*;
 
 /// Custom actor message type.
 #[derive(Debug)]
+#[allow(dead_code)]
 enum CounterMsg {
     Increment,
     Decrement,
@@ -22,6 +23,7 @@ enum CounterMsg {
 
 /// Reply message for GetValue.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct CounterReply {
     value: i64,
 }

@@ -1,7 +1,5 @@
 //! RpcMsg messages.
 
-use crate::actor::ActorRef;
-
 /// Messages for RpcActor.
 #[derive(Debug)]
 pub enum RpcMsg {

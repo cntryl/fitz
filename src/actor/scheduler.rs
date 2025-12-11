@@ -1,7 +1,7 @@
 //! Actor scheduler and executor.
 
 use super::actor_ref::ActorRef;
-use super::error::{ActorError, ActorResult};
+use super::error::ActorResult;
 use super::mailbox::Mailbox;
 use super::{Actor, ActorContext};
 use std::sync::Arc;
@@ -9,16 +9,16 @@ use std::thread;
 
 /// Cooperative scheduler that drives actors.
 pub struct Scheduler {
-    name: String,
-    worker_count: usize,
+    _name: String,
+    _worker_count: usize,
 }
 
 impl Scheduler {
     /// Create a new scheduler.
     pub fn new(name: impl Into<String>, worker_count: usize) -> Self {
         Self {
-            name: name.into(),
-            worker_count,
+            _name: name.into(),
+            _worker_count: worker_count,
         }
     }
 
@@ -66,16 +66,8 @@ where
     actor.on_start(&mut ctx);
 
     // Process messages
-    loop {
-        match mailbox.recv() {
-            Some(msg) => {
-                actor.on_message(msg, &mut ctx);
-            }
-            None => {
-                // Mailbox closed, actor is stopping
-                break;
-            }
-        }
+    while let Some(msg) = mailbox.recv() {
+        actor.on_message(msg, &mut ctx);
     }
 
     // Call on_stop

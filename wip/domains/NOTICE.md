@@ -510,5 +510,5 @@ async fn watch_order(order_id: &str) {
 
 ---
 
-*See OVERVIEW.md for system-level context and other domain specifications.*</content>
+*See ARCHITECTURE.md for system-level context and other domain specifications.*</content>
 <parameter name="filePath">d:\repos\cntryl\fitz\docs\NOTICE_SPEC.md

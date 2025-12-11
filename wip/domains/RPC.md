@@ -623,5 +623,5 @@ async fn auth_worker(engine: &EngineHandle) {
 
 ---
 
-*See OVERVIEW.md for system-level context and other domain specifications.*</content>
+*See ARCHITECTURE.md for system-level context and other domain specifications.*</content>
 <parameter name="filePath">d:\repos\cntryl\fitz\docs\RPC_SPEC.md

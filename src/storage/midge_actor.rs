@@ -8,7 +8,7 @@
 
 use crate::actor::{Actor, ActorContext};
 use crate::messages::midge::{
-    MidgeMsg, AppendStreamReply, ReadStreamReply, StreamRecord,
+    MidgeMsg, AppendStreamReply, ReadStreamReply,
     EnqueueReply, DequeueReply, AckReply,
     KvPutReply, KvGetReply, KvDeleteReply, MetricSnapshot,
 };
@@ -39,10 +39,10 @@ impl MidgeActor {
     /// Handle stream append operation.
     fn handle_append_stream(
         &mut self,
-        realm: String,
-        area: String,
-        stream_name: String,
-        payload: Vec<u8>,
+        _realm: String,
+        _area: String,
+        _stream_name: String,
+        _payload: Vec<u8>,
         reply_to: Option<crate::actor::ActorRef<AppendStreamReply>>,
     ) {
         // TODO: Implement real Midge append
@@ -59,11 +59,11 @@ impl MidgeActor {
     /// Handle stream read operation.
     fn handle_read_stream(
         &mut self,
-        realm: String,
-        area: String,
-        stream_name: String,
-        from_offset: u64,
-        max_count: usize,
+        _realm: String,
+        _area: String,
+        _stream_name: String,
+        _from_offset: u64,
+        _max_count: usize,
         reply_to: crate::actor::ActorRef<ReadStreamReply>,
     ) {
         // TODO: Implement real Midge read
@@ -73,10 +73,10 @@ impl MidgeActor {
     /// Handle queue enqueue operation.
     fn handle_enqueue(
         &mut self,
-        realm: String,
-        area: String,
-        queue_name: String,
-        payload: Vec<u8>,
+        _realm: String,
+        _area: String,
+        _queue_name: String,
+        _payload: Vec<u8>,
         reply_to: Option<crate::actor::ActorRef<EnqueueReply>>,
     ) {
         // TODO: Implement real Midge enqueue
@@ -92,9 +92,9 @@ impl MidgeActor {
     /// Handle queue dequeue operation.
     fn handle_dequeue(
         &mut self,
-        realm: String,
-        area: String,
-        queue_name: String,
+        _realm: String,
+        _area: String,
+        _queue_name: String,
         reply_to: crate::actor::ActorRef<DequeueReply>,
     ) {
         // TODO: Implement real Midge dequeue
@@ -107,10 +107,10 @@ impl MidgeActor {
     /// Handle queue ack operation.
     fn handle_ack(
         &mut self,
-        realm: String,
-        area: String,
-        queue_name: String,
-        message_id: String,
+        _realm: String,
+        _area: String,
+        _queue_name: String,
+        _message_id: String,
         reply_to: Option<crate::actor::ActorRef<AckReply>>,
     ) {
         // TODO: Implement real Midge ack
@@ -125,10 +125,10 @@ impl MidgeActor {
     /// Handle KV put operation.
     fn handle_kv_put(
         &mut self,
-        realm: String,
-        area: String,
-        key: Vec<u8>,
-        value: Vec<u8>,
+        _realm: String,
+        _area: String,
+        _key: Vec<u8>,
+        _value: Vec<u8>,
         reply_to: Option<crate::actor::ActorRef<KvPutReply>>,
     ) {
         // TODO: Implement real Midge KV put
@@ -143,9 +143,9 @@ impl MidgeActor {
     /// Handle KV get operation.
     fn handle_kv_get(
         &mut self,
-        realm: String,
-        area: String,
-        key: Vec<u8>,
+        _realm: String,
+        _area: String,
+        _key: Vec<u8>,
         reply_to: crate::actor::ActorRef<KvGetReply>,
     ) {
         // TODO: Implement real Midge KV get
@@ -155,9 +155,9 @@ impl MidgeActor {
     /// Handle KV delete operation.
     fn handle_kv_delete(
         &mut self,
-        realm: String,
-        area: String,
-        key: Vec<u8>,
+        _realm: String,
+        _area: String,
+        _key: Vec<u8>,
         reply_to: Option<crate::actor::ActorRef<KvDeleteReply>>,
     ) {
         // TODO: Implement real Midge KV delete
@@ -170,7 +170,7 @@ impl MidgeActor {
     }
 
     /// Handle metrics flush operation.
-    fn handle_flush_metrics(&mut self, realm: String, metrics: Vec<MetricSnapshot>) {
+    fn handle_flush_metrics(&mut self, _realm: String, _metrics: Vec<MetricSnapshot>) {
         // TODO: Implement metrics flush to Midge
     }
 }

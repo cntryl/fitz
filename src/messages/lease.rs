@@ -1,6 +1,5 @@
 //! LeaseMsg messages.
 
-use crate::actor::ActorRef;
 use std::time::Duration;
 
 /// Messages for LeaseActor.

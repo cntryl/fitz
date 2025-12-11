@@ -1,31 +1,39 @@
 # Lease Domain Specification
 
-**Version:** 1.0  
-**Status:** Implementation Complete  
-**Last Updated:** November 15, 2025  
+**Version:** 2.0 (Actor Model MVP)  
+**Status:** Specification  
+**Durability:** Ephemeral (lost on restart)  
+**Last Updated:** December 11, 2025  
 
 ---
 
 ## Overview
 
-Fitz Leases provide distributed coordination primitives for exclusive resource access. Leases enable exactly-one semantics for resource ownership with automatic expiry, supporting patterns like leader election, distributed locking, and work distribution.
+Fitz Leases provide ephemeral coordination primitives for exclusive resource access within a single Fitz instance. Leases enable exactly-one semantics for resource ownership with automatic expiry, supporting patterns like leader election and distributed locking.
 
-### Key Features
+### Key Features (MVP)
 
 - **Exclusive access**: Exactly-one holder per resource
 - **Automatic expiry**: Leases expire if not renewed
-- **Wait queues**: FIFO queuing for contended resources
+- **TTL-based lifecycle**: Explicit acquire/renew/release
 - **Hierarchical namespacing**: `realm/area/resource` organization
-- **Lease tokens**: Secure, non-forgeable access tokens
-- **Graceful handover**: Renew/release operations
+- **Secure tokens**: 32-byte random tokens (Base64URL)
+- **Actor-driven**: Pure message passing, no shared state
+
+### Removed from v1 (for MVP simplicity)
+
+- ❌ Wait queues / FIFO fairness (fail-fast on contention)
+- ❌ Cross-node coordination (single-node only)
+- ❌ Persistent lease storage (ephemeral)
+- ❌ Lease body metadata (optional, may add later)
+- ❌ Async RwLocks (actor state only)
 
 ### Use Cases
 
-- Distributed locking
-- Leader election
-- Job scheduling and work distribution
-- Resource allocation
-- Configuration management coordination
+- Ephemeral distributed locking
+- Leader election (single-node)
+- Exclusive job processing
+- Resource allocation coordination
 
 ---
 
@@ -48,56 +56,116 @@ lease://{realm}/{area}/{resource}[/{operation}]
 
 ### 1. Acquire Lease
 
-**Route Operation:** `lease://{realm}/{area}/{resource}/acquire`  
-**TLV Tags:** `TAG_ROUTE`, `TAG_LEASE_SECS` (TTL), `TAG_BODY` (optional data)
+Attempt to acquire exclusive lease on resource.
 
-**Behavior:**
-- Attempts to acquire exclusive lease on resource
-- If resource is held, client joins wait queue
-- Returns lease token on success
+**Route:** `lease://{realm}/{area}/{resource}/acquire`
 
-**Response TLV:** `TAG_ID` (lease token), `TAG_BODY` (optional data)
+**Request (TLV):**
+```
+Type: 0x0500 (Lease Request)
+Tags:
+  0x01 (realm)        → "acme"
+  0x02 (area)         → "locks"
+  0x03 (resource)     → "database/migration"
+  0x04 (operation)    → "acquire"
+  0x10 (ttl_secs)     → varint(300)  # 5 minutes
+```
 
-### 2. Renew Lease
+**Response (Success):**
+```
+Type: 0x0501 (Lease Response)
+Tags:
+  0x01 (status)       → "ok"
+  0x10 (token)        → bytes(32)  # Base64URL encoded
+  0x11 (expires_at)   → varint(unix_timestamp)
+```
 
-**Route Operation:** `lease://{realm}/{area}/{resource}/renew`  
-**TLV Tags:** `TAG_ROUTE`, `TAG_ID` (lease token), `TAG_LEASE_SECS` (new TTL)
+**Response (Held):**
+```
+Type: 0x0501
+Tags:
+  0x01 (status)       → "error"
+  0x02 (error_code)   → "LEASE_HELD"
+  0x10 (expires_at)   → varint(unix_timestamp)  # When current lease expires
+```
 
-**Behavior:**
-- Extends lease expiry time
-- Only current holder can renew
-- Maintains exclusive access
-
-**Response TLV:** Success acknowledgment
-
-### 3. Release Lease
-
-**Route Operation:** `lease://{realm}/{area}/{resource}/release`  
-**TLV Tags:** `TAG_ROUTE`, `TAG_ID` (lease token)
-
-**Behavior:**
-- Voluntarily releases lease
-- Allows next waiter to acquire
-- Cleans up lease state
-
-**Response TLV:** Success acknowledgment
+**Semantics:**
+- If resource is free, grant lease immediately
+- If resource is held, return `LEASE_HELD` error (no wait queue in MVP)
+- Generate secure 32-byte random token
+- Set expiry to `now + ttl_secs`
 
 ---
 
-## Lease Semantics
+### 2. Renew Lease
+
+Extend lease expiry time (only current holder).
+
+**Route:** `lease://{realm}/{area}/{resource}/renew`
+
+**Request:**
+```
+Type: 0x0500
+Tags:
+  0x03 (resource)     → "database/migration"
+  0x04 (operation)    → "renew"
+  0x10 (token)        → bytes(32)
+  0x11 (new_ttl_secs) → varint(300)
+```
+
+**Response:**
+```
+Type: 0x0501
+Tags:
+  0x01 (status)       → "ok"
+  0x10 (expires_at)   → varint(new_expiry_timestamp)
+```
+
+**Errors:**
+- `INVALID_TOKEN` - Token doesn't match current lease
+- `LEASE_EXPIRED` - Lease expired before renew
+
+---
+
+### 3. Release Lease
+
+Voluntarily release lease (only current holder).
+
+**Route:** `lease://{realm}/{area}/{resource}/release`
+
+**Request:**
+```
+Type: 0x0500
+Tags:
+  0x03 (resource)     → "database/migration"
+  0x04 (operation)    → "release"
+  0x10 (token)        → bytes(32)
+```
+
+**Response:**
+```
+Type: 0x0501
+Tags:
+  0x01 (status)       → "ok"
+```
+
+**Errors:**
+- `INVALID_TOKEN` - Token doesn't match
+- `LEASE_NOT_HELD` - No active lease on resource
+
+---
+
+## Lease Semantics (v2 Simplified)
 
 ### Exclusive Access
 
 Each resource can have at most one active lease:
 
 ```rust
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LeaseEntry {
-    pub id: String,           // Current holder identifier
-    pub token: String,        // Secure access token
+    pub token: [u8; 32],      // 32-byte random token
     pub expiry: Instant,      // When lease expires
-    pub body: Option<Vec<u8>>, // Optional associated data
-    pub waiters: VecDeque<Pending>, // FIFO wait queue
 }
 ```
 
@@ -105,12 +173,12 @@ pub struct LeaseEntry {
 
 1. **Free State**: No active lease, resource available
 2. **Held State**: Single client holds lease with expiry
-3. **Expired State**: Lease timed out, next waiter granted lease
-4. **Wait State**: Multiple clients waiting in FIFO queue
+3. **Expired State**: Lease timed out, resource becomes free
+4. **No Wait State**: Failed acquires return immediately (no queuing)
 
 ### Automatic Expiry
 
-Leases expire automatically if not renewed:
+Leases expire automatically if not renewed. Timer messages handle expiry:
 
 ```rust
 impl LeaseEntry {
@@ -119,57 +187,21 @@ impl LeaseEntry {
     }
 
     fn is_active(&self, now: Instant) -> bool {
-        !self.id.is_empty() && !self.is_expired(now)
+        !self.is_expired(now)
     }
 }
 ```
 
----
+### Secure Tokens
 
-## Wait Queues
-
-### FIFO Ordering
-
-Contended resources maintain fair ordering:
+Tokens are cryptographically secure:
 
 ```rust
-#[derive(Debug)]
-pub struct Pending {
-    pub requested_ttl: u32,
-    pub responder: oneshot::Sender<Result<LeaseGrant, String>>,
-}
-```
-
-### Grant Process
-
-When lease becomes available:
-
-```rust
-async fn grant_next_lease(&self, resource: &str) -> Result<(), LeaseError> {
-    let mut entry = self.get_lease_entry(resource).write().await;
-
-    if let Some(pending) = entry.waiters.pop_front() {
-        // Generate secure token
-        let token = generate_secure_token();
-
-        // Grant lease to next waiter
-        let grant = LeaseGrant {
-            id: resource.to_string(),
-            body: entry.body.clone(),
-            token: token.clone(),
-            ttl_secs: pending.requested_ttl,
-        };
-
-        // Update lease entry
-        entry.id = grant.id.clone();
-        entry.token = token;
-        entry.expiry = Instant::now() + Duration::from_secs(pending.requested_ttl as u64);
-
-        // Notify waiter
-        let _ = pending.responder.send(Ok(grant));
-    }
-
-    Ok(())
+fn generate_secure_token() -> [u8; 32] {
+    use rand::{thread_rng, RngCore};
+    let mut token = [0u8; 32];
+    thread_rng().fill_bytes(&mut token);
+    token
 }
 ```
 
@@ -626,5 +658,5 @@ lease_client.release("acme/resources/gpu/0", &gpu_grant.token).await?;
 
 ---
 
-*See OVERVIEW.md for system-level context and other domain specifications.*</content>
+*See ARCHITECTURE.md for system-level context and other domain specifications.*</content>
 <parameter name="filePath">d:\repos\cntryl\fitz\docs\LEASE_SPEC.md

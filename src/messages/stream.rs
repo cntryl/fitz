@@ -1,7 +1,5 @@
 //! StreamMsg messages.
 
-use crate::actor::ActorRef;
-
 /// Messages for StreamActor.
 #[derive(Debug)]
 pub enum StreamMsg {

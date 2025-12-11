@@ -6,7 +6,7 @@
 //! - Starting the scheduler and transport layers
 //! - Binding listeners and accepting connections
 
-use crate::actor::{Actor, ActorContext, ActorRef, ActorSystem, Scheduler};
+use crate::actor::{ActorRef, ActorSystem, Scheduler};
 use crate::messages::{MidgeMsg, RouterMsg, MetricsMsg};
 use crate::storage::MidgeActor;
 use std::sync::Arc;

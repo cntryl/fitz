@@ -1,7 +1,5 @@
 //! RouterActor messages.
 
-use crate::actor::ActorRef;
-
 /// Messages for RouterActor.
 #[derive(Debug)]
 pub enum RouterMsg {

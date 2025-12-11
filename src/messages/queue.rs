@@ -1,7 +1,5 @@
 //! QueueMsg messages.
 
-use crate::actor::ActorRef;
-
 /// Messages for QueueActor.
 #[derive(Debug)]
 pub enum QueueMsg {

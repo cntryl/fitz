@@ -1,7 +1,5 @@
 //! MetricsMsg messages.
 
-use crate::actor::ActorRef;
-
 /// Messages for MetricsActor.
 #[derive(Debug)]
 pub enum MetricsMsg {

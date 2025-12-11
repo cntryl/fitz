@@ -601,5 +601,5 @@ kv_client.commit_transaction(txn_id).await?;
 
 ---
 
-*See OVERVIEW.md for system-level context and other domain specifications.*</content>
+*See ARCHITECTURE.md for system-level context and other domain specifications.*</content>
 <parameter name="filePath">d:\repos\cntryl\fitz\docs\KV_SPEC.md
