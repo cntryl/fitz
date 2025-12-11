@@ -394,9 +394,3 @@ Notice v2 is:
 * **Backpressure-safe** via drop-on-full semantics
 * **Wildcards, but fast** (no regex, just segments)
 * **The absolute fastest broadcast mechanism in Fitz**
-
-If you want, next I can:
-
-* Sketch the `NoticeRouteActor` + `SessionActor` message enums
-* Give you the Rust skeletons for the v2 implementation
-* Or produce a Copilot prompt that keeps this spec as the guardrail.

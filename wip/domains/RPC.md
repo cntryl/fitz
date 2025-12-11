@@ -331,17 +331,3 @@ Errors travel to the reply inbox under the same correlation ID.
 * Streaming-first while remaining correlation-safe
 * Multi-worker and multi-route optimized
 * Designed like a modern fabric rather than a pub/sub relic
-
-This is the RPC layer people wish NATS, Kafka, gRPC, or RabbitMQ had. And Fitz will have it.
-
----
-
-If you'd like, I can now generate:
-
-✅ The RPC v2 wire diagrams
-✅ The actor messaging diagrams
-✅ The client SDK surface for Go/C#/TS/Rust
-✅ The reference implementation stubs
-✅ The Copilot prompt for generating RPC domain code
-
-Just say "give me the next step."

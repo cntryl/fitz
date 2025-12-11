@@ -251,7 +251,20 @@ Logs:
 
 ---
 
-# 9. Testing Requirements (Actor Model)
+# 9. Change Notifications
+
+Queue operations trigger **debounced, ephemeral notice events** to support real-time consumer wakeup:
+
+```
+notice://{realm}/{area}/{resource}/enqueued
+notice://{realm}/{area}/{resource}/available
+```
+
+These notifications carry only **state advancement metadata** (queue depth, head message ID, timestamp). They are **best-effort** and **non-durable**, and workers must re-fetch actual messages via `queue.reserve(...)`. Notifications are emitted no more frequently than the domain-level debounce interval (default 10–50ms) to prevent fan-out overload.
+
+---
+
+# 10. Testing Requirements (Actor Model)
 
 ### Unit
 
@@ -319,11 +332,3 @@ No heavyweight features that compromise throughput.
 Just a **world-class fast local queue**.
 
 ---
-
-If you want, next I can produce:
-
-* **Stream Domain Specification (v2)**
-* **Notice Domain Specification (v2)**
-* **RPC Domain Specification (v2)**
-
-Just say **“next domain: stream”** or whichever domain you want next.

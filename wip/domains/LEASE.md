@@ -314,14 +314,6 @@ Acquire → process tasks → renew as needed.
 
 ---
 
-# 🎯 This is the corrected, actor-model-accurate Lease Specification.
+# 🎯 Summary
 
-If you'd like, I can now generate specs for the other domains in the same format:
-
-* **Queue Domain**
-* **Stream Domain**
-* **KV Domain**
-* **Notice Domain**
-* **RPC Domain**
-
-Just say “next domain: queue” and I’ll produce the full spec.
+This is the actor-model, Fitz v2 lease specification: ephemeral, single-node, token-based exclusive ownership with TTL-driven expiry and no persistence.

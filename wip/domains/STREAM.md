@@ -348,6 +348,18 @@ Metrics:
 * `stream_append_conflicts_total`
 * `stream_area_merge_latency_ms`
 
+---
+
+# 12. Change Notifications
+
+Stream writes trigger **debounced, ephemeral notice events** to support real-time consumer wakeup:
+
+```
+notice://{realm}/{area}/{resource}/committed
+```
+
+These notifications carry only **state advancement metadata** (area sequence, resource sequence, timestamp). They are **best-effort** and **non-durable**, and consumers must re-fetch actual events via `stream.read(... from last_seq)`. Notifications are emitted no more frequently than the domain-level debounce interval (default 10–50ms) to prevent fan-out overload.
+
 Logs:
 
 * append decisions
