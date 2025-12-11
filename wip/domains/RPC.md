@@ -1,627 +1,347 @@
-# RPC Domain Specification
+# Fitz RPC v2 — Domain Specification
 
-**Version:** 1.0  
-**Status:** Implementation In Progress  
-**Last Updated:** November 15, 2025  
-
----
-
-## Overview
-
-Fitz RPC provides low-latency, in-memory request/response semantics with strong correlation guarantees. RPC operations are ephemeral (never persisted) and leverage core Fitz primitives like Publish, Subscribe, Reserve, and Consume for reliable delivery and load balancing.
-
-### Key Features
-
-- **Correlation-based replies**: Strong request/response correlation with IDs
-- **Multiple reply-routing modes**: Reply queues, hybrid signal+reserve, direct transport
-- **Streaming responses**: Ordered chunks with end-of-stream signaling
-- **Load balancing**: Exactly-one responder semantics via leasing
-- **Backpressure handling**: Bounded memory queues with graceful degradation
-- **Ephemeral storage**: All RPC state is memory-only (no persistence)
-
-### Reply-Routing Modes
-
-#### 1. Reply Queue (Baseline)
-- Client creates dedicated reply route
-- Worker publishes responses to client's reply queue
-- Simple and transport-agnostic
-
-#### 2. Hybrid Signal + Reserve (Recommended)
-- Broker signals all workers with lightweight notification
-- Workers race to reserve the request using leases
-- Exactly-one worker processes each request
-
-#### 3. Direct Transport Reply (Advanced)
-- Responses routed directly via originating connection
-- Lowest latency but requires complex reconnection handling
+**Version:** 2.0  
+**Status:** Ready for implementation  
+**Durability:** None (ephemeral)  
+**Transport:** TLV (binary, actor-first)  
+**Execution Model:** Actor-based with inbox routing
 
 ---
 
-## Route Format
+# 1. Overview
 
-RPC routes follow the standard Fitz format:
+Fitz RPC v2 provides ultra-low-latency request/response messaging with:
+
+* Exactly-one worker processing per request
+* Strict correlation for replies
+* Native streaming responses
+* Fully in-memory dispatch (no persistence)
+* Actor-model internal routing
+* Natural backpressure via per-client inboxes
+* No shared locks → zero contention
+* Horizontal worker scaling without coordination
+
+RPC is intentionally not durable. If a client disconnects or crashes, their pending RPCs evaporate, making RPC v2 a perfect fit for microservice calls, control-plane traffic, user-facing requests, analytics queries, and streaming workloads such as AI inference or large reports.
+
+---
+
+# 2. Route Format
 
 ```
 rpc://{realm}/{area}/{resource}/{operation}
 ```
 
-### Examples
-- `rpc://acme/auth/user/create` - Create user
-- `rpc://acme/inventory/item/update` - Update inventory item
-- `rpc://cntryl/analytics/query/run` - Run analytics query
+Examples:
+
+* rpc://acme/auth/user/create
+* rpc://acme/inventory/item/update
+* rpc://acme/reports/monthly/run
+* rpc://cntryl/ai/embedding/generate
+
+All RPC requests MUST specify a reply route (inbox).
 
 ---
 
-## Core Operations
+# 3. Core Concepts
 
-### 1. RPC Call (Client → Worker)
+## 3.1 Actor Participants
 
-**Route Operation:** `rpc://{realm}/{area}/{resource}/{operation}`  
-**TLV Tags:** `TAG_ROUTE`, `TAG_BODY`, `TAG_ID`, `TAG_ROUTE_REPLY` (optional)
+| Actor               | Purpose                                              |
+| ------------------- | ---------------------------------------------------- |
+| RpcRouteActor       | Owns a single RPC route; receives requests and assigns workers |
+| WorkerActor         | Handles business logic; subscribes to RPC routes     |
+| ReplyInboxActor     | Per-client inbox that serializes replies to the transport |
+| TransportActor      | Moves TLV frames to/from connections                  |
 
-**Behavior:**
-- Publishes request to RPC route with correlation ID
-- Optionally specifies reply route for responses
-- Workers receive via subscription or reservation
-
-**Response TLV:** Success acknowledgment (request queued)
-
-### 2. RPC Reply (Worker → Client)
-
-**Route Operation:** Reply route specified in request  
-**TLV Tags:** `TAG_ID`, `TAG_BODY`, `TAG_SEQ` (optional), `TAG_STREAM_END` (optional)
-
-**Behavior:**
-- Worker publishes response to client's reply route
-- Includes correlation ID for matching
-- Supports streaming with sequence numbers
-
-**Response TLV:** Success acknowledgment
-
-### 3. Reserve Request (Worker)
-
-**Route Operation:** `rpc://{realm}/{area}/{resource}/{operation}/reserve`  
-**TLV Tags:** `TAG_ROUTE`, `TAG_LEASE_SECS`
-
-**Behavior:**
-- Worker attempts to claim pending RPC request
-- Uses lease-based exactly-once semantics
-- Returns request details if lease granted
-
-**Response TLV:** `TAG_ID`, `TAG_BODY`, `TAG_DELIVERY_TOKEN`
-
-### 4. Acknowledge Processing (Worker)
-
-**Route Operation:** `rpc://{realm}/{area}/{resource}/{operation}/ack`  
-**TLV Tags:** `TAG_DELIVERY_TOKEN`
-
-**Behavior:**
-- Worker confirms successful processing
-- Releases lease and cleans up request state
-
-**Response TLV:** Success acknowledgment
+Workers do not communicate directly—every hand-off flows through the engine-level actor graph.
 
 ---
 
-## Reply-Routing Modes
+## 3.2 Request Lifecycle
 
-### Reply Queue Mode
-
-**Process:**
-1. Client creates reply route: `rpc/reply/{client-id}`
-2. Client subscribes to reply route
-3. Client publishes request with `TAG_ROUTE_REPLY`
-4. Worker consumes request and publishes to reply route
-5. Client receives responses matched by `TAG_ID`
-
-**Pros:** Simple, transport-agnostic, works with any subscription model  
-**Cons:** Requires per-client reply route management
-
-### Hybrid Signal + Reserve Mode
-
-**Process:**
-1. Client publishes request with `TAG_ID` and `TAG_ROUTE_REPLY`
-2. Broker sends lightweight signal to all subscribers (no body)
-3. Workers call reserve() to claim the request
-4. Broker grants lease to one worker with full request details
-5. Worker processes and publishes replies, then acknowledges
-
-**Pros:** Exactly-one responder, minimal network fanout, natural backpressure  
-**Cons:** Requires coordination between notice and queue domains
-
-### Direct Transport Reply Mode
-
-**Process:**
-1. Client includes `TAG_REPLY_HINT` in request
-2. Engine maps correlation ID to originating transport
-3. Worker publishes response directly to transport connection
-
-**Pros:** Lowest latency, no intermediate routing  
-**Cons:** Complex reconnection semantics, transport coupling
-
----
-
-## Data Model
-
-### RPC Request
-
-```rust
-#[derive(Debug, Clone)]
-pub struct RpcRequest {
-    pub route: String,
-    pub correlation_id: String,
-    pub body: Vec<u8>,
-    pub reply_route: Option<String>,
-    pub protocol_version: Option<String>,
-    pub timestamp: u64,
-}
+```
+Client → RpcRouteActor → WorkerActor → ReplyInboxActor → Client
 ```
 
-### RPC Response
-
-```rust
-#[derive(Debug, Clone)]
-pub struct RpcResponse {
-    pub correlation_id: String,
-    pub body: Vec<u8>,
-    pub sequence: Option<u64>,     // For streaming responses
-    pub is_end_of_stream: bool,
-    pub timestamp: u64,
-}
-```
-
-### Lease Token
-
-```rust
-#[derive(Debug, Clone)]
-pub struct LeaseToken {
-    pub request_id: String,
-    pub route: String,
-    pub expires_at: u64,
-    pub token: String,  // Cryptographically secure
-}
-```
+Each stage is non-blocking and actor-serialized.
 
 ---
 
-## Flow Control and Backpressure
+## 3.3 In-Memory Semantics
 
-### Bounded Memory Queues
+RPC v2 guarantees:
 
-- **Storage:** In-memory only (no persistence)
-- **Limits:** Configurable per-route capacity
-- **Policy:** Reject new requests when full (`RpcError::Backpressure`)
+* No durability
+* No persistence
+* No rewinds
+* No duplicate replies
+
+It is similar to a NATS Request but without lock contention, routing tables, subscription work stealing, or shard coordination.
+
+---
+
+# 4. RPC Request Model
+
+## 4.1 TLV Frame
+
+```
+TAG_ROUTE        = "rpc://acme/auth/user/create"
+TAG_ID           = correlation_id
+TAG_BODY         = request_bytes
+TAG_ROUTE_REPLY  = "inbox://session/123"
+TAG_HINT         = optional reply-mode hint
+TAG_CONTENT_TYPE = optional
+```
+
+## 4.2 Required Fields
+
+| Tag              | Meaning                           |
+| ---------------- | --------------------------------- |
+| TAG_ROUTE        | Fully qualified RPC route         |
+| TAG_ID           | Client-generated correlation ID   |
+| TAG_ROUTE_REPLY  | Client inbox route                |
+| TAG_BODY         | Request payload                   |
+
+---
+
+## 4.3 Correlation Semantics
+
+* Correlation ID is unique per client session.
+* Every response chunk must echo the same ID.
+* Workers use it to track streaming boundaries.
+
+---
+
+# 5. RPC Response Model
+
+## 5.1 Response Frame
+
+```
+TAG_ID         = correlation_id
+TAG_BODY       = response_bytes
+TAG_SEQ        = sequence number (optional)
+TAG_STREAM_END = optional terminal marker
+TAG_CONTENT_TYPE = optional
+```
+
+## 5.2 Streaming Rules
+
+* `TAG_SEQ` starts at 0 and must increment by 1.
+* `TAG_STREAM_END` finalizes the response and releases inbox state.
+* ReplyInboxActor enforces ordering, buffering ahead-of-time chunks, and dropping duplicates.
+
+Streaming is push-based: chunks flow as soon as they are ready.
+
+---
+
+# 6. RpcRouteActor Specification
+
+Each route uses a dedicated RpcRouteActor to queue inbound RPCs, assign workers, issue ephemeral leases, handle backpressure, and drop stale requests when clients disconnect.
+
+## 6.1 State
 
 ```rust
-#[derive(Debug)]
-pub struct RpcQueue {
-    requests: VecDeque<RpcRequest>,
+struct RpcRouteState {
+    route: Route,
+    pending: VecDeque<RpcRequest>,
+    workers: Vec<WorkerRegistration>,
     capacity: usize,
-    active_leases: HashMap<String, LeaseToken>,
 }
 ```
 
-### Client Throttling
+## 6.2 Behavior
 
-- **Behavior:** Clients must implement retry with jitter
-- **Detection:** Monitor `RpcError::Backpressure` responses
-- **Recovery:** Exponential backoff until capacity available
+### On request arrival
 
-### Worker Acknowledgments
+* If queue is full, reply with `RPC_BACKPRESSURE`.
+* Otherwise enqueue and attempt an immediate hand-off to a worker.
 
-- **Timing:** Workers must ack promptly to release capacity
-- **Failure:** Lease expiry triggers redelivery to another worker
-- **Cleanup:** Expired leases automatically cleaned up
+### Worker assignment
 
----
+* Policy: round-robin or least-busy selection.
+* The worker receives a `RpcWorkItem` plus lease expiration metadata.
+* Worker must reply (or ack) before lease expiry.
 
-## Streaming Responses
+### Lease expiration
 
-### Sequence-Based Ordering
-
-```rust
-// Worker sends streaming response
-let chunks = response_body.chunks(64 * 1024); // 64KB chunks
-for (i, chunk) in chunks.enumerate() {
-    let response = RpcResponse {
-        correlation_id: request_id.clone(),
-        body: chunk.to_vec(),
-        sequence: Some(i as u64),
-        is_end_of_stream: false,
-        timestamp: now(),
-    };
-    publish_response(reply_route, response).await?;
-}
-
-// Mark end of stream
-let end_response = RpcResponse {
-    correlation_id: request_id,
-    body: Vec::new(),
-    sequence: Some(chunks.len() as u64),
-    is_end_of_stream: true,
-    timestamp: now(),
-};
-publish_response(reply_route, end_response).await?;
-```
-
-### Client Consumption
-
-```rust
-// Client collects streaming response
-let mut chunks = Vec::new();
-let mut expected_seq = 0;
-
-while let Some(response) = receive_response().await? {
-    if response.correlation_id != request_id {
-        continue; // Not our response
-    }
-
-    if let Some(seq) = response.sequence {
-        if seq != expected_seq {
-            return Err(RpcError::OutOfOrderSequence);
-        }
-        expected_seq += 1;
-    }
-
-    if !response.body.is_empty() {
-        chunks.push(response.body);
-    }
-
-    if response.is_end_of_stream {
-        break;
-    }
-}
-
-let full_response = chunks.concat();
-```
+* If a worker crashes or hangs, lease expiration re-enqueues the request.
+* The next worker receives the request.
+* Inbox-layer correlation ensures the client never sees duplicate replies.
 
 ---
 
-## TLV Framing Details
+# 7. WorkerActor Specification
 
-### RPC Request
-```
-DAT Frame:
-- TAG_ROUTE (0x20): "rpc://acme/auth/user/create"
-- TAG_ID (0x??): "req_12345"
-- TAG_BODY (0x22): <request payload>
-- TAG_ROUTE_REPLY (0x??): "rpc/reply/client_abc" (optional)
-```
+Workers subscribe to RPC routes via `subscribe rpc://{realm}/{area}/{resource}/{operation}`.
 
-### RPC Response
-```
-DAT Frame:
-- TAG_ID (0x??): "req_12345"
-- TAG_BODY (0x22): <response payload>
-- TAG_SEQ (0x??): 0 (optional, for streaming)
-- TAG_STREAM_END (0x??): (empty, marks end of stream)
-```
-
-### Reserve Request
-```
-REG Frame:
-- TAG_ROUTE (0x20): "rpc://acme/auth/user/create"
-- TAG_LEASE_SECS (0x??): 30
-```
-
-### Lease Grant
-```
-DAT Frame:
-- TAG_ID (0x??): "req_12345"
-- TAG_BODY (0x22): <request payload>
-- TAG_DELIVERY_TOKEN (0x??): "lease_abc123"
-```
-
----
-
-## Error Handling
-
-### Error Codes
-
-| Code | Name | Description | Client Action |
-|---|---|---|---|
-| 4001 | ERR_RPC_TIMEOUT | No reply received within timeout | Retry or increase timeout |
-| 4002 | ERR_RPC_NOT_FOUND | No handler for route | Check route format |
-| 4003 | ERR_PERMISSION_DENIED | Unauthorized RPC access | Check authentication |
-| 4004 | ERR_BACKPRESSURE | Queue capacity exceeded | Retry with backoff |
-| 4005 | ERR_INVALID_TOKEN | Bad or expired lease token | Re-reserve request |
-| 4006 | ERR_CORRELATION_MISMATCH | Wrong correlation ID | Check client implementation |
-| 4007 | ERR_OUT_OF_ORDER_SEQUENCE | Streaming sequence gap | Restart streaming call |
-| 4008 | ERR_INVALID_REPLY_ROUTE | Malformed reply route | Check route format |
-
-### Timeout Handling
+## 7.1 Work item
 
 ```rust
-async fn rpc_call_with_timeout(
-    &self,
-    route: &str,
-    request: RpcRequest,
-    timeout: Duration,
-) -> Result<RpcResponse, RpcError> {
-    let start_time = Instant::now();
-
-    // Send request
-    self.publish_request(route, request.clone()).await?;
-
-    // Wait for response with timeout
-    match timeout_at(start_time + timeout, self.receive_response(request.correlation_id)).await {
-        Ok(response) => Ok(response),
-        Err(_) => Err(RpcError::Timeout),
-    }
-}
-```
-
----
-
-## Client and Worker Patterns
-
-### RPC Client Helper
-
-```rust
-pub struct RpcClient {
-    engine: EngineHandle,
+struct RpcWorkItem {
+    correlation_id: String,
     reply_route: String,
-    timeout: Duration,
-}
-
-impl RpcClient {
-    pub async fn call(&self, route: &str, body: &[u8]) -> Result<Vec<u8>, RpcError> {
-        let correlation_id = generate_id();
-        let request = RpcRequest {
-            route: route.to_string(),
-            correlation_id: correlation_id.clone(),
-            body: body.to_vec(),
-            reply_route: Some(self.reply_route.clone()),
-            timestamp: now(),
-        };
-
-        self.engine.publish_request(route, request).await?;
-
-        // Wait for response
-        let response = self.receive_response(correlation_id, self.timeout).await?;
-        Ok(response.body)
-    }
-
-    pub async fn call_stream(&self, route: &str, body: &[u8]) -> Result<impl Stream<Item = Vec<u8>>, RpcError> {
-        // Similar to call() but returns streaming response
-        // Collect chunks until TAG_STREAM_END
-    }
+    body: Vec<u8>,
+    lease_expiration: u64,
 }
 ```
 
-### Worker (Reply Queue Mode)
+## 7.2 Responsibilities
+
+1. Process the request synchronously (single or streaming responses).
+2. Send replies to `reply_route` using TLV frames.
+3. Emit `RPC_ACK(correlation_id)` when work is complete.
+
+## 7.3 Failure handling
+
+* Worker crashes: lease expires and the route actor re-enqueues the request.
+* Client observes only the committed replies since ReplyInboxActor serializes output.
+
+---
+
+# 8. ReplyInboxActor Specification
+
+Each client transport owns `inbox://session/{session_id}`—a single-threaded actor that orders replies per correlation ID, handles slow transports, and drops state when the session ends.
+
+## 8.1 State
 
 ```rust
-async fn handle_rpc_requests() {
-    loop {
-        // Consume from RPC route
-        let (correlation_id, body, token) = engine.reserve("rpc://acme/auth/user/create", 30).await?;
-
-        // Process request
-        let response = process_request(body).await?;
-
-        // Send reply
-        engine.publish_reply(reply_route, correlation_id, response).await?;
-
-        // Acknowledge
-        engine.ack("rpc://acme/auth/user/create", token).await?;
-    }
+struct InboxState {
+    pending: HashMap<CorrelationId, ReplyAccumulator>,
+    transport_sink: Sender<TlvFrame>,
 }
 ```
 
-### Worker (Signal + Reserve Mode)
+## 8.2 Streaming enforcement
 
-```rust
-async fn handle_rpc_signals() {
-    // Subscribe to RPC route for signals
-    engine.subscribe("rpc://acme/auth/user/create").await?;
-
-    loop {
-        // Receive signal (no body)
-        let signal = receive_signal().await?;
-
-        // Race to reserve the actual request
-        match engine.reserve("rpc://acme/auth/user/create", 30).await {
-            Ok((correlation_id, body, token)) => {
-                // We won the lease
-                let response = process_request(body).await?;
-                engine.publish_reply(signal.reply_route, correlation_id, response).await?;
-                engine.ack("rpc://acme/auth/user/create", token).await?;
-            }
-            Err(_) => {
-                // Another worker got it, continue
-                continue;
-            }
-        }
-    }
-}
-```
+* If `seq == expected`, forward immediately.
+* If `seq > expected`, buffer until missing chunks arrive.
+* If `seq < expected`, drop as duplicate.
+* On `TAG_STREAM_END`, finalize and clear state.
 
 ---
 
-## Configuration
+# 9. TLV Wire Summary
 
-### RPC Settings
+## 9.1 Request
 
-```yaml
-rpc:
-  # Global defaults
-  default_timeout_seconds: 30
-  max_queue_size: 1000              # Per-route capacity
-  lease_duration_seconds: 30        # Default lease time
-  max_payload_size: 10485760        # 10MB
+| Tag          | Value          |
+| ------------ | -------------- |
+| ROUTE        | RPC route      |
+| ID           | correlation ID |
+| BODY         | request bytes  |
+| ROUTE_REPLY  | reply inbox    |
+| HINT         | optional       |
+| CONTENT_TYPE | optional       |
 
-  # Route-specific overrides
-  "rpc://acme/auth/**":
-    timeout_seconds: 10             # Faster auth calls
-    max_queue_size: 500
+## 9.2 Response chunk
 
-  "rpc://acme/analytics/**":
-    timeout_seconds: 300            # Longer analytics
-    max_queue_size: 100
-    max_payload_size: 104857600     # 100MB for large queries
-```
+| Tag        | Value           |
+| ---------- | --------------- |
+| ID         | correlation ID  |
+| SEQ        | sequence number |
+| BODY       | chunk bytes     |
+| STREAM_END | optional        |
 
-### Inbox Management
+## 9.3 Ack (Worker → Route)
 
-```yaml
-inbox:
-  route_prefix: "rpc/reply/"
-  cleanup_interval_seconds: 60      # Periodic cleanup
-  max_inboxes_per_session: 10
-  inbox_ttl_seconds: 3600           # 1 hour
-```
+| Tag | Value          |
+| --- | -------------- |
+| ID  | correlation ID |
 
 ---
 
-## Observability
+# 10. Backpressure Model
 
-### Metrics
+## 10.1 Route-level capacity
 
-- `rpc_requests_total{route,method}`
-- `rpc_responses_total{route,status}`
-- `rpc_request_duration_seconds{route}`
-- `rpc_queue_size{route}`
-- `rpc_active_leases{route}`
-- `rpc_timeouts_total{route}`
-- `rpc_backpressure_total{route}`
+* Full queue → return `RPC_BACKPRESSURE` so clients can retry with jitter.
 
-### Logging
+## 10.2 Inbox-level pressure
 
-```json
-{
-  "timestamp": "2025-11-15T10:30:00Z",
-  "level": "info",
-  "message": "rpc_request_queued",
-  "route": "rpc://acme/auth/user/create",
-  "correlation_id": "req_12345",
-  "queue_size": 5
-}
-```
+* The inbox buffers up to a configurable limit.
+* Exceeding it disconnects the session and frees state.
+* Worker replies remain in memory until the inbox flushes or session ends.
 
-```json
-{
-  "timestamp": "2025-11-15T10:30:05Z",
-  "level": "info",
-  "message": "rpc_request_processed",
-  "route": "rpc://acme/auth/user/create",
-  "correlation_id": "req_12345",
-  "duration_ms": 150,
-  "worker_id": "worker_001"
-}
-```
+## 10.3 Worker flow control
+
+* Workers process one request by default (configurable concurrency per worker).
 
 ---
 
-## Implementation Status
+# 11. Error Model
 
-### ✅ Completed
-- TLV format definitions and correlation semantics
-- Route format standardization
-- Reply-routing mode designs (all three modes)
-- Flow control and backpressure design
-- Error model and codes
+| Code                      | Meaning                     |
+| ------------------------- | --------------------------- |
+| RPC_TIMEOUT               | Worker didn't reply in time |
+| RPC_BACKPRESSURE          | Route queue full            |
+| RPC_UNAUTHORIZED          | Missing permission          |
+| RPC_INVALID_ROUTE         | Route parsing failure       |
+| RPC_STREAM_GAP            | Out-of-order chunk          |
+| RPC_CLIENT_DISCONNECTED   | Inbox vanished mid-request  |
+| RPC_WORKER_CRASHED        | Lease expired without reply |
 
-### 🚧 In Progress
-- Core RPC domain handler implementation
-- Bounded in-memory queue management
-- Notice integration for hybrid signal+reserve
-- Inbox lifecycle and security
-- Streaming response support
-
-### 📋 TODO
-- Direct transport reply optimization
-- Advanced load balancing policies
-- Request deduplication and idempotency
-- Cross-realm RPC calls
-- RPC service discovery
+Errors travel to the reply inbox under the same correlation ID.
 
 ---
 
-## Testing Requirements
+# 12. Performance Expectations
 
-### Unit Tests (48 total)
-- **Basic RPC:** Request delivery, reply correlation, handler dispatch
-- **Inbox Management:** Allocation, security, cleanup, collision prevention
-- **Streaming:** Ordered chunks, end-of-stream, large payload handling
-- **Concurrency:** Isolation by correlation ID, concurrent calls
-- **Error Handling:** Timeouts, invalid routes, crash recovery
-- **Load Balancing:** Single handler per request, distribution across workers
-- **Idempotency:** Request deduplication, cancellation support
-
-### Integration Tests
-- End-to-end RPC call with reply queue mode
-- Hybrid signal+reserve with multiple workers
-- Streaming response collection and ordering
-- Backpressure handling and client retry logic
-- Worker crash recovery and request redelivery
-
-### Performance Benchmarks
-- RPC call latency (round-trip)
-- Queue throughput under load
-- Streaming response bandwidth
-- Concurrent worker scaling
-- Memory usage per queued request
+* < 150µs p50 latency for small RPCs
+* < 1.0ms p99 under load
+* Millions of RPC/sec per node
+* Zero hot-path allocations (actor-local queues)
+* Streaming with 64KB chunks limited only by transport bandwidth
 
 ---
 
-## Usage Patterns
+# 13. Testing Requirements
 
-### Synchronous RPC Call
+## 13.1 Unit tests
 
-```rust
-// Client makes synchronous call
-let client = RpcClient::new(engine, "rpc/reply/client_123");
-let request = b"{\"user_id\": 123, \"action\": \"get_profile\"}";
-let response = client.call("rpc://acme/auth/user/get", request, Duration::from_secs(10)).await?;
-let profile: UserProfile = serde_json::from_slice(&response)?;
-```
+* TLV parsing and validation
+* Inbox reassembly and ordering
+* Worker lease expiration and requeue
+* RpcRouteActor load balancing
+* Streaming order enforcement
+* Error delivery to inbox
 
-### Streaming RPC Response
+## 13.2 Integration tests
 
-```rust
-// Client handles streaming response
-let mut stream = client.call_stream("rpc://acme/analytics/query/run", query).await?;
-let mut results = Vec::new();
+* Full round-trip RPC
+* Multi-worker concurrency
+* Worker crash recovery
+* Client disconnect mid-stream
+* Backpressure scenarios
+* High-volume streaming calls
 
-while let Some(chunk) = stream.next().await {
-    let partial: QueryResult = serde_json::from_slice(&chunk)?;
-    results.push(partial);
+## 13.3 Performance tests
 
-    if results.len() >= 1000 {
-        // Process batch
-        process_batch(&results).await?;
-        results.clear();
-    }
-}
-```
-
-### Worker Implementation
-
-```rust
-// Worker processes RPC requests
-async fn auth_worker(engine: &EngineHandle) {
-    loop {
-        // Reserve request (hybrid mode)
-        let (correlation_id, body, token) = engine
-            .reserve("rpc://acme/auth/user/create", 30)
-            .await?;
-
-        // Process request
-        let user_req: CreateUserRequest = serde_json::from_slice(&body)?;
-        let user = create_user(user_req).await?;
-        let response = serde_json::to_vec(&user)?;
-
-        // Send reply
-        engine.publish_reply(correlation_id, response).await?;
-
-        // Acknowledge
-        engine.ack(token).await?;
-    }
-}
-```
+* Latency
+* Throughput
+* Worker scaling
+* Streaming bandwidth
+* Load shedding/backpressure effectiveness
 
 ---
 
-*See ARCHITECTURE.md for system-level context and other domain specifications.*</content>
-<parameter name="filePath">d:\repos\cntryl\fitz\docs\RPC_SPEC.md
+# 14. Why This Is World Class
+
+* Actor-driven, non-blocking, zero-durable state machines
+* Single-owner queues (no locks) and perfect backpressure
+* Streaming-first while remaining correlation-safe
+* Multi-worker and multi-route optimized
+* Designed like a modern fabric rather than a pub/sub relic
+
+This is the RPC layer people wish NATS, Kafka, gRPC, or RabbitMQ had. And Fitz will have it.
+
+---
+
+If you'd like, I can now generate:
+
+✅ The RPC v2 wire diagrams
+✅ The actor messaging diagrams
+✅ The client SDK surface for Go/C#/TS/Rust
+✅ The reference implementation stubs
+✅ The Copilot prompt for generating RPC domain code
+
+Just say "give me the next step."

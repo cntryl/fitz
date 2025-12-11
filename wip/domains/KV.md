@@ -1,4 +1,304 @@
-# KV Domain Specification
+# KV Domain Specification (v2 — Actor Model MVP)
+
+**Version:** 2.0  
+**Status:** MVP Specification  
+**Durability:** Fully Durable (backed by Midge)  
+**Last Updated:** December 11, 2025
+
+---
+
+# 1. Overview
+
+Fitz KV provides **simple, durable key-value storage** built on top of **Midge**, exposed through Fitz’s messaging protocol.
+
+The KV domain is:
+
+* **Durable** (backed by Midge)
+* **Single-node authoritative** (no distributed consensus)
+* **Actor-driven** (no shared state, no locks)
+* **Non-transactional (MVP)**
+* **Fast** (one actor hop + Midge write)
+* **Hierarchically namespaced** (realm/area/resource/user_key)
+
+This is not a distributed KV. It is **a durable KV API façade around a local Midge instance**.
+
+---
+
+# 2. Route Format
+
+```
+kv://{realm}/{area}/{resource}/{operation}
+```
+
+Examples:
+
+```
+kv://acme/config/db/put
+kv://acme/sessions/user123/get
+kv://acme/cache/items/delete
+kv://acme/users/*/scan
+```
+
+---
+
+# 3. Actor Model Architecture
+
+There is exactly **one KVActor per route family**. It owns no data directly — it **delegates to Midge**.
+
+```rust
+struct KvActor {
+    store: MidgeHandle, // injected at startup
+}
+```
+
+Midge handles durability, ordering, and atomicity of single-key writes.
+
+KVActor:
+
+* Parses keys
+* Applies namespacing
+* Calls into Midge
+* Packages TLV replies
+* Never locks
+* Never blocks
+
+---
+
+# 4. Core Operations (MVP)
+
+## 4.1 Put
+
+**Route:** `kv://{realm}/{area}/{resource}/put`
+
+**Request Tags:**
+
+* key (derived from route)
+* TAG_BODY → value bytes
+
+**Behavior:**
+Writes value to Midge using derived composite key.
+
+**Response:**
+`status = ok`
+
+---
+
+## 4.2 Get
+
+**Route:** `kv://{realm}/{area}/{resource}/get`
+
+**Behavior:**
+Fetches value from Midge.
+
+**Response:**
+`TAG_BODY` containing value or empty if missing.
+
+---
+
+## 4.3 Delete
+
+**Route:** `kv://{realm}/{area}/{resource}/delete`
+
+**Behavior:**
+Deletes one key.
+
+**Response:**
+`status = ok`
+
+---
+
+## 4.4 Scan
+
+**Route:** `kv://{realm}/{area}/*/scan`
+
+**Request Tags:**
+
+* TAG_START_KEY
+* TAG_END_KEY
+* TAG_LIMIT (optional)
+
+**Behavior:**
+Delegates to Midge range scan. Returns ordered key/value pairs.
+
+**Response:**
+Sequence of (TAG_ID, TAG_BODY) pairs.
+
+---
+
+## 4.5 Delete Range
+
+**Route:** `kv://{realm}/{area}/*/delete_range`
+
+**Behavior:**
+Delegates to Midge range deletion.
+
+**Response:**
+`TAG_COUNT` = number of deleted keys
+
+---
+
+# 5. Removed From MVP (Important)
+
+The following features from earlier specs are **NOT in Fitz v2 MVP**:
+
+* ❌ Multi-key transactions
+* ❌ Optimistic concurrency
+* ❌ Batch operations
+* ❌ Multi-get
+* ❌ Transaction begin/commit/rollback
+* ❌ Lease-based locking of keys
+* ❌ Cross-area or cross-realm operations
+* ❌ TTL on values (can be added later)
+
+These all move to **future roadmap**.
+
+MVP is:
+
+> **Durable single-key operations + range ops** via Midge, wrapped in an actor façade.
+
+Which is exactly the correct model for Fitz v2.
+
+---
+
+# 6. Namespacing Model
+
+Full storage key = route family + realm + area + resource + user_key.
+
+Example:
+
+```
+kv://acme/config/db/put
+```
+
+Maps internally to something like:
+
+```
+<route_family> / acme / config / db
+```
+
+Midge handles the final user_key directly from the route’s resource component.
+
+---
+
+# 7. Data Model (Simplified)
+
+```rust
+struct KvEntry {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+```
+
+No version numbers.  
+No timestamps.  
+No metadata.
+
+Midge persists and indexes the data.
+
+---
+
+# 8. Error Codes (Simplified)
+
+| Code             | Meaning                                               |
+| ---------------- | ----------------------------------------------------- |
+| KV_KEY_NOT_FOUND | Returned only on explicit "get-strict" ops (optional) |
+| KV_BAD_RANGE     | Start > end                                           |
+| KV_TOO_LARGE     | Key or value exceeds limits                           |
+| KV_BACKEND_ERROR | Midge failure                                         |
+
+Transactions errors removed.
+
+---
+
+# 9. Observability
+
+Metrics:
+
+* `kv_put_total`
+* `kv_get_total`
+* `kv_delete_total`
+* `kv_scan_total`
+* `kv_op_duration_seconds{op}`
+
+Logs:
+
+* `kv_put`
+* `kv_delete_range`
+* `kv_scan`
+
+---
+
+# 10. Testing Requirements
+
+### Unit
+
+* Put/Get/Delete correctness
+* ASCII + binary keys
+* Range semantics
+* TLV validation
+* Bad routes
+
+### Integration
+
+* Midge durability
+* Restart behavior
+* Range scans on large datasets
+
+### Performance
+
+* Put latency
+* Scan throughput
+* Delete_range cost
+
+---
+
+# 11. Usage Patterns
+
+### Config Storage
+
+```
+kv://acme/config/db/put
+```
+
+### Session Storage
+
+```
+kv://acme/sessions/user123/get
+```
+
+### Metadata & Flags
+
+```
+kv://acme/feature-flags/*/scan
+```
+
+---
+
+# ⭐ **Final Summary (What Fitz KV v2 Really Is)**
+
+> **Fitz KV is a simple, actor-based, durable facade over Midge, supporting only single-key CRUD + range ops.**
+
+This is perfect because:
+
+* It is blazing fast
+* It uses zero locks
+* It is consistent within one node
+* It aligns perfectly with Midge’s LSM architecture
+* It keeps Fitz predictable and lightweight
+* It allows a clean path to future expansion
+
+---
+
+# If you'd like, I can now produce:
+
+✅ **The corrected spec for Queue (v2)**
+✅ **The corrected spec for Stream (v2)**
+✅ **The corrected spec for Notice (v2)**
+✅ **The corrected spec for RPC (v2)**
+
+Just say:
+
+**“next domain: queue”**# KV Domain Specification
 
 **Version:** 1.0  
 **Status:** Implementation Complete  
