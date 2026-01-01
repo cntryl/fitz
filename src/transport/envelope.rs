@@ -51,6 +51,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Unique message identifier for tracing and correlation
+///
+/// # Current Implementation
+///
+/// IDs are generated from a process-local atomic counter. This means:
+/// - **Process-local**: IDs are unique within a single Fitz process
+/// - **Not stable**: IDs reset on process restart
+/// - **Monotonic**: IDs increase sequentially (useful for ordering)
+///
+/// # Future Evolution
+///
+/// This will be replaced with distributed ID generation when remoting is added:
+/// - **UUID**: For globally unique, collision-resistant IDs
+/// - **Snowflake**: For sortable distributed IDs with timestamp prefix
+/// - **Midge-backed sequence**: For persistent, cluster-coordinated sequences
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MessageId(u64);
 
@@ -239,10 +253,6 @@ impl fmt::Debug for Envelope {
             .finish()
     }
 }
-
-// Envelope is Send + Sync because all fields are Send + Sync
-unsafe impl Send for Envelope {}
-unsafe impl Sync for Envelope {}
 
 #[cfg(test)]
 mod tests {
