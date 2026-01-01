@@ -20,8 +20,10 @@
 //! - The suffix is stored with the subscription at the prefix node
 //! - During matching, we try suffix patterns against all possible remaining segments
 
+use crate::transport::matcher::{
+    extract_route_segments, match_pattern_segments, parse_pattern_segments, PatternSegment,
+};
 use crate::transport::routing::{Route, RouteFamily};
-use crate::transport::matcher::{PatternSegment, parse_pattern_segments, extract_route_segments, match_pattern_segments};
 use std::collections::HashMap;
 
 /// Unique subscription identifier
@@ -76,7 +78,12 @@ impl SubscriptionIndex {
     /// - `family_id`: RouteFamily for isolation
     /// - `pattern`: The route pattern (may contain `*` and `**` wildcards)
     /// - `subscription_id`: Unique identifier for this subscription
-    pub fn insert(&mut self, family_id: RouteFamily, pattern: &Route, subscription_id: SubscriptionId) {
+    pub fn insert(
+        &mut self,
+        family_id: RouteFamily,
+        pattern: &Route,
+        subscription_id: SubscriptionId,
+    ) {
         let segments = parse_pattern_segments(pattern.as_str());
         let root = self
             .roots
@@ -92,7 +99,12 @@ impl SubscriptionIndex {
     /// - `family_id`: RouteFamily
     /// - `pattern`: The original route pattern
     /// - `subscription_id`: Subscription to remove
-    pub fn remove(&mut self, family_id: RouteFamily, pattern: &Route, subscription_id: SubscriptionId) {
+    pub fn remove(
+        &mut self,
+        family_id: RouteFamily,
+        pattern: &Route,
+        subscription_id: SubscriptionId,
+    ) {
         let segments = parse_pattern_segments(pattern.as_str());
         if let Some(root) = self.roots.get_mut(&family_id) {
             remove_from_trie(root, &segments, 0, subscription_id);
@@ -238,7 +250,7 @@ fn matches_suffix(suffix: &[PatternSegment], route: &[String], start_idx: usize)
     if suffix.is_empty() {
         return true;
     }
-    
+
     // Try matching suffix starting at each position from start_idx onwards
     for try_idx in start_idx..=route.len() {
         if match_pattern_segments(suffix, 0, route, try_idx) {

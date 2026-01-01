@@ -280,7 +280,7 @@ fn bench_lease_runtime_multi_family_isolation(c: &mut Criterion) {
 
                         // Acquire
                         let _ = actor_ref.send(LeaseMessage::Acquire {
-                            family_id: black_box(family.clone()),
+                            family_id: black_box(family),
                             route: black_box(route.clone()),
                             owner_id: black_box(owner.clone()),
                             ttl_secs: 10,
@@ -339,7 +339,7 @@ fn bench_lease_runtime_burst_load(c: &mut Criterion) {
                         let owner = format!("burst_client_{}", i);
 
                         let _ = actor_ref.send(LeaseMessage::Acquire {
-                            family_id: black_box(family.clone()),
+                            family_id: black_box(family),
                             route: black_box(route),
                             owner_id: black_box(owner),
                             ttl_secs: 1,
@@ -386,7 +386,7 @@ fn bench_lease_runtime_sustained_load(c: &mut Criterion) {
 
             actor_ref
                 .send(LeaseMessage::Acquire {
-                    family_id: black_box(family.clone()),
+                    family_id: black_box(family),
                     route: black_box(route),
                     owner_id: black_box(owner),
                     ttl_secs: 3600, // Long TTL to simulate long-lived leases
