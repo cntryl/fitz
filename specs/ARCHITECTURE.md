@@ -40,7 +40,7 @@ Fitz v2 is a **pure actor model** messaging platform built on three core princip
 │                                                              │
 │  Domain Actors (SYNC):                                      │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │ src/domains/notifications/ - Pub/Sub (ephemeral)     │  │
+│  │ src/domains/notification/ - Pub/Sub (ephemeral)      │  │
 │  │ src/domains/stream/ - Append logs (durable)          │  │
 │  │ src/domains/queue/ - Work queues (NOT IMPLEMENTED)   │  │
 │  │ src/domains/rpc/ - Request/response (ephemeral)      │  │
@@ -97,7 +97,7 @@ A **domain** is a messaging primitive exposed to users. Fitz provides **6 domain
 
 | Domain | Status | Module | Description |
 |--------|--------|--------|-------------|
-| **notifications** | ✅ Implemented | `src/domains/notifications/` | Fire-and-forget pub/sub (was "notice") |
+| **notification** | ✅ Implemented | `src/domains/notification/` | Fire-and-forget pub/sub (was "notice") |
 | **rpc** | ✅ Implemented | `src/domains/rpc/` | Request/response with correlation IDs |
 | **lease** | ✅ Implemented | `src/domains/lease/` | Distributed locks for coordination |
 
@@ -127,7 +127,7 @@ Every routed message follows:
 
 | Segment | Meaning | Example |
 |---------|---------|---------|
-| scheme | Messaging domain | `stream`, `notifications`, `rpc`, `lease`, `kv` |
+| scheme | Messaging domain | `stream`, `notification`, `rpc`, `lease`, `kv` |
 | realm | Logical grouping (NOT isolation boundary) | `billing` |
 | area | Subsystem grouping | `payments` |
 | resource | Actual stream/topic/key | `events` |
@@ -171,7 +171,7 @@ src/
 │   └── policy/          # Policy evaluation and enforcement
 │
 ├── domains/             # Domain-specific actors (SYNC)
-│   ├── notifications/   # Pub/sub domain (ephemeral)
+│   ├── notification/    # Pub/sub domain (ephemeral)
 │   │   ├── actor/       # NotificationActor implementation
 │   │   ├── api/         # Public API surface
 │   │   └── protocol/    # Wire protocol definitions
@@ -262,7 +262,7 @@ src/
 - ❌ Routing tables (`transport/router/`)
 - ❌ RPC state (`domains/rpc/`)
 - ❌ Leases (`domains/lease/`)
-- ❌ Subscriptions (`domains/notifications/`, `domains/stream/`)
+- ❌ Subscriptions (`domains/notification/`, `domains/stream/`)
 - ❌ Metrics (`control/metrics/`)
 
 **Critical Rule:** Only `storage/engine/` touches Midge. No other module may perform direct storage I/O.
@@ -358,7 +358,7 @@ Located in `src/control/`:
 
 ## 7. Domain Actor Details
 
-### 7.1 Notifications (`domains/notifications/`)
+### 7.1 Notification (`domains/notification/`)
 
 **Purpose:** Fire-and-forget pub/sub (ephemeral)
 
@@ -442,7 +442,7 @@ Located in `src/control/`:
 
 ## 8. Key Architectural Principles
 
-1. **Domains are messaging primitives only** - stream, kv, notifications, rpc, lease (+ queue planned)
+1. **Domains are messaging primitives only** - stream, kv, notification, rpc, lease (+ queue planned)
 2. **Actor model everywhere** - Every subsystem is an actor, no shared state
 3. **Sync actors, async edges** - Actors are synchronous, only transport/storage are async
 4. **Route Family is physical boundary** - Maps to Midge, defines isolation
@@ -461,7 +461,7 @@ Located in `src/control/`:
 | Transport (TLV) | `src/transport/codecs/` | 🚧 Stubbed |
 | Storage (Midge) | `src/storage/engine/` | 🚧 Stubbed |
 | Security | `src/security/` | 🚧 Stubbed |
-| Notifications | `src/domains/notifications/` | 🚧 Stubbed |
+| Notification | `src/domains/notification/` | 🚧 Stubbed |
 | Stream | `src/domains/stream/` | 🚧 Stubbed |
 | RPC | `src/domains/rpc/` | 🚧 Stubbed |
 | Lease | `src/domains/lease/` | 🚧 Stubbed |
@@ -507,7 +507,7 @@ Located in `src/control/`:
    - Error propagation
 
 4. **Implement domain actors** (one at a time)
-   - Start with notifications (simplest)
+   - Start with notification (simplest)
    - Then stream, rpc, lease, kv
    - Queue last (most complex)
 
