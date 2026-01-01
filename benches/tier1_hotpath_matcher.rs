@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use fitz::domains::notification::matcher::Pattern;
+use fitz::transport::matcher::Pattern;
 use fitz::transport::routing::Route;
 
 #[path = "config.rs"]
@@ -7,24 +7,19 @@ mod config;
 
 /// Exact literal route match (best case)
 fn bench_exact_match(c: &mut Criterion) {
-    // Arrange: Pre-construct pattern and route
     let pattern = Pattern::new("notify://acme/orders/create");
     let route = Route::new("notify://acme/orders/create".to_string());
 
     let mut group = c.benchmark_group("hotpath_matcher_exact");
     group.sampling_mode(criterion::SamplingMode::Flat);
     group.bench_function("exact_literal_match", |b| {
-        b.iter(|| {
-            // Act: measure only the match operation
-            pattern.matches(black_box(&route))
-        })
+        b.iter(|| pattern.matches(black_box(&route)))
     });
     group.finish();
 }
 
 /// Single-level wildcard match
 fn bench_single_wildcard(c: &mut Criterion) {
-    // Arrange: Pre-construct pattern and route
     let pattern = Pattern::new("notify://acme/orders/*");
     let route_create = Route::new("notify://acme/orders/create".to_string());
     let route_update = Route::new("notify://acme/orders/update".to_string());
@@ -33,7 +28,6 @@ fn bench_single_wildcard(c: &mut Criterion) {
     group.sampling_mode(criterion::SamplingMode::Flat);
     group.bench_function("single_star_match", |b| {
         b.iter(|| {
-            // Act: measure match with single * wildcard
             let _ = pattern.matches(black_box(&route_create));
             let _ = pattern.matches(black_box(&route_update));
         })
@@ -41,9 +35,8 @@ fn bench_single_wildcard(c: &mut Criterion) {
     group.finish();
 }
 
-/// Multi-level wildcard at end
+/// Multi-level wildcard at end (depth knee)
 fn bench_double_star_end(c: &mut Criterion) {
-    // Arrange: Pre-construct pattern and routes with varying depths
     let pattern = Pattern::new("notify://acme/orders/**");
     let route_direct = Route::new("notify://acme/orders".to_string());
     let route_level1 = Route::new("notify://acme/orders/create".to_string());
@@ -53,7 +46,6 @@ fn bench_double_star_end(c: &mut Criterion) {
     group.sampling_mode(criterion::SamplingMode::Flat);
     group.bench_function("double_star_at_end", |b| {
         b.iter(|| {
-            // Act: measure match with ** at end (varies depth)
             let _ = pattern.matches(black_box(&route_direct));
             let _ = pattern.matches(black_box(&route_level1));
             let _ = pattern.matches(black_box(&route_level3));
@@ -64,7 +56,6 @@ fn bench_double_star_end(c: &mut Criterion) {
 
 /// Multi-level wildcard in middle
 fn bench_double_star_middle(c: &mut Criterion) {
-    // Arrange: Pre-construct pattern and routes
     let pattern = Pattern::new("notify://acme/**/created");
     let route_direct = Route::new("notify://acme/created".to_string());
     let route_level2 = Route::new("notify://acme/orders/created".to_string());
@@ -74,7 +65,6 @@ fn bench_double_star_middle(c: &mut Criterion) {
     group.sampling_mode(criterion::SamplingMode::Flat);
     group.bench_function("double_star_in_middle", |b| {
         b.iter(|| {
-            // Act: measure match with ** in middle
             let _ = pattern.matches(black_box(&route_direct));
             let _ = pattern.matches(black_box(&route_level2));
             let _ = pattern.matches(black_box(&route_level4));
@@ -85,25 +75,112 @@ fn bench_double_star_middle(c: &mut Criterion) {
 
 /// Negative match that fails late (worst case for backtracking)
 fn bench_negative_match_late_fail(c: &mut Criterion) {
-    // Arrange: Pattern that will fail only at the final segment
-    // Pattern expects "*/items/history/created" but route has different final segment
     let pattern = Pattern::new("notify://acme/*/items/history/created");
     let route_fail = Route::new("notify://acme/orders/items/history/updated".to_string());
 
     let mut group = c.benchmark_group("hotpath_matcher_negative_late");
     group.sampling_mode(criterion::SamplingMode::Flat);
     group.bench_function("negative_match_late_fail", |b| {
-        b.iter(|| {
-            // Act: measure negative match (fails at last segment)
-            let _ = pattern.matches(black_box(&route_fail));
-        })
+        b.iter(|| pattern.matches(black_box(&route_fail)))
     });
+    group.finish();
+}
+
+/// Find the depth knee: increasing route depth
+fn bench_depth_knee(c: &mut Criterion) {
+    let pattern = Pattern::new("notify://acme/orders/**");
+    
+    // Varying route depths
+    let route_depth1 = Route::new("notify://acme/orders/x".to_string());
+    let route_depth3 = Route::new("notify://acme/orders/a/b/c".to_string());
+    let route_depth5 = Route::new("notify://acme/orders/a/b/c/d/e".to_string());
+    let route_depth10 = Route::new("notify://acme/orders/a/b/c/d/e/f/g/h/i/j".to_string());
+
+    let mut group = c.benchmark_group("hotpath_matcher_depth_knee");
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    
+    group.bench_function("depth_1", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth1)))
+    });
+    group.bench_function("depth_3", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth3)))
+    });
+    group.bench_function("depth_5", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth5)))
+    });
+    group.bench_function("depth_10", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth10)))
+    });
+    
+    group.finish();
+}
+
+/// Find the pattern complexity knee: multiple wildcards
+fn bench_pattern_complexity_knee(c: &mut Criterion) {
+    let route = Route::new("notify://acme/orders/items/history/created".to_string());
+    
+    let pattern_literals = Pattern::new("notify://acme/orders/items/history/created");
+    let pattern_one_star = Pattern::new("notify://acme/orders/*/history/created");
+    let pattern_two_stars = Pattern::new("notify://acme/*/items/*/created");
+    let pattern_three_stars = Pattern::new("notify://acme/*/*/*/*");
+    let pattern_double_star = Pattern::new("notify://acme/**/created");
+
+    let mut group = c.benchmark_group("hotpath_matcher_complexity_knee");
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    
+    group.bench_function("all_literals", |b| {
+        b.iter(|| pattern_literals.matches(black_box(&route)))
+    });
+    group.bench_function("one_star", |b| {
+        b.iter(|| pattern_one_star.matches(black_box(&route)))
+    });
+    group.bench_function("two_stars", |b| {
+        b.iter(|| pattern_two_stars.matches(black_box(&route)))
+    });
+    group.bench_function("three_stars", |b| {
+        b.iter(|| pattern_three_stars.matches(black_box(&route)))
+    });
+    group.bench_function("double_star", |b| {
+        b.iter(|| pattern_double_star.matches(black_box(&route)))
+    });
+    
+    group.finish();
+}
+
+/// Find the backtracking knee: ** with increasing alternatives
+fn bench_backtracking_knee(c: &mut Criterion) {
+    // Pattern with ** that must backtrack through alternatives
+    let pattern = Pattern::new("notify://acme/**/items/created");
+    
+    // Routes with varying depths before "items"
+    let route_depth1 = Route::new("notify://acme/items/created".to_string());
+    let route_depth2 = Route::new("notify://acme/orders/items/created".to_string());
+    let route_depth3 = Route::new("notify://acme/orders/details/items/created".to_string());
+    let route_depth5 = Route::new("notify://acme/a/b/c/d/items/created".to_string());
+
+    let mut group = c.benchmark_group("hotpath_matcher_backtracking_knee");
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    
+    group.bench_function("backtrack_0_segments", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth1)))
+    });
+    group.bench_function("backtrack_1_segment", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth2)))
+    });
+    group.bench_function("backtrack_2_segments", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth3)))
+    });
+    group.bench_function("backtrack_4_segments", |b| {
+        b.iter(|| pattern.matches(black_box(&route_depth5)))
+    });
+    
     group.finish();
 }
 
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = bench_exact_match, bench_single_wildcard, bench_double_star_end, bench_double_star_middle, bench_negative_match_late_fail
+    targets = bench_exact_match, bench_single_wildcard, bench_double_star_end, bench_double_star_middle, 
+              bench_negative_match_late_fail, bench_depth_knee, bench_pattern_complexity_knee, bench_backtracking_knee
 }
 criterion_main!(benches);

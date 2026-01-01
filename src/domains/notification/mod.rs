@@ -27,5 +27,4 @@
 //! ```
 
 pub mod actor;
-pub mod matcher;
 pub mod protocol;

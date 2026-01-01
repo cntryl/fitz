@@ -1,6 +1,6 @@
-//! Wildcard route matching for notifications
+//! Wildcard route matching for transport patterns
 //!
-//! Notifications support NATS-like wildcard routing with two wildcard types:
+//! Supports NATS-like wildcard routing with two wildcard types.
 //!
 //! # Wildcard Syntax
 //!
@@ -30,7 +30,7 @@
 
 use crate::transport::routing::Route;
 
-/// Wildcard pattern for notification subscriptions
+/// Wildcard pattern for route subscriptions
 ///
 /// A pattern is a route that may contain `*` and `**` wildcards.
 /// Patterns are matched against published routes to determine fan-out targets.
@@ -103,39 +103,55 @@ fn parse_pattern(route: &str) -> Vec<PatternSegment> {
         .collect()
 }
 
-/// Match route segments against pattern segments
+/// Match route segments against pattern segments using index-based iteration
+/// (avoids recursive slicing overhead)
+#[inline]
 fn match_segments(patterns: &[PatternSegment], route: &[&str]) -> bool {
-    match (patterns.first(), route.first()) {
-        // Both empty: perfect match
-        (None, None) => true,
-        // Pattern exhausted but route remains: no match
-        (None, Some(_)) => false,
-        // Route exhausted but pattern remains: check if remaining pattern can match empty
-        (Some(_), None) => {
-            // Only ** can match zero segments
-            patterns
-                .iter()
-                .all(|p| matches!(p, PatternSegment::DoubleStar))
-        }
-        // Pattern is **
-        (Some(PatternSegment::DoubleStar), Some(_)) => {
+    match_segments_indexed(patterns, 0, route, 0)
+}
+
+/// Index-based matching function (avoids slice allocation on each recursion)
+#[inline]
+fn match_segments_indexed(
+    patterns: &[PatternSegment],
+    pat_idx: usize,
+    route: &[&str],
+    route_idx: usize,
+) -> bool {
+    // Both exhausted: match
+    if pat_idx >= patterns.len() && route_idx >= route.len() {
+        return true;
+    }
+
+    // Pattern exhausted but route remains: no match
+    if pat_idx >= patterns.len() {
+        return false;
+    }
+
+    // Route exhausted but pattern remains: only ** can match empty
+    if route_idx >= route.len() {
+        return patterns[pat_idx..]
+            .iter()
+            .all(|p| matches!(p, PatternSegment::DoubleStar));
+    }
+
+    match &patterns[pat_idx] {
+        PatternSegment::DoubleStar => {
             // Option 1: ** matches zero segments, skip to next pattern
-            if match_segments(&patterns[1..], route) {
+            if match_segments_indexed(patterns, pat_idx + 1, route, route_idx) {
                 return true;
             }
             // Option 2: ** matches one or more segments, consume one segment
-            match_segments(patterns, &route[1..])
+            match_segments_indexed(patterns, pat_idx, route, route_idx + 1)
         }
-        // Pattern is *
-        (Some(PatternSegment::Star), Some(_)) => {
+        PatternSegment::Star => {
             // * matches exactly one segment
-            match_segments(&patterns[1..], &route[1..])
+            match_segments_indexed(patterns, pat_idx + 1, route, route_idx + 1)
         }
-        // Pattern is literal
-        (Some(PatternSegment::Literal(pat)), Some(route_seg)) => {
+        PatternSegment::Literal(pat) => {
             // Literal must match exactly
-            if pat == *route_seg {
-                match_segments(&patterns[1..], &route[1..])
+            if pat == route[route_idx] {
+                match_segments_indexed(patterns, pat_idx + 1, route, route_idx + 1)
             } else {
                 false
             }

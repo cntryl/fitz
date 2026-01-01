@@ -1,4 +1,5 @@
-//! Notification protocol definitions//!
+//! Notification protocol definitions
+//!
 //! The notification protocol supports fire-and-forget pub/sub with wildcard routing.
 //!
 //! # Message Types

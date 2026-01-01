@@ -3,5 +3,6 @@
 pub mod backpressure;
 pub mod codecs;
 pub mod envelope;
+pub mod matcher;
 pub mod router;
 pub mod routing;

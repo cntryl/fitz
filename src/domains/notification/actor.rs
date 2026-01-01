@@ -1,4 +1,5 @@
-//! Notification actor implementation//!
+//! Notification actor implementation
+//!
 //! The NotificationsActor manages in-memory pub/sub with wildcard routing.
 //!
 //! # State
@@ -22,7 +23,7 @@
 //! - Removes only exact pattern+subscriber matches
 //! - Idempotent: unsubscribing non-existent subscription is safe
 
-use crate::domains::notification::matcher::Pattern;
+use crate::transport::matcher::Pattern;
 use crate::domains::notification::protocol::{
     NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeMessage,
 };
