@@ -1,18 +1,50 @@
-// LAYER: SESSION
-//! Reference implementation of the Ingress trait
+// LAYER: SESSION (Async → Sync Bridge)
+//! Ingress trait and reference implementation for the async → sync boundary
 //!
-//! This module provides a working implementation of the `Ingress` trait
-//! that integrates with the runtime. It handles:
-//! 1. Session lifecycle (open, frame, close)
-//! 2. Frame routing to session actors
-//! 3. Backpressure and error handling
+//! # Purpose
+//!
+//! This module defines the async `Ingress` trait (the single async/sync boundary)
+//! and provides a reference implementation `RuntimeIngress` for session lifecycle
+//! management and event dispatching.
+//!
+//! # Design
+//!
+//! - **Trait definition** and **reference impl** live together to make the boundary
+//!   explicit and easy to review.
+//! - **API** (`api/tcp.rs`, `api/ws/mod.rs`) consumes this trait.
+//! - **Other session helpers** remain in their respective modules.
 
-use crate::runtime::ingress::{Ingress, IngressDecision};
+use bytes::Bytes;
 use crate::protocol::frame::ChannelId;
 use crate::session::{CloseReason, SessionInfo};
-use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
+
+/// Outcome from the runtime for a single protocol message
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IngressDecision {
+    Accept,
+    Close(String),
+    Backpressure,
+}
+
+/// Trait implemented by the session layer to consume transport frames
+#[async_trait::async_trait]
+pub trait Ingress: Send + Sync {
+    /// Called when transport opens a new session
+    async fn on_open(&self, session: SessionInfo) -> Result<u64, String>;
+
+    /// Called for every demultiplexed channel message
+    async fn on_frame(
+        &self,
+        session_id: u64,
+        channel_id: ChannelId,
+        message_payload: Bytes,
+    ) -> IngressDecision;
+
+    /// Called when the transport closes the connection
+    async fn on_close(&self, session_id: u64, reason: CloseReason);
+}
 
 /// Session frame message for dispatching to domain handlers
 #[derive(Debug, Clone)]
@@ -33,7 +65,7 @@ pub enum SessionEvent {
 /// Ingress implementation with session tracking
 ///
 /// This reference implementation tracks active sessions and can route
-/// frame events to domain handlers. It's designed to be embedded in
+/// frame events to event handlers. It's designed to be embedded in
 /// a runtime dispatcher or session manager.
 pub struct RuntimeIngress {
     sessions: Arc<DashMap<u64, SessionInfo>>,
@@ -235,3 +267,4 @@ mod tests {
         assert_eq!(ingress.session_count(), 3);
     }
 }
+

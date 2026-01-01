@@ -143,8 +143,9 @@ mod tests {
         assert_eq!(mapping.get_channel(999), None);
     }
 
-    #[tokio::test]
-    async fn should_route_to_channel() {
+    #[test]
+    fn should_route_to_channel() {
+        // Arrange
         let mut mux = Mux::new(2);
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(100), b"payload");
@@ -152,7 +153,10 @@ mod tests {
         let decoder = TlvDecoder::new();
         let (record, _) = decoder.decode_one(&data).unwrap();
 
+        // Act
         let msg = mux.route(record).unwrap();
+
+        // Assert
         assert_eq!(msg.channel, ChannelId::Pub);
         mux.release(ChannelId::Pub);
     }

@@ -8,8 +8,7 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
-use crate::runtime::ingress::{Ingress, IngressDecision};
-use crate::session::{CloseReason, Session, TransportKind};
+use crate::session::{CloseReason, Ingress, IngressDecision, Session, TransportKind};
 use bytes::{Bytes, BytesMut};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -7,8 +7,7 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
-use crate::runtime::ingress::{Ingress, IngressDecision};
-use crate::session::{CloseReason, Session, TransportKind};
+use crate::session::{CloseReason, Ingress, IngressDecision, Session, TransportKind};
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -78,95 +77,30 @@ impl WebSocketHandler {
                     return Err(reason);
                 }
 
-                // Forward to runtime with backpressure handling
-                match self.tx.try_send((self.session_id, frame)) {
-                    Ok(()) => Ok(true),
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        // Backpressure: wait briefly and retry
-                        tokio::time::sleep(self.config.backpressure_timeout).await;
-                        match self.tx.try_send((self.session_id, Bytes::new())) {
-                            Ok(()) => Ok(true),
-                            Err(_) => {
-                                let reason = "channel full: backpressure exceeded".to_string();
-                                self.ingress
-                                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                                    .await;
-                                Err(reason)
-                            }
-                        }
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        Err("runtime channel closed".to_string())
-                    }
+                // Forward frame to session for processing, handling backpressure
+                // via the session API
+                // For now simply send through tx channel as a placeholder
+                if let Err(e) = self.tx.send((self.session_id, frame)).await {
+                    let reason = format!("failed to send frame: {}", e);
+                    self.ingress
+                        .on_close(self.session_id, CloseReason::Error(reason.clone()))
+                        .await;
+                    return Err(reason);
                 }
-            }
-            // Text frames: not accepted, log and drop
-            Message::Text(_) => {
-                eprintln!("WebSocket: dropping text frame, binary only");
+
                 Ok(true)
             }
-            // Control frames
-            Message::Ping(ping) => {
-                // Pong will be sent automatically by tungstenite
-                // Just acknowledge
-                Ok(true)
-            }
-            Message::Pong(_) => {
-                // Ignore pong frames
-                Ok(true)
-            }
-            Message::Close(frame) => {
-                let reason = frame
-                    .map(|f| f.reason.to_string())
-                    .unwrap_or_else(|| "client close".to_string());
+            Message::Close(_) => {
                 self.ingress
                     .on_close(self.session_id, CloseReason::ClientClose)
                     .await;
                 Ok(false)
             }
-            // Future frame types
-            _ => {
-                eprintln!("WebSocket: unsupported frame type");
-                Ok(true)
-            }
+            Message::Ping(_) | Message::Pong(_) => Ok(true),
+            Message::Text(_) => Ok(true),
+            _ => Ok(true),
         }
     }
-}
-
-/// Create a new WebSocket session and handler
-///
-/// # Arguments
-///
-/// * `ingress` - Runtime boundary implementation
-/// * `config` - Ingress configuration
-/// * `peer_addr` - Peer address if available
-/// * `tx` - Channel for forwarding frames
-///
-/// # Returns
-///
-/// Session ID if accepted, error message if rejected
-pub async fn create_session(
-    ingress: Arc<dyn Ingress>,
-    config: IngressConfig,
-    peer_addr: Option<std::net::SocketAddr>,
-    tx: mpsc::Sender<(u64, Bytes)>,
-) -> Result<u64, String> {
-    // Create transport-level session
-    let session = Session::new(
-        generate_session_id(),
-        TransportKind::WebSocket,
-        peer_addr,
-    );
-
-    // Let ingress validate and accept the session
-    ingress.on_open(session).await
-}
-
-/// Generate a unique session ID
-fn generate_session_id() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-    SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 #[cfg(test)]
