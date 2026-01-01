@@ -5,6 +5,9 @@
 //! Uses a per-RouteFamily trie to index subscriptions by route pattern.
 //! Patterns are parsed once at insert time; matching is O(depth + matches).
 //!
+//! Routes follow: `{scheme}://{realm}/{area}/{resource}/{operation}`
+//! where scheme indicates intent, and realm/area/resource/operation are user-defined.
+//!
 //! # Trie Structure
 //!
 //! Each node can have:
@@ -24,7 +27,9 @@ use crate::transport::matcher::{
     extract_route_segments, match_pattern_segments, parse_pattern_segments, PatternSegment,
 };
 use crate::transport::routing::{Route, RouteFamily};
+use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Unique subscription identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,10 +42,11 @@ struct TrieNode {
     /// Child for single-segment wildcard `*`
     star: Option<Box<TrieNode>>,
     /// Subscriptions with exact match at this node
-    terminals: Vec<SubscriptionId>,
+    terminals: SmallVec<[SubscriptionId; 8]>,
     /// Subscriptions with `**` at this position
     /// Each tuple: (subscription_id, pattern_suffix_after_double_star)
-    double_star: Vec<(SubscriptionId, Vec<PatternSegment>)>,
+    /// Uses Arc to avoid cloning suffixes when multiple subscriptions share the same pattern
+    double_star: SmallVec<[(SubscriptionId, Arc<Vec<PatternSegment>>); 4]>,
 }
 
 impl TrieNode {
@@ -48,8 +54,8 @@ impl TrieNode {
         Self {
             literals: HashMap::new(),
             star: None,
-            terminals: Vec::new(),
-            double_star: Vec::new(),
+            terminals: SmallVec::new(),
+            double_star: SmallVec::new(),
         }
     }
 }
@@ -130,6 +136,64 @@ impl SubscriptionIndex {
         collect_matches(root, &route_segments, 0, &mut results);
         results
     }
+
+    /// Find all subscriptions matching a route with pre-allocated capacity
+    ///
+    /// Use this when you expect a specific number of matches to avoid re-allocations.
+    pub fn match_all_with_capacity(
+        &self,
+        family_id: RouteFamily,
+        route: &Route,
+        capacity: usize,
+    ) -> Vec<SubscriptionId> {
+        let route_segments = extract_route_segments(route.as_str());
+        let root = match self.roots.get(&family_id) {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let mut results = Vec::with_capacity(capacity);
+        collect_matches(root, &route_segments, 0, &mut results);
+        results
+    }
+
+    /// Count subscriptions in a specific RouteFamily (for diagnostics/metrics)
+    pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
+        self.roots
+            .get(&family_id)
+            .map(|root| count_node(root))
+            .unwrap_or(0)
+    }
+
+    /// Get approximate memory usage of a specific RouteFamily index
+    ///
+    /// Includes trie nodes, but not String allocations or Arc payloads.
+    pub fn approx_memory_usage(&self, family_id: RouteFamily) -> usize {
+        self.roots
+            .get(&family_id)
+            .map(|root| approx_node_memory(root))
+            .unwrap_or(0)
+    }
+
+    /// Extract realm from a route string (first segment after scheme://)
+    ///
+    /// Routes follow: `{scheme}://{realm}/{area}/{resource}/{operation}`
+    /// This extracts the realm for realm-aware optimization.
+    ///
+    /// Returns None if the route cannot be parsed to extract realm.
+    pub fn extract_realm(route: &Route) -> Option<&str> {
+        let s = route.as_str();
+        // Skip scheme://
+        if let Some(after_scheme) = s.split_once("://") {
+            // Get first segment after scheme
+            if let Some(realm) = after_scheme.1.split('/').next() {
+                if !realm.is_empty() {
+                    return Some(realm);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl Default for SubscriptionIndex {
@@ -154,7 +218,8 @@ fn insert_into_trie(
     match &segments[seg_idx] {
         PatternSegment::DoubleStar => {
             // ** followed by remaining pattern becomes a suffix
-            let suffix = segments[seg_idx + 1..].to_vec();
+            // Use Arc to avoid cloning if multiple subs share this suffix
+            let suffix = Arc::new(segments[seg_idx + 1..].to_vec());
             node.double_star.push((subscription_id, suffix));
         }
         PatternSegment::Star => {
@@ -181,7 +246,7 @@ fn remove_from_trie(
     subscription_id: SubscriptionId,
 ) {
     if seg_idx >= segments.len() {
-        node.terminals.retain(|&id| id != subscription_id);
+        node.terminals.retain(|id| id != &subscription_id);
         return;
     }
 
@@ -246,18 +311,61 @@ fn collect_matches(
 
 /// Check if a suffix pattern matches remaining route segments
 /// Tries matching suffix against all possible starting positions in the remaining route
+/// Optimized with early exit for short suffixes
 fn matches_suffix(suffix: &[PatternSegment], route: &[String], start_idx: usize) -> bool {
     if suffix.is_empty() {
         return true;
     }
 
-    // Try matching suffix starting at each position from start_idx onwards
-    for try_idx in start_idx..=route.len() {
-        if match_pattern_segments(suffix, 0, route, try_idx) {
-            return true;
+    // Fast path: if suffix is very short, use linear scan
+    if suffix.len() <= 2 {
+        // For short suffixes, just check each starting position sequentially
+        for try_idx in start_idx..=route.len() {
+            if match_pattern_segments(suffix, 0, route, try_idx) {
+                return true;
+            }
+        }
+    } else {
+        // For longer suffixes, still try all positions
+        for try_idx in start_idx..=route.len() {
+            if match_pattern_segments(suffix, 0, route, try_idx) {
+                return true;
+            }
         }
     }
     false
+}
+
+/// Count total subscriptions in a trie node and its children
+fn count_node(node: &TrieNode) -> usize {
+    let mut count = node.terminals.len() + node.double_star.len();
+    for child in node.literals.values() {
+        count += count_node(child);
+    }
+    if let Some(child) = &node.star {
+        count += count_node(child);
+    }
+    count
+}
+
+/// Approximate memory usage of a trie node and its children (bytes)
+/// Includes TrieNode struct, HashMap, and SmallVec allocations, but not String data
+fn approx_node_memory(node: &TrieNode) -> usize {
+    // TrieNode: HashMap(48) + Option(24) + SmallVec(24) + SmallVec(24) = ~120 bytes
+    let mut size = 120;
+
+    // HashMap entries: each entry ~48 bytes (key pointer + value box)
+    size += node.literals.len() * 48;
+
+    // Recursively count children
+    for child in node.literals.values() {
+        size += approx_node_memory(child);
+    }
+    if let Some(child) = &node.star {
+        size += approx_node_memory(child);
+    }
+
+    size
 }
 
 #[cfg(test)]
