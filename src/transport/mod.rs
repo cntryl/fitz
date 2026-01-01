@@ -6,4 +6,5 @@ pub mod envelope;
 pub mod matcher;
 pub mod router;
 pub mod routing;
+pub mod session;
 pub mod subscriptions;

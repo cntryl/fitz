@@ -2,12 +2,19 @@
 //!
 //! Fire-and-forget pub/sub messaging with NATS-like wildcard routing.
 //!
+//! # Architecture
+//!
+//! - **SessionActor**: Enforces all authentication and authorization
+//! - **NoticeRouteActor**: Owns subscriptions per route, trusts SessionActor, performs fanout
+//! - Subscriptions are session-scoped and cleaned up on disconnect
+//! - Authorization is prefix-based (exact, area wildcard, realm wildcard, global)
+//!
 //! # Semantics
 //!
 //! - **Fire-and-forget**: No acknowledgements, retries, or delivery guarantees
 //! - **Best-effort**: Messages delivered only to subscribers alive at publish time
 //! - **Isolated**: All messaging scoped to (RouteFamilyId, route) pairs
-//! - **Stateless**: No ordering, durability, or persistence
+//! - **Session-scoped**: Subscriptions vanish on disconnect
 //!
 //! # Wildcard Routing
 //!
@@ -19,10 +26,10 @@
 //!
 //! ```ignore
 //! // Subscribe to all orders
-//! subscribe(family, "notify://acme/orders/*", subscriber);
+//! subscribe(family, "notice://acme/orders/*", subscriber);
 //!
 //! // Publish to create operation
-//! publish(family, "notify://acme/orders/create", payload);
+//! publish(family, "notice://acme/orders/create", payload);
 //! // Matches above subscription
 //! ```
 
