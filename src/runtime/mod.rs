@@ -24,7 +24,6 @@ pub mod actor;
 pub mod context;
 pub mod envelope;
 pub mod ingress;
-pub mod ingress_impl;
 pub mod mailbox;
 pub mod matcher;
 pub mod router;
@@ -38,7 +37,7 @@ pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendE
 pub use context::{Timer, TimerId, TimerManager};
 pub use envelope::{Envelope, MessageId};
 pub use ingress::{Ingress, IngressDecision};
-pub use ingress_impl::{RuntimeIngress, SessionEvent, SessionFrame};
+pub use crate::session::ingress_impl::{RuntimeIngress, SessionEvent, SessionFrame};
 pub use mailbox::Mailbox;
 pub use matcher::{Pattern, PatternSegment};
 pub use router::{DeliveryError, MailboxSink, RouteError, Router};

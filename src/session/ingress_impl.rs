@@ -1,12 +1,13 @@
+// LAYER: SESSION
 //! Reference implementation of the Ingress trait
 //!
 //! This module provides a working implementation of the `Ingress` trait
-//! that integrates with the runtime scheduler. It handles:
+//! that integrates with the runtime. It handles:
 //! 1. Session lifecycle (open, frame, close)
 //! 2. Frame routing to session actors
 //! 3. Backpressure and error handling
 
-use super::ingress::{Ingress, IngressDecision};
+use crate::runtime::ingress::{Ingress, IngressDecision};
 use crate::protocol::frame::ChannelId;
 use crate::session::{CloseReason, SessionInfo};
 use bytes::Bytes;
