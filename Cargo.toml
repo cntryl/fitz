@@ -65,41 +65,41 @@ serial_test = "0.5"
 # Benchmark framework set up, but implementations need API updates for current context/actor design
 
 [[bench]]
-name = "send_local"
+name = "tier1_hotpath_send_local"
 harness = false
 path = "benches/tier1_hotpath_send_local.rs"
 
 [[bench]]
-name = "self_send"
+name = "tier1_hotpath_self_send"
 harness = false
 path = "benches/tier1_hotpath_self_send.rs"
 
 [[bench]]
-name = "reply"
+name = "tier1_hotpath_reply"
 harness = false
 path = "benches/tier1_hotpath_reply.rs"
 
 [[bench]]
-name = "matcher"
+name = "tier1_hotpath_matcher"
 harness = false
 path = "benches/tier1_hotpath_matcher.rs"
 
 [[bench]]
-name = "router"
+name = "tier2_subsystem_router"
 harness = false
 path = "benches/tier2_subsystem_router.rs"
 
 [[bench]]
-name = "mailbox"
+name = "tier2_subsystem_mailbox"
 harness = false
 path = "benches/tier2_subsystem_mailbox.rs"
 
 [[bench]]
-name = "scheduler"
+name = "tier2_subsystem_scheduler"
 harness = false
 path = "benches/tier2_subsystem_scheduler.rs"
 
 [[bench]]
-name = "lease"
+name = "tier2_subsystem_lease"
 harness = false
 path = "benches/tier2_subsystem_lease.rs"
