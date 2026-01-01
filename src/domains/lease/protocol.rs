@@ -63,6 +63,13 @@ pub enum LeaseMessage {
 
     /// Query lease status (for testing/debugging)
     Query { lease_id: String },
+
+    /// Periodic tick for runtime-driven expiration
+    ///
+    /// The lease actor responds by proactively expiring old leases.
+    /// This is sent periodically by the scheduler to ensure leases
+    /// are expired even when not being actively accessed.
+    Tick,
 }
 
 /// Lease operation responses

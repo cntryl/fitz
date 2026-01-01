@@ -303,11 +303,27 @@ impl Actor for LeaseActor {
                 fencing_token,
             } => self.handle_release(lease_id, owner_id, fencing_token),
             LeaseMessage::Query { lease_id } => self.handle_query(lease_id),
+            LeaseMessage::Tick => {
+                // Proactively expire old leases
+                self.expire_old_leases();
+                return; // No response needed
+            }
         };
 
         // In a real system, we would reply to the sender
         // For now, just log the response
         println!("[LeaseActor {}] Response: {:?}", ctx.actor_id(), response);
+    }
+}
+
+impl LeaseActor {
+    /// Proactively expire old leases (called on Tick)
+    ///
+    /// This removes expired leases from state without waiting for
+    /// them to be accessed. Enables runtime-driven expiration.
+    fn expire_old_leases(&mut self) {
+        let now = self.clock.now();
+        self.leases.retain(|_lease_id, state| !state.is_expired(now));
     }
 }
 

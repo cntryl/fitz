@@ -45,7 +45,9 @@
 //! Client A learns it no longer holds the lease and must stop work.
 
 pub mod actor;
+pub mod guard;
 pub mod protocol;
 
 pub use actor::{Clock, LeaseActor, SystemClock};
+pub use guard::{LeaseError, LeaseGuard, LeaseHandle};
 pub use protocol::{LeaseMessage, LeaseResponse};
