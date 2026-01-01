@@ -31,9 +31,10 @@
 //! - Unknown destinations are dropped (logged at debug level)
 //! - Sink implementations handle backpressure
 //! - Router is thread-safe and cloneable
+//! - Route families are strictly isolated (no cross-family routing)
 
-use crate::runtime::ActorId;
 use crate::transport::envelope::Envelope;
+use crate::transport::routing::RouteAddress;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -86,18 +87,18 @@ impl std::error::Error for DeliveryError {}
 /// Errors that can occur during routing
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteError {
-    /// Destination actor not found in registry
-    ActorNotFound(ActorId),
+    /// Destination route not found in registry
+    RouteNotFound(RouteAddress),
     /// Delivery failed (mailbox full or actor stopped)
-    DeliveryFailed(ActorId, DeliveryError),
+    DeliveryFailed(RouteAddress, DeliveryError),
 }
 
 impl std::fmt::Display for RouteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RouteError::ActorNotFound(id) => write!(f, "Actor not found: {:?}", id),
-            RouteError::DeliveryFailed(id, err) => {
-                write!(f, "Delivery failed for actor {:?}: {}", id, err)
+            RouteError::RouteNotFound(addr) => write!(f, "Route not found: {}", addr),
+            RouteError::DeliveryFailed(addr, err) => {
+                write!(f, "Delivery failed for route {}: {}", addr, err)
             }
         }
     }
@@ -105,31 +106,34 @@ impl std::fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-/// Actor registry mapping ActorId to mailbox sinks
-struct ActorRegistry {
-    sinks: RwLock<HashMap<ActorId, Arc<dyn MailboxSink>>>,
+/// Route registry mapping RouteAddress to mailbox sinks
+///
+/// Enforces route family isolation: routes in different families
+/// never conflict even if they have the same path string.
+struct RouteRegistry {
+    sinks: RwLock<HashMap<RouteAddress, Arc<dyn MailboxSink>>>,
 }
 
-impl ActorRegistry {
+impl RouteRegistry {
     fn new() -> Self {
         Self {
             sinks: RwLock::new(HashMap::new()),
         }
     }
 
-    fn register(&self, id: ActorId, sink: Arc<dyn MailboxSink>) {
+    fn register(&self, address: RouteAddress, sink: Arc<dyn MailboxSink>) {
         let mut sinks = self.sinks.write().unwrap();
-        sinks.insert(id, sink);
+        sinks.insert(address, sink);
     }
 
-    fn unregister(&self, id: ActorId) {
+    fn unregister(&self, address: &RouteAddress) {
         let mut sinks = self.sinks.write().unwrap();
-        sinks.remove(&id);
+        sinks.remove(address);
     }
 
-    fn get(&self, id: ActorId) -> Option<Arc<dyn MailboxSink>> {
+    fn get(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
         let sinks = self.sinks.read().unwrap();
-        sinks.get(&id).cloned()
+        sinks.get(address).cloned()
     }
 
     fn len(&self) -> usize {
@@ -138,11 +142,16 @@ impl ActorRegistry {
     }
 }
 
-/// Message router for in-process actor delivery
+/// Message router for in-process delivery
 ///
-/// The router maintains a registry of actor mailbox sinks and delivers
+/// The router maintains a registry of route-to-mailbox mappings and delivers
 /// envelopes to their destinations. It provides best-effort delivery
 /// without guarantees or retries.
+///
+/// # Route Family Isolation
+///
+/// **CRITICAL**: The router enforces strict isolation between route families.
+/// Routes with the same path in different families are completely independent.
 ///
 /// # Thread Safety
 ///
@@ -154,61 +163,74 @@ impl ActorRegistry {
 /// ```ignore
 /// use fitz::transport::router::{Router, MailboxSink};
 /// use fitz::transport::envelope::Envelope;
-/// use fitz::runtime::ActorId;
+/// use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
 ///
 /// let router = Router::new();
-/// let actor_id = ActorId::new(1);
+/// let address = RouteAddress::new(
+///     RouteFamily::new(1),
+///     Route::new("/user/123")
+/// );
 ///
 /// // Register a mailbox sink
-/// router.register(actor_id, Arc::new(my_sink));
+/// router.register(address.clone(), Arc::new(my_sink));
 ///
 /// // Route an envelope
-/// let envelope = Envelope::new(actor_id, MyMessage::DoWork);
+/// let envelope = Envelope::new(address, MyMessage::DoWork);
 /// router.route(envelope)?;
 /// ```
 #[derive(Clone)]
 pub struct Router {
-    registry: Arc<ActorRegistry>,
+    registry: Arc<RouteRegistry>,
 }
 
 impl Router {
     /// Create a new router with an empty registry
     pub fn new() -> Self {
         Self {
-            registry: Arc::new(ActorRegistry::new()),
+            registry: Arc::new(RouteRegistry::new()),
         }
     }
 
-    /// Register an actor's mailbox sink
+    /// Register a route's mailbox sink
     ///
-    /// After registration, envelopes addressed to this actor will be
+    /// After registration, envelopes addressed to this route will be
     /// delivered to the provided sink.
+    ///
+    /// # Route Family Isolation
+    ///
+    /// Routes in different families are independent. Registering
+    /// `(family=1, route="/user")` does not affect `(family=2, route="/user")`.
     ///
     /// # Note
     ///
-    /// If an actor with this ID is already registered, the old sink
-    /// is replaced.
-    pub fn register(&self, id: ActorId, sink: Arc<dyn MailboxSink>) {
-        self.registry.register(id, sink);
+    /// If a route is already registered, the old sink is replaced.
+    pub fn register(&self, address: RouteAddress, sink: Arc<dyn MailboxSink>) {
+        self.registry.register(address, sink);
     }
 
-    /// Unregister an actor
+    /// Unregister a route
     ///
-    /// After unregistration, envelopes addressed to this actor will
-    /// fail with `ActorNotFound` error.
-    pub fn unregister(&self, id: ActorId) {
-        self.registry.unregister(id);
+    /// After unregistration, envelopes addressed to this route will
+    /// fail with `RouteNotFound` error.
+    pub fn unregister(&self, address: &RouteAddress) {
+        self.registry.unregister(address);
     }
 
-    /// Route an envelope to its destination actor
+    /// Route an envelope to its destination
     ///
     /// Extracts the destination from the envelope, looks up the registered
     /// sink, and attempts delivery.
     ///
+    /// # Route Family Isolation
+    ///
+    /// **CRITICAL**: No cross-family routing. If an envelope is addressed to
+    /// `(family=1, route="/user")`, the router will never attempt delivery to
+    /// `(family=2, route="/user")`, even if family 1's route is not registered.
+    ///
     /// # Errors
     ///
     /// Returns:
-    /// - `ActorNotFound` if the destination is not registered
+    /// - `RouteNotFound` if the destination is not registered
     /// - `DeliveryFailed` if the sink rejected the envelope
     ///
     /// # Invariants
@@ -217,23 +239,23 @@ impl Router {
     /// - No retries or queuing on failure
     /// - Deadlines in envelope are not enforced (sink's responsibility)
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
-        let dest = envelope.destination();
+        let dest = envelope.destination().clone();
 
         let sink = self
             .registry
-            .get(dest)
-            .ok_or(RouteError::ActorNotFound(dest))?;
+            .get(&dest)
+            .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
 
         sink.deliver(envelope)
             .map_err(|e| RouteError::DeliveryFailed(dest, e))
     }
 
-    /// Check if an actor is registered
-    pub fn contains(&self, id: ActorId) -> bool {
-        self.registry.get(id).is_some()
+    /// Check if a route is registered
+    pub fn contains(&self, address: &RouteAddress) -> bool {
+        self.registry.get(address).is_some()
     }
 
-    /// Get the number of registered actors
+    /// Get the number of registered routes
     pub fn len(&self) -> usize {
         self.registry.len()
     }
@@ -253,7 +275,13 @@ impl Default for Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
     use std::sync::Mutex;
+
+    /// Helper to create test route addresses
+    fn test_address(family: u64, route: &str) -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(family), Route::new(route))
+    }
 
     /// Mock sink for testing
     struct MockSink {
@@ -292,44 +320,44 @@ mod tests {
     }
 
     #[test]
-    fn should_register_actor() {
+    fn should_register_route() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/user/123");
         let sink = Arc::new(MockSink::new());
 
         // Act
-        router.register(actor_id, sink);
+        router.register(address.clone(), sink);
 
         // Assert
-        assert!(router.contains(actor_id));
+        assert!(router.contains(&address));
         assert_eq!(router.len(), 1);
     }
 
     #[test]
-    fn should_unregister_actor() {
+    fn should_unregister_route() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/user/123");
         let sink = Arc::new(MockSink::new());
-        router.register(actor_id, sink);
+        router.register(address.clone(), sink);
 
         // Act
-        router.unregister(actor_id);
+        router.unregister(&address);
 
         // Assert
-        assert!(!router.contains(actor_id));
+        assert!(!router.contains(&address));
         assert!(router.is_empty());
     }
 
     #[test]
-    fn should_route_envelope_to_registered_actor() {
+    fn should_route_envelope_to_registered_route() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/user/123");
         let sink = Arc::new(MockSink::new());
-        router.register(actor_id, sink.clone());
-        let envelope = Envelope::new(actor_id, "test message");
+        router.register(address.clone(), sink.clone());
+        let envelope = Envelope::new(address, "test message");
 
         // Act
         let result = router.route(envelope);
@@ -340,27 +368,27 @@ mod tests {
     }
 
     #[test]
-    fn should_return_error_for_unregistered_actor() {
+    fn should_return_error_for_unregistered_route() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
-        let envelope = Envelope::new(actor_id, "test message");
+        let address = test_address(1, "/user/123");
+        let envelope = Envelope::new(address.clone(), "test message");
 
         // Act
         let result = router.route(envelope);
 
         // Assert
-        assert_eq!(result, Err(RouteError::ActorNotFound(actor_id)));
+        assert_eq!(result, Err(RouteError::RouteNotFound(address)));
     }
 
     #[test]
     fn should_return_error_for_failed_delivery() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/user/123");
         let sink = Arc::new(MockSink::failing());
-        router.register(actor_id, sink);
-        let envelope = Envelope::new(actor_id, "test message");
+        router.register(address.clone(), sink);
+        let envelope = Envelope::new(address.clone(), "test message");
 
         // Act
         let result = router.route(envelope);
@@ -369,26 +397,26 @@ mod tests {
         assert_eq!(
             result,
             Err(RouteError::DeliveryFailed(
-                actor_id,
+                address,
                 DeliveryError::MailboxFull
             ))
         );
     }
 
     #[test]
-    fn should_support_multiple_actors() {
+    fn should_support_multiple_routes() {
         // Arrange
         let router = Router::new();
-        let actor1 = ActorId::new(1);
-        let actor2 = ActorId::new(2);
+        let addr1 = test_address(1, "/user/123");
+        let addr2 = test_address(1, "/user/456");
         let sink1 = Arc::new(MockSink::new());
         let sink2 = Arc::new(MockSink::new());
-        router.register(actor1, sink1.clone());
-        router.register(actor2, sink2.clone());
+        router.register(addr1.clone(), sink1.clone());
+        router.register(addr2.clone(), sink2.clone());
 
         // Act
-        router.route(Envelope::new(actor1, "msg1")).unwrap();
-        router.route(Envelope::new(actor2, "msg2")).unwrap();
+        router.route(Envelope::new(addr1, "msg1")).unwrap();
+        router.route(Envelope::new(addr2, "msg2")).unwrap();
 
         // Assert
         assert_eq!(sink1.count(), 1);
@@ -400,15 +428,15 @@ mod tests {
     fn should_clone_router() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/user/123");
         let sink = Arc::new(MockSink::new());
-        router.register(actor_id, sink);
+        router.register(address.clone(), sink);
 
         // Act
         let cloned = router.clone();
 
         // Assert
-        assert!(cloned.contains(actor_id));
+        assert!(cloned.contains(&address));
         assert_eq!(cloned.len(), router.len());
     }
 
@@ -416,21 +444,22 @@ mod tests {
     fn should_handle_concurrent_routing() {
         // Arrange
         let router = Router::new();
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/user/123");
         let sink = Arc::new(MockSink::new());
-        router.register(actor_id, sink.clone());
+        router.register(address.clone(), sink.clone());
 
         let router_clone = router.clone();
+        let addr_clone = address.clone();
         let handle = std::thread::spawn(move || {
             for i in 0..10 {
-                let envelope = Envelope::new(actor_id, i);
+                let envelope = Envelope::new(addr_clone.clone(), i);
                 router_clone.route(envelope).unwrap();
             }
         });
 
         // Act - route from main thread concurrently
         for i in 10..20 {
-            let envelope = Envelope::new(actor_id, i);
+            let envelope = Envelope::new(address.clone(), i);
             router.route(envelope).unwrap();
         }
 
@@ -438,5 +467,26 @@ mod tests {
 
         // Assert
         assert_eq!(sink.count(), 20);
+    }
+
+    #[test]
+    fn should_isolate_same_route_in_different_families() {
+        // Arrange
+        let router = Router::new();
+        let addr_family1 = test_address(1, "/user/123");
+        let addr_family2 = test_address(2, "/user/123");
+        let sink1 = Arc::new(MockSink::new());
+        let sink2 = Arc::new(MockSink::new());
+        router.register(addr_family1.clone(), sink1.clone());
+        router.register(addr_family2.clone(), sink2.clone());
+
+        // Act
+        router.route(Envelope::new(addr_family1, "msg1")).unwrap();
+        router.route(Envelope::new(addr_family2, "msg2")).unwrap();
+
+        // Assert
+        assert_eq!(sink1.count(), 1, "Family 1 should receive its message");
+        assert_eq!(sink2.count(), 1, "Family 2 should receive its message");
+        assert_eq!(router.len(), 2, "Both routes should be registered independently");
     }
 }

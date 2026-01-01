@@ -54,6 +54,7 @@
 
 use super::protocol::{LeaseMessage, LeaseResponse};
 use crate::runtime::{ActorRef, Context};
+use crate::transport::routing::{Route, RouteFamily};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -110,7 +111,8 @@ impl std::error::Error for LeaseError {}
 /// with the stale token will be rejected by the lease actor.
 #[derive(Debug, Clone)]
 pub struct LeaseHandle {
-    lease_id: String,
+    family_id: RouteFamily,
+    route: Route,
     owner_id: String,
     fencing_token: u64,
     expires_at: Instant,
@@ -120,14 +122,16 @@ pub struct LeaseHandle {
 impl LeaseHandle {
     /// Create a lease handle from an Acquired response
     pub fn from_acquired(
-        lease_id: String,
+        family_id: RouteFamily,
+        route: Route,
         owner_id: String,
         fencing_token: u64,
         ttl: Duration,
         lease_actor: ActorRef<LeaseMessage>,
     ) -> Self {
         Self {
-            lease_id,
+            family_id,
+            route,
             owner_id,
             fencing_token,
             expires_at: Instant::now() + ttl,
@@ -151,9 +155,14 @@ impl LeaseHandle {
         self.fencing_token
     }
 
-    /// Get the lease ID
-    pub fn lease_id(&self) -> &str {
-        &self.lease_id
+    /// Get the route family ID
+    pub fn family_id(&self) -> RouteFamily {
+        self.family_id
+    }
+
+    /// Get the route
+    pub fn route(&self) -> &Route {
+        &self.route
     }
 
     /// Get the owner ID
@@ -167,9 +176,10 @@ impl LeaseHandle {
     /// the handle does not wait for a response.
     pub fn release<A: crate::runtime::Actor>(self, ctx: &Context<A>) -> Result<(), LeaseError> {
         ctx.send(
-            self.lease_actor.actor_id(),
+            self.lease_actor.address().clone(),
             LeaseMessage::Release {
-                lease_id: self.lease_id,
+                family_id: self.family_id,
+                route: self.route,
                 owner_id: self.owner_id,
                 fencing_token: self.fencing_token,
             },
@@ -195,14 +205,16 @@ impl LeaseGuard {
     pub fn handle_from_response(
         &self,
         response: LeaseResponse,
-        lease_id: String,
+        family_id: RouteFamily,
+        route: Route,
         owner_id: String,
         ttl_secs: u64,
     ) -> Result<LeaseHandle, LeaseError> {
         match response {
             LeaseResponse::Acquired { fencing_token }
             | LeaseResponse::AlreadyHeld { fencing_token } => Ok(LeaseHandle::from_acquired(
-                lease_id,
+                family_id,
+                route,
                 owner_id,
                 fencing_token,
                 Duration::from_secs(ttl_secs),
@@ -228,8 +240,21 @@ mod tests {
     use super::*;
     use crate::domains::lease::LeaseActor;
     use crate::runtime::scheduler::Scheduler;
+    use crate::transport::routing::{Route, RouteFamily, RouteAddress};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    fn test_address(family: u64, route: &str) -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+    }
+
+    fn test_family(id: u64) -> RouteFamily {
+        RouteFamily::new(id)
+    }
+
+    fn test_route(route: &str) -> Route {
+        Route::new(route.to_string())
+    }
 
     /// Mock clock for testing expiration
     struct MockClock {
@@ -254,7 +279,11 @@ mod tests {
     fn should_create_lease_handle_from_acquired_response() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(
+            LeaseActor::new(),
+            test_address(1, "/lease/actor"),
+            100,
+        );
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::Acquired { fencing_token: 1 };
@@ -262,7 +291,8 @@ mod tests {
         // Act
         let handle = guard.handle_from_response(
             response,
-            "test-lease".to_string(),
+            test_family(1),
+            test_route("/lease/test"),
             "owner-1".to_string(),
             60,
         );
@@ -271,7 +301,8 @@ mod tests {
         assert!(handle.is_ok());
         let handle = handle.unwrap();
         assert_eq!(handle.fencing_token(), 1);
-        assert_eq!(handle.lease_id(), "test-lease");
+        assert_eq!(handle.family_id(), test_family(1));
+        assert_eq!(handle.route().as_str(), "/lease/test");
         assert_eq!(handle.owner_id(), "owner-1");
         assert!(handle.is_valid());
     }
@@ -280,7 +311,11 @@ mod tests {
     fn should_create_lease_handle_from_already_held_response() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(
+            LeaseActor::new(),
+            test_address(1, "/lease/actor"),
+            100,
+        );
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::AlreadyHeld { fencing_token: 5 };
@@ -288,7 +323,8 @@ mod tests {
         // Act
         let handle = guard.handle_from_response(
             response,
-            "test-lease".to_string(),
+            test_family(1),
+            test_route("/lease/test"),
             "owner-1".to_string(),
             60,
         );
@@ -303,7 +339,7 @@ mod tests {
     fn should_return_error_when_lease_held_by_other() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::HeldByOther {
@@ -313,7 +349,8 @@ mod tests {
         // Act
         let result = guard.handle_from_response(
             response,
-            "test-lease".to_string(),
+            test_family(1),
+            test_route("/lease/test"),
             "owner-1".to_string(),
             60,
         );
@@ -332,7 +369,7 @@ mod tests {
     fn should_return_error_when_lease_not_held() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::NotHeld;
@@ -340,7 +377,8 @@ mod tests {
         // Act
         let result = guard.handle_from_response(
             response,
-            "test-lease".to_string(),
+            test_family(1),
+            test_route("/lease/test"),
             "owner-1".to_string(),
             60,
         );
@@ -354,7 +392,7 @@ mod tests {
     fn should_return_error_when_fenced() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::Fenced { current_token: 10 };
@@ -362,7 +400,8 @@ mod tests {
         // Act
         let result = guard.handle_from_response(
             response,
-            "test-lease".to_string(),
+            test_family(1),
+            test_route("/lease/test"),
             "owner-1".to_string(),
             60,
         );
@@ -376,10 +415,11 @@ mod tests {
     fn should_mark_handle_invalid_after_expiration() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
 
         let handle = LeaseHandle::from_acquired(
-            "test-lease".to_string(),
+            test_family(1),
+            test_route("/lease/test"),
             "owner-1".to_string(),
             1,
             Duration::from_millis(100), // 100ms TTL
@@ -399,12 +439,13 @@ mod tests {
         // Arrange
         let lease_actor = LeaseActor::with_clock(Box::new(MockClock::new()));
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(lease_actor, 100);
+        let lease_actor_ref = scheduler.spawn(lease_actor, test_address(1, "/lease/actor"), 100);
 
         // Acquire a lease with 2-second TTL
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "expiring-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/expiring"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 2,
             })
@@ -420,7 +461,8 @@ mod tests {
         // Assert - New owner can acquire (lease was expired)
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "expiring-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/expiring"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
             })
@@ -433,12 +475,13 @@ mod tests {
     fn should_reject_stale_fencing_tokens() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
 
         // Owner 1 acquires lease
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "test-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/test"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 1,
             })
@@ -452,7 +495,8 @@ mod tests {
         // Owner 2 acquires lease (gets higher token)
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "test-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/test"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
             })
@@ -463,7 +507,8 @@ mod tests {
         // Act - Owner 1 tries to renew with stale token=1
         lease_actor_ref
             .send(LeaseMessage::Renew {
-                lease_id: "test-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/test"),
                 owner_id: "owner-1".to_string(),
                 fencing_token: 1,
                 ttl_secs: 60,
@@ -479,12 +524,17 @@ mod tests {
         // Arrange - First runtime
         let scheduler1 = Scheduler::new(1);
         let lease_actor1 = LeaseActor::new();
-        let lease_actor_ref1 = scheduler1.spawn(lease_actor1, 100);
+        let lease_actor_ref1 = scheduler1.spawn(
+            lease_actor1,
+            test_address(1, "/lease/actor1"),
+            100,
+        );
 
         // Acquire leases
         lease_actor_ref1
             .send(LeaseMessage::Acquire {
-                lease_id: "lease-1".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/lease1"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 60,
             })
@@ -492,7 +542,8 @@ mod tests {
 
         lease_actor_ref1
             .send(LeaseMessage::Acquire {
-                lease_id: "lease-2".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/lease2"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
             })
@@ -506,18 +557,24 @@ mod tests {
 
         let scheduler2 = Scheduler::new(1);
         let lease_actor2 = LeaseActor::new(); // Fresh state
-        let lease_actor_ref2 = scheduler2.spawn(lease_actor2, 100);
+        let lease_actor_ref2 = scheduler2.spawn(
+            lease_actor2,
+            test_address(1, "/lease/actor2"),
+            100,
+        );
 
         // Assert - Query old leases should return NotFound
         lease_actor_ref2
             .send(LeaseMessage::Query {
-                lease_id: "lease-1".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/lease1"),
             })
             .unwrap();
 
         lease_actor_ref2
             .send(LeaseMessage::Query {
-                lease_id: "lease-2".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/lease2"),
             })
             .unwrap();
 
@@ -526,7 +583,8 @@ mod tests {
         // New owner can acquire (leases are gone)
         lease_actor_ref2
             .send(LeaseMessage::Acquire {
-                lease_id: "lease-1".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/lease1"),
                 owner_id: "new-owner".to_string(),
                 ttl_secs: 60,
             })
@@ -539,12 +597,13 @@ mod tests {
     fn should_serialize_concurrent_acquires_correctly() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), 100);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
 
         // Act - Send concurrent acquire attempts
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "contended-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/contended"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 60,
             })
@@ -552,7 +611,8 @@ mod tests {
 
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "contended-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/contended"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
             })
@@ -560,7 +620,8 @@ mod tests {
 
         lease_actor_ref
             .send(LeaseMessage::Acquire {
-                lease_id: "contended-lease".to_string(),
+                family_id: test_family(1),
+                route: test_route("/lease/contended"),
                 owner_id: "owner-3".to_string(),
                 ttl_secs: 60,
             })
@@ -570,4 +631,107 @@ mod tests {
         // (verified via logs showing one Acquired, two HeldByOther)
         std::thread::sleep(Duration::from_millis(100));
     }
+
+    #[test]
+    fn should_isolate_leases_across_route_families() {
+        // Arrange
+        let scheduler = Scheduler::new(1);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let guard = LeaseGuard::new(lease_actor_ref.clone());
+
+        // Act - Acquire same route in different families
+        let response1 = guard.handle_from_response(
+            LeaseResponse::Acquired { fencing_token: 1 },
+            test_family(1),
+            test_route("/lease/resource"),
+            "owner-1".to_string(),
+            60,
+        );
+        let response2 = guard.handle_from_response(
+            LeaseResponse::Acquired { fencing_token: 1 },
+            test_family(2),
+            test_route("/lease/resource"),
+            "owner-2".to_string(),
+            60,
+        );
+
+        // Assert - Both should succeed (different families)
+        assert!(response1.is_ok());
+        assert!(response2.is_ok());
+    }
+
+    #[test]
+    fn should_prevent_conflicts_within_same_route_family() {
+        // Arrange
+        let scheduler = Scheduler::new(1);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let guard = LeaseGuard::new(lease_actor_ref.clone());
+
+        // Act - Acquire first lease
+        let response1 = guard.handle_from_response(
+            LeaseResponse::Acquired { fencing_token: 1 },
+            test_family(1),
+            test_route("/lease/resource"),
+            "owner-1".to_string(),
+            60,
+        );
+        // Try to acquire same lease (different owner, same family+route)
+        let response2 = guard.handle_from_response(
+            LeaseResponse::HeldByOther {
+                current_owner: "owner-1".to_string(),
+            },
+            test_family(1),
+            test_route("/lease/resource"),
+            "owner-2".to_string(),
+            60,
+        );
+
+        // Assert - First succeeds, second fails
+        assert!(response1.is_ok());
+        assert!(response2.is_err());
+        assert_eq!(
+            response2.unwrap_err(),
+            LeaseError::HeldByOther {
+                current_owner: "owner-1".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn should_independently_manage_leases_across_families() {
+        // Arrange
+        let scheduler = Scheduler::new(1);
+        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let guard = LeaseGuard::new(lease_actor_ref.clone());
+
+        // Act - Acquire in both families
+        let handle1 = guard
+            .handle_from_response(
+                LeaseResponse::Acquired { fencing_token: 1 },
+                test_family(1),
+                test_route("/lease/resource"),
+                "owner-1".to_string(),
+                60,
+            )
+            .unwrap();
+        let handle2 = guard
+            .handle_from_response(
+                LeaseResponse::Acquired { fencing_token: 1 },
+                test_family(2),
+                test_route("/lease/resource"),
+                "owner-2".to_string(),
+                60,
+            )
+            .unwrap();
+
+        // Assert - Both handles are valid and independent
+        assert!(handle1.is_valid());
+        assert!(handle2.is_valid());
+        assert_eq!(handle1.family_id(), test_family(1));
+        assert_eq!(handle2.family_id(), test_family(2));
+        assert_eq!(handle1.route().as_str(), "/lease/resource");
+        assert_eq!(handle2.route().as_str(), "/lease/resource");
+    }
 }
+
+

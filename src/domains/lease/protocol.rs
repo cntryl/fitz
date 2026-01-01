@@ -4,6 +4,13 @@
 //! for ordering guarantees. Leases have time-to-live (TTL) and can be
 //! acquired, renewed, and released.
 //!
+//! # Route Family Isolation
+//!
+//! Leases are always scoped to (RouteFamily, Route) tuples. RouteFamily
+//! is the unit of isolation - leases in different families never conflict,
+//! even if they use identical route strings. This enables multi-realm
+//! deployments where each realm operates independently.
+//!
 //! # Fencing Tokens
 //!
 //! Each lease acquisition returns a monotonically increasing fencing token.
@@ -23,6 +30,8 @@
 //! - Renewing with the current token succeeds
 //! - Releasing with an outdated token fails safely
 
+use crate::transport::routing::{Route, RouteFamily};
+
 /// Lease domain messages
 ///
 /// All lease operations are asynchronous and return responses via
@@ -31,21 +40,25 @@
 pub enum LeaseMessage {
     /// Acquire a lease
     ///
+    /// Lease identity is (family_id, route) - route families provide hard isolation.
     /// If the lease is unowned or expired, grants it to the owner.
     /// If already owned by this owner, returns the existing token (idempotent).
     /// If owned by another owner, fails.
     Acquire {
-        lease_id: String,
+        family_id: RouteFamily,
+        route: Route,
         owner_id: String,
         ttl_secs: u64,
     },
 
     /// Renew a lease
     ///
+    /// Lease identity is (family_id, route) - route families provide hard isolation.
     /// Extends the lease expiration if the fencing token matches.
     /// Fails if the token is outdated or the lease is no longer held.
     Renew {
-        lease_id: String,
+        family_id: RouteFamily,
+        route: Route,
         owner_id: String,
         fencing_token: u64,
         ttl_secs: u64,
@@ -53,16 +66,23 @@ pub enum LeaseMessage {
 
     /// Release a lease
     ///
+    /// Lease identity is (family_id, route) - route families provide hard isolation.
     /// Releases the lease if the fencing token matches.
     /// Fails if the token is outdated or the lease is not held.
     Release {
-        lease_id: String,
+        family_id: RouteFamily,
+        route: Route,
         owner_id: String,
         fencing_token: u64,
     },
 
     /// Query lease status (for testing/debugging)
-    Query { lease_id: String },
+    ///
+    /// Lease identity is (family_id, route) - route families provide hard isolation.
+    Query {
+        family_id: RouteFamily,
+        route: Route,
+    },
 
     /// Periodic tick for runtime-driven expiration
     ///

@@ -1,11 +1,12 @@
 //! Actor scheduling and execution coordination
 
-use super::actor::{Actor, ActorError, ActorId, ActorRef, Context};
+use super::actor::{Actor, ActorError, ActorRef, Context};
 use super::mailbox::Mailbox;
 use crate::transport::envelope::Envelope;
 use crate::transport::router::Router;
+use crate::transport::routing::RouteAddress;
 use std::any::Any;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -13,7 +14,6 @@ use std::time::Duration;
 /// Actor system scheduler that manages actor lifecycles and message processing
 pub struct Scheduler {
     router: Arc<Router>,
-    next_actor_id: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
     #[allow(dead_code)]
     worker_threads: usize,
@@ -24,7 +24,6 @@ impl Scheduler {
     pub fn new(worker_threads: usize) -> Self {
         Self {
             router: Arc::new(Router::new()),
-            next_actor_id: Arc::new(AtomicU64::new(1)),
             running: Arc::new(AtomicBool::new(false)),
             worker_threads: worker_threads.max(1),
         }
@@ -34,7 +33,6 @@ impl Scheduler {
     pub fn with_router(router: Arc<Router>, worker_threads: usize) -> Self {
         Self {
             router,
-            next_actor_id: Arc::new(AtomicU64::new(1)),
             running: Arc::new(AtomicBool::new(false)),
             worker_threads: worker_threads.max(1),
         }
@@ -45,31 +43,35 @@ impl Scheduler {
         self.router.clone()
     }
 
-    /// Generate a new unique actor ID
-    fn next_actor_id(&self) -> ActorId {
-        let id = self.next_actor_id.fetch_add(1, Ordering::SeqCst);
-        ActorId::new(id)
-    }
-
     /// Spawn a new actor and return its reference
-    pub fn spawn<A>(&self, mut actor: A, mailbox_capacity: usize) -> ActorRef<A::Message>
+    ///
+    /// The caller must provide a RouteAddress for the actor. The scheduler will:
+    /// - Register the actor's mailbox with the router at the given address
+    /// - Start a dedicated thread for message processing
+    /// - Return an ActorRef for sending messages to the actor
+    pub fn spawn<A>(
+        &self,
+        mut actor: A,
+        address: RouteAddress,
+        mailbox_capacity: usize,
+    ) -> ActorRef<A::Message>
     where
         A: Actor,
         A::Message: Any + Send + Sync + 'static,
     {
-        let actor_id = self.next_actor_id();
         let mailbox = Mailbox::new(mailbox_capacity);
-        let actor_ref = ActorRef::new(actor_id, self.router.clone());
+        let actor_ref = ActorRef::new(address.clone(), self.router.clone());
 
         // Register mailbox with router
-        self.router.register(actor_id, Arc::new(mailbox.clone()));
+        self.router
+            .register(address.clone(), Arc::new(mailbox.clone()));
 
         let receiver = mailbox.receiver().clone();
         let router_clone = self.router.clone();
 
         // Spawn actor execution thread
         thread::spawn(move || {
-            let mut ctx = Context::new(actor_id, router_clone);
+            let mut ctx = Context::new(address.clone(), router_clone);
 
             // Call started hook
             actor.started(&mut ctx);
@@ -83,7 +85,7 @@ impl Scheduler {
                             eprintln!(
                                 "Dropped expired message {:?} for actor {:?}",
                                 envelope.id(),
-                                actor_id
+                                address
                             );
                             continue;
                         }
@@ -91,10 +93,10 @@ impl Scheduler {
                         // Extract typed message from envelope
                         // We need to clone the envelope for context, then extract payload
                         let envelope_id = envelope.id();
-                        let envelope_source = envelope.source();
+                        let envelope_source = envelope.source().cloned();
                         let envelope_causation = envelope.causation();
                         let envelope_deadline = envelope.deadline();
-                        
+
                         let msg = match envelope.into_payload::<A::Message>() {
                             Some(m) => m,
                             None => {
@@ -102,7 +104,7 @@ impl Scheduler {
                                 eprintln!(
                                     "Type mismatch: envelope {:?} for actor {:?} contains wrong message type",
                                     envelope_id,
-                                    actor_id
+                                    address
                                 );
                                 continue;
                             }
@@ -111,7 +113,7 @@ impl Scheduler {
                         // Reconstruct envelope for context (without payload)
                         // Create a dummy envelope with the same metadata
                         let ctx_envelope = if let Some(src) = envelope_source {
-                            let mut env = Envelope::from_actor(src, actor_id, ());
+                            let mut env = Envelope::from_route(src, address.clone(), ());
                             if let Some(causation) = envelope_causation {
                                 env = env.with_causation(causation);
                             }
@@ -120,7 +122,7 @@ impl Scheduler {
                             }
                             env
                         } else {
-                            let mut env = Envelope::new(actor_id, ());
+                            let mut env = Envelope::new(address.clone(), ());
                             if let Some(causation) = envelope_causation {
                                 env = env.with_causation(causation);
                             }
@@ -187,6 +189,11 @@ impl Default for Scheduler {
 mod tests {
     use super::*;
     use crate::transport::envelope::Envelope;
+    use crate::transport::routing::{Route, RouteFamily};
+
+    fn test_address(family: u64, route: &str) -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+    }
 
     #[derive(Debug)]
     enum TestMsg {
@@ -263,11 +270,11 @@ mod tests {
         let actor2 = CounterActor { count: 0 };
 
         // Act
-        let ref1 = scheduler.spawn(actor1, 10);
-        let ref2 = scheduler.spawn(actor2, 10);
+        let ref1 = scheduler.spawn(actor1, test_address(1, "/test/actor1"), 10);
+        let ref2 = scheduler.spawn(actor2, test_address(1, "/test/actor2"), 10);
 
         // Assert
-        assert_ne!(ref1.actor_id(), ref2.actor_id());
+        assert_ne!(ref1.address(), ref2.address());
     }
 
     #[test]
@@ -276,7 +283,7 @@ mod tests {
         let scheduler = Scheduler::new(1);
         scheduler.start();
         let actor = CounterActor { count: 0 };
-        let actor_ref = scheduler.spawn(actor, 10);
+        let actor_ref = scheduler.spawn(actor, test_address(1, "/test/counter"), 10);
 
         // Act
         actor_ref.send(TestMsg::Increment).unwrap();
@@ -298,11 +305,12 @@ mod tests {
         let scheduler = Scheduler::new(1);
         scheduler.start();
         let actor = CounterActor { count: 0 };
-        let actor_ref = scheduler.spawn(actor, 10);
+        let address = test_address(1, "/test/counter");
+        let actor_ref = scheduler.spawn(actor, address.clone(), 10);
 
         // Send a message with an already-expired deadline
         let past_deadline = std::time::Instant::now() - Duration::from_secs(1);
-        let expired_envelope = Envelope::new(actor_ref.actor_id(), TestMsg::Increment)
+        let expired_envelope = Envelope::new(address, TestMsg::Increment)
             .with_deadline(past_deadline);
         scheduler.router().route(expired_envelope).unwrap();
 
@@ -329,12 +337,14 @@ mod tests {
         // Create two actors
         let actor1 = CounterActor { count: 0 };
         let actor2 = CounterActor { count: 0 };
-        let ref1 = scheduler.spawn(actor1, 10);
-        let ref2 = scheduler.spawn(actor2, 10);
+        let addr1 = test_address(1, "/test/actor1");
+        let addr2 = test_address(1, "/test/actor2");
+        let ref1 = scheduler.spawn(actor1, addr1.clone(), 10);
+        let ref2 = scheduler.spawn(actor2, addr2, 10);
 
         // Create a ping-pong actor that sends to another actor
         struct PingActor {
-            target: ActorId,
+            target: RouteAddress,
             pings_sent: usize,
         }
         impl Actor for PingActor {
@@ -342,7 +352,7 @@ mod tests {
             fn receive(&mut self, msg: String, ctx: &mut Context<Self>) {
                 if msg == "start" {
                     // Send a message to the target actor
-                    ctx.send(self.target, TestMsg::Increment).ok();
+                    ctx.send(self.target.clone(), TestMsg::Increment).ok();
                     self.pings_sent += 1;
                     ctx.stop();
                 }
@@ -350,10 +360,10 @@ mod tests {
         }
 
         let ping_actor = PingActor {
-            target: ref1.actor_id(),
+            target: addr1.clone(),
             pings_sent: 0,
         };
-        let ping_ref = scheduler.spawn(ping_actor, 10);
+        let ping_ref = scheduler.spawn(ping_actor, test_address(1, "/test/ping"), 10);
 
         // Act - trigger the ping
         ping_ref.send("start".to_string()).unwrap();
@@ -405,14 +415,16 @@ mod tests {
         };
         let response_actor = ResponseActor;
 
-        let request_ref = scheduler.spawn(request_actor, 10);
-        let response_ref = scheduler.spawn(response_actor, 10);
+        let request_addr = test_address(1, "/test/request");
+        let response_addr = test_address(1, "/test/response");
+        let request_ref = scheduler.spawn(request_actor, request_addr.clone(), 10);
+        let response_ref = scheduler.spawn(response_actor, response_addr.clone(), 10);
 
         // Act - send request from request_ref to response_ref
         // We need to manually create an envelope with source set
-        let request_envelope = Envelope::from_actor(
-            request_ref.actor_id(),
-            response_ref.actor_id(),
+        let request_envelope = Envelope::from_route(
+            request_addr,
+            response_addr,
             "hello".to_string(),
         );
         scheduler.router().route(request_envelope).unwrap();

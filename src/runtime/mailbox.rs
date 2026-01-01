@@ -82,6 +82,11 @@ impl MailboxSink for Mailbox {
 mod tests {
     use super::*;
     use crate::runtime::ActorId;
+    use crate::transport::routing::{Route, RouteFamily, RouteAddress};
+
+    fn test_address(family: u64, route: &str) -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+    }
 
     #[test]
     fn should_create_mailbox_with_capacity() {
@@ -101,7 +106,7 @@ mod tests {
         // Arrange
         let mailbox = Mailbox::new(10);
         let sender = mailbox.sender();
-        let envelope = Envelope::new(ActorId::new(1), 42);
+        let envelope = Envelope::new(test_address(1, "/test/actor"), 42);
 
         // Act
         let result = sender.try_send(envelope);
@@ -117,7 +122,7 @@ mod tests {
         // Arrange
         let mailbox = Mailbox::new(10);
         let sender = mailbox.sender();
-        let envelope = Envelope::new(ActorId::new(1), 42);
+        let envelope = Envelope::new(test_address(1, "/test/actor"), 42);
         sender.try_send(envelope).unwrap();
 
         // Act
@@ -133,15 +138,16 @@ mod tests {
         // Arrange
         let mailbox = Mailbox::new(2);
         let sender = mailbox.sender();
+        let addr = test_address(1, "/test/actor");
         sender
-            .try_send(Envelope::new(ActorId::new(1), 1))
+            .try_send(Envelope::new(addr.clone(), 1))
             .unwrap();
         sender
-            .try_send(Envelope::new(ActorId::new(1), 2))
+            .try_send(Envelope::new(addr.clone(), 2))
             .unwrap();
 
         // Act
-        let result = sender.try_send(Envelope::new(ActorId::new(1), 3));
+        let result = sender.try_send(Envelope::new(addr, 3));
 
         // Assert
         assert!(result.is_err());
@@ -154,7 +160,7 @@ mod tests {
         let mailbox = Mailbox::new(10);
         let sender = mailbox.sender();
         sender
-            .try_send(Envelope::new(ActorId::new(1), 42))
+            .try_send(Envelope::new(test_address(1, "/test/actor"), 42))
             .unwrap();
 
         // Act
@@ -171,13 +177,14 @@ mod tests {
         let mailbox = Mailbox::new(10);
         let sender1 = mailbox.sender();
         let sender2 = mailbox.sender();
+        let addr = test_address(1, "/test/actor");
 
         // Act
         sender1
-            .try_send(Envelope::new(ActorId::new(1), 1))
+            .try_send(Envelope::new(addr.clone(), 1))
             .unwrap();
         sender2
-            .try_send(Envelope::new(ActorId::new(1), 2))
+            .try_send(Envelope::new(addr, 2))
             .unwrap();
 
         // Assert

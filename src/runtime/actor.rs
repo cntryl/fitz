@@ -2,6 +2,7 @@
 
 use crate::transport::envelope::Envelope;
 use crate::transport::router::{RouteError, Router};
+use crate::transport::routing::RouteAddress;
 use std::fmt;
 use std::sync::Arc;
 
@@ -31,12 +32,12 @@ pub trait Actor: Send + 'static {
 /// Context provided to actors during message processing
 ///
 /// The context provides access to:
-/// - Actor's own ID
+/// - Actor's own route address
 /// - Message sending capabilities (with automatic causation tracking)
 /// - Lifecycle control (stopping the actor)
 /// - Current envelope metadata (for causation chains)
 pub struct Context<A: Actor + ?Sized> {
-    actor_id: ActorId,
+    address: RouteAddress,
     state: ActorState,
     router: Arc<Router>,
     current_envelope: Option<Envelope>,
@@ -44,9 +45,9 @@ pub struct Context<A: Actor + ?Sized> {
 }
 
 impl<A: Actor + ?Sized> Context<A> {
-    pub fn new(actor_id: ActorId, router: Arc<Router>) -> Self {
+    pub fn new(address: RouteAddress, router: Arc<Router>) -> Self {
         Self {
-            actor_id,
+            address,
             state: ActorState::Running,
             router,
             current_envelope: None,
@@ -59,15 +60,15 @@ impl<A: Actor + ?Sized> Context<A> {
         self.current_envelope = Some(envelope);
     }
 
-    /// Get the actor's ID
-    pub fn actor_id(&self) -> ActorId {
-        self.actor_id
+    /// Get the actor's route address
+    pub fn address(&self) -> &RouteAddress {
+        &self.address
     }
 
     /// Send a message to another actor
     ///
     /// This is the preferred way for actors to send messages. The context:
-    /// - Sets the source to this actor's ID
+    /// - Sets the source to this actor's route address
     /// - Automatically tracks causation from the current message
     /// - Inherits deadline from the current message if present
     ///
@@ -79,16 +80,16 @@ impl<A: Actor + ?Sized> Context<A> {
     ///     
     ///     fn receive(&mut self, msg: MyMessage, ctx: &mut Context<Self>) {
     ///         // Send a message to another actor
-    ///         let other_actor = self.other_actor_ref.actor_id();
-    ///         ctx.send(other_actor, ResponseMessage::Done).ok();
+    ///         let other_address = self.other_actor_ref.address();
+    ///         ctx.send(other_address.clone(), ResponseMessage::Done).ok();
     ///     }
     /// }
     /// ```
-    pub fn send<M>(&self, dest: ActorId, msg: M) -> Result<(), SendError>
+    pub fn send<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
     {
-        let mut envelope = Envelope::from_actor(self.actor_id, dest, msg);
+        let mut envelope = Envelope::from_route(self.address.clone(), dest, msg);
 
         // Set causation from current envelope
         if let Some(current) = &self.current_envelope {
@@ -103,7 +104,7 @@ impl<A: Actor + ?Sized> Context<A> {
         self.router
             .route(envelope)
             .map_err(|e| match e {
-                RouteError::ActorNotFound(_) => SendError::ActorNotFound,
+                RouteError::RouteNotFound(_) => SendError::ActorNotFound,
                 RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
             })
     }
@@ -134,7 +135,7 @@ impl<A: Actor + ?Sized> Context<A> {
         self.router
             .route(reply_envelope)
             .map_err(|e| match e {
-                RouteError::ActorNotFound(_) => SendError::ActorNotFound,
+                RouteError::RouteNotFound(_) => SendError::ActorNotFound,
                 RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
             })
     }
@@ -176,15 +177,15 @@ impl fmt::Display for ActorId {
 /// untyped router internally. Messages are wrapped in Envelopes before routing.
 #[derive(Clone)]
 pub struct ActorRef<M: Send + 'static> {
-    actor_id: ActorId,
+    address: RouteAddress,
     router: Arc<Router>,
     _phantom: std::marker::PhantomData<fn() -> M>,
 }
 
 impl<M: Send + 'static> ActorRef<M> {
-    pub fn new(actor_id: ActorId, router: Arc<Router>) -> Self {
+    pub fn new(address: RouteAddress, router: Arc<Router>) -> Self {
         Self {
-            actor_id,
+            address,
             router,
             _phantom: std::marker::PhantomData,
         }
@@ -198,25 +199,25 @@ impl<M: Send + 'static> ActorRef<M> {
     where
         M: Send + Sync + 'static,
     {
-        let envelope = Envelope::new(self.actor_id, msg);
+        let envelope = Envelope::new(self.address.clone(), msg);
         self.router
             .route(envelope)
             .map_err(|e| match e {
-                RouteError::ActorNotFound(_) => SendError::ActorNotFound,
+                RouteError::RouteNotFound(_) => SendError::ActorNotFound,
                 RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
             })
     }
 
-    /// Get the actor's ID
-    pub fn actor_id(&self) -> ActorId {
-        self.actor_id
+    /// Get the actor's route address
+    pub fn address(&self) -> &RouteAddress {
+        &self.address
     }
 }
 
 impl<M: Send + 'static> fmt::Debug for ActorRef<M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ActorRef")
-            .field("actor_id", &self.actor_id)
+            .field("address", &self.address)
             .finish()
     }
 }
@@ -275,8 +276,11 @@ impl std::error::Error for SendError {}
 mod tests {
     use super::*;
     use crate::runtime::mailbox::Mailbox;
-    use crate::transport::router::Router;
+    use crate::transport::router::Router;    use crate::transport::routing::{Route, RouteFamily, RouteAddress};
 
+    fn test_address(family: u64, route: &str) -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+    }
     #[test]
     fn should_create_actor_id() {
         // Arrange
@@ -330,23 +334,23 @@ mod tests {
     #[test]
     fn should_create_context_with_running_state() {
         // Arrange
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/test/actor");
         let router = Arc::new(Router::new());
 
         // Act
-        let ctx: Context<DummyActor> = Context::new(actor_id, router);
+        let ctx: Context<DummyActor> = Context::new(address.clone(), router);
 
         // Assert
-        assert_eq!(ctx.actor_id(), actor_id);
+        assert_eq!(ctx.address(), &address);
         assert!(ctx.is_running());
     }
 
     #[test]
     fn should_stop_context() {
         // Arrange
-        let actor_id = ActorId::new(1);
+        let address = test_address(1, "/test/actor");
         let router = Arc::new(Router::new());
-        let mut ctx: Context<DummyActor> = Context::new(actor_id, router);
+        let mut ctx: Context<DummyActor> = Context::new(address, router);
 
         // Act
         ctx.stop();
@@ -360,9 +364,9 @@ mod tests {
         // Arrange
         let router = Arc::new(Router::new());
         let mailbox = Mailbox::new(10);
-        let actor_id = ActorId::new(1);
-        router.register(actor_id, Arc::new(mailbox.clone()));
-        let actor_ref: ActorRef<i32> = ActorRef::new(actor_id, router);
+        let address = test_address(1, "/test/actor");
+        router.register(address.clone(), Arc::new(mailbox.clone()));
+        let actor_ref: ActorRef<i32> = ActorRef::new(address, router);
 
         // Act
         let result = actor_ref.send(42);
@@ -378,9 +382,9 @@ mod tests {
         // Arrange
         let router = Arc::new(Router::new());
         let mailbox = Mailbox::new(1);
-        let actor_id = ActorId::new(1);
-        router.register(actor_id, Arc::new(mailbox.clone()));
-        let actor_ref: ActorRef<i32> = ActorRef::new(actor_id, router);
+        let address = test_address(1, "/test/actor");
+        router.register(address.clone(), Arc::new(mailbox.clone()));
+        let actor_ref: ActorRef<i32> = ActorRef::new(address, router);
         actor_ref.send(1).unwrap();
 
         // Act
@@ -394,35 +398,35 @@ mod tests {
     fn should_get_actor_id_from_ref() {
         // Arrange
         let router = Arc::new(Router::new());
-        let actor_id = ActorId::new(42);
-        let actor_ref: ActorRef<i32> = ActorRef::new(actor_id, router);
+        let address = test_address(1, "/test/actor");
+        let actor_ref: ActorRef<i32> = ActorRef::new(address.clone(), router);
 
         // Act
-        let id = actor_ref.actor_id();
+        let addr = actor_ref.address();
 
         // Assert
-        assert_eq!(id, actor_id);
+        assert_eq!(addr, &address);
     }
 
     #[test]
     fn should_send_message_via_context() {
         // Arrange
         let router = Arc::new(Router::new());
-        let sender_id = ActorId::new(1);
-        let receiver_id = ActorId::new(2);
+        let sender_addr = test_address(1, "/test/sender");
+        let receiver_addr = test_address(1, "/test/receiver");
         let receiver_mailbox = Mailbox::new(10);
-        router.register(receiver_id, Arc::new(receiver_mailbox.clone()));
+        router.register(receiver_addr.clone(), Arc::new(receiver_mailbox.clone()));
 
-        let ctx: Context<DummyActor> = Context::new(sender_id, router);
+        let ctx: Context<DummyActor> = Context::new(sender_addr.clone(), router);
 
         // Act
-        let result = ctx.send(receiver_id, 42_i32);
+        let result = ctx.send(receiver_addr.clone(), 42_i32);
 
         // Assert
         assert!(result.is_ok());
         let envelope = receiver_mailbox.receiver().recv().unwrap();
-        assert_eq!(envelope.source(), Some(sender_id));
-        assert_eq!(envelope.destination(), receiver_id);
+        assert_eq!(envelope.source(), Some(&sender_addr));
+        assert_eq!(envelope.destination(), &receiver_addr);
         assert_eq!(envelope.into_payload::<i32>(), Some(42));
     }
 
@@ -430,20 +434,20 @@ mod tests {
     fn should_inherit_causation_when_sending_from_context() {
         // Arrange
         let router = Arc::new(Router::new());
-        let sender_id = ActorId::new(1);
-        let receiver_id = ActorId::new(2);
+        let sender_addr = test_address(1, "/test/sender");
+        let receiver_addr = test_address(1, "/test/receiver");
         let receiver_mailbox = Mailbox::new(10);
-        router.register(receiver_id, Arc::new(receiver_mailbox.clone()));
+        router.register(receiver_addr.clone(), Arc::new(receiver_mailbox.clone()));
 
-        let mut ctx: Context<DummyActor> = Context::new(sender_id, router);
+        let mut ctx: Context<DummyActor> = Context::new(sender_addr.clone(), router);
         
         // Simulate receiving a message with causation
-        let parent_envelope = Envelope::from_actor(ActorId::new(99), sender_id, ());
+        let parent_envelope = Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ());
         let parent_id = parent_envelope.id();
         ctx.set_current_envelope(parent_envelope);
 
         // Act
-        ctx.send(receiver_id, 42_i32).unwrap();
+        ctx.send(receiver_addr, 42_i32).unwrap();
 
         // Assert
         let envelope = receiver_mailbox.receiver().recv().unwrap();
@@ -454,15 +458,15 @@ mod tests {
     fn should_reply_to_sender_via_context() {
         // Arrange
         let router = Arc::new(Router::new());
-        let sender_id = ActorId::new(1);
-        let receiver_id = ActorId::new(2);
+        let sender_addr = test_address(1, "/test/sender");
+        let receiver_addr = test_address(1, "/test/receiver");
         let sender_mailbox = Mailbox::new(10);
-        router.register(sender_id, Arc::new(sender_mailbox.clone()));
+        router.register(sender_addr.clone(), Arc::new(sender_mailbox.clone()));
 
-        let mut ctx: Context<DummyActor> = Context::new(receiver_id, router);
+        let mut ctx: Context<DummyActor> = Context::new(receiver_addr.clone(), router);
         
         // Simulate receiving a message from sender
-        let request_envelope = Envelope::from_actor(sender_id, receiver_id, 10_i32);
+        let request_envelope = Envelope::from_route(sender_addr.clone(), receiver_addr.clone(), 10_i32);
         let request_id = request_envelope.id();
         ctx.set_current_envelope(request_envelope);
 
@@ -472,8 +476,8 @@ mod tests {
         // Assert
         assert!(result.is_ok());
         let reply_envelope = sender_mailbox.receiver().recv().unwrap();
-        assert_eq!(reply_envelope.source(), Some(receiver_id));
-        assert_eq!(reply_envelope.destination(), sender_id);
+        assert_eq!(reply_envelope.source(), Some(&receiver_addr));
+        assert_eq!(reply_envelope.destination(), &sender_addr);
         assert_eq!(reply_envelope.causation(), Some(request_id));
         assert_eq!(reply_envelope.into_payload::<&str>(), Some("response"));
     }
@@ -482,21 +486,21 @@ mod tests {
     fn should_inherit_deadline_when_sending_from_context() {
         // Arrange
         let router = Arc::new(Router::new());
-        let sender_id = ActorId::new(1);
-        let receiver_id = ActorId::new(2);
+        let sender_addr = test_address(1, "/test/sender");
+        let receiver_addr = test_address(1, "/test/receiver");
         let receiver_mailbox = Mailbox::new(10);
-        router.register(receiver_id, Arc::new(receiver_mailbox.clone()));
+        router.register(receiver_addr.clone(), Arc::new(receiver_mailbox.clone()));
 
-        let mut ctx: Context<DummyActor> = Context::new(sender_id, router);
+        let mut ctx: Context<DummyActor> = Context::new(sender_addr.clone(), router);
         
         // Simulate receiving a message with a deadline
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let parent_envelope = Envelope::from_actor(ActorId::new(99), sender_id, ())
+        let parent_envelope = Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ())
             .with_deadline(deadline);
         ctx.set_current_envelope(parent_envelope);
 
         // Act
-        ctx.send(receiver_id, 42_i32).unwrap();
+        ctx.send(receiver_addr, 42_i32).unwrap();
 
         // Assert
         let envelope = receiver_mailbox.receiver().recv().unwrap();

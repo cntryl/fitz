@@ -31,12 +31,16 @@
 //!
 //! ```ignore
 //! use fitz::transport::envelope::Envelope;
-//! use fitz::runtime::ActorId;
+//! use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
 //! use std::time::{Duration, Instant};
 //!
 //! // Create an envelope with a deadline
+//! let dest = RouteAddress::new(
+//!     RouteFamily::new(1),
+//!     Route::new("/user/123")
+//! );
 //! let envelope = Envelope::new(
-//!     ActorId::new(1),  // destination
+//!     dest,  // destination
 //!     "Hello".to_string()  // payload
 //! ).with_deadline(Instant::now() + Duration::from_secs(5));
 //!
@@ -44,7 +48,7 @@
 //! let reply = envelope.reply_to("World".to_string());
 //! ```
 
-use crate::runtime::ActorId;
+use crate::transport::routing::RouteAddress;
 use std::any::Any;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -102,11 +106,11 @@ pub struct Envelope {
     /// Unique message identifier
     id: MessageId,
 
-    /// Source actor (None for external/user-initiated messages)
-    source: Option<ActorId>,
+    /// Source route (None for external/user-initiated messages)
+    source: Option<RouteAddress>,
 
-    /// Destination actor
-    destination: ActorId,
+    /// Destination route
+    destination: RouteAddress,
 
     /// Parent message ID for causation tracking (request/reply chains)
     causation: Option<MessageId>,
@@ -124,9 +128,13 @@ impl Envelope {
     /// # Example
     ///
     /// ```ignore
-    /// let envelope = Envelope::new(actor_id, MyMessage::DoWork);
+    /// let address = RouteAddress::new(
+    ///     RouteFamily::new(1),
+    ///     Route::new("/user/123")
+    /// );
+    /// let envelope = Envelope::new(address, MyMessage::DoWork);
     /// ```
-    pub fn new<M: Any + Send + Sync>(destination: ActorId, payload: M) -> Self {
+    pub fn new<M: Any + Send + Sync>(destination: RouteAddress, payload: M) -> Self {
         Self {
             id: MessageId::new(),
             source: None,
@@ -137,10 +145,10 @@ impl Envelope {
         }
     }
 
-    /// Create an envelope with a known source actor
-    pub fn from_actor<M: Any + Send + Sync>(
-        source: ActorId,
-        destination: ActorId,
+    /// Create an envelope with a known source route
+    pub fn from_route<M: Any + Send + Sync>(
+        source: RouteAddress,
+        destination: RouteAddress,
         payload: M,
     ) -> Self {
         Self {
@@ -182,12 +190,13 @@ impl Envelope {
     pub fn reply_to<M: Any + Send + Sync>(&self, payload: M) -> Envelope {
         let source = self
             .source
+            .as_ref()
             .expect("Cannot reply to message with no source");
 
         Envelope {
             id: MessageId::new(),
-            source: Some(self.destination),
-            destination: source,
+            source: Some(self.destination.clone()),
+            destination: source.clone(),
             causation: Some(self.id),
             deadline: self.deadline,
             payload: Box::new(payload),
@@ -199,14 +208,14 @@ impl Envelope {
         self.id
     }
 
-    /// Get the source actor ID (if any)
-    pub fn source(&self) -> Option<ActorId> {
-        self.source
+    /// Get the source route address (if any)
+    pub fn source(&self) -> Option<&RouteAddress> {
+        self.source.as_ref()
     }
 
-    /// Get the destination actor ID
-    pub fn destination(&self) -> ActorId {
-        self.destination
+    /// Get the destination route address
+    pub fn destination(&self) -> &RouteAddress {
+        &self.destination
     }
 
     /// Get the causation ID (parent message)
@@ -257,19 +266,24 @@ impl fmt::Debug for Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::routing::{RouteFamily, Route};
     use std::time::Duration;
+
+    fn test_address(family: u64, route: &str) -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+    }
 
     #[test]
     fn should_create_envelope_with_destination() {
         // Arrange
-        let destination = ActorId::new(42);
+        let destination = test_address(1, "/test/actor");
         let payload = "test message";
 
         // Act
-        let envelope = Envelope::new(destination, payload);
+        let envelope = Envelope::new(destination.clone(), payload);
 
         // Assert
-        assert_eq!(envelope.destination(), destination);
+        assert_eq!(envelope.destination(), &destination);
         assert_eq!(envelope.source(), None);
         assert_eq!(envelope.payload::<&str>(), Some(&"test message"));
     }
@@ -277,23 +291,23 @@ mod tests {
     #[test]
     fn should_create_envelope_with_source() {
         // Arrange
-        let source = ActorId::new(1);
-        let destination = ActorId::new(2);
+        let source = test_address(1, "/test/source");
+        let destination = test_address(1, "/test/destination");
         let payload = 42;
 
         // Act
-        let envelope = Envelope::from_actor(source, destination, payload);
+        let envelope = Envelope::from_route(source.clone(), destination.clone(), payload);
 
         // Assert
-        assert_eq!(envelope.source(), Some(source));
-        assert_eq!(envelope.destination(), destination);
+        assert_eq!(envelope.source(), Some(&source));
+        assert_eq!(envelope.destination(), &destination);
         assert_eq!(envelope.payload::<i32>(), Some(&42));
     }
 
     #[test]
     fn should_set_deadline() {
         // Arrange
-        let destination = ActorId::new(1);
+        let destination = test_address(1, "/test/actor");
         let deadline = Instant::now() + Duration::from_secs(10);
 
         // Act
@@ -307,7 +321,7 @@ mod tests {
     #[test]
     fn should_detect_expired_deadline() {
         // Arrange
-        let destination = ActorId::new(1);
+        let destination = test_address(1, "/test/actor");
         let past_deadline = Instant::now() - Duration::from_secs(1);
 
         // Act
@@ -320,7 +334,7 @@ mod tests {
     #[test]
     fn should_set_causation() {
         // Arrange
-        let destination = ActorId::new(1);
+        let destination = test_address(1, "/test/actor");
         let parent_id = MessageId::new();
 
         // Act
@@ -333,16 +347,16 @@ mod tests {
     #[test]
     fn should_create_reply_envelope() {
         // Arrange
-        let source = ActorId::new(1);
-        let destination = ActorId::new(2);
-        let original = Envelope::from_actor(source, destination, "request");
+        let source = test_address(1, "/test/source");
+        let destination = test_address(1, "/test/destination");
+        let original = Envelope::from_route(source.clone(), destination.clone(), "request");
 
         // Act
         let reply = original.reply_to("response");
 
         // Assert
-        assert_eq!(reply.source(), Some(destination));
-        assert_eq!(reply.destination(), source);
+        assert_eq!(reply.source(), Some(&destination));
+        assert_eq!(reply.destination(), &source);
         assert_eq!(reply.causation(), Some(original.id()));
         assert_eq!(reply.payload::<&str>(), Some(&"response"));
     }
@@ -350,7 +364,7 @@ mod tests {
     #[test]
     fn should_extract_payload() {
         // Arrange
-        let destination = ActorId::new(1);
+        let destination = test_address(1, "/test/actor");
         let envelope = Envelope::new(destination, 42_i32);
 
         // Act
@@ -363,7 +377,7 @@ mod tests {
     #[test]
     fn should_return_none_for_wrong_type() {
         // Arrange
-        let destination = ActorId::new(1);
+        let destination = test_address(1, "/test/actor");
         let envelope = Envelope::new(destination, "string");
 
         // Act
@@ -401,10 +415,10 @@ mod tests {
     #[test]
     fn should_inherit_deadline_in_reply() {
         // Arrange
-        let source = ActorId::new(1);
-        let destination = ActorId::new(2);
+        let source = test_address(1, "/test/source");
+        let destination = test_address(1, "/test/destination");
         let deadline = Instant::now() + Duration::from_secs(5);
-        let original = Envelope::from_actor(source, destination, "request")
+        let original = Envelope::from_route(source, destination, "request")
             .with_deadline(deadline);
 
         // Act
