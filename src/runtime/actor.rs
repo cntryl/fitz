@@ -29,24 +29,114 @@ pub trait Actor: Send + 'static {
 }
 
 /// Context provided to actors during message processing
+///
+/// The context provides access to:
+/// - Actor's own ID
+/// - Message sending capabilities (with automatic causation tracking)
+/// - Lifecycle control (stopping the actor)
+/// - Current envelope metadata (for causation chains)
 pub struct Context<A: Actor + ?Sized> {
     actor_id: ActorId,
     state: ActorState,
+    router: Arc<Router>,
+    current_envelope: Option<Envelope>,
     _phantom: std::marker::PhantomData<*const A>,
 }
 
 impl<A: Actor + ?Sized> Context<A> {
-    pub fn new(actor_id: ActorId) -> Self {
+    pub fn new(actor_id: ActorId, router: Arc<Router>) -> Self {
         Self {
             actor_id,
             state: ActorState::Running,
+            router,
+            current_envelope: None,
             _phantom: std::marker::PhantomData,
         }
+    }
+
+    /// Set the current envelope being processed (internal use by scheduler)
+    pub(crate) fn set_current_envelope(&mut self, envelope: Envelope) {
+        self.current_envelope = Some(envelope);
     }
 
     /// Get the actor's ID
     pub fn actor_id(&self) -> ActorId {
         self.actor_id
+    }
+
+    /// Send a message to another actor
+    ///
+    /// This is the preferred way for actors to send messages. The context:
+    /// - Sets the source to this actor's ID
+    /// - Automatically tracks causation from the current message
+    /// - Inherits deadline from the current message if present
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// impl Actor for MyActor {
+    ///     type Message = MyMessage;
+    ///     
+    ///     fn receive(&mut self, msg: MyMessage, ctx: &mut Context<Self>) {
+    ///         // Send a message to another actor
+    ///         let other_actor = self.other_actor_ref.actor_id();
+    ///         ctx.send(other_actor, ResponseMessage::Done).ok();
+    ///     }
+    /// }
+    /// ```
+    pub fn send<M>(&self, dest: ActorId, msg: M) -> Result<(), SendError>
+    where
+        M: Send + Sync + 'static,
+    {
+        let mut envelope = Envelope::from_actor(self.actor_id, dest, msg);
+
+        // Set causation from current envelope
+        if let Some(current) = &self.current_envelope {
+            envelope = envelope.with_causation(current.id());
+
+            // Inherit deadline if present
+            if let Some(deadline) = current.deadline() {
+                envelope = envelope.with_deadline(deadline);
+            }
+        }
+
+        self.router
+            .route(envelope)
+            .map_err(|e| match e {
+                RouteError::ActorNotFound(_) => SendError::ActorNotFound,
+                RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+            })
+    }
+
+    /// Reply to the sender of the current message
+    ///
+    /// This creates a reply envelope that:
+    /// - Is addressed to the original sender
+    /// - Has causation set to the current message ID
+    /// - Inherits the deadline from the current message
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - There is no current envelope (called outside message processing)
+    /// - The current envelope has no source (external message)
+    pub fn reply<M>(&self, msg: M) -> Result<(), SendError>
+    where
+        M: Send + Sync + 'static,
+    {
+        let current = self
+            .current_envelope
+            .as_ref()
+            .expect("Cannot reply without a current envelope");
+
+        let reply_envelope = current.reply_to(msg);
+
+        self.router
+            .route(reply_envelope)
+            .map_err(|e| match e {
+                RouteError::ActorNotFound(_) => SendError::ActorNotFound,
+                RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+            })
     }
 
     /// Stop this actor
@@ -241,9 +331,10 @@ mod tests {
     fn should_create_context_with_running_state() {
         // Arrange
         let actor_id = ActorId::new(1);
+        let router = Arc::new(Router::new());
 
         // Act
-        let ctx: Context<DummyActor> = Context::new(actor_id);
+        let ctx: Context<DummyActor> = Context::new(actor_id, router);
 
         // Assert
         assert_eq!(ctx.actor_id(), actor_id);
@@ -254,7 +345,8 @@ mod tests {
     fn should_stop_context() {
         // Arrange
         let actor_id = ActorId::new(1);
-        let mut ctx: Context<DummyActor> = Context::new(actor_id);
+        let router = Arc::new(Router::new());
+        let mut ctx: Context<DummyActor> = Context::new(actor_id, router);
 
         // Act
         ctx.stop();
@@ -310,6 +402,105 @@ mod tests {
 
         // Assert
         assert_eq!(id, actor_id);
+    }
+
+    #[test]
+    fn should_send_message_via_context() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let sender_id = ActorId::new(1);
+        let receiver_id = ActorId::new(2);
+        let receiver_mailbox = Mailbox::new(10);
+        router.register(receiver_id, Arc::new(receiver_mailbox.clone()));
+
+        let ctx: Context<DummyActor> = Context::new(sender_id, router);
+
+        // Act
+        let result = ctx.send(receiver_id, 42_i32);
+
+        // Assert
+        assert!(result.is_ok());
+        let envelope = receiver_mailbox.receiver().recv().unwrap();
+        assert_eq!(envelope.source(), Some(sender_id));
+        assert_eq!(envelope.destination(), receiver_id);
+        assert_eq!(envelope.into_payload::<i32>(), Some(42));
+    }
+
+    #[test]
+    fn should_inherit_causation_when_sending_from_context() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let sender_id = ActorId::new(1);
+        let receiver_id = ActorId::new(2);
+        let receiver_mailbox = Mailbox::new(10);
+        router.register(receiver_id, Arc::new(receiver_mailbox.clone()));
+
+        let mut ctx: Context<DummyActor> = Context::new(sender_id, router);
+        
+        // Simulate receiving a message with causation
+        let parent_envelope = Envelope::from_actor(ActorId::new(99), sender_id, ());
+        let parent_id = parent_envelope.id();
+        ctx.set_current_envelope(parent_envelope);
+
+        // Act
+        ctx.send(receiver_id, 42_i32).unwrap();
+
+        // Assert
+        let envelope = receiver_mailbox.receiver().recv().unwrap();
+        assert_eq!(envelope.causation(), Some(parent_id));
+    }
+
+    #[test]
+    fn should_reply_to_sender_via_context() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let sender_id = ActorId::new(1);
+        let receiver_id = ActorId::new(2);
+        let sender_mailbox = Mailbox::new(10);
+        router.register(sender_id, Arc::new(sender_mailbox.clone()));
+
+        let mut ctx: Context<DummyActor> = Context::new(receiver_id, router);
+        
+        // Simulate receiving a message from sender
+        let request_envelope = Envelope::from_actor(sender_id, receiver_id, 10_i32);
+        let request_id = request_envelope.id();
+        ctx.set_current_envelope(request_envelope);
+
+        // Act - reply to the sender
+        let result = ctx.reply("response");
+
+        // Assert
+        assert!(result.is_ok());
+        let reply_envelope = sender_mailbox.receiver().recv().unwrap();
+        assert_eq!(reply_envelope.source(), Some(receiver_id));
+        assert_eq!(reply_envelope.destination(), sender_id);
+        assert_eq!(reply_envelope.causation(), Some(request_id));
+        assert_eq!(reply_envelope.into_payload::<&str>(), Some("response"));
+    }
+
+    #[test]
+    fn should_inherit_deadline_when_sending_from_context() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let sender_id = ActorId::new(1);
+        let receiver_id = ActorId::new(2);
+        let receiver_mailbox = Mailbox::new(10);
+        router.register(receiver_id, Arc::new(receiver_mailbox.clone()));
+
+        let mut ctx: Context<DummyActor> = Context::new(sender_id, router);
+        
+        // Simulate receiving a message with a deadline
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let parent_envelope = Envelope::from_actor(ActorId::new(99), sender_id, ())
+            .with_deadline(deadline);
+        ctx.set_current_envelope(parent_envelope);
+
+        // Act
+        ctx.send(receiver_id, 42_i32).unwrap();
+
+        // Assert
+        let envelope = receiver_mailbox.receiver().recv().unwrap();
+        assert_eq!(envelope.deadline(), Some(deadline));
     }
 
     // Dummy actor for testing

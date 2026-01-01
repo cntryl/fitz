@@ -2,6 +2,7 @@
 
 use super::actor::{Actor, ActorError, ActorId, ActorRef, Context};
 use super::mailbox::Mailbox;
+use crate::transport::envelope::Envelope;
 use crate::transport::router::Router;
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -64,10 +65,11 @@ impl Scheduler {
         self.router.register(actor_id, Arc::new(mailbox.clone()));
 
         let receiver = mailbox.receiver().clone();
+        let router_clone = self.router.clone();
 
         // Spawn actor execution thread
         thread::spawn(move || {
-            let mut ctx = Context::new(actor_id);
+            let mut ctx = Context::new(actor_id, router_clone);
 
             // Call started hook
             actor.started(&mut ctx);
@@ -76,18 +78,60 @@ impl Scheduler {
             while ctx.is_running() {
                 match receiver.recv_timeout(Duration::from_millis(100)) {
                     Ok(envelope) => {
-                        // Unwrap envelope to extract typed message
+                        // Check deadline before processing
+                        if envelope.is_expired() {
+                            eprintln!(
+                                "Dropped expired message {:?} for actor {:?}",
+                                envelope.id(),
+                                actor_id
+                            );
+                            continue;
+                        }
+
+                        // Extract typed message from envelope
+                        // We need to clone the envelope for context, then extract payload
+                        let envelope_id = envelope.id();
+                        let envelope_source = envelope.source();
+                        let envelope_causation = envelope.causation();
+                        let envelope_deadline = envelope.deadline();
+                        
                         let msg = match envelope.into_payload::<A::Message>() {
                             Some(m) => m,
                             None => {
                                 // Type mismatch - log and skip
                                 eprintln!(
-                                    "Type mismatch: envelope for {:?} contains wrong message type",
+                                    "Type mismatch: envelope {:?} for actor {:?} contains wrong message type",
+                                    envelope_id,
                                     actor_id
                                 );
                                 continue;
                             }
                         };
+
+                        // Reconstruct envelope for context (without payload)
+                        // Create a dummy envelope with the same metadata
+                        let ctx_envelope = if let Some(src) = envelope_source {
+                            let mut env = Envelope::from_actor(src, actor_id, ());
+                            if let Some(causation) = envelope_causation {
+                                env = env.with_causation(causation);
+                            }
+                            if let Some(deadline) = envelope_deadline {
+                                env = env.with_deadline(deadline);
+                            }
+                            env
+                        } else {
+                            let mut env = Envelope::new(actor_id, ());
+                            if let Some(causation) = envelope_causation {
+                                env = env.with_causation(causation);
+                            }
+                            if let Some(deadline) = envelope_deadline {
+                                env = env.with_deadline(deadline);
+                            }
+                            env
+                        };
+
+                        // Set current envelope for causation tracking
+                        ctx.set_current_envelope(ctx_envelope);
 
                         // Process message with panic recovery
                         if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
@@ -142,6 +186,7 @@ impl Default for Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::envelope::Envelope;
 
     #[derive(Debug)]
     enum TestMsg {
@@ -245,5 +290,138 @@ mod tests {
         assert_eq!(count, 3);
         
         actor_ref.send(TestMsg::Stop).unwrap();
+    }
+
+    #[test]
+    fn should_drop_expired_messages() {
+        // Arrange
+        let scheduler = Scheduler::new(1);
+        scheduler.start();
+        let actor = CounterActor { count: 0 };
+        let actor_ref = scheduler.spawn(actor, 10);
+
+        // Send a message with an already-expired deadline
+        let past_deadline = std::time::Instant::now() - Duration::from_secs(1);
+        let expired_envelope = Envelope::new(actor_ref.actor_id(), TestMsg::Increment)
+            .with_deadline(past_deadline);
+        scheduler.router().route(expired_envelope).unwrap();
+
+        // Send a valid message to verify actor is still working
+        actor_ref.send(TestMsg::Increment).unwrap();
+
+        // Act
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        actor_ref.send(TestMsg::GetCount(tx)).unwrap();
+        let count = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        // Assert - only the non-expired message was processed
+        assert_eq!(count, 1);
+        
+        actor_ref.send(TestMsg::Stop).unwrap();
+    }
+
+    #[test]
+    fn should_enable_actor_to_actor_messaging() {
+        // Arrange
+        let scheduler = Scheduler::new(2);
+        scheduler.start();
+
+        // Create two actors
+        let actor1 = CounterActor { count: 0 };
+        let actor2 = CounterActor { count: 0 };
+        let ref1 = scheduler.spawn(actor1, 10);
+        let ref2 = scheduler.spawn(actor2, 10);
+
+        // Create a ping-pong actor that sends to another actor
+        struct PingActor {
+            target: ActorId,
+            pings_sent: usize,
+        }
+        impl Actor for PingActor {
+            type Message = String;
+            fn receive(&mut self, msg: String, ctx: &mut Context<Self>) {
+                if msg == "start" {
+                    // Send a message to the target actor
+                    ctx.send(self.target, TestMsg::Increment).ok();
+                    self.pings_sent += 1;
+                    ctx.stop();
+                }
+            }
+        }
+
+        let ping_actor = PingActor {
+            target: ref1.actor_id(),
+            pings_sent: 0,
+        };
+        let ping_ref = scheduler.spawn(ping_actor, 10);
+
+        // Act - trigger the ping
+        ping_ref.send("start".to_string()).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        // Check that actor1 received the increment
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        ref1.send(TestMsg::GetCount(tx)).unwrap();
+        let count = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        // Assert
+        assert_eq!(count, 1);
+
+        ref1.send(TestMsg::Stop).unwrap();
+        ref2.send(TestMsg::Stop).unwrap();
+    }
+
+    #[test]
+    fn should_support_reply_pattern() {
+        // Arrange
+        let scheduler = Scheduler::new(2);
+        scheduler.start();
+
+        // Create a request-response actor pair
+        struct RequestActor {
+            response_received: Arc<std::sync::Mutex<Option<String>>>,
+        }
+        impl Actor for RequestActor {
+            type Message = String;
+            fn receive(&mut self, msg: String, _ctx: &mut Context<Self>) {
+                *self.response_received.lock().unwrap() = Some(msg);
+            }
+        }
+
+        struct ResponseActor;
+        impl Actor for ResponseActor {
+            type Message = String;
+            fn receive(&mut self, msg: String, ctx: &mut Context<Self>) {
+                if msg == "hello" {
+                    // Reply to the sender
+                    ctx.reply("world".to_string()).ok();
+                }
+            }
+        }
+
+        let response_received = Arc::new(std::sync::Mutex::new(None));
+        let request_actor = RequestActor {
+            response_received: response_received.clone(),
+        };
+        let response_actor = ResponseActor;
+
+        let request_ref = scheduler.spawn(request_actor, 10);
+        let response_ref = scheduler.spawn(response_actor, 10);
+
+        // Act - send request from request_ref to response_ref
+        // We need to manually create an envelope with source set
+        let request_envelope = Envelope::from_actor(
+            request_ref.actor_id(),
+            response_ref.actor_id(),
+            "hello".to_string(),
+        );
+        scheduler.router().route(request_envelope).unwrap();
+
+        // Wait for reply
+        thread::sleep(Duration::from_millis(100));
+
+        // Assert
+        let response = response_received.lock().unwrap().clone();
+        assert_eq!(response, Some("world".to_string()));
     }
 }
