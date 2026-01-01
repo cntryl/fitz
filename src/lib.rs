@@ -35,7 +35,7 @@
 
 pub mod actor;
 pub mod messages;
-pub mod personas;
+pub mod domains;
 pub mod storage;
 pub mod transport;
 pub mod routing;
