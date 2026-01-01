@@ -8,7 +8,7 @@
 use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
 use crate::protocol::tlv::{TlvDecoder, TlvError};
-use crate::session::ingress::{Ingress, IngressDecision};
+use crate::session::manager::{Ingress, IngressDecision};
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
 use std::collections::HashMap;

@@ -1,6 +1,6 @@
 # Test & Bench Inventory
 
-_Generated 2026-01-01T19:26:28Z by `scripts/generate_inventory.py`._
+_Generated 2026-01-01T20:02:16Z by `scripts/generate_inventory.py`._
 
 Complete inventory of all test and benchmark functions across midge.
 
@@ -18,7 +18,7 @@ Complete inventory of all test and benchmark functions across midge.
     - `should_generate_unique_session_ids`
     - `should_handle_large_frames`
 
-- `src/api/ws/mod.rs`
+- `src/api/ws.rs`
   - tests:
     - `should_generate_unique_session_ids`
 
@@ -65,6 +65,7 @@ Complete inventory of all test and benchmark functions across midge.
 - `src/protocol/mux.rs`
   - tests:
     - `should_map_default_ranges`
+    - `should_route_to_channel`
     - `should_track_backpressure`
 
 - `src/runtime/actor.rs`
@@ -102,11 +103,6 @@ Complete inventory of all test and benchmark functions across midge.
     - `should_return_none_for_wrong_type`
     - `should_set_causation`
     - `should_set_deadline`
-
-- `src/runtime/ingress_impl.rs`
-  - tests:
-    - `should_list_sessions`
-    - `should_retrieve_session_info`
 
 - `src/runtime/mailbox.rs`
   - tests:
@@ -153,6 +149,17 @@ Complete inventory of all test and benchmark functions across midge.
     - `should_support_multiple_routes`
     - `should_unregister_route`
 
+- `src/runtime/routing.rs`
+  - tests:
+    - `should_allow_same_route_in_different_families_in_hashmap`
+    - `should_compare_route_families_by_identity`
+    - `should_compare_routes_by_path`
+    - `should_create_route`
+    - `should_create_route_address`
+    - `should_create_route_family`
+    - `should_hash_route_families_consistently`
+    - `should_isolate_same_route_in_different_families`
+
 - `src/runtime/scheduler.rs`
   - tests:
     - `should_create_scheduler_with_workers`
@@ -193,16 +200,10 @@ Complete inventory of all test and benchmark functions across midge.
     - `should_reset_restart_tracker`
     - `should_track_restart_within_limit`
 
-- `src/transport/routing.rs`
+- `src/session/ingress.rs`
   - tests:
-    - `should_allow_same_route_in_different_families_in_hashmap`
-    - `should_compare_route_families_by_identity`
-    - `should_compare_routes_by_path`
-    - `should_create_route`
-    - `should_create_route_address`
-    - `should_create_route_family`
-    - `should_hash_route_families_consistently`
-    - `should_isolate_same_route_in_different_families`
+    - `should_list_sessions`
+    - `should_retrieve_session_info`
 
 **Integration Tests (tests/)**
 

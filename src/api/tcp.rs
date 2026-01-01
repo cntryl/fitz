@@ -9,7 +9,7 @@
 
 use crate::api::ingress::IngressConfig;
 use crate::session::{CloseReason, Session, TransportKind, SessionPermissions, SessionMetadata};
-use crate::session::ingress::{Ingress, IngressDecision};
+use crate::session::manager::Ingress;
 use bytes::{Bytes, BytesMut, Buf};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -159,7 +159,7 @@ impl TcpHandler {
 pub async fn create_session(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
-    stream: &TcpStream,
+    stream: TcpStream,
     tx: mpsc::Sender<(u64, Bytes)>,
 ) -> Result<TcpHandler, String> {
     // Extract peer address
@@ -185,10 +185,7 @@ pub async fn create_session(
         config,
         session_id,
         tx,
-        // Note: we can't move stream here, so caller must manage it
-        // This is a limitation of the current design
-        // TODO: Consider using Arc<TcpStream> or Tokio's split pattern
-        todo!("stream handling needs refactor"),
+        stream,
     ))
 }
 
@@ -218,7 +215,7 @@ mod tests {
     #[test]
     fn should_encode_length_prefix() {
         // Arrange
-        let data = vec![1, 2, 3, 4, 5];
+        let data = [1, 2, 3, 4, 5];
         let len = data.len() as u32;
 
         // Act

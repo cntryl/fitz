@@ -1,6 +1,6 @@
 
 # ==================================================================
-# .gitattributes — repository-level attributes for Midge
+# .gitattributes — repository-level attributes for Fitz
 # Enforce consistent text normalization, mark common binary files and
 # keep build/output directories out of source archives and language stats.
 # ==================================================================

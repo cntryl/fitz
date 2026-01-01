@@ -13,11 +13,11 @@
 
 #![allow(clippy::module_inception)]
 
-pub mod ingress;
+pub mod manager;
 pub mod permissions;
 pub mod session;
 
-pub use ingress::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
+pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
 pub use permissions::SessionPermissions;
 pub use session::{next_session_id, CloseReason, Session, SessionError, SessionId, SessionInfo, SessionMetadata, TransportKind};
 
