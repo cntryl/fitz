@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 #[path = "config.rs"]
 mod config;

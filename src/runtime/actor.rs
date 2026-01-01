@@ -1,8 +1,9 @@
+// LAYER: RUNTIME
 //! Core actor abstractions and lifecycle management
 
-use crate::transport::envelope::Envelope;
-use crate::transport::router::{RouteError, Router};
-use crate::transport::routing::RouteAddress;
+use crate::runtime::envelope::Envelope;
+use crate::runtime::router::{RouteError, Router};
+use crate::runtime::routing::RouteAddress;
 use std::fmt;
 use std::sync::Arc;
 
@@ -274,8 +275,8 @@ impl std::error::Error for SendError {}
 mod tests {
     use super::*;
     use crate::runtime::mailbox::Mailbox;
-    use crate::transport::router::Router;
-    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::router::Router;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
         RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))

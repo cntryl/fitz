@@ -1,3 +1,4 @@
+// LAYER: RUNTIME
 //! High-performance subscription index for route pattern matching
 //!
 //! # Design
@@ -23,10 +24,10 @@
 //! - The suffix is stored with the subscription at the prefix node
 //! - During matching, we try suffix patterns against all possible remaining segments
 
-use crate::transport::matcher::{
+use crate::runtime::matcher::{
     extract_route_segments, match_pattern_segments, parse_pattern_segments, PatternSegment,
 };
-use crate::transport::routing::{Route, RouteFamily};
+use crate::runtime::routing::{Route, RouteFamily};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;

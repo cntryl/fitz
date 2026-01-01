@@ -379,7 +379,7 @@ mod tests {
 
     fn test_key(realm: &str, area: &str, resource: &str) -> LeaseKey {
         LeaseKey {
-            family: crate::transport::routing::RouteFamily::new(1),
+            family: crate::runtime::routing::RouteFamily::new(1),
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),

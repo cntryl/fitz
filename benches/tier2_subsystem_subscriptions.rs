@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use fitz::transport::routing::{Route, RouteFamily};
-use fitz::transport::subscriptions::{SubscriptionId, SubscriptionIndex};
+use fitz::runtime::routing::{Route, RouteFamily};
+use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 
 #[path = "config.rs"]
 mod config;

@@ -1,7 +1,8 @@
+// LAYER: RUNTIME
 //! Actor mailbox implementation and message queuing
 
-use crate::transport::envelope::Envelope;
-use crate::transport::router::{DeliveryError, MailboxSink};
+use crate::runtime::envelope::Envelope;
+use crate::runtime::router::{DeliveryError, MailboxSink};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 /// Mailbox for actor message queuing with bounded capacity
@@ -79,7 +80,7 @@ impl MailboxSink for Mailbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
         RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))

@@ -1,10 +1,11 @@
+// LAYER: RUNTIME
 //! Actor scheduling and execution coordination
 
 use super::actor::{Actor, ActorError, ActorRef, Context};
 use super::mailbox::Mailbox;
-use crate::transport::envelope::Envelope;
-use crate::transport::router::Router;
-use crate::transport::routing::RouteAddress;
+use crate::runtime::envelope::Envelope;
+use crate::runtime::router::Router;
+use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -188,8 +189,8 @@ impl Default for Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::envelope::Envelope;
-    use crate::transport::routing::{Route, RouteFamily};
+    use crate::runtime::envelope::Envelope;
+    use crate::runtime::routing::{Route, RouteFamily};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
         RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))

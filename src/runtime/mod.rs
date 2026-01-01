@@ -1,21 +1,47 @@
+// LAYER: RUNTIME (Core Synchronous Engine)
 //! Actor runtime and execution model
 //!
-//! This module provides the core actor runtime for Fitz:
+//! This is the authoritative layer. It contains:
+//! - `routing`: Universal addressing model (RouteFamily, Route, RouteAddress)
 //! - `actor`: Actor trait and lifecycle
-//! - `mailbox`: Message queuing with bounded capacity
-//! - `scheduler`: Cooperative actor scheduling
-//! - `supervision`: Fault tolerance and restart strategies
-//! - `context`: Actor execution context with timers
+//! - `mailbox`: Message queuing
+//! - `scheduler`: Actor scheduling
+//! - `envelope`: Message metadata and routing
+//! - `router`: Message delivery infrastructure
+//! - `matcher`: Wildcard pattern matching
+//! - `subscriptions`: High-performance subscription indexing
+//!
+//! **CRITICAL INVARIANTS:**
+//! - 100% synchronous (no async, no Tokio)
+//! - No socket I/O
+//! - No domain business logic
+//! - Receives frames from Session
+//! - Returns responses to Session
+//!
+//! This module is the core of Fitz and must remain pure and deterministic.
 
 pub mod actor;
 pub mod context;
+pub mod envelope;
+pub mod ingress;
+pub mod ingress_impl;
 pub mod mailbox;
+pub mod matcher;
+pub mod router;
+pub mod routing;
 pub mod scheduler;
+pub mod subscriptions;
 pub mod supervision;
 
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
 pub use context::{Timer, TimerId, TimerManager};
+pub use envelope::{Envelope, MessageId};
+pub use ingress::{Ingress, IngressDecision};
+pub use ingress_impl::{RuntimeIngress, SessionEvent, SessionFrame};
 pub use mailbox::Mailbox;
+pub use matcher::{Pattern, PatternSegment};
+pub use router::{DeliveryError, MailboxSink, RouteError, Router};
 pub use scheduler::Scheduler;
+pub use subscriptions::{SubscriptionId, SubscriptionIndex};
 pub use supervision::{SupervisionAction, SupervisorStrategy};

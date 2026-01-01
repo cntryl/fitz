@@ -24,18 +24,18 @@
 //! **UnsubscribeAll**: Called when session disconnects
 //! - Removes all subscriptions for that session
 
-use crate::transport::subscriptions::{SubscriptionIndex, SubscriptionId};
-use crate::transport::session::SessionId;
+use crate::runtime::subscriptions::{SubscriptionIndex, SubscriptionId};
+use crate::session::session::SessionId;
 use crate::domains::notification::protocol::{
     NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeMessage,
     UnsubscribeAllMessage,
 };
 use crate::runtime::actor::{Actor, Context};
-use crate::transport::routing::RouteFamily;
+use crate::runtime::routing::RouteFamily;
 use std::collections::HashMap;
 
 /// Maps subscription ID to (session_id, subscriber_address)
-type SubscriptionMap = HashMap<SubscriptionId, (SessionId, crate::transport::routing::RouteAddress)>;
+type SubscriptionMap = HashMap<SubscriptionId, (SessionId, crate::runtime::routing::RouteAddress)>;
 
 /// NoticeRouteActor owns subscriptions for a specific (RouteFamily, route) pair
 ///
@@ -168,7 +168,7 @@ impl Actor for NoticeRouteActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_family() -> RouteFamily {
         RouteFamily::new(1)

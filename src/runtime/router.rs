@@ -1,3 +1,4 @@
+// LAYER: RUNTIME
 //! Message routing and delivery infrastructure
 //!
 //! This module defines the routing layer that sits between message producers
@@ -33,8 +34,8 @@
 //! - Router is thread-safe and cloneable
 //! - Route families are strictly isolated (no cross-family routing)
 
-use crate::transport::envelope::Envelope;
-use crate::transport::routing::RouteAddress;
+use crate::runtime::envelope::Envelope;
+use crate::runtime::routing::RouteAddress;
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -158,9 +159,9 @@ impl RouteRegistry {
 /// # Example
 ///
 /// ```ignore
-/// use fitz::transport::router::{Router, MailboxSink};
-/// use fitz::transport::envelope::Envelope;
-/// use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
+/// use fitz::runtime::router::{Router, MailboxSink};
+/// use fitz::runtime::envelope::Envelope;
+/// use fitz::runtime::routing::{RouteFamily, Route, RouteAddress};
 ///
 /// let router = Router::new();
 /// let address = RouteAddress::new(
@@ -272,7 +273,7 @@ impl Default for Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use parking_lot::Mutex;
 
     /// Helper to create test route addresses

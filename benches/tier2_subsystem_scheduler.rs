@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::{Actor, Context};
-use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 
 #[path = "config.rs"]

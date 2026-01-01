@@ -1,4 +1,5 @@
-//! Wildcard route matching for transport patterns
+// LAYER: RUNTIME
+//! Wildcard route matching for runtime patterns
 //!
 //! Supports NATS-like wildcard routing with two wildcard types.
 //!
@@ -28,7 +29,7 @@
 //! Wildcards apply **only within the same RouteFamily**.
 //! The RouteFamily ID must match exactly; wildcards never cross family boundaries.
 
-use crate::transport::routing::Route;
+use crate::runtime::routing::Route;
 
 /// Wildcard pattern for route subscriptions
 ///

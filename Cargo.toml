@@ -39,6 +39,7 @@ rcgen = "0.12"
 crc32fast = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
 
 # Lock-free / concurrency crates used by lease service
 crossbeam-epoch = "0.9"

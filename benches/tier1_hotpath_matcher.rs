@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use fitz::transport::matcher::Pattern;
-use fitz::transport::routing::Route;
+use fitz::runtime::matcher::Pattern;
+use fitz::runtime::routing::Route;
 
 #[path = "config.rs"]
 mod config;

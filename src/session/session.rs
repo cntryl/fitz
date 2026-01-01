@@ -1,0 +1,199 @@
+// LAYER: SESSION
+//! Session lifecycle and multiplexed frame handling
+//!
+//! Each session owns a TLV decoder, a mux, and permission metadata. The session
+//! pipeline decodes frames, demuxes them into logical channels, and dispatches
+//! them through the runtime ingress boundary.
+
+use crate::protocol::frame::ChannelId;
+use crate::protocol::mux::{Mux, MuxError, TypeMapping};
+use crate::protocol::tlv::{TlvDecoder, TlvError};
+use crate::runtime::ingress::{Ingress, IngressDecision};
+use crate::session::permissions::SessionPermissions;
+use bytes::Bytes;
+use std::collections::HashMap;
+use std::fmt;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Unique session identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionId(pub u64);
+
+/// Transport kind identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransportKind {
+    WebSocket,
+    Tcp,
+}
+
+impl fmt::Display for TransportKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransportKind::WebSocket => write!(f, "websocket"),
+            TransportKind::Tcp => write!(f, "tcp"),
+        }
+    }
+}
+
+/// Why the session was closed
+#[derive(Debug, Clone)]
+pub enum CloseReason {
+    ClientClose,
+    ServerClose(String),
+    Error(String),
+    Timeout,
+}
+
+impl fmt::Display for CloseReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CloseReason::ClientClose => write!(f, "client_close"),
+            CloseReason::ServerClose(msg) => write!(f, "server_close: {}", msg),
+            CloseReason::Error(err) => write!(f, "error: {}", err),
+            CloseReason::Timeout => write!(f, "timeout"),
+        }
+    }
+}
+
+/// Session metadata stored alongside permissions
+#[derive(Debug, Clone, Default)]
+pub struct SessionMetadata {
+    properties: HashMap<String, String>,
+}
+
+impl SessionMetadata {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.properties.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.properties.get(key).map(|s| s.as_str())
+    }
+}
+
+/// Summary of session metadata exposed to runtime ingress
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub session_id: u64,
+    pub transport_kind: TransportKind,
+    pub peer_addr: Option<SocketAddr>,
+    pub metadata: Arc<SessionMetadata>,
+    pub permissions_snapshot: SessionPermissions,
+}
+
+/// Errors that can occur while handling a frame
+#[derive(Debug, Clone)]
+pub enum SessionError {
+    Decode(TlvError),
+    Mux(MuxError),
+    /// Ingress requested close with reason
+    IngressClose(String),
+    /// Ingress asked for backpressure
+    Backpressure(ChannelId),
+}
+
+impl fmt::Display for SessionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Decode(err) => write!(f, "TLV decode error: {}", err),
+            Self::Mux(err) => write!(f, "Mux error: {}", err),
+            Self::IngressClose(reason) => write!(f, "ingress requested close: {}", reason),
+            Self::Backpressure(channel) => write!(f, "backpressure on channel {}", channel),
+        }
+    }
+}
+
+impl std::error::Error for SessionError {}
+
+/// Session object owning decoder + mux
+pub struct Session {
+    info: SessionInfo,
+    decoder: TlvDecoder,
+    mux: Mux,
+}
+
+impl Session {
+    /// Create a new session
+    pub fn new(
+        session_id: u64,
+        transport_kind: TransportKind,
+        peer_addr: Option<SocketAddr>,
+        permissions: SessionPermissions,
+        metadata: SessionMetadata,
+        channel_capacity: usize,
+        type_mapping: Option<TypeMapping>,
+    ) -> Self {
+        let mux = if let Some(mapping) = type_mapping {
+            Mux::with_mapping(channel_capacity, mapping)
+        } else {
+            Mux::new(channel_capacity)
+        };
+
+        let info = SessionInfo {
+            session_id,
+            transport_kind,
+            peer_addr,
+            metadata: Arc::new(metadata),
+            permissions_snapshot: permissions.clone(),
+        };
+
+        Self {
+            info,
+            decoder: TlvDecoder::new(),
+            mux,
+        }
+    }
+
+    /// Get session metadata for runtime ingress
+    pub fn info(&self) -> SessionInfo {
+        self.info.clone()
+    }
+
+    /// Handle a raw frame
+    pub async fn on_frame(&mut self, frame: Bytes, ingress: &dyn Ingress) -> Result<(), SessionError> {
+        let records = self
+            .decoder
+            .decode_all(&frame)
+            .map_err(SessionError::Decode)?;
+
+        for record in records {
+            let message = self.mux.route(record).map_err(SessionError::Mux)?;
+            let decision = ingress
+                .on_frame(self.info.session_id, message.channel, message.payload)
+                .await;
+
+            self.mux.release(message.channel);
+
+            match decision {
+                IngressDecision::Accept => continue,
+                IngressDecision::Backpressure => {
+                    return Err(SessionError::Backpressure(message.channel));
+                }
+                IngressDecision::Close(reason) => {
+                    return Err(SessionError::IngressClose(reason));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Access permissions snapshot
+    pub fn permissions(&self) -> &SessionPermissions {
+        &self.info.permissions_snapshot
+    }
+}
+
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Generate a unique session ID across transports
+pub fn next_session_id() -> u64 {
+    SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)
+}

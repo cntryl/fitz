@@ -54,7 +54,7 @@
 
 use super::protocol::{LeaseMessage, LeaseResponse};
 use crate::runtime::{ActorRef, Context};
-use crate::transport::routing::{Route, RouteFamily};
+use crate::runtime::routing::{Route, RouteFamily};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -240,7 +240,7 @@ mod tests {
     use super::*;
     use crate::domains::lease::LeaseActor;
     use crate::runtime::scheduler::Scheduler;
-    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use parking_lot::Mutex;
     use std::sync::Arc;
     use std::time::{Duration, Instant};

@@ -40,7 +40,7 @@
 //! - Renewing with the current token succeeds
 //! - Releasing with an outdated token fails safely
 
-use crate::transport::routing::{Route, RouteFamily};
+use crate::runtime::routing::{Route, RouteFamily};
 
 /// Parsed lease identity
 ///

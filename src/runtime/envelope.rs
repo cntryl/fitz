@@ -1,3 +1,4 @@
+// LAYER: RUNTIME
 //! Domain-agnostic message envelope for routing, tracing, and observability
 //!
 //! # Purpose
@@ -30,8 +31,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use fitz::transport::envelope::Envelope;
-//! use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
+//! use fitz::runtime::envelope::Envelope;
+//! use fitz::runtime::routing::{RouteFamily, Route, RouteAddress};
 //! use std::time::{Duration, Instant};
 //!
 //! // Create an envelope with a deadline
@@ -48,7 +49,7 @@
 //! let reply = envelope.reply_to("World".to_string());
 //! ```
 
-use crate::transport::routing::RouteAddress;
+use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -264,7 +265,7 @@ impl fmt::Debug for Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::routing::{Route, RouteFamily};
+    use crate::runtime::routing::{Route, RouteFamily};
     use std::time::Duration;
 
     fn test_address(family: u64, route: &str) -> RouteAddress {

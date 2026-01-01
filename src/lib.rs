@@ -10,6 +10,8 @@ pub mod domains;
 pub mod errors;
 pub mod prelude;
 pub mod runtime;
+pub mod protocol;
+pub mod session;
 pub mod security;
 pub mod storage;
 pub mod transport;

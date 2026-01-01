@@ -24,8 +24,8 @@
 //! - Isolated: All messaging is scoped to (RouteFamilyId, route) pairs
 //! - Session-scoped: Subscriptions vanish on disconnect
 
-use crate::transport::routing::{Route, RouteAddress, RouteFamily};
-use crate::transport::session::SessionId;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::session::session::SessionId;
 use bytes::Bytes;
 
 /// Messages for the notification domain
