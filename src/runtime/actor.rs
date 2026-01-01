@@ -1,6 +1,9 @@
 //! Core actor abstractions and lifecycle management
 
+use crate::transport::envelope::Envelope;
+use crate::transport::router::{RouteError, Router};
 use std::fmt;
+use std::sync::Arc;
 
 /// The core Actor trait that all actors must implement.
 ///
@@ -78,22 +81,40 @@ impl fmt::Display for ActorId {
 }
 
 /// Reference to an actor for sending messages
+///
+/// ActorRef maintains type safety at the API level while using the
+/// untyped router internally. Messages are wrapped in Envelopes before routing.
 #[derive(Clone)]
 pub struct ActorRef<M: Send + 'static> {
     actor_id: ActorId,
-    sender: crossbeam_channel::Sender<M>,
+    router: Arc<Router>,
+    _phantom: std::marker::PhantomData<fn() -> M>,
 }
 
 impl<M: Send + 'static> ActorRef<M> {
-    pub fn new(actor_id: ActorId, sender: crossbeam_channel::Sender<M>) -> Self {
-        Self { actor_id, sender }
+    pub fn new(actor_id: ActorId, router: Arc<Router>) -> Self {
+        Self {
+            actor_id,
+            router,
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     /// Send a message to this actor (non-blocking, may fail if mailbox is full)
-    pub fn send(&self, msg: M) -> Result<(), SendError> {
-        self.sender
-            .try_send(msg)
-            .map_err(|_| SendError::MailboxFull)
+    ///
+    /// The message is wrapped in an Envelope and routed to the destination actor.
+    /// The source is not set (external message).
+    pub fn send(&self, msg: M) -> Result<(), SendError>
+    where
+        M: Send + Sync + 'static,
+    {
+        let envelope = Envelope::new(self.actor_id, msg);
+        self.router
+            .route(envelope)
+            .map_err(|e| match e {
+                RouteError::ActorNotFound(_) => SendError::ActorNotFound,
+                RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+            })
     }
 
     /// Get the actor's ID
@@ -145,6 +166,7 @@ impl std::error::Error for ActorError {}
 pub enum SendError {
     MailboxFull,
     ActorStopped,
+    ActorNotFound,
 }
 
 impl fmt::Display for SendError {
@@ -152,6 +174,7 @@ impl fmt::Display for SendError {
         match self {
             SendError::MailboxFull => write!(f, "Mailbox is full"),
             SendError::ActorStopped => write!(f, "Actor has stopped"),
+            SendError::ActorNotFound => write!(f, "Actor not found"),
         }
     }
 }
@@ -161,6 +184,8 @@ impl std::error::Error for SendError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::mailbox::Mailbox;
+    use crate::transport::router::Router;
 
     #[test]
     fn should_create_actor_id() {
@@ -241,24 +266,29 @@ mod tests {
     #[test]
     fn should_send_message_via_actor_ref() {
         // Arrange
-        let (tx, rx) = crossbeam_channel::bounded(10);
+        let router = Arc::new(Router::new());
+        let mailbox = Mailbox::new(10);
         let actor_id = ActorId::new(1);
-        let actor_ref = ActorRef::new(actor_id, tx);
+        router.register(actor_id, Arc::new(mailbox.clone()));
+        let actor_ref: ActorRef<i32> = ActorRef::new(actor_id, router);
 
         // Act
         let result = actor_ref.send(42);
 
         // Assert
         assert!(result.is_ok());
-        assert_eq!(rx.recv().unwrap(), 42);
+        let envelope = mailbox.receiver().recv().unwrap();
+        assert_eq!(envelope.into_payload::<i32>(), Some(42));
     }
 
     #[test]
     fn should_fail_send_when_mailbox_full() {
         // Arrange
-        let (tx, _rx) = crossbeam_channel::bounded(1);
+        let router = Arc::new(Router::new());
+        let mailbox = Mailbox::new(1);
         let actor_id = ActorId::new(1);
-        let actor_ref = ActorRef::new(actor_id, tx);
+        router.register(actor_id, Arc::new(mailbox.clone()));
+        let actor_ref: ActorRef<i32> = ActorRef::new(actor_id, router);
         actor_ref.send(1).unwrap();
 
         // Act
@@ -271,9 +301,9 @@ mod tests {
     #[test]
     fn should_get_actor_id_from_ref() {
         // Arrange
-        let (tx, _rx) = crossbeam_channel::bounded::<i32>(10);
+        let router = Arc::new(Router::new());
         let actor_id = ActorId::new(42);
-        let actor_ref = ActorRef::new(actor_id, tx);
+        let actor_ref: ActorRef<i32> = ActorRef::new(actor_id, router);
 
         // Act
         let id = actor_ref.actor_id();

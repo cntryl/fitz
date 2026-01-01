@@ -1,15 +1,22 @@
 //! Actor mailbox implementation and message queuing
 
+use crate::transport::envelope::Envelope;
+use crate::transport::router::{DeliveryError, MailboxSink};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 /// Mailbox for actor message queuing with bounded capacity
-pub struct Mailbox<M: Send + 'static> {
-    sender: Sender<M>,
-    receiver: Receiver<M>,
+///
+/// Mailboxes store type-erased `Envelope` messages instead of typed messages.
+/// This allows the runtime to handle any message type uniformly while maintaining
+/// type safety at the actor boundary (messages are unwrapped to their concrete type
+/// before being passed to actors).
+pub struct Mailbox {
+    sender: Sender<Envelope>,
+    receiver: Receiver<Envelope>,
     capacity: usize,
 }
 
-impl<M: Send + 'static> Mailbox<M> {
+impl Mailbox {
     /// Create a new mailbox with the specified capacity
     pub fn new(capacity: usize) -> Self {
         let (sender, receiver) = bounded(capacity);
@@ -21,12 +28,12 @@ impl<M: Send + 'static> Mailbox<M> {
     }
 
     /// Get a sender for this mailbox
-    pub fn sender(&self) -> Sender<M> {
+    pub fn sender(&self) -> Sender<Envelope> {
         self.sender.clone()
     }
 
     /// Get a receiver for this mailbox
-    pub fn receiver(&self) -> &Receiver<M> {
+    pub fn receiver(&self) -> &Receiver<Envelope> {
         &self.receiver
     }
 
@@ -46,7 +53,7 @@ impl<M: Send + 'static> Mailbox<M> {
     }
 }
 
-impl<M: Send + 'static> Clone for Mailbox<M> {
+impl Clone for Mailbox {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
@@ -56,9 +63,25 @@ impl<M: Send + 'static> Clone for Mailbox<M> {
     }
 }
 
+/// Implement MailboxSink to bridge transport and runtime layers
+///
+/// This allows the router (in transport) to deliver envelopes to mailboxes
+/// (in runtime) without creating a circular dependency.
+impl MailboxSink for Mailbox {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.sender
+            .try_send(envelope)
+            .map_err(|e| match e {
+                crossbeam_channel::TrySendError::Full(_) => DeliveryError::MailboxFull,
+                crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::ActorId;
 
     #[test]
     fn should_create_mailbox_with_capacity() {
@@ -66,7 +89,7 @@ mod tests {
         let capacity = 100;
 
         // Act
-        let mailbox: Mailbox<i32> = Mailbox::new(capacity);
+        let mailbox = Mailbox::new(capacity);
 
         // Assert
         assert_eq!(mailbox.capacity(), capacity);
@@ -74,13 +97,14 @@ mod tests {
     }
 
     #[test]
-    fn should_send_message_to_mailbox() {
+    fn should_send_envelope_to_mailbox() {
         // Arrange
         let mailbox = Mailbox::new(10);
         let sender = mailbox.sender();
+        let envelope = Envelope::new(ActorId::new(1), 42);
 
         // Act
-        let result = sender.try_send(42);
+        let result = sender.try_send(envelope);
 
         // Assert
         assert!(result.is_ok());
@@ -89,17 +113,18 @@ mod tests {
     }
 
     #[test]
-    fn should_receive_message_from_mailbox() {
+    fn should_receive_envelope_from_mailbox() {
         // Arrange
         let mailbox = Mailbox::new(10);
         let sender = mailbox.sender();
-        sender.try_send(42).unwrap();
+        let envelope = Envelope::new(ActorId::new(1), 42);
+        sender.try_send(envelope).unwrap();
 
         // Act
-        let msg = mailbox.receiver().try_recv();
+        let received = mailbox.receiver().try_recv();
 
         // Assert
-        assert_eq!(msg.unwrap(), 42);
+        assert!(received.is_ok());
         assert!(mailbox.is_empty());
     }
 
@@ -108,11 +133,15 @@ mod tests {
         // Arrange
         let mailbox = Mailbox::new(2);
         let sender = mailbox.sender();
-        sender.try_send(1).unwrap();
-        sender.try_send(2).unwrap();
+        sender
+            .try_send(Envelope::new(ActorId::new(1), 1))
+            .unwrap();
+        sender
+            .try_send(Envelope::new(ActorId::new(1), 2))
+            .unwrap();
 
         // Act
-        let result = sender.try_send(3);
+        let result = sender.try_send(Envelope::new(ActorId::new(1), 3));
 
         // Assert
         assert!(result.is_err());
@@ -124,7 +153,9 @@ mod tests {
         // Arrange
         let mailbox = Mailbox::new(10);
         let sender = mailbox.sender();
-        sender.try_send(42).unwrap();
+        sender
+            .try_send(Envelope::new(ActorId::new(1), 42))
+            .unwrap();
 
         // Act
         let cloned = mailbox.clone();
@@ -142,8 +173,12 @@ mod tests {
         let sender2 = mailbox.sender();
 
         // Act
-        sender1.try_send(1).unwrap();
-        sender2.try_send(2).unwrap();
+        sender1
+            .try_send(Envelope::new(ActorId::new(1), 1))
+            .unwrap();
+        sender2
+            .try_send(Envelope::new(ActorId::new(1), 2))
+            .unwrap();
 
         // Assert
         assert_eq!(mailbox.len(), 2);
