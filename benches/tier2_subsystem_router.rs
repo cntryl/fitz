@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 
-#[path = "../config.rs"]
+#[path = "config.rs"]
 mod config;
 
 fn bench_route_creation(c: &mut Criterion) {

@@ -4,7 +4,7 @@ use fitz::runtime::{Actor, Context};
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 
-#[path = "../config.rs"]
+#[path = "config.rs"]
 mod config;
 
 fn test_address(family: u64, route: &str) -> RouteAddress {

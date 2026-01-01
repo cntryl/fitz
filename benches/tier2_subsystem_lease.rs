@@ -4,7 +4,7 @@ use fitz::runtime::scheduler::Scheduler;
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 
-#[path = "./config.rs"]
+#[path = "config.rs"]
 mod config;
 
 fn bench_lease_creation(c: &mut Criterion) {

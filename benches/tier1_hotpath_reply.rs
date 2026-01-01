@@ -3,7 +3,7 @@ use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::{Actor, Context};
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 
-#[path = "../config.rs"]
+#[path = "config.rs"]
 mod config;
 
 struct EchoActor;

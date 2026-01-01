@@ -5,7 +5,7 @@ use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-#[path = "../config.rs"]
+#[path = "config.rs"]
 mod config;
 
 struct CounterActor {
