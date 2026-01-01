@@ -14,5 +14,4 @@ pub mod protocol;
 pub mod session;
 pub mod security;
 pub mod storage;
-pub mod transport;
 pub mod utils;

@@ -211,8 +211,8 @@ Route: {scheme}://{realm}/{area}/{resource}/{operation}
 ### Files
 
 - `src/personas/session_actor.rs`
-- `src/transport/websocket.rs`
-- `src/transport/multiplexer.rs`
+- `src/api/ws.rs`
+- `src/protocol/mux.rs`
 
 ### Validation Criteria
 

@@ -8,10 +8,11 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
-use crate::session::{CloseReason, Ingress, IngressDecision, Session, TransportKind};
-use bytes::{Bytes, BytesMut};
+use crate::session::{CloseReason, Session, TransportKind, SessionPermissions, SessionMetadata};
+use crate::session::ingress::{Ingress, IngressDecision};
+use bytes::{Bytes, BytesMut, Buf};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -169,10 +170,14 @@ pub async fn create_session(
         generate_session_id(),
         TransportKind::Tcp,
         peer_addr,
+        SessionPermissions::empty(),
+        SessionMetadata::new(),
+        config.channel_capacity,
+        None,
     );
 
     // Let ingress validate and accept the session
-    let session_id = ingress.on_open(session).await?;
+    let session_id = ingress.on_open(session.info()).await?;
 
     // Create handler
     Ok(TcpHandler::new(

@@ -7,7 +7,8 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
-use crate::session::{CloseReason, Ingress, IngressDecision, Session, TransportKind};
+use crate::session::{CloseReason, Ingress, IngressDecision, SessionInfo, TransportKind, SessionMetadata, SessionPermissions};
+use crate::protocol::frame::ChannelId;
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -112,11 +113,11 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Ingress for MockIngress {
-        async fn on_open(&self, _session: Session) -> Result<u64, String> {
+        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
             Ok(1)
         }
 
-        async fn on_frame(&self, _session_id: u64, _frame: Bytes) -> IngressDecision {
+        async fn on_frame(&self, _session_id: u64, _channel_id: ChannelId, _message_payload: Bytes) -> IngressDecision {
             IngressDecision::Accept
         }
 
@@ -126,9 +127,9 @@ mod tests {
     #[test]
     fn should_generate_unique_session_ids() {
         // Arrange & Act
-        let id1 = generate_session_id();
-        let id2 = generate_session_id();
-        let id3 = generate_session_id();
+        let id1 = crate::session::next_session_id();
+        let id2 = crate::session::next_session_id();
+        let id3 = crate::session::next_session_id();
 
         // Assert
         assert!(id1 < id2);
@@ -139,11 +140,16 @@ mod tests {
     async fn should_create_websocket_session() {
         // Arrange
         let ingress = Arc::new(MockIngress);
-        let config = IngressConfig::default();
-        let (tx, _rx) = mpsc::channel(100);
+        let session = SessionInfo {
+            session_id: 1,
+            transport_kind: TransportKind::WebSocket,
+            peer_addr: None,
+            metadata: Arc::new(SessionMetadata::new()),
+            permissions_snapshot: SessionPermissions::empty(),
+        };
 
         // Act
-        let result = create_session(ingress, config, None, tx).await;
+        let result = ingress.on_open(session).await;
 
         // Assert
         assert!(result.is_ok());

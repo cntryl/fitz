@@ -133,7 +133,7 @@ Fitz supports multiple transport protocols, all following the same async-edge/sy
 ### Detailed Inbound Steps
 
 #### 1. WebSocket Layer (Async)
-**File**: `src/transport/ws.rs`
+**File**: `src/api/ws.rs`
 
 - Tokio task spawned per connection
 - `ws_stream.next().await` yields incoming frames
@@ -389,7 +389,7 @@ DomainResponse::NoticeDelivery { subscribers, notification_frame, ack_frame } =>
 ```
 
 #### 3. Outbound Queue (Sync → Async Boundary)
-**File**: `src/transport/ws.rs`
+**File**: `src/api/ws.rs`
 
 Each WebSocket connection has a dedicated **bounded SPSC queue** for outbound frames:
 - Created in `handle_connection()`: `let (producer, consumer) = SpscQueue::with_capacity(N);`.
@@ -408,7 +408,7 @@ if let Some(frame) = outbound_cons.pop() {
 ```
 
 #### 4. WebSocket Write (Async)
-**File**: `src/transport/ws.rs`
+**File**: `src/api/ws.rs`
 
 - WebSocket task selects on both inbound (ws_stream) and outbound (outbound_rx)
 - Outbound frames written via `SinkExt::send()`
@@ -518,7 +518,7 @@ match operation {
 ### Session Identity at Transport Connect
 
 #### 1. JWT Extraction on WebSocket Upgrade
-**Files**: `src/transport/http.rs`, `src/transport/ws.rs`
+**Files**: `src/api/http.rs`, `src/api/ws.rs`
 
 - Clients MUST present a bearer token during the HTTP → WebSocket upgrade:
     - Preferred: `Authorization: Bearer <jwt>` request header.
@@ -686,7 +686,7 @@ let ctx = DomainContext {
 
 The engine exposes a small, stable API to the transport layer and tests; all other interactions remain internal to the engine thread(s).
 
-**Files**: `src/core/engine.rs`, `src/transport/ws.rs`
+**Files**: `src/core/engine.rs`, `src/api/ws.rs`
 
 - `EngineHandle::register_session(conn_id, SessionAuth)`
     - Called once during WebSocket setup after JWT verification.
@@ -712,7 +712,7 @@ No other direct calls into the engine are permitted from transport; control-plan
 
 ### Shard Selection Function
 
-**Files**: `src/core/engine.rs`, `src/transport/ws.rs`
+**Files**: `src/core/engine.rs`, `src/api/ws.rs`
 
 - The system runs with a fixed `NUM_SHARDS` configured at startup.
 - Shard ownership is decided at connection time and never changes for the lifetime of a connection.
