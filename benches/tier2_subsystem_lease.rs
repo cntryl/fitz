@@ -117,7 +117,7 @@ fn bench_lease_runtime_acquire_release_loop(c: &mut Criterion) {
         b.iter(|| {
             // Send acquire
             let _ = actor_ref.send(LeaseMessage::Acquire {
-                family_id: black_box(family.clone()),
+                family_id: black_box(family),
                 route: black_box(route.clone()),
                 owner_id: black_box(owner.clone()),
                 ttl_secs,
@@ -125,7 +125,7 @@ fn bench_lease_runtime_acquire_release_loop(c: &mut Criterion) {
 
             // Send release (we don't wait for responses in tight loop)
             let _ = actor_ref.send(LeaseMessage::Release {
-                family_id: black_box(family.clone()),
+                family_id: black_box(family),
                 route: black_box(route.clone()),
                 owner_id: black_box(owner.clone()),
                 fencing_token: black_box(1),
@@ -157,7 +157,7 @@ fn bench_lease_runtime_renew_spin(c: &mut Criterion) {
 
     // First, acquire the lease
     let _ = actor_ref.send(LeaseMessage::Acquire {
-        family_id: family.clone(),
+        family_id: family,
         route: route.clone(),
         owner_id: owner.clone(),
         ttl_secs,
@@ -175,7 +175,7 @@ fn bench_lease_runtime_renew_spin(c: &mut Criterion) {
         b.iter(|| {
             // Tight loop of renew messages
             let _ = actor_ref.send(LeaseMessage::Renew {
-                family_id: black_box(family.clone()),
+                family_id: black_box(family),
                 route: black_box(route.clone()),
                 owner_id: black_box(owner.clone()),
                 fencing_token: black_box(1),
@@ -224,7 +224,7 @@ fn bench_lease_runtime_contended_acquire(c: &mut Criterion) {
                     for i in 0..count {
                         let owner = format!("contender_{}", i);
                         let _ = actor_ref.send(LeaseMessage::Acquire {
-                            family_id: black_box(family.clone()),
+                            family_id: black_box(family),
                             route: black_box(route.clone()),
                             owner_id: black_box(owner),
                             ttl_secs,

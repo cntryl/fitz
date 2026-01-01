@@ -64,7 +64,7 @@ impl NotificationActor {
 
     /// Publish a message, fan-out to all matching subscribers
     fn handle_publish(&mut self, msg: PublishMessage, ctx: &mut Context<Self>) {
-        let family_id = msg.family_id.clone();
+        let family_id = msg.family_id;
 
         // Find all subscriptions for this RouteFamily
         for (key, subs) in self.subscriptions.iter() {
@@ -86,7 +86,7 @@ impl NotificationActor {
     /// Subscribe to a pattern
     fn handle_subscribe(&mut self, msg: SubscribeMessage) {
         let key = SubscriptionKey {
-            family_id: msg.family_id.clone(),
+            family_id: msg.family_id,
             pattern: msg.pattern.as_str().to_string(),
         };
 
@@ -98,14 +98,14 @@ impl NotificationActor {
 
         self.subscriptions
             .entry(key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(subscription);
     }
 
     /// Unsubscribe from a pattern
     fn handle_unsubscribe(&mut self, msg: UnsubscribeMessage) {
         let key = SubscriptionKey {
-            family_id: msg.family_id.clone(),
+            family_id: msg.family_id,
             pattern: msg.pattern.as_str().to_string(),
         };
 
@@ -168,63 +168,75 @@ mod tests {
 
     #[test]
     fn should_subscribe_to_pattern() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family = test_family();
         let pattern = test_route("notify://realm/orders/*");
         let subscriber = test_address();
+        let subscribe = SubscribeMessage::new(family, pattern.clone(), subscriber.clone());
 
-        let subscribe = SubscribeMessage::new(family.clone(), pattern.clone(), subscriber.clone());
+        // Act
         actor.handle_subscribe(subscribe);
 
+        // Assert
         assert_eq!(actor.subscriptions.len(), 1);
     }
 
     #[test]
     fn should_unsubscribe_from_pattern() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family = test_family();
         let pattern = test_route("notify://realm/orders/*");
         let subscriber = test_address();
-
-        let subscribe = SubscribeMessage::new(family.clone(), pattern.clone(), subscriber.clone());
+        let subscribe = SubscribeMessage::new(family, pattern.clone(), subscriber.clone());
         actor.handle_subscribe(subscribe);
         assert_eq!(actor.subscriptions.len(), 1);
-
         let unsubscribe = UnsubscribeMessage::new(family, pattern, subscriber);
+
+        // Act
         actor.handle_unsubscribe(unsubscribe);
+
+        // Assert
         assert_eq!(actor.subscriptions.len(), 0);
     }
 
     #[test]
     fn should_isolate_subscriptions_across_families() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family1 = RouteFamily::new(1);
         let family2 = RouteFamily::new(2);
         let pattern = test_route("notify://realm/orders/*");
         let subscriber = test_address();
 
+        // Act
         // Subscribe to same pattern in different families
         actor.handle_subscribe(SubscribeMessage::new(
             family1,
             pattern.clone(),
             subscriber.clone(),
         ));
-        actor.handle_subscribe(SubscribeMessage::new(family2.clone(), pattern, subscriber));
+        actor.handle_subscribe(SubscribeMessage::new(family2, pattern, subscriber));
 
+        // Assert
         assert_eq!(actor.subscriptions.len(), 2);
     }
 
     #[test]
     fn should_allow_multiple_subscribers_to_same_pattern() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family = test_family();
         let pattern = test_route("notify://realm/orders/*");
         let sub1 = test_address();
         let sub2 = test_address();
 
-        actor.handle_subscribe(SubscribeMessage::new(family.clone(), pattern.clone(), sub1));
+        // Act
+        actor.handle_subscribe(SubscribeMessage::new(family, pattern.clone(), sub1));
         actor.handle_subscribe(SubscribeMessage::new(family, pattern, sub2));
 
+        // Assert
         assert_eq!(actor.subscriptions.len(), 1);
         let subs = &actor.subscriptions.values().next().unwrap();
         assert_eq!(subs.len(), 2);
@@ -232,27 +244,27 @@ mod tests {
 
     #[test]
     fn should_unsubscribe_only_matching_subscriber() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family = test_family();
         let pattern = test_route("notify://realm/orders/*");
-        let sub1 = RouteAddress::new(family.clone(), test_route("test://subscriber/1"));
-        let sub2 = RouteAddress::new(family.clone(), test_route("test://subscriber/2"));
-
+        let sub1 = RouteAddress::new(family, test_route("test://subscriber/1"));
+        let sub2 = RouteAddress::new(family, test_route("test://subscriber/2"));
         actor.handle_subscribe(SubscribeMessage::new(
-            family.clone(),
+            family,
             pattern.clone(),
             sub1.clone(),
         ));
         actor.handle_subscribe(SubscribeMessage::new(
-            family.clone(),
+            family,
             pattern.clone(),
             sub2.clone(),
         ));
 
-        // Unsubscribe only sub1
+        // Act
         actor.handle_unsubscribe(UnsubscribeMessage::new(family, pattern, sub1));
 
-        // Should still have 1 subscription
+        // Assert
         assert_eq!(actor.subscriptions.len(), 1);
         let subs = &actor.subscriptions.values().next().unwrap();
         assert_eq!(subs.len(), 1);
@@ -261,44 +273,48 @@ mod tests {
 
     #[test]
     fn should_support_idempotent_unsubscribe() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family = test_family();
         let pattern = test_route("notify://realm/orders/*");
         let subscriber = test_address();
-
         actor.handle_subscribe(SubscribeMessage::new(
-            family.clone(),
+            family,
             pattern.clone(),
             subscriber.clone(),
         ));
 
+        // Act
         // Unsubscribe twice
         actor.handle_unsubscribe(UnsubscribeMessage::new(
-            family.clone(),
+            family,
             pattern.clone(),
             subscriber.clone(),
         ));
         actor.handle_unsubscribe(UnsubscribeMessage::new(family, pattern, subscriber));
 
-        // Should be empty
+        // Assert
         assert_eq!(actor.subscriptions.len(), 0);
     }
 
     #[test]
     fn should_support_idempotent_subscribe() {
+        // Arrange
         let mut actor = NotificationActor::new();
         let family = test_family();
         let pattern = test_route("notify://realm/orders/*");
         let subscriber = test_address();
 
+        // Act
         // Subscribe same pattern+subscriber twice
         actor.handle_subscribe(SubscribeMessage::new(
-            family.clone(),
+            family,
             pattern.clone(),
             subscriber.clone(),
         ));
         actor.handle_subscribe(SubscribeMessage::new(family, pattern, subscriber));
 
+        // Assert
         assert_eq!(actor.subscriptions.len(), 1);
         let subs = &actor.subscriptions.values().next().unwrap();
         // Idempotency is not enforced (both added), but that's OK for in-memory
