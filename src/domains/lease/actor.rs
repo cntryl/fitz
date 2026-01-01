@@ -329,9 +329,9 @@ impl Actor for LeaseActor {
             }
         };
 
-        // In a real system, we would reply to the sender
-        // For now, just log the response
-        println!("[LeaseActor {:?}] Response: {:?}", ctx.address(), response);
+        // Send response back to the client via reply (if the message came from another actor)
+        // For testing/benchmarking without a proper source, this is a no-op
+        let _ = ctx.reply(response).ok();
     }
 }
 

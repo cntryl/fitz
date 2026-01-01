@@ -114,9 +114,9 @@ impl<A: Actor + ?Sized> Context<A> {
     /// - Has causation set to the current message ID
     /// - Inherits the deadline from the current message
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if:
+    /// Returns `Err(SendError::ActorNotFound)` if:
     /// - There is no current envelope (called outside message processing)
     /// - The current envelope has no source (external message)
     pub fn reply<M>(&self, msg: M) -> Result<(), SendError>
@@ -126,7 +126,11 @@ impl<A: Actor + ?Sized> Context<A> {
         let current = self
             .current_envelope
             .as_ref()
-            .expect("Cannot reply without a current envelope");
+            .ok_or(SendError::ActorNotFound)?;
+
+        if current.source().is_none() {
+            return Err(SendError::ActorNotFound);
+        }
 
         let reply_envelope = current.reply_to(msg);
 
