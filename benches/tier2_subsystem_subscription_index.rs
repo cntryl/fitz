@@ -11,10 +11,10 @@ fn make_subscription_index_with_patterns(pattern_count: usize) -> SubscriptionIn
 
     for i in 0..pattern_count {
         let pattern_str = match i % 4 {
-            0 => format!("notify://realm/orders/create"),
-            1 => format!("notify://realm/orders/*"),
-            2 => format!("notify://realm/**/created"),
-            _ => format!("notify://realm/items/*/action"),
+            0 => "notify://realm/orders/create".to_string(),
+            1 => "notify://realm/orders/*".to_string(),
+            2 => "notify://realm/**/created".to_string(),
+            _ => "notify://realm/items/*/action".to_string(),
         };
         let pattern = Route::new(pattern_str);
         index.insert(family, &pattern, SubscriptionId(i as u64));
@@ -31,7 +31,7 @@ fn bench_insert_single_pattern(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
     group.bench_function("insert_exact_pattern", |b| {
         b.iter_batched(
-            || SubscriptionIndex::new(),
+            SubscriptionIndex::new,
             |mut index| {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
@@ -48,7 +48,7 @@ fn bench_insert_with_single_star(c: &mut Criterion) {
     let mut group = c.benchmark_group("subscription_index_insert");
     group.bench_function("insert_single_star_pattern", |b| {
         b.iter_batched(
-            || SubscriptionIndex::new(),
+            SubscriptionIndex::new,
             |mut index| {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
@@ -65,7 +65,7 @@ fn bench_insert_with_double_star(c: &mut Criterion) {
     let mut group = c.benchmark_group("subscription_index_insert");
     group.bench_function("insert_double_star_pattern", |b| {
         b.iter_batched(
-            || SubscriptionIndex::new(),
+            SubscriptionIndex::new,
             |mut index| {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
@@ -162,7 +162,7 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
     group.throughput(Throughput::Elements(100));
     group.bench_function("mixed_operations_100_patterns", |b| {
         b.iter_batched(
-            || SubscriptionIndex::new(),
+            SubscriptionIndex::new,
             |mut index| {
                 // Insert various patterns
                 for i in 0..100 {
