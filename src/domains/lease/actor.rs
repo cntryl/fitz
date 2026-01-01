@@ -134,12 +134,7 @@ impl LeaseActor {
     }
 
     /// Handle lease acquisition
-    fn handle_acquire(
-        &mut self,
-        key: LeaseKey,
-        owner_id: String,
-        ttl_secs: u64,
-    ) -> LeaseResponse {
+    fn handle_acquire(&mut self, key: LeaseKey, owner_id: String, ttl_secs: u64) -> LeaseResponse {
         let now = self.clock.now();
         let ttl = Duration::from_secs(ttl_secs);
 
@@ -298,35 +293,29 @@ impl Actor for LeaseActor {
                 route,
                 owner_id,
                 ttl_secs,
-            } => {
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
-                    None => LeaseResponse::NotFound,
-                }
-            }
+            } => match LeaseKey::from_route(family_id, &route) {
+                Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
+                None => LeaseResponse::NotFound,
+            },
             LeaseMessage::Renew {
                 family_id,
                 route,
                 owner_id,
                 fencing_token,
                 ttl_secs,
-            } => {
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
-                    None => LeaseResponse::NotFound,
-                }
-            }
+            } => match LeaseKey::from_route(family_id, &route) {
+                Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
+                None => LeaseResponse::NotFound,
+            },
             LeaseMessage::Release {
                 family_id,
                 route,
                 owner_id,
                 fencing_token,
-            } => {
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_release(key, owner_id, fencing_token),
-                    None => LeaseResponse::NotFound,
-                }
-            }
+            } => match LeaseKey::from_route(family_id, &route) {
+                Some(key) => self.handle_release(key, owner_id, fencing_token),
+                None => LeaseResponse::NotFound,
+            },
             LeaseMessage::Query { family_id, route } => {
                 match LeaseKey::from_route(family_id, &route) {
                     Some(key) => self.handle_query(key),
@@ -353,14 +342,16 @@ impl LeaseActor {
     /// them to be accessed. Enables runtime-driven expiration.
     fn expire_old_leases(&mut self) {
         let now = self.clock.now();
-        self.leases.retain(|_lease_id, state| !state.is_expired(now));
+        self.leases
+            .retain(|_lease_id, state| !state.is_expired(now));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
 
     /// Mock clock for deterministic testing
     struct MockClock {
@@ -375,14 +366,14 @@ mod tests {
         }
 
         fn advance(&self, duration: Duration) {
-            let mut now = self.now.lock().unwrap();
+            let mut now = self.now.lock();
             *now += duration;
         }
     }
 
     impl Clock for MockClock {
         fn now(&self) -> Instant {
-            *self.now.lock().unwrap()
+            *self.now.lock()
         }
     }
 
@@ -401,24 +392,30 @@ mod tests {
         let mut actor = LeaseActor::new();
 
         // Act
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Assert
-        assert!(matches!(response, LeaseResponse::Acquired { fencing_token: 1 }));
+        assert!(matches!(
+            response,
+            LeaseResponse::Acquired { fencing_token: 1 }
+        ));
     }
 
     #[test]
     fn should_return_existing_token_for_idempotent_acquire() {
         // Arrange
         let mut actor = LeaseActor::new();
-        let first = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
+        let first =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let first_token = match first {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
         };
 
         // Act
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Assert
         assert_eq!(
@@ -436,7 +433,8 @@ mod tests {
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 60);
 
         // Assert
         assert_eq!(
@@ -462,7 +460,8 @@ mod tests {
         clock_ref.advance(Duration::from_secs(10));
 
         // Act
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 60);
 
         // Assert
         assert!(matches!(
@@ -481,7 +480,8 @@ mod tests {
         }));
 
         // Act - acquire first lease
-        let response1 = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 5);
+        let response1 =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 5);
         let token1 = match response1 {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -489,7 +489,8 @@ mod tests {
 
         // Expire and takeover
         clock_ref.advance(Duration::from_secs(10));
-        let response2 = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 5);
+        let response2 =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 5);
         let token2 = match response2 {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -503,15 +504,20 @@ mod tests {
     fn should_renew_lease_with_valid_token() {
         // Arrange
         let mut actor = LeaseActor::new();
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let token = match response {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
         };
 
         // Act
-        let renew_response =
-            actor.handle_renew(test_key("acme", "locks", "test1"), "owner1".to_string(), token, 60);
+        let renew_response = actor.handle_renew(
+            test_key("acme", "locks", "test1"),
+            "owner1".to_string(),
+            token,
+            60,
+        );
 
         // Assert
         assert_eq!(
@@ -529,7 +535,12 @@ mod tests {
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act
-        let response = actor.handle_renew(test_key("acme", "locks", "test1"), "owner1".to_string(), 999, 60);
+        let response = actor.handle_renew(
+            test_key("acme", "locks", "test1"),
+            "owner1".to_string(),
+            999,
+            60,
+        );
 
         // Assert
         assert!(matches!(
@@ -547,7 +558,8 @@ mod tests {
             now: clock_ref.now.clone(),
         }));
 
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 5);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 5);
         let token = match response {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -557,8 +569,12 @@ mod tests {
         clock_ref.advance(Duration::from_secs(10));
 
         // Act
-        let renew_response =
-            actor.handle_renew(test_key("acme", "locks", "test1"), "owner1".to_string(), token, 60);
+        let renew_response = actor.handle_renew(
+            test_key("acme", "locks", "test1"),
+            "owner1".to_string(),
+            token,
+            60,
+        );
 
         // Assert
         assert_eq!(renew_response, LeaseResponse::Expired);
@@ -568,15 +584,19 @@ mod tests {
     fn should_release_lease_with_valid_token() {
         // Arrange
         let mut actor = LeaseActor::new();
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let token = match response {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
         };
 
         // Act
-        let release_response =
-            actor.handle_release(test_key("acme", "locks", "test1"), "owner1".to_string(), token);
+        let release_response = actor.handle_release(
+            test_key("acme", "locks", "test1"),
+            "owner1".to_string(),
+            token,
+        );
 
         // Assert
         assert_eq!(release_response, LeaseResponse::Released);
@@ -589,7 +609,11 @@ mod tests {
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act
-        let response = actor.handle_release(test_key("acme", "locks", "test1"), "owner1".to_string(), 999);
+        let response = actor.handle_release(
+            test_key("acme", "locks", "test1"),
+            "owner1".to_string(),
+            999,
+        );
 
         // Assert
         assert!(matches!(
@@ -602,15 +626,21 @@ mod tests {
     fn should_allow_reacquire_after_release() {
         // Arrange
         let mut actor = LeaseActor::new();
-        let response = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
+        let response =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let token = match response {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
         };
-        actor.handle_release(test_key("acme", "locks", "test1"), "owner1".to_string(), token);
+        actor.handle_release(
+            test_key("acme", "locks", "test1"),
+            "owner1".to_string(),
+            token,
+        );
 
         // Act
-        let reacquire = actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 60);
+        let reacquire =
+            actor.handle_acquire(test_key("acme", "locks", "test1"), "owner2".to_string(), 60);
 
         // Assert
         assert!(matches!(

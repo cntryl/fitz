@@ -6,10 +6,6 @@ use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 #[path = "../config.rs"]
 mod config;
 
-fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
-}
-
 struct MessageActor;
 
 impl Actor for MessageActor {
@@ -19,15 +15,20 @@ impl Actor for MessageActor {
 
 fn bench_mailbox_send(c: &mut Criterion) {
     let scheduler = Scheduler::new(1);
-    let actor_ref = scheduler.spawn(MessageActor, test_address(1, "/bench/mailbox"), 10000);
+    let address = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("/bench/mailbox".to_string()),
+    );
+    let actor_ref = scheduler.spawn(MessageActor, address, 10000);
 
     let mut group = c.benchmark_group("subsystem_mailbox");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("send_to_mailbox", |b| {
+        let ref_clone = actor_ref.clone();
         b.iter(|| {
-            actor_ref.send(black_box(42)).ok();
+            ref_clone.send(black_box(42)).ok();
         })
     });
 
@@ -36,16 +37,21 @@ fn bench_mailbox_send(c: &mut Criterion) {
 
 fn bench_mailbox_capacity(c: &mut Criterion) {
     let scheduler = Scheduler::new(1);
-    let actor_ref = scheduler.spawn(MessageActor, test_address(1, "/bench/capacity"), 1000);
+    let address = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("/bench/capacity".to_string()),
+    );
+    let actor_ref = scheduler.spawn(MessageActor, address, 1000);
 
     let mut group = c.benchmark_group("subsystem_mailbox_capacity");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(100));
 
     group.bench_function("send_100_messages", |b| {
+        let ref_clone = actor_ref.clone();
         b.iter(|| {
             for i in 0..100 {
-                actor_ref.send(black_box(i)).ok();
+                ref_clone.send(black_box(i)).ok();
             }
         })
     });

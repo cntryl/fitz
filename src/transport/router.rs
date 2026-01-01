@@ -35,8 +35,8 @@
 
 use crate::transport::envelope::Envelope;
 use crate::transport::routing::RouteAddress;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use dashmap::DashMap;
+use std::sync::Arc;
 
 /// Trait for delivering envelopes to actor mailboxes
 ///
@@ -108,37 +108,34 @@ impl std::error::Error for RouteError {}
 
 /// Route registry mapping RouteAddress to mailbox sinks
 ///
+/// Uses DashMap for lock-free concurrent access with minimal contention.
 /// Enforces route family isolation: routes in different families
 /// never conflict even if they have the same path string.
 struct RouteRegistry {
-    sinks: RwLock<HashMap<RouteAddress, Arc<dyn MailboxSink>>>,
+    sinks: DashMap<RouteAddress, Arc<dyn MailboxSink>>,
 }
 
 impl RouteRegistry {
     fn new() -> Self {
         Self {
-            sinks: RwLock::new(HashMap::new()),
+            sinks: DashMap::new(),
         }
     }
 
     fn register(&self, address: RouteAddress, sink: Arc<dyn MailboxSink>) {
-        let mut sinks = self.sinks.write().unwrap();
-        sinks.insert(address, sink);
+        self.sinks.insert(address, sink);
     }
 
     fn unregister(&self, address: &RouteAddress) {
-        let mut sinks = self.sinks.write().unwrap();
-        sinks.remove(address);
+        self.sinks.remove(address);
     }
 
     fn get(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
-        let sinks = self.sinks.read().unwrap();
-        sinks.get(address).cloned()
+        self.sinks.get(address).map(|r| r.clone())
     }
 
     fn len(&self) -> usize {
-        let sinks = self.sinks.read().unwrap();
-        sinks.len()
+        self.sinks.len()
     }
 }
 
@@ -276,7 +273,7 @@ impl Default for Router {
 mod tests {
     use super::*;
     use crate::transport::routing::{Route, RouteAddress, RouteFamily};
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
 
     /// Helper to create test route addresses
     fn test_address(family: u64, route: &str) -> RouteAddress {
@@ -305,7 +302,7 @@ mod tests {
         }
 
         fn count(&self) -> usize {
-            self.delivered.lock().unwrap().len()
+            self.delivered.lock().len()
         }
     }
 
@@ -314,7 +311,7 @@ mod tests {
             if self.should_fail {
                 return Err(DeliveryError::MailboxFull);
             }
-            self.delivered.lock().unwrap().push(envelope);
+            self.delivered.lock().push(envelope);
             Ok(())
         }
     }
@@ -487,6 +484,10 @@ mod tests {
         // Assert
         assert_eq!(sink1.count(), 1, "Family 1 should receive its message");
         assert_eq!(sink2.count(), 1, "Family 2 should receive its message");
-        assert_eq!(router.len(), 2, "Both routes should be registered independently");
+        assert_eq!(
+            router.len(),
+            2,
+            "Both routes should be registered independently"
+        );
     }
 }

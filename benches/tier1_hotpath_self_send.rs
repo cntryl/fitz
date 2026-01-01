@@ -2,14 +2,11 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::{Actor, Context};
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 #[path = "../config.rs"]
 mod config;
-
-fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
-}
 
 struct CounterActor {
     count: Arc<Mutex<u64>>,
@@ -18,7 +15,7 @@ struct CounterActor {
 impl Actor for CounterActor {
     type Message = u64;
     fn receive(&mut self, _msg: Self::Message, _ctx: &mut Context<Self>) {
-        *self.count.lock().unwrap() += 1;
+        *self.count.lock() += 1;
     }
 }
 
@@ -27,9 +24,13 @@ fn bench_self_send(c: &mut Criterion) {
     let count_clone = count.clone();
     
     let scheduler = Scheduler::new(1);
+    let address = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("/bench/counter".to_string()),
+    );
     let actor_ref = scheduler.spawn(
         CounterActor { count: count_clone },
-        test_address(1, "/bench/counter"),
+        address,
         10000,
     );
 
@@ -38,9 +39,10 @@ fn bench_self_send(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("send_to_self", |b| {
+        let ref_clone = actor_ref.clone();
         b.iter(|| {
             // ONLY hot path - send a message to self
-            actor_ref.send(black_box(1)).ok();
+            ref_clone.send(black_box(1)).ok();
         })
     });
 

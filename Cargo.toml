@@ -67,34 +67,34 @@ serial_test = "0.5"
 [[bench]]
 name = "send_local"
 harness = false
-path = "benches/tier1_hotpath/send_local.rs"
+path = "benches/tier1_hotpath_send_local.rs"
 
 [[bench]]
 name = "self_send"
 harness = false
-path = "benches/tier1_hotpath/self_send.rs"
+path = "benches/tier1_hotpath_self_send.rs"
 
 [[bench]]
 name = "reply"
 harness = false
-path = "benches/tier1_hotpath/reply.rs"
+path = "benches/tier1_hotpath_reply.rs"
 
 [[bench]]
 name = "router"
 harness = false
-path = "benches/tier2_subsystem/router.rs"
+path = "benches/tier2_subsystem_router.rs"
 
 [[bench]]
 name = "mailbox"
 harness = false
-path = "benches/tier2_subsystem/mailbox.rs"
+path = "benches/tier2_subsystem_mailbox.rs"
 
 [[bench]]
 name = "scheduler"
 harness = false
-path = "benches/tier2_subsystem/scheduler.rs"
+path = "benches/tier2_subsystem_scheduler.rs"
 
 [[bench]]
 name = "lease"
 harness = false
-path = "benches/tier2_subsystem/lease.rs"
+path = "benches/tier2_subsystem_lease.rs"

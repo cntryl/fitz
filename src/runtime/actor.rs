@@ -101,12 +101,10 @@ impl<A: Actor + ?Sized> Context<A> {
             }
         }
 
-        self.router
-            .route(envelope)
-            .map_err(|e| match e {
-                RouteError::RouteNotFound(_) => SendError::ActorNotFound,
-                RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
-            })
+        self.router.route(envelope).map_err(|e| match e {
+            RouteError::RouteNotFound(_) => SendError::ActorNotFound,
+            RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+        })
     }
 
     /// Reply to the sender of the current message
@@ -132,12 +130,10 @@ impl<A: Actor + ?Sized> Context<A> {
 
         let reply_envelope = current.reply_to(msg);
 
-        self.router
-            .route(reply_envelope)
-            .map_err(|e| match e {
-                RouteError::RouteNotFound(_) => SendError::ActorNotFound,
-                RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
-            })
+        self.router.route(reply_envelope).map_err(|e| match e {
+            RouteError::RouteNotFound(_) => SendError::ActorNotFound,
+            RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+        })
     }
 
     /// Stop this actor
@@ -200,12 +196,10 @@ impl<M: Send + 'static> ActorRef<M> {
         M: Send + Sync + 'static,
     {
         let envelope = Envelope::new(self.address.clone(), msg);
-        self.router
-            .route(envelope)
-            .map_err(|e| match e {
-                RouteError::RouteNotFound(_) => SendError::ActorNotFound,
-                RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
-            })
+        self.router.route(envelope).map_err(|e| match e {
+            RouteError::RouteNotFound(_) => SendError::ActorNotFound,
+            RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+        })
     }
 
     /// Get the actor's route address
@@ -276,7 +270,8 @@ impl std::error::Error for SendError {}
 mod tests {
     use super::*;
     use crate::runtime::mailbox::Mailbox;
-    use crate::transport::router::Router;    use crate::transport::routing::{Route, RouteFamily, RouteAddress};
+    use crate::transport::router::Router;
+    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
         RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
@@ -440,9 +435,10 @@ mod tests {
         router.register(receiver_addr.clone(), Arc::new(receiver_mailbox.clone()));
 
         let mut ctx: Context<DummyActor> = Context::new(sender_addr.clone(), router);
-        
+
         // Simulate receiving a message with causation
-        let parent_envelope = Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ());
+        let parent_envelope =
+            Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ());
         let parent_id = parent_envelope.id();
         ctx.set_current_envelope(parent_envelope);
 
@@ -464,9 +460,10 @@ mod tests {
         router.register(sender_addr.clone(), Arc::new(sender_mailbox.clone()));
 
         let mut ctx: Context<DummyActor> = Context::new(receiver_addr.clone(), router);
-        
+
         // Simulate receiving a message from sender
-        let request_envelope = Envelope::from_route(sender_addr.clone(), receiver_addr.clone(), 10_i32);
+        let request_envelope =
+            Envelope::from_route(sender_addr.clone(), receiver_addr.clone(), 10_i32);
         let request_id = request_envelope.id();
         ctx.set_current_envelope(request_envelope);
 
@@ -492,11 +489,12 @@ mod tests {
         router.register(receiver_addr.clone(), Arc::new(receiver_mailbox.clone()));
 
         let mut ctx: Context<DummyActor> = Context::new(sender_addr.clone(), router);
-        
+
         // Simulate receiving a message with a deadline
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let parent_envelope = Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ())
-            .with_deadline(deadline);
+        let parent_envelope =
+            Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ())
+                .with_deadline(deadline);
         ctx.set_current_envelope(parent_envelope);
 
         // Act

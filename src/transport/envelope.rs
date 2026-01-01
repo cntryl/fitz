@@ -230,9 +230,7 @@ impl Envelope {
 
     /// Check if this message has expired past its deadline
     pub fn is_expired(&self) -> bool {
-        self.deadline
-            .map(|d| Instant::now() > d)
-            .unwrap_or(false)
+        self.deadline.map(|d| Instant::now() > d).unwrap_or(false)
     }
 
     /// Extract the payload, downcasting to the expected type
@@ -266,7 +264,7 @@ impl fmt::Debug for Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::routing::{RouteFamily, Route};
+    use crate::transport::routing::{Route, RouteFamily};
     use std::time::Duration;
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
@@ -418,8 +416,7 @@ mod tests {
         let source = test_address(1, "/test/source");
         let destination = test_address(1, "/test/destination");
         let deadline = Instant::now() + Duration::from_secs(5);
-        let original = Envelope::from_route(source, destination, "request")
-            .with_deadline(deadline);
+        let original = Envelope::from_route(source, destination, "request").with_deadline(deadline);
 
         // Act
         let reply = original.reply_to("response");

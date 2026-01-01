@@ -6,10 +6,6 @@ use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
 #[path = "../config.rs"]
 mod config;
 
-fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
-}
-
 struct EchoActor;
 
 impl Actor for EchoActor {
@@ -20,16 +16,21 @@ impl Actor for EchoActor {
 fn bench_reply(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let scheduler = Scheduler::new(1);
-    let echo_ref = scheduler.spawn(EchoActor, test_address(1, "/bench/echo"), 10000);
+    let address = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("/bench/echo".to_string()),
+    );
+    let echo_ref = scheduler.spawn(EchoActor, address, 10000);
 
     let mut group = c.benchmark_group("hotpath_reply");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("send_and_receive", |b| {
+        let ref_clone = echo_ref.clone();
         b.iter(|| {
             // ONLY hot path - send message and receive response
-            echo_ref.send(black_box(42)).ok();
+            ref_clone.send(black_box(42)).ok();
         })
     });
 

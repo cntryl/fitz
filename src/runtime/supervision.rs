@@ -7,10 +7,7 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub enum SupervisorStrategy {
     /// Restart the actor on failure
-    Restart {
-        max_restarts: u32,
-        within: Duration,
-    },
+    Restart { max_restarts: u32, within: Duration },
     /// Stop the actor on failure
     Stop,
     /// Escalate the failure to the parent supervisor
@@ -94,7 +91,8 @@ impl RestartTracker {
         let now = std::time::Instant::now();
 
         // Remove old restart records outside the time window
-        self.restarts.retain(|&t| now.duration_since(t) < self.within);
+        self.restarts
+            .retain(|&t| now.duration_since(t) < self.within);
 
         // Check if we're within the restart limit
         if self.restarts.len() >= self.max_restarts as usize {
@@ -126,7 +124,10 @@ mod tests {
 
         // Assert
         match strategy {
-            SupervisorStrategy::Restart { max_restarts: m, within: w } => {
+            SupervisorStrategy::Restart {
+                max_restarts: m,
+                within: w,
+            } => {
                 assert_eq!(m, max_restarts);
                 assert_eq!(w, within);
             }

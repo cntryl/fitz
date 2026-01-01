@@ -62,10 +62,7 @@ impl LeaseKey {
     ///
     /// Returns None if the route doesn't match the expected format.
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
-        let parts: Vec<&str> = route.as_str()
-            .trim_start_matches('/')
-            .split('/')
-            .collect();
+        let parts: Vec<&str> = route.as_str().trim_start_matches('/').split('/').collect();
 
         if parts.len() >= 4 {
             Some(LeaseKey {

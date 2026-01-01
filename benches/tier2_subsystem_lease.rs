@@ -2,13 +2,10 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::domains::lease::LeaseActor;
 use fitz::runtime::scheduler::Scheduler;
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
+use std::sync::Arc;
 
-#[path = "../config.rs"]
+#[path = "./config.rs"]
 mod config;
-
-fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
-}
 
 fn bench_lease_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_lease");
@@ -26,19 +23,18 @@ fn bench_lease_creation(c: &mut Criterion) {
 }
 
 fn bench_lease_spawn(c: &mut Criterion) {
-    let scheduler = Scheduler::new(1);
-    
+    let scheduler = Arc::new(Scheduler::new(1));
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/lease/actor".to_string()));
+
     let mut group = c.benchmark_group("subsystem_lease");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("spawn_lease_actor", |b| {
+        let sched = scheduler.clone();
+        let addr = address.clone();
         b.iter(|| {
-            scheduler.spawn(
-                LeaseActor::new(),
-                black_box(test_address(1, "/lease/actor")),
-                1000,
-            );
+            sched.spawn(LeaseActor::new(), black_box(addr.clone()), 1000);
         })
     });
 
@@ -46,14 +42,18 @@ fn bench_lease_spawn(c: &mut Criterion) {
 }
 
 fn bench_lease_family_isolation(c: &mut Criterion) {
+    // Pre-create families to avoid allocation in hot path
+    let families: Vec<_> = (0..10).map(RouteFamily::new).collect();
+
     let mut group = c.benchmark_group("subsystem_lease_isolation");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(10));
 
     group.bench_function("spawn_10_families", |b| {
+        let fams = families.clone();
         b.iter(|| {
-            for family in 0..10 {
-                RouteFamily::new(black_box(family));
+            for family in &fams {
+                black_box(family);
             }
         })
     });

@@ -131,10 +131,7 @@ impl TimerManager {
 
     /// Get the next timer deadline
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.timers
-            .values()
-            .map(|t| t.deadline())
-            .min()
+        self.timers.values().map(|t| t.deadline()).min()
     }
 
     /// Clear all timers

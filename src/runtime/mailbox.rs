@@ -69,19 +69,17 @@ impl Clone for Mailbox {
 /// (in runtime) without creating a circular dependency.
 impl MailboxSink for Mailbox {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.sender
-            .try_send(envelope)
-            .map_err(|e| match e {
-                crossbeam_channel::TrySendError::Full(_) => DeliveryError::MailboxFull,
-                crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
-            })
+        self.sender.try_send(envelope).map_err(|e| match e {
+            crossbeam_channel::TrySendError::Full(_) => DeliveryError::MailboxFull,
+            crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::routing::{Route, RouteFamily, RouteAddress};
+    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
         RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
@@ -138,12 +136,8 @@ mod tests {
         let mailbox = Mailbox::new(2);
         let sender = mailbox.sender();
         let addr = test_address(1, "/test/actor");
-        sender
-            .try_send(Envelope::new(addr.clone(), 1))
-            .unwrap();
-        sender
-            .try_send(Envelope::new(addr.clone(), 2))
-            .unwrap();
+        sender.try_send(Envelope::new(addr.clone(), 1)).unwrap();
+        sender.try_send(Envelope::new(addr.clone(), 2)).unwrap();
 
         // Act
         let result = sender.try_send(Envelope::new(addr, 3));
@@ -179,12 +173,8 @@ mod tests {
         let addr = test_address(1, "/test/actor");
 
         // Act
-        sender1
-            .try_send(Envelope::new(addr.clone(), 1))
-            .unwrap();
-        sender2
-            .try_send(Envelope::new(addr, 2))
-            .unwrap();
+        sender1.try_send(Envelope::new(addr.clone(), 1)).unwrap();
+        sender2.try_send(Envelope::new(addr, 2)).unwrap();
 
         // Assert
         assert_eq!(mailbox.len(), 2);

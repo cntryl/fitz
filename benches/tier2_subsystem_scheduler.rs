@@ -2,6 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::{Actor, Context};
 use fitz::transport::routing::{Route, RouteAddress, RouteFamily};
+use std::sync::Arc;
 
 #[path = "../config.rs"]
 mod config;
@@ -19,7 +20,7 @@ impl Actor for SpawnActor {
 
 fn bench_scheduler_spawn(c: &mut Criterion) {
     // Create scheduler once, outside benchmark
-    let scheduler = Scheduler::new(1);
+    let scheduler = Arc::new(Scheduler::new(1));
     let address = test_address(1, "/bench/spawn");
 
     let mut group = c.benchmark_group("subsystem_scheduler");
@@ -27,10 +28,12 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("spawn_single_actor", |b| {
+        let sched = scheduler.clone();
+        let addr = address.clone();
         b.iter(|| {
-            scheduler.spawn(
+            sched.spawn(
                 SpawnActor,
-                black_box(address.clone()),
+                black_box(addr.clone()),
                 100,
             );
         })
@@ -40,18 +43,24 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
 }
 
 fn bench_scheduler_spawn_cross_family(c: &mut Criterion) {
-    let scheduler = Scheduler::new(1);
+    let scheduler = Arc::new(Scheduler::new(1));
+
+    // Pre-compute addresses to avoid string allocations in hot path
+    let addresses: Vec<_> = (0..5)
+        .map(|i| test_address(i, &format!("/bench/family{}/actor", i)))
+        .collect();
 
     let mut group = c.benchmark_group("subsystem_scheduler");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("spawn_different_family", |b| {
-        let mut counter = 0u64;
+        let sched = scheduler.clone();
+        let addrs = addresses.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            counter += 1;
-            let addr = test_address(counter % 5, &format!("/actor/{}", counter));
-            scheduler.spawn(SpawnActor, black_box(addr), 100);
+            sched.spawn(SpawnActor, black_box(addrs[idx % addrs.len()].clone()), 100);
+            idx = idx.wrapping_add(1);
         })
     });
 

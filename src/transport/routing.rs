@@ -460,7 +460,10 @@ mod tests {
         let addr2 = RouteAddress::new(family_b, route);
 
         // Assert
-        assert_ne!(addr1, addr2, "Same route in different families must be isolated");
+        assert_ne!(
+            addr1, addr2,
+            "Same route in different families must be isolated"
+        );
     }
 
     #[test]
@@ -480,7 +483,11 @@ mod tests {
         map.insert(addr2.clone(), "value-b");
 
         // Assert
-        assert_eq!(map.len(), 2, "Same route in different families creates distinct keys");
+        assert_eq!(
+            map.len(),
+            2,
+            "Same route in different families creates distinct keys"
+        );
         assert_eq!(map.get(&addr1), Some(&"value-a"));
         assert_eq!(map.get(&addr2), Some(&"value-b"));
     }

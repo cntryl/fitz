@@ -240,8 +240,9 @@ mod tests {
     use super::*;
     use crate::domains::lease::LeaseActor;
     use crate::runtime::scheduler::Scheduler;
-    use crate::transport::routing::{Route, RouteFamily, RouteAddress};
-    use std::sync::{Arc, Mutex};
+    use crate::transport::routing::{Route, RouteAddress, RouteFamily};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
@@ -271,7 +272,7 @@ mod tests {
 
     impl crate::domains::lease::Clock for MockClock {
         fn now(&self) -> Instant {
-            *self.now.lock().unwrap()
+            *self.now.lock()
         }
     }
 
@@ -279,11 +280,8 @@ mod tests {
     fn should_create_lease_handle_from_acquired_response() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(
-            LeaseActor::new(),
-            test_address(1, "/lease/actor"),
-            100,
-        );
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::Acquired { fencing_token: 1 };
@@ -311,11 +309,8 @@ mod tests {
     fn should_create_lease_handle_from_already_held_response() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(
-            LeaseActor::new(),
-            test_address(1, "/lease/actor"),
-            100,
-        );
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::AlreadyHeld { fencing_token: 5 };
@@ -339,7 +334,8 @@ mod tests {
     fn should_return_error_when_lease_held_by_other() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::HeldByOther {
@@ -369,7 +365,8 @@ mod tests {
     fn should_return_error_when_lease_not_held() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::NotHeld;
@@ -392,7 +389,8 @@ mod tests {
     fn should_return_error_when_fenced() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         let response = LeaseResponse::Fenced { current_token: 10 };
@@ -415,7 +413,8 @@ mod tests {
     fn should_mark_handle_invalid_after_expiration() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
 
         let handle = LeaseHandle::from_acquired(
             test_family(1),
@@ -477,7 +476,8 @@ mod tests {
     fn should_reject_stale_fencing_tokens() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
 
         // Owner 1 acquires lease
         lease_actor_ref
@@ -526,11 +526,8 @@ mod tests {
         // Arrange - First runtime
         let scheduler1 = Scheduler::new(1);
         let lease_actor1 = LeaseActor::new();
-        let lease_actor_ref1 = scheduler1.spawn(
-            lease_actor1,
-            test_address(1, "/lease/actor1"),
-            100,
-        );
+        let lease_actor_ref1 =
+            scheduler1.spawn(lease_actor1, test_address(1, "/lease/actor1"), 100);
 
         // Acquire leases
         lease_actor_ref1
@@ -559,11 +556,8 @@ mod tests {
 
         let scheduler2 = Scheduler::new(1);
         let lease_actor2 = LeaseActor::new(); // Fresh state
-        let lease_actor_ref2 = scheduler2.spawn(
-            lease_actor2,
-            test_address(1, "/lease/actor2"),
-            100,
-        );
+        let lease_actor_ref2 =
+            scheduler2.spawn(lease_actor2, test_address(1, "/lease/actor2"), 100);
 
         // Assert - Query old leases should return NotFound
         lease_actor_ref2
@@ -599,7 +593,8 @@ mod tests {
     fn should_serialize_concurrent_acquires_correctly() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
 
         // Act - Send concurrent acquire attempts
         lease_actor_ref
@@ -638,7 +633,8 @@ mod tests {
     fn should_isolate_leases_across_route_families() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         // Act - Acquire same route in different families
@@ -666,7 +662,8 @@ mod tests {
     fn should_prevent_conflicts_within_same_route_family() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         // Act - Acquire first lease
@@ -703,7 +700,8 @@ mod tests {
     fn should_independently_manage_leases_across_families() {
         // Arrange
         let scheduler = Scheduler::new(1);
-        let lease_actor_ref = scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
+        let lease_actor_ref =
+            scheduler.spawn(LeaseActor::new(), test_address(1, "/lease/actor"), 100);
         let guard = LeaseGuard::new(lease_actor_ref.clone());
 
         // Act - Acquire in both families
@@ -735,5 +733,3 @@ mod tests {
         assert_eq!(handle2.route().as_str(), "/lease/resource");
     }
 }
-
-

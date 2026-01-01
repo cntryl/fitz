@@ -136,11 +136,11 @@ impl Scheduler {
                         ctx.set_current_envelope(ctx_envelope);
 
                         // Process message with panic recovery
-                        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                            || {
+                        if let Err(e) =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 actor.receive(msg, &mut ctx);
-                            },
-                        )) {
+                            }))
+                        {
                             let error = ActorError::Panic(format!("{:?}", e));
                             actor.on_error(error, &mut ctx);
                         }
@@ -295,7 +295,7 @@ mod tests {
 
         // Assert
         assert_eq!(count, 3);
-        
+
         actor_ref.send(TestMsg::Stop).unwrap();
     }
 
@@ -310,8 +310,8 @@ mod tests {
 
         // Send a message with an already-expired deadline
         let past_deadline = std::time::Instant::now() - Duration::from_secs(1);
-        let expired_envelope = Envelope::new(address, TestMsg::Increment)
-            .with_deadline(past_deadline);
+        let expired_envelope =
+            Envelope::new(address, TestMsg::Increment).with_deadline(past_deadline);
         scheduler.router().route(expired_envelope).unwrap();
 
         // Send a valid message to verify actor is still working
@@ -324,7 +324,7 @@ mod tests {
 
         // Assert - only the non-expired message was processed
         assert_eq!(count, 1);
-        
+
         actor_ref.send(TestMsg::Stop).unwrap();
     }
 
@@ -389,12 +389,12 @@ mod tests {
 
         // Create a request-response actor pair
         struct RequestActor {
-            response_received: Arc<std::sync::Mutex<Option<String>>>,
+            response_received: Arc<parking_lot::Mutex<Option<String>>>,
         }
         impl Actor for RequestActor {
             type Message = String;
             fn receive(&mut self, msg: String, _ctx: &mut Context<Self>) {
-                *self.response_received.lock().unwrap() = Some(msg);
+                *self.response_received.lock() = Some(msg);
             }
         }
 
@@ -409,7 +409,7 @@ mod tests {
             }
         }
 
-        let response_received = Arc::new(std::sync::Mutex::new(None));
+        let response_received = Arc::new(parking_lot::Mutex::new(None));
         let request_actor = RequestActor {
             response_received: response_received.clone(),
         };
@@ -422,18 +422,15 @@ mod tests {
 
         // Act - send request from _request_ref to _response_ref
         // We need to manually create an envelope with source set
-        let request_envelope = Envelope::from_route(
-            request_addr,
-            response_addr,
-            "hello".to_string(),
-        );
+        let request_envelope =
+            Envelope::from_route(request_addr, response_addr, "hello".to_string());
         scheduler.router().route(request_envelope).unwrap();
 
         // Wait for reply
         thread::sleep(Duration::from_millis(100));
 
         // Assert
-        let response = response_received.lock().unwrap().clone();
+        let response = response_received.lock().clone();
         assert_eq!(response, Some("world".to_string()));
     }
 }
