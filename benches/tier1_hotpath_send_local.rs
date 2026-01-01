@@ -16,10 +16,7 @@ impl Actor for PingActor {
 fn bench_send_local(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - create scheduler and spawn actor
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("/bench/ping".to_string()),
-    );
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/ping".to_string()));
     let actor_ref = scheduler.spawn(PingActor, address, 1000);
 
     let mut group = c.benchmark_group("hotpath_send_local");

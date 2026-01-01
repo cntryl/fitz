@@ -31,11 +31,7 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
         let sched = scheduler.clone();
         let addr = address.clone();
         b.iter(|| {
-            sched.spawn(
-                SpawnActor,
-                black_box(addr.clone()),
-                100,
-            );
+            sched.spawn(SpawnActor, black_box(addr.clone()), 100);
         })
     });
 

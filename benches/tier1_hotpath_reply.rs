@@ -16,10 +16,7 @@ impl Actor for EchoActor {
 fn bench_reply(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("/bench/echo".to_string()),
-    );
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/echo".to_string()));
     let echo_ref = scheduler.spawn(EchoActor, address, 10000);
 
     let mut group = c.benchmark_group("hotpath_reply");

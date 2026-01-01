@@ -22,17 +22,13 @@ impl Actor for CounterActor {
 fn bench_self_send(c: &mut Criterion) {
     let count = Arc::new(Mutex::new(0u64));
     let count_clone = count.clone();
-    
+
     let scheduler = Scheduler::new(1);
     let address = RouteAddress::new(
         RouteFamily::new(1),
         Route::new("/bench/counter".to_string()),
     );
-    let actor_ref = scheduler.spawn(
-        CounterActor { count: count_clone },
-        address,
-        10000,
-    );
+    let actor_ref = scheduler.spawn(CounterActor { count: count_clone }, address, 10000);
 
     let mut group = c.benchmark_group("hotpath_self_send");
     group.sampling_mode(SamplingMode::Flat);
