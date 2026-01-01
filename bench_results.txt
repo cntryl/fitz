@@ -102,100 +102,104 @@ running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 subsystem_lease/create_lease_actor
-                        time:   [12.012 ns 12.108 ns 12.220 ns]
-                        thrpt:  [81.832 Melem/s 82.590 Melem/s 83.250 Melem/s]
+                        time:   [11.730 ns 11.865 ns 12.016 ns]
+                        thrpt:  [83.224 Melem/s 84.282 Melem/s 85.254 Melem/s]
                  change:
-                        time:   [-2.1048% -0.7495% +0.6238%] (p = 0.33 > 0.05)
-                        thrpt:  [-0.6199% +0.7552% +2.1501%]
-                        No change in performance detected.
+                        time:   [-3.4064% -2.0076% -0.4716%] (p = 0.02 < 0.05)
+                        thrpt:  [+0.4738% +2.0487% +3.5265%]
+                        Change within noise threshold.
 
 subsystem_lease/spawn_lease_actor
-                        time:   [47.016 µs 52.858 µs 59.967 µs]
-                        thrpt:  [16.676 Kelem/s 18.919 Kelem/s 21.269 Kelem/s]
+                        time:   [47.896 µs 50.340 µs 53.575 µs]
+                        thrpt:  [18.665 Kelem/s 19.865 Kelem/s 20.879 Kelem/s]
                  change:
-                        time:   [-0.6467% +12.499% +26.890%] (p = 0.12 > 0.05)
-                        thrpt:  [-21.192% -11.111% +0.6509%]
+                        time:   [-17.083% -4.7634% +8.4989%] (p = 0.55 > 0.05)
+                        thrpt:  [-7.8331% +5.0016% +20.603%]
                         No change in performance detected.
 Found 1 outliers among 10 measurements (10.00%)
   1 (10.00%) high mild
 
 subsystem_lease_isolation/spawn_10_families
-                        time:   [2.3138 ns 2.3813 ns 2.4808 ns]
-                        thrpt:  [4.0310 Gelem/s 4.1995 Gelem/s 4.3219 Gelem/s]
+                        time:   [2.2829 ns 2.3052 ns 2.3280 ns]
+                        thrpt:  [4.2955 Gelem/s 4.3381 Gelem/s 4.3804 Gelem/s]
                  change:
-                        time:   [-12.165% -4.4340% +3.1869%] (p = 0.36 > 0.05)
-                        thrpt:  [-3.0884% +4.6397% +13.850%]
+                        time:   [-7.2892% -3.1962% -0.1912%] (p = 0.12 > 0.05)
+                        thrpt:  [+0.1916% +3.3017% +7.8623%]
                         No change in performance detected.
-Found 1 outliers among 10 measurements (10.00%)
-  1 (10.00%) high severe
 
 subsystem_mailbox/send_to_mailbox
-                        time:   [373.76 ns 377.03 ns 380.46 ns]
-                        thrpt:  [2.6284 Melem/s 2.6523 Melem/s 2.6755 Melem/s]
+                        time:   [353.30 ns 360.59 ns 367.95 ns]
+                        thrpt:  [2.7178 Melem/s 2.7732 Melem/s 2.8304 Melem/s]
                  change:
-                        time:   [-1.1667% +0.7155% +2.5525%] (p = 0.49 > 0.05)
-                        thrpt:  [-2.4890% -0.7104% +1.1805%]
-                        No change in performance detected.
-Found 3 outliers among 10 measurements (30.00%)
-  1 (10.00%) low severe
-  1 (10.00%) low mild
-  1 (10.00%) high severe
+                        time:   [-6.2951% -4.3599% -2.1425%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.1894% +4.5586% +6.7179%]
+                        Performance has improved.
 
 subsystem_mailbox_capacity/send_100_messages
-                        time:   [36.569 µs 37.814 µs 39.421 µs]
-                        thrpt:  [2.5367 Melem/s 2.6445 Melem/s 2.7345 Melem/s]
+                        time:   [36.160 µs 36.613 µs 37.055 µs]
+                        thrpt:  [2.6987 Melem/s 2.7313 Melem/s 2.7655 Melem/s]
                  change:
-                        time:   [-1.5189% +1.9406% +6.1551%] (p = 0.43 > 0.05)
-                        thrpt:  [-5.7982% -1.9037% +1.5423%]
+                        time:   [-7.2639% -3.1763% +0.3316%] (p = 0.16 > 0.05)
+                        thrpt:  [-0.3305% +3.2805% +7.8329%]
                         No change in performance detected.
-Found 2 outliers among 10 measurements (20.00%)
-  2 (20.00%) high severe
 
 hotpath_reply/send_and_receive
-                        time:   [370.65 ns 387.20 ns 416.19 ns]
-                        thrpt:  [2.4028 Melem/s 2.5826 Melem/s 2.6980 Melem/s]
+                        time:   [375.64 ns 379.28 ns 382.77 ns]
+                        thrpt:  [2.6126 Melem/s 2.6365 Melem/s 2.6621 Melem/s]
                  change:
-                        time:   [-7.6049% -1.0407% +7.5888%] (p = 0.83 > 0.05)
-                        thrpt:  [-7.0535% +1.0516% +8.2308%]
+                        time:   [-8.9703% -2.0443% +2.6874%] (p = 0.72 > 0.05)
+                        thrpt:  [-2.6171% +2.0870% +9.8543%]
                         No change in performance detected.
-Found 1 outliers among 10 measurements (10.00%)
-  1 (10.00%) high severe
 
 subsystem_router/create_route_address
-                        time:   [41.845 ns 42.261 ns 42.815 ns]
-                        thrpt:  [23.356 Melem/s 23.663 Melem/s 23.897 Melem/s]
+                        time:   [40.805 ns 41.238 ns 41.663 ns]
+                        thrpt:  [24.002 Melem/s 24.249 Melem/s 24.507 Melem/s]
                  change:
-                        time:   [-7.2563% -3.8467% -0.5041%] (p = 0.05 > 0.05)
-                        thrpt:  [+0.5067% +4.0006% +7.8240%]
-                        No change in performance detected.
-Found 2 outliers among 10 measurements (20.00%)
-  1 (10.00%) high mild
-  1 (10.00%) high severe
+                        time:   [-3.9746% -2.4190% -0.9746%] (p = 0.01 < 0.05)
+                        thrpt:  [+0.9842% +2.4789% +4.1391%]
+                        Change within noise threshold.
 
 subsystem_router_isolation/same_route_different_families
-                        time:   [90.014 ns 90.916 ns 92.057 ns]
-                        thrpt:  [10.863 Melem/s 10.999 Melem/s 11.109 Melem/s]
+                        time:   [87.700 ns 88.920 ns 90.180 ns]
+                        thrpt:  [11.089 Melem/s 11.246 Melem/s 11.403 Melem/s]
                  change:
-                        time:   [-14.435% -9.8776% -4.9235%] (p = 0.00 < 0.05)
-                        thrpt:  [+5.1784% +10.960% +16.870%]
-                        Performance has improved.
-Found 2 outliers among 10 measurements (20.00%)
-  1 (10.00%) high mild
-  1 (10.00%) high severe
+                        time:   [-3.9626% -2.1953% -0.3863%] (p = 0.04 < 0.05)
+                        thrpt:  [+0.3878% +2.2445% +4.1261%]
+                        Change within noise threshold.
 
 subsystem_scheduler/spawn_single_actor
-                        time:   [37.672 µs 41.413 µs 45.527 µs]
-                        thrpt:  [21.965 Kelem/s 24.147 Kelem/s 26.545 Kelem/s]
+                        time:   [38.523 µs 43.133 µs 48.405 µs]
+                        thrpt:  [20.659 Kelem/s 23.184 Kelem/s 25.958 Kelem/s]
                  change:
-                        time:   [-30.086% -17.378% -3.0052%] (p = 0.05 > 0.05)
-                        thrpt:  [+3.0983% +21.034% +43.033%]
+                        time:   [-10.194% +4.1526% +19.678%] (p = 0.63 > 0.05)
+                        thrpt:  [-16.442% -3.9870% +11.351%]
                         No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
 
 subsystem_scheduler/spawn_different_family
-                        time:   [58.353 µs 69.450 µs 80.961 µs]
-                        thrpt:  [12.352 Kelem/s 14.399 Kelem/s 17.137 Kelem/s]
+                        time:   [42.530 µs 48.957 µs 55.625 µs]
+                        thrpt:  [17.978 Kelem/s 20.426 Kelem/s 23.513 Kelem/s]
                  change:
-                        time:   [-6.8137% +17.639% +44.417%] (p = 0.19 > 0.05)
-                        thrpt:  [-30.756% -14.994% +7.3119%]
+                        time:   [-42.328% -29.507% -12.176%] (p = 0.01 < 0.05)
+                        thrpt:  [+13.864% +41.858% +73.395%]
+                        Performance has improved.
+
+hotpath_self_send/send_to_self
+                        time:   [358.36 ns 362.38 ns 365.76 ns]
+                        thrpt:  [2.7340 Melem/s 2.7596 Melem/s 2.7905 Melem/s]
+                 change:
+                        time:   [+0.7652% +3.8477% +7.3717%] (p = 0.03 < 0.05)
+                        thrpt:  [-6.8656% -3.7051% -0.7594%]
+                        Change within noise threshold.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+
+hotpath_send_local/send_u64_message
+                        time:   [371.39 ns 381.41 ns 390.15 ns]
+                        thrpt:  [2.5631 Melem/s 2.6218 Melem/s 2.6926 Melem/s]
+                 change:
+                        time:   [-4.1562% -1.6861% +0.6458%] (p = 0.24 > 0.05)
+                        thrpt:  [-0.6417% +1.7150% +4.3364%]
                         No change in performance detected.
 
