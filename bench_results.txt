@@ -1,0 +1,201 @@
+
+running 93 tests
+test domains::lease::actor::tests::should_acquire_unowned_lease ... ignored
+test domains::lease::actor::tests::should_allow_expired_lease_takeover ... ignored
+test domains::lease::actor::tests::should_allow_reacquire_after_release ... ignored
+test domains::lease::actor::tests::should_issue_monotonic_fencing_tokens ... ignored
+test domains::lease::actor::tests::should_query_lease_status ... ignored
+test domains::lease::actor::tests::should_reject_acquire_when_held_by_other ... ignored
+test domains::lease::actor::tests::should_reject_release_with_wrong_token ... ignored
+test domains::lease::actor::tests::should_reject_renew_of_expired_lease ... ignored
+test domains::lease::actor::tests::should_reject_renew_with_wrong_token ... ignored
+test domains::lease::actor::tests::should_release_lease_with_valid_token ... ignored
+test domains::lease::actor::tests::should_renew_lease_with_valid_token ... ignored
+test domains::lease::actor::tests::should_return_existing_token_for_idempotent_acquire ... ignored
+test domains::lease::guard::tests::should_create_lease_handle_from_acquired_response ... ignored
+test domains::lease::guard::tests::should_create_lease_handle_from_already_held_response ... ignored
+test domains::lease::guard::tests::should_independently_manage_leases_across_families ... ignored
+test domains::lease::guard::tests::should_isolate_leases_across_route_families ... ignored
+test domains::lease::guard::tests::should_lose_all_leases_on_simulated_restart ... ignored
+test domains::lease::guard::tests::should_mark_handle_invalid_after_expiration ... ignored
+test domains::lease::guard::tests::should_prevent_conflicts_within_same_route_family ... ignored
+test domains::lease::guard::tests::should_proactively_expire_leases_on_tick ... ignored
+test domains::lease::guard::tests::should_reject_stale_fencing_tokens ... ignored
+test domains::lease::guard::tests::should_return_error_when_fenced ... ignored
+test domains::lease::guard::tests::should_return_error_when_lease_held_by_other ... ignored
+test domains::lease::guard::tests::should_return_error_when_lease_not_held ... ignored
+test domains::lease::guard::tests::should_serialize_concurrent_acquires_correctly ... ignored
+test runtime::actor::tests::should_compare_equal_actor_ids ... ignored
+test runtime::actor::tests::should_compare_unequal_actor_ids ... ignored
+test runtime::actor::tests::should_create_actor_id ... ignored
+test runtime::actor::tests::should_create_context_with_running_state ... ignored
+test runtime::actor::tests::should_fail_send_when_mailbox_full ... ignored
+test runtime::actor::tests::should_format_actor_id ... ignored
+test runtime::actor::tests::should_get_actor_id_from_ref ... ignored
+test runtime::actor::tests::should_inherit_causation_when_sending_from_context ... ignored
+test runtime::actor::tests::should_inherit_deadline_when_sending_from_context ... ignored
+test runtime::actor::tests::should_reply_to_sender_via_context ... ignored
+test runtime::actor::tests::should_send_message_via_actor_ref ... ignored
+test runtime::actor::tests::should_send_message_via_context ... ignored
+test runtime::actor::tests::should_stop_context ... ignored
+test runtime::context::tests::should_cancel_timer ... ignored
+test runtime::context::tests::should_fire_timer_after_delay ... ignored
+test runtime::context::tests::should_schedule_repeating_timer ... ignored
+test runtime::mailbox::tests::should_clone_mailbox ... ignored
+test runtime::mailbox::tests::should_create_mailbox_with_capacity ... ignored
+test runtime::mailbox::tests::should_handle_multiple_senders ... ignored
+test runtime::mailbox::tests::should_receive_envelope_from_mailbox ... ignored
+test runtime::mailbox::tests::should_respect_mailbox_capacity ... ignored
+test runtime::mailbox::tests::should_send_envelope_to_mailbox ... ignored
+test runtime::scheduler::tests::should_create_scheduler_with_workers ... ignored
+test runtime::scheduler::tests::should_drop_expired_messages ... ignored
+test runtime::scheduler::tests::should_enable_actor_to_actor_messaging ... ignored
+test runtime::scheduler::tests::should_generate_unique_actor_ids ... ignored
+test runtime::scheduler::tests::should_process_messages_in_sequence ... ignored
+test runtime::scheduler::tests::should_start_scheduler ... ignored
+test runtime::scheduler::tests::should_stop_scheduler ... ignored
+test runtime::scheduler::tests::should_support_reply_pattern ... ignored
+test runtime::supervision::tests::should_create_escalate_strategy ... ignored
+test runtime::supervision::tests::should_create_restart_strategy ... ignored
+test runtime::supervision::tests::should_create_resume_strategy ... ignored
+test runtime::supervision::tests::should_create_stop_strategy ... ignored
+test runtime::supervision::tests::should_decide_restart_action ... ignored
+test runtime::supervision::tests::should_decide_stop_action ... ignored
+test runtime::supervision::tests::should_expire_old_restart_records ... ignored
+test runtime::supervision::tests::should_fail_restart_when_exceeding_limit ... ignored
+test runtime::supervision::tests::should_reset_restart_tracker ... ignored
+test runtime::supervision::tests::should_track_restart_within_limit ... ignored
+test transport::envelope::tests::should_create_envelope_with_destination ... ignored
+test transport::envelope::tests::should_create_envelope_with_source ... ignored
+test transport::envelope::tests::should_create_reply_envelope ... ignored
+test transport::envelope::tests::should_detect_expired_deadline ... ignored
+test transport::envelope::tests::should_extract_payload ... ignored
+test transport::envelope::tests::should_format_message_id ... ignored
+test transport::envelope::tests::should_generate_unique_message_ids ... ignored
+test transport::envelope::tests::should_inherit_deadline_in_reply ... ignored
+test transport::envelope::tests::should_return_none_for_wrong_type ... ignored
+test transport::envelope::tests::should_set_causation ... ignored
+test transport::envelope::tests::should_set_deadline ... ignored
+test transport::router::tests::should_clone_router ... ignored
+test transport::router::tests::should_handle_concurrent_routing ... ignored
+test transport::router::tests::should_isolate_same_route_in_different_families ... ignored
+test transport::router::tests::should_register_route ... ignored
+test transport::router::tests::should_return_error_for_failed_delivery ... ignored
+test transport::router::tests::should_return_error_for_unregistered_route ... ignored
+test transport::router::tests::should_route_envelope_to_registered_route ... ignored
+test transport::router::tests::should_support_multiple_routes ... ignored
+test transport::router::tests::should_unregister_route ... ignored
+test transport::routing::tests::should_allow_same_route_in_different_families_in_hashmap ... ignored
+test transport::routing::tests::should_compare_route_families_by_identity ... ignored
+test transport::routing::tests::should_compare_routes_by_path ... ignored
+test transport::routing::tests::should_create_route ... ignored
+test transport::routing::tests::should_create_route_address ... ignored
+test transport::routing::tests::should_create_route_family ... ignored
+test transport::routing::tests::should_hash_route_families_consistently ... ignored
+test transport::routing::tests::should_isolate_same_route_in_different_families ... ignored
+
+test result: ok. 0 passed; 0 failed; 93 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+subsystem_lease/create_lease_actor
+                        time:   [12.012 ns 12.108 ns 12.220 ns]
+                        thrpt:  [81.832 Melem/s 82.590 Melem/s 83.250 Melem/s]
+                 change:
+                        time:   [-2.1048% -0.7495% +0.6238%] (p = 0.33 > 0.05)
+                        thrpt:  [-0.6199% +0.7552% +2.1501%]
+                        No change in performance detected.
+
+subsystem_lease/spawn_lease_actor
+                        time:   [47.016 µs 52.858 µs 59.967 µs]
+                        thrpt:  [16.676 Kelem/s 18.919 Kelem/s 21.269 Kelem/s]
+                 change:
+                        time:   [-0.6467% +12.499% +26.890%] (p = 0.12 > 0.05)
+                        thrpt:  [-21.192% -11.111% +0.6509%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+
+subsystem_lease_isolation/spawn_10_families
+                        time:   [2.3138 ns 2.3813 ns 2.4808 ns]
+                        thrpt:  [4.0310 Gelem/s 4.1995 Gelem/s 4.3219 Gelem/s]
+                 change:
+                        time:   [-12.165% -4.4340% +3.1869%] (p = 0.36 > 0.05)
+                        thrpt:  [-3.0884% +4.6397% +13.850%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+subsystem_mailbox/send_to_mailbox
+                        time:   [373.76 ns 377.03 ns 380.46 ns]
+                        thrpt:  [2.6284 Melem/s 2.6523 Melem/s 2.6755 Melem/s]
+                 change:
+                        time:   [-1.1667% +0.7155% +2.5525%] (p = 0.49 > 0.05)
+                        thrpt:  [-2.4890% -0.7104% +1.1805%]
+                        No change in performance detected.
+Found 3 outliers among 10 measurements (30.00%)
+  1 (10.00%) low severe
+  1 (10.00%) low mild
+  1 (10.00%) high severe
+
+subsystem_mailbox_capacity/send_100_messages
+                        time:   [36.569 µs 37.814 µs 39.421 µs]
+                        thrpt:  [2.5367 Melem/s 2.6445 Melem/s 2.7345 Melem/s]
+                 change:
+                        time:   [-1.5189% +1.9406% +6.1551%] (p = 0.43 > 0.05)
+                        thrpt:  [-5.7982% -1.9037% +1.5423%]
+                        No change in performance detected.
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high severe
+
+hotpath_reply/send_and_receive
+                        time:   [370.65 ns 387.20 ns 416.19 ns]
+                        thrpt:  [2.4028 Melem/s 2.5826 Melem/s 2.6980 Melem/s]
+                 change:
+                        time:   [-7.6049% -1.0407% +7.5888%] (p = 0.83 > 0.05)
+                        thrpt:  [-7.0535% +1.0516% +8.2308%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+subsystem_router/create_route_address
+                        time:   [41.845 ns 42.261 ns 42.815 ns]
+                        thrpt:  [23.356 Melem/s 23.663 Melem/s 23.897 Melem/s]
+                 change:
+                        time:   [-7.2563% -3.8467% -0.5041%] (p = 0.05 > 0.05)
+                        thrpt:  [+0.5067% +4.0006% +7.8240%]
+                        No change in performance detected.
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+
+subsystem_router_isolation/same_route_different_families
+                        time:   [90.014 ns 90.916 ns 92.057 ns]
+                        thrpt:  [10.863 Melem/s 10.999 Melem/s 11.109 Melem/s]
+                 change:
+                        time:   [-14.435% -9.8776% -4.9235%] (p = 0.00 < 0.05)
+                        thrpt:  [+5.1784% +10.960% +16.870%]
+                        Performance has improved.
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+
+subsystem_scheduler/spawn_single_actor
+                        time:   [37.672 µs 41.413 µs 45.527 µs]
+                        thrpt:  [21.965 Kelem/s 24.147 Kelem/s 26.545 Kelem/s]
+                 change:
+                        time:   [-30.086% -17.378% -3.0052%] (p = 0.05 > 0.05)
+                        thrpt:  [+3.0983% +21.034% +43.033%]
+                        No change in performance detected.
+
+subsystem_scheduler/spawn_different_family
+                        time:   [58.353 µs 69.450 µs 80.961 µs]
+                        thrpt:  [12.352 Kelem/s 14.399 Kelem/s 17.137 Kelem/s]
+                 change:
+                        time:   [-6.8137% +17.639% +44.417%] (p = 0.19 > 0.05)
+                        thrpt:  [-30.756% -14.994% +7.3119%]
+                        No change in performance detected.
+

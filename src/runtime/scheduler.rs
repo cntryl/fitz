@@ -417,10 +417,10 @@ mod tests {
 
         let request_addr = test_address(1, "/test/request");
         let response_addr = test_address(1, "/test/response");
-        let request_ref = scheduler.spawn(request_actor, request_addr.clone(), 10);
-        let response_ref = scheduler.spawn(response_actor, response_addr.clone(), 10);
+        let _request_ref = scheduler.spawn(request_actor, request_addr.clone(), 10);
+        let _response_ref = scheduler.spawn(response_actor, response_addr.clone(), 10);
 
-        // Act - send request from request_ref to response_ref
+        // Act - send request from _request_ref to _response_ref
         // We need to manually create an envelope with source set
         let request_envelope = Envelope::from_route(
             request_addr,

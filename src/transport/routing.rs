@@ -1,51 +1,165 @@
 //! Route-based addressing with family isolation
 //!
-//! Fitz uses route families as hard isolation boundaries. All addressing
-//! in Fitz is based on (RouteFamily, Route) tuples.
+//! # Universal Addressing Model
 //!
-//! # Route Families
+//! Fitz uses **RouteFamily + Route** as the universal addressing and isolation
+//! model across the entire runtime. All domains (RPC, Notifications, Queue,
+//! Stream, KV, Lease) use this same addressing pattern.
 //!
-//! A RouteFamily is an opaque identifier that creates an isolation boundary:
-//! - Routes have meaning only within their family
-//! - The same route string may exist in multiple families
-//! - Families are fully isolated: no inheritance, no prefix semantics
-//! - All coordination, routing, and leasing is scoped to (family, route)
+//! # Core Concepts
+//!
+//! ## RouteFamily
+//!
+//! A **RouteFamily** is a hard isolation boundary represented as an integer (u64).
+//!
+//! **Properties:**
+//! - Opaque identifier with no semantic meaning to the runtime
+//! - No hierarchy, prefix semantics, or inheritance between families
+//! - Isolation applies to routing, leasing, coordination, and state
+//! - **Alignment:** RouteFamilyId aligns 1:1 with Midge ColumnFamilyId (same value)
+//!
+//! ## Route
+//!
+//! A **Route** is a structured identifier following this pattern:
+//!
+//! ```text
+//! {scheme}://{realm}/{area}/{resource}/{operation}
+//! ```
+//!
+//! **Components:**
+//! - **scheme**: Addressing intent or interaction pattern (e.g., `rpc`, `inbox`, `notify`, `queue`, `stream`)
+//!   - Scheme is NOT a domain; multiple schemes may map to the same domain
+//!   - Domain dispatch is resolved from the Route, not assumed from scheme alone
+//!
+//! - **realm**: Top-level logical namespace
+//!   - May represent tenant, organization, department, environment, or any root concept
+//!   - Semantics are user-defined, not enforced by the runtime
+//!   - **IMPORTANT:** Realm is just a string in the route path, NOT the RouteFamily
+//!
+//! - **area**: Logical subsystem or bounded context
+//!
+//! - **resource**: Entity, stream, queue, or keyspace identifier
+//!
+//! - **operation**: Action or verb (optional per scheme)
+//!
+//! **Examples:**
+//! ```text
+//! rpc://acme/auth/users/authenticate
+//! notify://acme/events/orders/created
+//! queue://acme/jobs/worker/process
+//! stream://acme/analytics/events/append
+//! lease://acme/locks/db/migration/acquire
+//! ```
+//!
+//! ## Full Address
+//!
+//! A full address is **always** the pair: `(RouteFamilyId, Route)`
+//!
+//! **Rules:**
+//! - Every message send must specify a RouteFamilyId
+//! - RouteFamilyId is never optional and has no default
+//! - Replies must preserve the original RouteFamilyId
+//! - Domains must never observe or influence state outside their RouteFamily
 //!
 //! # Invariants
 //!
 //! **CRITICAL: These invariants must be maintained:**
 //!
-//! 1. **No cross-family resolution**: A route lookup in family A will never
+//! 1. **No cross-family routing**: A route lookup in family A will never
 //!    return results from family B, even if the route strings match.
 //!
 //! 2. **No cross-family leases**: A lease acquired in family A has no effect
 //!    on the same resource name in family B.
 //!
 //! 3. **No cross-family messages**: Messages sent to (family A, route X) will
-//!    never be delivered to (family B, route X), even if route X is identical.
+//!    never be delivered to (family B, route X).
 //!
-//! # Example
+//! 4. **No cross-family state**: Domains operate within RouteFamily boundaries;
+//!    state changes in family A never affect family B.
 //!
-//! ```ignore
-//! let family_a = RouteFamily::new(1);
-//! let family_b = RouteFamily::new(2);
+//! 5. **Schemes don't imply domains**: Multiple schemes can map to the same
+//!    domain; routing is resolved from the full Route, not just the scheme.
 //!
-//! // These are completely independent addresses:
-//! let addr1 = RouteAddress::new(family_a, Route::new("/user/123"));
-//! let addr2 = RouteAddress::new(family_b, Route::new("/user/123"));
+//! 6. **Realm semantics are opaque**: The runtime does not interpret realm
+//!    values; users define their own organizational semantics.
 //!
-//! // Leases are independent:
-//! lease_actor.acquire(family_a, "lock-1"); // Family 1
-//! lease_actor.acquire(family_b, "lock-1"); // Family 2 (independent)
+//! # Examples
+//!
+//! ```
+//! # use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
+//! // Two completely independent routing families
+//! let family_prod = RouteFamily::new(1);
+//! let family_staging = RouteFamily::new(2);
+//!
+//! // Same route pattern in different families = completely independent
+//! let prod_addr = RouteAddress::new(
+//!     family_prod,
+//!     Route::new("rpc://acme/auth/users/authenticate".to_string())
+//! );
+//! let staging_addr = RouteAddress::new(
+//!     family_staging,
+//!     Route::new("rpc://acme/auth/users/authenticate".to_string())
+//! );
+//!
+//! // These addresses are isolated:
+//! // - Messages to prod_addr never reach staging_addr
+//! // - Leases in prod never conflict with staging
+//! // - State in prod is invisible to staging
+//! ```
+//!
+//! # Multi-tenancy Example
+//!
+//! ```
+//! # use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
+//! // Option 1: RouteFamily-per-tenant (strongest isolation)
+//! let tenant_a_family = RouteFamily::new(100);
+//! let tenant_b_family = RouteFamily::new(200);
+//!
+//! let tenant_a_addr = RouteAddress::new(
+//!     tenant_a_family,
+//!     Route::new("rpc://app/orders/create".to_string())
+//! );
+//! let tenant_b_addr = RouteAddress::new(
+//!     tenant_b_family,
+//!     Route::new("rpc://app/orders/create".to_string())
+//! );
+//!
+//! // Option 2: Shared RouteFamily, realm-per-tenant (logical isolation)
+//! let shared_family = RouteFamily::new(1);
+//!
+//! let tenant_a_logical = RouteAddress::new(
+//!     shared_family,
+//!     Route::new("rpc://tenant-a/orders/create".to_string())
+//! );
+//! let tenant_b_logical = RouteAddress::new(
+//!     shared_family,
+//!     Route::new("rpc://tenant-b/orders/create".to_string())
+//! );
 //! ```
 
 use std::fmt;
+#[allow(unused_imports)]
 use std::hash::{Hash, Hasher};
 
 /// An opaque route family identifier
 ///
 /// Route families create hard isolation boundaries in Fitz.
 /// All addressing, routing, and coordination is scoped to a family.
+///
+/// # Isolation Guarantee
+///
+/// RouteFamily provides **complete isolation**:
+/// - No routing leaks between families
+/// - No lease conflicts between families
+/// - No message delivery between families
+/// - No shared state between families
+///
+/// # Alignment with Storage
+///
+/// RouteFamilyId aligns 1:1 (by value) with Midge ColumnFamilyId:
+/// - Same underlying integer type (u64)
+/// - Same value represents the same isolation boundary
+/// - Alignment is contractual, not enforced by storage code
 ///
 /// # Design
 ///
@@ -70,7 +184,7 @@ impl RouteFamily {
     /// # Example
     ///
     /// ```
-    /// # use fitz::routing::RouteFamily;
+    /// # use fitz::transport::routing::RouteFamily;
     /// let family = RouteFamily::new(1);
     /// ```
     pub fn new(id: u64) -> Self {
@@ -97,19 +211,54 @@ impl fmt::Display for RouteFamily {
 
 /// A route within a family
 ///
-/// Routes are string-based addresses that have meaning only within
-/// their RouteFamily. The same route string in different families
-/// represents completely independent addresses.
+/// Routes are structured identifiers following the pattern:
+///
+/// ```text
+/// {scheme}://{realm}/{area}/{resource}/{operation}
+/// ```
+///
+/// # Structure
+///
+/// - **scheme**: Addressing intent (e.g., `rpc`, `inbox`, `notify`, `queue`, `stream`, `lease`)
+///   - NOT a domain identifier
+///   - Multiple schemes may map to the same domain
+///
+/// - **realm**: Top-level namespace (user-defined semantics)
+///   - NOT the RouteFamily (realm is a string in the route)
+///   - May represent tenant, org, env, or any organizational concept
+///   - Runtime does not enforce semantics
+///
+/// - **area**: Logical subsystem or bounded context
+///
+/// - **resource**: Entity, stream, queue, or keyspace identifier
+///
+/// - **operation**: Action or verb (optional)
+///
+/// # Examples
+///
+/// ```text
+/// rpc://acme/auth/users/authenticate
+/// notify://acme/events/orders/created
+/// queue://acme/jobs/worker/process
+/// stream://acme/analytics/events/append
+/// lease://acme/locks/db/migration/acquire
+/// ```
 ///
 /// # Design
 ///
-/// Route is a simple wrapper around String:
-/// - No parsing or validation (opaque to the runtime)
-/// - No prefix matching or wildcards (yet)
+/// Route is a wrapper around String:
+/// - Runtime treats routes as opaque strings
+/// - No parsing or validation at the routing layer
 /// - Pure string equality for lookups
+/// - Domains may parse and interpret the structure
 ///
-/// Higher-level domains may impose structure (e.g., "/user/123"),
-/// but the routing layer treats routes as opaque strings.
+/// # Route vs RouteFamily
+///
+/// **IMPORTANT:** Route contains a `{realm}` component as a string,
+/// but realm is NOT the RouteFamily:
+/// - RouteFamily is an integer providing hard isolation
+/// - realm is a string in the route path providing logical organization
+/// - Same realm value can appear in different RouteFamilies
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Route {
     path: String,
@@ -120,13 +269,13 @@ impl Route {
     ///
     /// # Arguments
     ///
-    /// - `path`: Route path (e.g., "/user/123", "db-shard-1")
+    /// - `path`: Full route path following `{scheme}://{realm}/{area}/{resource}/{operation}` pattern
     ///
     /// # Example
     ///
     /// ```
-    /// # use fitz::routing::Route;
-    /// let route = Route::new("/user/123");
+    /// # use fitz::transport::routing::Route;
+    /// let route = Route::new("rpc://acme/auth/users/authenticate".to_string());
     /// ```
     pub fn new(path: impl Into<String>) -> Self {
         Self { path: path.into() }
@@ -171,7 +320,7 @@ impl RouteAddress {
     /// # Example
     ///
     /// ```
-    /// # use fitz::routing::{RouteFamily, Route, RouteAddress};
+    /// # use fitz::transport::routing::{RouteFamily, Route, RouteAddress};
     /// let family = RouteFamily::new(1);
     /// let route = Route::new("/user/123");
     /// let address = RouteAddress::new(family, route);
@@ -214,7 +363,10 @@ mod tests {
 
     #[test]
     fn should_create_route_family() {
-        // Arrange & Act
+        // Arrange
+        // (no setup needed)
+
+        // Act
         let family = RouteFamily::new(1);
 
         // Assert
@@ -228,9 +380,13 @@ mod tests {
         let family2 = RouteFamily::new(1);
         let family3 = RouteFamily::new(2);
 
-        // Act & Assert
-        assert_eq!(family1, family2);
-        assert_ne!(family1, family3);
+        // Act
+        let eq_result = family1 == family2;
+        let ne_result = family1 != family3;
+
+        // Assert
+        assert!(eq_result);
+        assert!(ne_result);
     }
 
     #[test]
@@ -252,7 +408,10 @@ mod tests {
 
     #[test]
     fn should_create_route() {
-        // Arrange & Act
+        // Arrange
+        // (no setup needed)
+
+        // Act
         let route = Route::new("/user/123");
 
         // Assert
@@ -266,9 +425,13 @@ mod tests {
         let route2 = Route::new("/user/123");
         let route3 = Route::new("/user/456");
 
-        // Act & Assert
-        assert_eq!(route1, route2);
-        assert_ne!(route1, route3);
+        // Act
+        let eq_result = route1 == route2;
+        let ne_result = route1 != route3;
+
+        // Assert
+        assert!(eq_result);
+        assert!(ne_result);
     }
 
     #[test]
@@ -278,7 +441,7 @@ mod tests {
         let route = Route::new("/service/method");
 
         // Act
-        let address = RouteAddress::new(family.clone(), route.clone());
+        let address = RouteAddress::new(family, route.clone());
 
         // Assert
         assert_eq!(address.family(), &family);

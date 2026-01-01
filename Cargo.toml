@@ -62,3 +62,39 @@ criterion = { version = "0.4", features = ["async_futures"] }
 serial_test = "0.5"
 
 # Note: Benchmarks will be added as persona actors are implemented
+# Benchmark framework set up, but implementations need API updates for current context/actor design
+
+[[bench]]
+name = "send_local"
+harness = false
+path = "benches/tier1_hotpath/send_local.rs"
+
+[[bench]]
+name = "self_send"
+harness = false
+path = "benches/tier1_hotpath/self_send.rs"
+
+[[bench]]
+name = "reply"
+harness = false
+path = "benches/tier1_hotpath/reply.rs"
+
+[[bench]]
+name = "router"
+harness = false
+path = "benches/tier2_subsystem/router.rs"
+
+[[bench]]
+name = "mailbox"
+harness = false
+path = "benches/tier2_subsystem/mailbox.rs"
+
+[[bench]]
+name = "scheduler"
+harness = false
+path = "benches/tier2_subsystem/scheduler.rs"
+
+[[bench]]
+name = "lease"
+harness = false
+path = "benches/tier2_subsystem/lease.rs"

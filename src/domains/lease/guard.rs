@@ -426,12 +426,14 @@ mod tests {
             lease_actor_ref,
         );
 
-        // Act & Assert
-        assert!(handle.is_valid());
-
+        // Act
+        let valid_before = handle.is_valid();
         std::thread::sleep(Duration::from_millis(150));
+        let valid_after = handle.is_valid();
 
-        assert!(!handle.is_valid());
+        // Assert
+        assert!(valid_before);
+        assert!(!valid_after);
     }
 
     #[test]

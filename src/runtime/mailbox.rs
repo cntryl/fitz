@@ -81,7 +81,6 @@ impl MailboxSink for Mailbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::ActorId;
     use crate::transport::routing::{Route, RouteFamily, RouteAddress};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
