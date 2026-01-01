@@ -16,7 +16,7 @@ The Sessions domain manages WebSocket connection lifecycle, identity binding, an
 - **Connection lifecycle**: Connect, authenticate, disconnect
 - **Identity binding**: Associate JWT/token with connection
 - **Message correlation**: Track request/response pairs
-- **Realm isolation**: Enforce realm boundaries per connection
+- **Route-family isolation**: Enforce route family boundaries per connection
 - **Heartbeat/keepalive**: Detect dead connections
 - **Graceful shutdown**: Clean session termination
 
@@ -74,7 +74,7 @@ struct SessionState {
     session_id: String,
     conn_tx: mpsc::Sender<Vec<u8>>,
     remote_addr: SocketAddr,
-    realm: Option<String>,
+    route_family: Option<String>,
     identity: Option<Identity>,
     connected_at: Instant,
     last_activity: Instant,
@@ -107,7 +107,7 @@ SessionMsg::Authenticate {
 ```rust
 struct Identity {
     subject: String,           // JWT "sub" claim
-    realm: String,             // JWT "realm" claim
+    route_family: String,      // JWT "route_family" claim
     roles: Vec<String>,        // JWT "roles" claim
     permissions: Vec<String>,  // Resolved from roles
     expires_at: Instant,       // JWT "exp" claim
@@ -219,7 +219,7 @@ struct SessionState {
     session_id: String,
     conn_tx: mpsc::Sender<Vec<u8>>,
     remote_addr: SocketAddr,
-    realm: Option<String>,
+    route_family: Option<String>,
     identity: Option<Identity>,
     connected_at: Instant,
     last_activity: Instant,
@@ -243,7 +243,7 @@ impl Actor for SessionActor {
                     session_id: session_id.clone(),
                     conn_tx,
                     remote_addr,
-                    realm: None,
+                    route_family: None,
                     identity: None,
                     connected_at: Instant::now(),
                     last_activity: Instant::now(),

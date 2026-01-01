@@ -51,7 +51,7 @@ Notes:
 
 A **Route Family** is the **physical boundary**:
 
-- tenant / environment / partition
+- isolation / environment / partition
 - maps to Midge column families
 - defines which actors & storage a request hits
 
@@ -83,7 +83,7 @@ All domains use the same route structure *inside* a Route Family:
 Where:
 
 - `scheme`   = one of `stream`, `queue`, `kv`, `notice`, `rpc`, `lease`
-- `realm`    = logical namespace (NOT tenant)
+- `realm`    = logical grouping (NOT an isolation boundary)
 - `area`     = subsystem label
 - `resource` = concrete entity name
 - `operation`= verb (append, enqueue, get, publish, invoke, acquire, …)
@@ -120,7 +120,7 @@ Each of these has one or more personas (actors), but they are **never** called d
 
 - **Domains** = what Fitz does (messaging models)
 - **Personas** = who does the work (actors per domain)
-- **Route Families** = where the work lives (storage/tenant boundary)
+- **Route Families** = where the work lives (storage/isolation boundary)
 - **Routing Schemes** = how work is addressed (uniform URI structure)
 - **Infrastructure** = what supports the work (auth, control, routing, etc.)
 - **Durability** = whether work is persisted (Midge) or ephemeral (memory)

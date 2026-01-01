@@ -364,7 +364,7 @@ Those should be solved via **Streams/Queues**, not Notice.
 
 ### 13.1 UI Notifications
 
-* Frontend subscribes to `notice://acme/ui/{tenant}/events`
+* Frontend subscribes to `notice://acme/ui/{route_family}/events`
 * Backend publishes notifications on status changes
 * Lost messages → user refresh or poll backing KV/Stream
 

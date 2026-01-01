@@ -136,7 +136,7 @@ pub struct DiscoveryActor {
 
 - Client bootstrapping
 - API exploration
-- Multi-tenant SaaS dashboards
+- Multi-family SaaS dashboards
 - Monitoring and observability
 
 ---

@@ -8,7 +8,7 @@
 
 ## Architecture Foundation
 
-### Route Family = Tenant Boundary
+### Route Family = Isolation Boundary
 
 Fitz v2 uses **Route Family** as the top-level isolation and storage partition:
 
@@ -17,7 +17,7 @@ Route Family (e.g., acme-prod)
     ↓
 Route: {scheme}://{realm}/{area}/{resource}/{operation}
     ├─ scheme: domain type (stream, queue, kv, etc.)
-    ├─ realm: logical grouping (NOT tenant!)
+   ├─ realm: logical grouping (NOT an isolation boundary!)
     ├─ area: subsystem
     ├─ resource: entity
     └─ operation: verb
@@ -139,9 +139,9 @@ Route: {scheme}://{realm}/{area}/{resource}/{operation}
 2. **Update ParsedRoute**
    ```rust
    pub struct ParsedRoute {
-       route_family: RouteFamily,      // NEW: tenant boundary
+      route_family: RouteFamily,      // NEW: isolation boundary
        scheme: RouteScheme,             // stream, queue, kv, etc.
-       realm: InternedString,           // logical (not tenant!)
+      realm: InternedString,           // logical (not an isolation boundary!)
        area: InternedString,
        resource: InternedString,
        operation: Option<InternedString>,
@@ -479,7 +479,7 @@ transport:
 - [ ] Lease-based coordination
 - [ ] RPC service
 - [ ] Pub/sub notifications
-- [ ] Multi-tenant setup
+- [ ] Multi-family setup
 
 ---
 

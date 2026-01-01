@@ -12,13 +12,13 @@ Before diving into architecture, let's establish precise terminology:
 
 - **Connection** (`conn_id: u64`): A physical WebSocket TCP connection. One client socket = one connection. Assigned atomically at accept time. Immutable for the connection's lifetime.
 
-- **Channel** (`channel_id: u32`): A logical multiplexed stream within a connection. Each frame header contains a `channel_id`. One connection can carry multiple channels. Channels enable request/response correlation, subscription isolation, and multi-tenant routing over a single connection.
+- **Channel** (`channel_id: u32`): A logical multiplexed stream within a connection. Each frame header contains a `channel_id`. One connection can carry multiple channels. Channels enable request/response correlation, subscription isolation, and route-family isolation over a single connection.
 
-- **Session**: Authentication and authorization state bound to a connection at upgrade time. Contains JWT claims, tenant/realm identity (`route_family`), and permission grants. One session per connection.
+- **Session**: Authentication and authorization state bound to a connection at upgrade time. Contains JWT claims, route-family identity (`route_family`), and permission grants. One session per connection.
 
-- **Route Family** (`route_family: String`): Tenant/realm identifier extracted from JWT or route. Used for shard selection and multi-tenancy. Maps to storage namespaces. Example: `"acme-corp"`, `"tenant-123"`.
+- **Route Family** (`route_family: String`): Isolation boundary identifier extracted from JWT or connection context. Used for shard selection and isolation. Maps to storage partitions. Example: `"acme-corp"`, `"family-123"`.
 
-- **Shard**: An engine instance (one OS thread) processing events for a subset of connections. Shard assignment is deterministic by `route_family`. All connections for a tenant go to the same shard.
+- **Shard**: An engine instance (one OS thread) processing events for a subset of connections. Shard assignment is deterministic by `route_family`. All connections for a route family go to the same shard.
 
 - **Inbox**: A temporary RPC reply route allocated per request (e.g., `inbox://realm/uuid`). Owned by the requesting channel. Replies to this route are delivered back to the owner's channel on the owner's connection.
 
@@ -209,7 +209,7 @@ let ctx = DomainContext {
     route_str,
     payload,
     channel_id,        // Logical channel from frame header
-    route_family,      // Tenant/realm from session
+    route_family,      // From session
 };
 // Note: conn_id is NOT passed to domains; it's transport-layer only.
 // Domains work with channel_id for correlation and routing decisions.
@@ -527,7 +527,7 @@ match operation {
     1. Extract the raw JWT from the request.
     2. Call `authn::verify_token(jwt)` to:
          - Validate signature, issuer, audience, expiry.
-         - Extract identity and tenancy claims: `sub`, `tenant`/`route_family`, `scopes`/`roles`.
+         - Extract identity and route-family claims: `sub`, `route_family`, `scopes`/`roles`.
     3. If verification fails:
          - Reject the upgrade with 4xx and DO NOT create a WebSocket or engine session.
 
@@ -555,7 +555,7 @@ struct PermissionGrants {
 ```
 
 - Shard selection:
-    - Determine the engine shard for the connection based on `route_family` (or another tenant key).
+    - Determine the engine shard for the connection based on `route_family`.
     - Obtain an `EngineHandle` for that shard.
     - Before spawning the WebSocket task:
         - Register the session and outbound queue with the shard:
@@ -649,7 +649,7 @@ let ctx = DomainContext {
 
 - Domains **do not perform primary authorization checks**. All route- and operation-level checks happen in the engine before domain dispatch.
 - Domains may:
-    - Enforce additional invariants based on `route_family` or tenant fields.
+    - Enforce additional invariants based on `route_family`.
     - Use `subject`/identity in business logic (e.g. attaching owner IDs, audit fields).
     - Perform data-level checks (e.g. ACLs stored in KV) inside services, but these build on the already-authorized session.
 - The control domain MAY expose operations that adjust grants or tokens, but any such operation must itself be protected by the engine-level authz step.
@@ -716,7 +716,7 @@ No other direct calls into the engine are permitted from transport; control-plan
 
 - The system runs with a fixed `NUM_SHARDS` configured at startup.
 - Shard ownership is decided at connection time and never changes for the lifetime of a connection.
-- Shard selection is based on tenant/route family to preserve isolation:
+- Shard selection is based on route family to preserve isolation:
 
 ```rust
 fn choose_shard(route_family: &str, num_shards: usize) -> usize {
@@ -895,12 +895,12 @@ pub fn build_ack_response(route: &str) -> ResponseBuf {
 
 ### Sync Engine (Sharded)
 - **Baseline**: The implementation **SHOULD** run with multiple engine shards for production.
-- **Sharding key**: Typically `route_family` or realm; all connections for a given tenant/realm go to the same shard.
+- **Sharding key**: Typically `route_family`; all connections for a given route family go to the same shard.
 - **Per-shard invariants**:
     - One thread per shard, single-threaded event loop.
     - Shard-local inbox (`Receiver<EngineEvent>`) and connection registry.
     - No cross-shard state mutation.
-- **Cross-tenant isolation**: Different `route_family` values should be mapped to different shards where practical.
+- **Cross-family isolation**: Different `route_family` values should be mapped to different shards where practical.
 
 ### Domain Services
 - **Stateless domains** (Control): No locking needed

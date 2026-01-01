@@ -15,7 +15,7 @@
 #### What Route Family Defines
 
 - ✅ **Storage partition** - Maps to Midge column families
-- ✅ **Tenant/environment** - prod, dev, customer-42, region
+- ✅ **Isolation/environment** - prod, dev, customer-42, region
 - ✅ **Resource isolation** - Hard boundary between families
 - ✅ **Actor instantiation** - Each family has its own StreamActor, QueueActor, etc.
 - ✅ **Control plane scope** - Quotas, limits, policies per family
@@ -26,8 +26,8 @@
 #### Examples
 
 ```
-acme-prod          ← Production tenant
-acme-dev           ← Development tenant
+acme-prod          ← Production environment
+acme-dev           ← Development environment
 customer-42        ← SaaS customer
 billing-us-east    ← Regional service
 core-internal      ← Internal systems
@@ -52,22 +52,22 @@ acme-dev.kv         ← Completely separate storage
 
 ---
 
-### 2. Realm = Purely Logical Namespace
+### 2. Realm = Purely Logical Grouping
 
-**Realm is NOT a tenant and NOT a physical boundary.**
+**Realm is NOT an isolation boundary and NOT a physical boundary.**
 
 Realm is a **logical grouping inside a family** for organizational clarity.
 
 #### What Realm Is
 
 - ✅ **Subsystem grouping** - orders, auth, billing, analytics
-- ✅ **Microservice namespace** - chat, search, recommendations
+- ✅ **Microservice grouping** - chat, search, recommendations
 - ✅ **Conceptual grouping** - Organizational convenience
 - ✅ **Routing clarity** - Makes routes self-documenting
 
 #### What Realm Is NOT
 
-- ❌ **NOT a tenant** - Family is the tenant
+- ❌ **NOT an isolation boundary** - Family is the isolation boundary
 - ❌ **NOT a storage partition** - No physical storage impact
 - ❌ **NOT an isolation boundary** - Data can cross realms
 - ❌ **NOT an actor boundary** - No separate actors per realm
@@ -107,8 +107,8 @@ Route: {scheme}://{realm}/{area}/{resource}/{operation}
 ### Route Components
 
 - **scheme**: Domain type (`stream`, `queue`, `kv`, `lease`, `rpc`, `notice`, `metrics`)
-- **realm**: Logical grouping (orders, auth, billing) - NOT tenant!
-- **area**: Sub-namespace within realm
+- **realm**: Logical grouping (orders, auth, billing) - NOT an isolation boundary!
+- **area**: Sub-grouping within realm
 - **resource**: Specific entity
 - **operation**: Verb (append, get, acquire, etc.)
 
@@ -268,7 +268,7 @@ Each customer = separate Route Family = complete isolation.
 ```
                 ┌─────────────────────────────────┐
                 │      Route Family               │  ← PHYSICAL
-                │  (tenant / environment / CF)    │
+                │  (isolation / environment / CF) │
                 └─────────────────────────────────┘
                        ↓           ↓         ↓
              ┌─────────┼───────────┼─────────┼─────────┐
@@ -362,8 +362,8 @@ fitz:
 
 ## Key Takeaways
 
-1. **Route Family = tenant boundary** (physical, durable, enforced)
-2. **Realm = organizational namespace** (logical, ephemeral, convenience)
+1. **Route Family = isolation boundary** (physical, durable, enforced)
+2. **Realm = organizational grouping** (logical, ephemeral, convenience)
 3. **Scheme = domain type** (determines which actor handles request)
 4. **Midge sees families, not realms** (storage partition = family)
 5. **Actors are per-family, not per-realm** (one StreamActor per family)

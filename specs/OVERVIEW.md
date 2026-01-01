@@ -1,19 +1,25 @@
 # Fitz Broker - System Overview
 
 **Version:** 0.5  
-**Status:** Implementation in Progress  
+**Status:** Legacy overview (not canonical for Fitz v2)  
 **Last Updated:** November 15, 2025  
+
+> Note: This document predates the Fitz v2 canonical routing model.
+> For authoritative Fitz v2 architecture and domain definitions, use:
+> - `specs/ARCHITECTURE.md`
+> - `specs/DOMAIN_MODEL.md`
+> - `specs/ROUTING_ARCHITECTURE.md`
 
 ---
 
 ## Purpose and Scope
 
-Fitz is a transport-agnostic, multi-tenant message broker providing unified **notices**, **streams**, **queues**, **RPC**, **inboxes**, and **control-plane coordination** via typed routes over WebSocket with binary TLV framing.
+Fitz is a transport-agnostic message broker providing unified **notices**, **streams**, **queues**, **RPC**, **inboxes**, and **control-plane coordination** via typed routes over WebSocket with binary TLV framing.
 
 ### Key Features
 
 - **Transport Agnostic**: WebSocket today, extensible to QUIC/gRPC/NATS
-- **Multi-Tenant**: JWT-based realm isolation with route permissions
+- **Isolation**: JWT-based route-family isolation with route permissions
 - **Unified Routing**: Single route space across all message patterns
 - **Durable Storage**: Pluggable backends (Local, Azure, AWS)
 - **Crash Safe**: WAL + deterministic recovery
@@ -167,7 +173,7 @@ Fitz uses a unified route space with scheme-based dispatch:
 {scheme}://{realm}/{area}/{resource}[/{operation}]
 ```
 
-- **realm**: Tenant identifier (JWT claim)
+- **realm**: Logical grouping inside a route family
 - **area**: Functional subsystem
 - **resource**: Entity or queue name
 - **operation**: Action (optional)
@@ -209,17 +215,18 @@ Fitz uses binary TLV (Type-Length-Value) frames over WebSocket:
 ### Authentication
 - JWT tokens in `CONN_OPEN` or headers
 - Signature validation via JWKS
-- `realm` claim required for tenant routes
+- `route_family` claim required for route-family scoped routes
 
 ### Authorization
 - Route-based permissions in JWT claims
 - Examples: `pub:stream://acme/*`, `read:queue://acme/jobs/*`
 - Broker enforces per-frame at dispatch
 
-### Multi-Tenant Isolation
-- Routes prefixed by realm
-- Storage partitioned by tenant
-- Cross-tenant access blocked
+### Isolation
+*This section uses legacy terminology.*
+
+- Storage and actor isolation are enforced by **route family** (envelope/context), not by `realm`.
+- `realm` is a logical grouping inside a route family.
 
 ---
 
@@ -365,7 +372,7 @@ security:
 
 ## Glossary
 
-- **Realm**: Tenant or namespace identifier
+- **Realm**: Logical grouping identifier
 - **Route**: URI identifying a resource or destination
 - **TLV**: Type-Length-Value binary encoding
 - **WAL**: Write-ahead log for durability

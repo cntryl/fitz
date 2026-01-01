@@ -1,158 +1,123 @@
-# Fitz v2 Architectural Summary
+# Fitz v2 Architecture
 
 **Version:** 2.0 (Canonical)  
 **Status:** Authoritative  
-**Last Updated:** December 11, 2025
+**Last Updated:** January 1, 2026
 
-*Domains, Personas, System Components, Routing, and Boundaries*
-
----
-
-## 1️⃣ Domains (Messaging Concepts)
-
-A **domain** in Fitz is a *messaging primitive* the system exposes to users — a conceptual communication or storage model.
-
-These are the **six Fitz v2 messaging domains**:
-
-### Durable Domains (backed by Midge)
-
-1. **stream**
-   - Append-only logs
-   - Replay, subscribe, cursors
-
-2. **queue**
-   - Work queues
-   - Ack, redelivery, visibility timeout
-
-3. **kv**
-   - Durable key-value pairs
-   - Metadata storage, consumer offsets, config
-
-### Ephemeral Domains
-
-4. **notice**
-   - Fire-and-forget pub/sub
-   - Fast broadcast, no replay
-
-5. **rpc**
-   - Request/response
-   - Synchronous messaging over Fitz
-
-6. **lease**
-   - Ephemeral distributed locks
-   - Coordination primitives (not correctness guarantees)
-
-**These are the only entities developers think of as "domains."**
-
-Everything else is system infrastructure.
+*Actor Model | Clean Boundaries | Message-Driven*
 
 ---
 
-## 2️⃣ Personas (Actor Roles)
+## Executive Summary
 
-Each domain + subsystem has a corresponding **actor persona** — the runtime module that owns state and behavior.
+Fitz v2 is a **pure actor model** messaging platform built on three core principles:
 
-### Domain Personas
-
-| Domain | Persona | Durable? | Notes |
-|--------|---------|----------|-------|
-| stream | `StreamActor` | yes | Manages subscribers, fanout, cursor state; durability via MidgeActor |
-| queue | `QueueActor` | yes | Scheduling, inflight state, retry logic |
-| kv | *No direct actor* | yes | Calls go through `MidgeActor` or thin `KvActor` facade |
-| notice | `NoticeActor` or handled inside `RealmActor` | no | Stateless fanout |
-| rpc | `RpcActor` | no | Correlation IDs, timeouts, reply routing |
-| lease | `LeaseActor` | no | TTL timers, exclusive ownership |
-
-### Infrastructure Personas
-
-| Subsystem | Persona | Purpose |
-|-----------|---------|---------|
-| control plane | `ControlPlaneActor` | Create/delete streams, queues; system introspection |
-| auth | `AuthActor` | Token validation, RBAC, permissions |
-| routing | `RouterActor` | Parse routes, map scheme → persona |
-| realms | `RealmActor` | Subscriber membership, notice fanout, grouping |
-| durability | `MidgeActor` | Bridge to Midge for stream/queue/kv |
-| metrics | `MetricsActor` | Counters, histograms, system metrics |
-| sessions | `SessionActor` | Per-connection state, backpressure, TLV decode |
-| scheduler | `SystemActor` | Actor lifecycle, supervision |
+1. **Actor Model Everywhere** - Every subsystem is an actor with its own mailbox, no shared state
+2. **Clean Durability Boundary** - Only 3 things persist (streams, queues, kv via Midge)
+3. **Message Passing Only** - All coordination via synchronous message passing, async only at edges
 
 ---
 
-## 3️⃣ System Components (Not Domains)
-
-These are **required** but *not messaging primitives.*
-They support the domains but aren't domains themselves.
-
-### Authentication
-- Token validation
-- RBAC for routes
-- Session principal context
-- Backed by KV config
-
-### Control Plane
-- Create/delete/describe streams and queues
-- Admin API
-- Discovery (list families, realms, queues, consumers…)
-- Backed by KV
-
-### Routing Infrastructure
-- Route parsing
-- Scheme → persona dispatch
-- Realm/area/resource extraction
-- Route permissions
-
-### Session Engine
-- TCP/WS TLV decode
-- Connection lifetime management
-- Inbound and outbound flow control
-
-### Metrics
-- Internal counters (per actor/domain)
-- Exporter → OTEL + optional durable Midge metrics
-
-### Actor Runtime
-- Mailboxes
-- Scheduler
-- Message passing
-- Timers
-
-### Transport Layer
-- TLV framing (type/length/value)
-- TCP
-- WebSocket
-- Multiplexer
-
-**These are the "bones" of Fitz, not domains.**
-
----
-
-## 4️⃣ Route Families (Physical Boundaries)
-
-A **Route Family** is the top-level boundary in Fitz.
-
-### Properties
-
-- ✅ Maps to **Midge column families**
-- ✅ Defines a **physical namespace**
-- ✅ Is the **tenant / environment / partition boundary**
-- ✅ Determines which storage partition (streams, queues, kv) an operation uses
-- ✅ Separate actor sets per family (e.g., StreamActor per family)
-
-### Examples
+## System Architecture
 
 ```
-acme-prod
-acme-dev
-customer-42
-internal-core
+┌─────────────────────────────────────────────────────────────┐
+│                        Transport Layer                       │
+│         (TCP, WebSocket, TLV Framing - ASYNC)               │
+└──────────────┬─────────────────────────────────────────────┘
+               │ TLV Frames
+               ↓
+┌─────────────────────────────────────────────────────────────┐
+│                     API Layer (ASYNC)                        │
+│         src/api/ - HTTP, WebSocket, CLI                     │
+└──────────────┬─────────────────────────────────────────────┘
+               │ Parsed Messages
+               ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  Actor Runtime (SYNC)                        │
+│   src/runtime/ - Mailbox, Scheduler, Supervision, Context   │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Domain Actors (SYNC):                                      │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ src/domains/notifications/ - Pub/Sub (ephemeral)     │  │
+│  │ src/domains/stream/ - Append logs (durable)          │  │
+│  │ src/domains/queue/ - Work queues (NOT IMPLEMENTED)   │  │
+│  │ src/domains/rpc/ - Request/response (ephemeral)      │  │
+│  │ src/domains/lease/ - Distributed locks (ephemeral)   │  │
+│  │ src/domains/kv/ - Key-value (durable)                │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                              │
+│  Control Actors (SYNC):                                     │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ src/control/node/ - Node management                  │  │
+│  │ src/control/cluster/ - Cluster coordination          │  │
+│  │ src/control/health/ - Health monitoring              │  │
+│  │ src/control/metrics/ - Metrics collection            │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                              │
+│  Infrastructure (SYNC):                                     │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ src/transport/router/ - Route dispatch               │  │
+│  │ src/security/identity/ - Authentication              │  │
+│  │ src/security/policy/ - Authorization                 │  │
+│  └──────────────────────────────────────────────────────┘  │
+└──────────────┬─────────────────────────────────────────────┘
+               │ Storage Ops
+               ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  Storage Layer (ASYNC)                       │
+│        src/storage/engine/ - Midge adapter ONLY             │
+└──────────────┬─────────────────────────────────────────────┘
+               │
+               ↓
+         [ Midge Storage ]
+         - Streams (append-only logs)
+         - Queues (NOT IMPLEMENTED)
+         - KV (key-value pairs)
 ```
-
-**Important:** All routes include a family, but the family is *not* part of the URI.
-It's part of the envelope that wraps the route.
 
 ---
 
-## 5️⃣ Route Structure
+## 1. Core Concepts
+
+### 1.1 Domains (Messaging Primitives)
+
+A **domain** is a messaging primitive exposed to users. Fitz provides **6 domains** (5 implemented):
+
+#### Durable Domains (backed by Midge)
+
+| Domain | Status | Module | Description |
+|--------|--------|--------|-------------|
+| **stream** | ✅ Implemented | `src/domains/stream/` | Append-only logs with replay, subscribe, cursors |
+| **queue** | ❌ Not Implemented | - | Work queues with ack, redelivery, visibility timeout |
+| **kv** | ✅ Implemented | `src/domains/kv/` | Durable key-value pairs for metadata, offsets, config |
+
+#### Ephemeral Domains
+
+| Domain | Status | Module | Description |
+|--------|--------|--------|-------------|
+| **notifications** | ✅ Implemented | `src/domains/notifications/` | Fire-and-forget pub/sub (was "notice") |
+| **rpc** | ✅ Implemented | `src/domains/rpc/` | Request/response with correlation IDs |
+| **lease** | ✅ Implemented | `src/domains/lease/` | Distributed locks for coordination |
+
+**Note:** Queue domain is planned but not implemented. All others are functional.
+
+### 1.2 Route Families (Physical Boundaries)
+
+A **Route Family** is the top-level isolation boundary in Fitz.
+
+**Properties:**
+- Maps to Midge column families (physical storage partition)
+- Defines isolation/environment/partition boundary
+- Determines which storage partition (streams, kv) an operation uses
+- Separate actor instances per family
+
+**Examples:** `acme-prod`, `acme-dev`, `customer-42`, `internal-core`
+
+**Important:** Route families are part of the message envelope, NOT the URI.
+
+### 1.3 Route Structure
 
 Every routed message follows:
 
@@ -160,189 +125,415 @@ Every routed message follows:
 {scheme}://{realm}/{area}/{resource}/{operation}
 ```
 
-### Components
+| Segment | Meaning | Example |
+|---------|---------|---------|
+| scheme | Messaging domain | `stream`, `notifications`, `rpc`, `lease`, `kv` |
+| realm | Logical grouping (NOT isolation boundary) | `billing` |
+| area | Subsystem grouping | `payments` |
+| resource | Actual stream/topic/key | `events` |
+| operation | Action to perform | `append`, `publish`, `invoke`, `get` |
 
-| Segment | Meaning |
-|---------|---------|
-| scheme | Messaging domain (`stream`, `queue`, `notice`, etc.) |
-| realm | Purely logical namespace (NOT tenant) |
-| area | Subsystem grouping |
-| resource | The actual stream, queue, keyset, etc. |
-| operation | append, enqueue, ack, acquire, invoke, publish, etc. |
-
-**This is universal across all domains.**
-
----
-
-## 6️⃣ Putting It All Together (Example)
-
-Say a user publishes to a stream:
-
+**Full Example:**
 ```
 Route Family: acme-prod
 Route: stream://billing/payments/events/append
 ```
 
-The steps:
-
-1. **SessionActor** receives a TLV frame
-2. **RouterActor** parses URI → scheme = `stream`
-3. **Control Plane** may authorize/validate this resource
-4. **AuthActor** checks permissions
-5. **StreamActor** in the correct Route Family handles fanout + cursor updates
-6. **MidgeActor** persists the append
-7. **MetricsActor** records stats
-8. Stream subscribers receive updates via **RealmActor** + fanout
-
-**Everything is cleanly layered and domain-driven.**
+**Critical:** Realm is purely logical. Route Family is the physical boundary.
 
 ---
 
-## 7️⃣ Fitz MVP Domain + Persona Set
-
-### Domains (6 messaging primitives)
+## 2. Source Code Organization
 
 ```
-stream, queue, kv, notice, rpc, lease
-```
-
-### Personas (14 actor implementations)
-
-```
-Domain Actors:
-  StreamActor, QueueActor, KvActor (or MidgeActor facade),
-  NoticeActor, RpcActor, LeaseActor
-
-Infrastructure Actors:
-  RouterActor, RealmActor, AuthActor, ControlPlaneActor,
-  MetricsActor, SessionActor, MidgeActor, SystemActor
-```
-
-### System Components (7 infrastructure subsystems)
-
-```
-auth, control-plane, routing, realms, metrics, transport, actor-runtime
-```
-
-### Physical Boundary
-
-```
-Route Family (maps to Midge column families)
-```
-
----
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                   Route Family (acme-prod)              │
-│                    PHYSICAL BOUNDARY                     │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  Domains (6):                                           │
-│  ┌──────────┬──────────┬──────────┐                    │
-│  │ stream   │ queue    │ kv       │  (durable)         │
-│  └──────────┴──────────┴──────────┘                    │
-│  ┌──────────┬──────────┬──────────┐                    │
-│  │ notice   │ rpc      │ lease    │  (ephemeral)       │
-│  └──────────┴──────────┴──────────┘                    │
-│                                                          │
-│  Infrastructure (7):                                    │
-│  ┌──────────┬──────────┬──────────┬──────────┐        │
-│  │ auth     │ control  │ routing  │ realms   │        │
-│  ├──────────┼──────────┼──────────┼──────────┤        │
-│  │ metrics  │sessions  │ actor-rt │          │        │
-│  └──────────┴──────────┴──────────┴──────────┘        │
-│                                                          │
-│  Storage:                                               │
-│  ┌─────────────────────────────────────────┐           │
-│  │ Midge (acme-prod.streams/queues/kv)    │           │
-│  └─────────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────────┘
+src/
+├── runtime/              # Actor runtime + execution model (SYNC)
+│   ├── actor/           # Actor trait, lifecycle, message handling
+│   ├── mailbox/         # Bounded message queues, backpressure
+│   ├── scheduler/       # Cooperative actor scheduling
+│   ├── supervision/     # Fault tolerance, restart strategies
+│   └── context/         # Actor execution context, timers
+│
+├── transport/           # Message transport layer (MIXED)
+│   ├── envelope/        # Message envelope structure, metadata
+│   ├── router/          # Route parsing, wildcard matching, dispatch
+│   ├── codecs/          # TLV encoding/decoding
+│   └── backpressure/    # Flow control mechanisms
+│
+├── storage/             # Thin abstraction over Midge (ASYNC)
+│   ├── engine/          # Midge adapter - ONLY place that touches storage
+│   ├── state/           # Actor state persistence helpers
+│   └── checkpoints/     # State checkpointing and recovery
+│
+├── security/            # Authentication and authorization (SYNC)
+│   ├── identity/        # Token validation, principal extraction
+│   ├── claims/          # Claims-based authorization
+│   └── policy/          # Policy evaluation and enforcement
+│
+├── domains/             # Domain-specific actors (SYNC)
+│   ├── notifications/   # Pub/sub domain (ephemeral)
+│   │   ├── actor/       # NotificationActor implementation
+│   │   ├── api/         # Public API surface
+│   │   └── protocol/    # Wire protocol definitions
+│   ├── rpc/             # RPC domain (ephemeral)
+│   │   ├── actor/       # RpcActor with correlation tracking
+│   │   ├── api/         # RPC API
+│   │   └── protocol/    # RPC protocol
+│   ├── lease/           # Lease domain (ephemeral)
+│   │   ├── actor/       # LeaseActor with TTL timers
+│   │   ├── api/         # Lease API
+│   │   └── protocol/    # Lease protocol
+│   ├── kv/              # Key-value domain (durable)
+│   │   ├── actor/       # KvActor (thin facade over storage)
+│   │   ├── api/         # KV API
+│   │   └── protocol/    # KV protocol
+│   └── stream/          # Stream domain (durable)
+│       ├── actor/       # StreamActor with fanout logic
+│       ├── api/         # Stream API
+│       └── protocol/    # Stream protocol
+│
+├── control/             # System-owned actors (SYNC)
+│   ├── node/            # Node lifecycle, local resource management
+│   ├── cluster/         # Cluster membership, gossip, coordination
+│   ├── health/          # Health checks, probes, status reporting
+│   └── metrics/         # Metrics aggregation and export
+│
+├── api/                 # Edge API surfaces (ASYNC)
+│   ├── http/            # HTTP REST endpoints
+│   ├── ws/              # WebSocket connection handling
+│   └── cli/             # CLI commands and interface
+│
+├── config/              # Configuration management
+│   ├── schema/          # Configuration schema definitions
+│   └── loader/          # Config loading and validation
+│
+├── errors/              # Error types and handling
+├── utils/               # Utility functions and helpers
+└── prelude/             # Common imports and convenience traits
 ```
 
 ---
 
-## Specification Organization
+## 3. Actor Model Fundamentals
 
-### Domain Specifications
+### 3.1 Core Principles
 
-Located in `wip/domains/`:
+1. **Every subsystem is an actor** - Has its own mailbox, owns its state
+2. **No shared mutable state** - All coordination via message passing
+3. **Synchronous actors** - Actors process messages synchronously
+4. **Async at edges only** - Only transport (TCP/WS) and storage (Midge) are async
+5. **Single-threaded per actor** - No locks on hot paths
+6. **Cooperative scheduling** - Actors yield after processing messages
 
-- `STREAM.md` - Stream domain specification
-- `QUEUE.md` - Queue domain specification
-- `KV.md` - KV domain specification
-- `NOTICE.md` - Notice (pub/sub) domain specification
-- `RPC.md` - RPC domain specification
-- `LEASE.md` - Lease domain specification
+### 3.2 Message Flow Example: Stream Append
 
-### Infrastructure Specifications
+```
+1. [Client] → TLV frame over WebSocket
+             ↓
+2. [api/ws] → Parse frame (ASYNC)
+             ↓
+3. [Actor Runtime] → Dispatch to StreamActor mailbox (SYNC)
+             ↓
+4. [domains/stream/actor] → Process append, update subscribers (SYNC)
+             ↓
+5. [storage/engine] → Persist to Midge (ASYNC)
+             ↓
+6. [domains/stream/actor] → Fanout to subscribers (SYNC)
+             ↓
+7. [transport/router] → Route to subscriber mailboxes (SYNC)
+             ↓
+8. [api/ws] → Encode TLV frames (ASYNC)
+             ↓
+9. [Client] ← Receive stream data
+```
 
-Located in `wip/infrastructure/`:
+**Key Observation:** Only steps 2, 5, and 8 are async. Everything else is synchronous message passing.
 
-- `AUTH.md` - Authentication and authorization
-- `CONTROL_PLANE.md` - System management and discovery
-- `ROUTING.md` - Route parsing and dispatch
-- `REALMS.md` - Logical grouping and membership
-- `METRICS.md` - System metrics and observability
-- `SESSIONS.md` - Connection lifecycle
-- `TRANSPORT.md` - TLV protocol and network
+### 3.3 Durability Boundary
 
-### Persona Implementations
+**ONLY these persist data:**
 
-Located in `src/personas/`:
+- ✅ `src/domains/stream/` → via `src/storage/engine/` → Midge (append-only logs)
+- ✅ `src/domains/kv/` → via `src/storage/engine/` → Midge (key-value)
+- ❌ Queue domain (not implemented)
 
-- Domain actors: `stream_actor.rs`, `queue_actor.rs`, `lease_actor.rs`, etc.
-- Infrastructure actors: `router_actor.rs`, `realm_actor.rs`, `auth_actor.rs`, etc.
+**Everything else is ephemeral:**
 
----
+- ❌ Routing tables (`transport/router/`)
+- ❌ RPC state (`domains/rpc/`)
+- ❌ Leases (`domains/lease/`)
+- ❌ Subscriptions (`domains/notifications/`, `domains/stream/`)
+- ❌ Metrics (`control/metrics/`)
 
-## Key Architectural Principles
-
-1. **Domains are messaging primitives only** - stream, queue, kv, notice, rpc, lease
-2. **Personas are actor implementations** - One actor type per domain + infrastructure
-3. **Route Family is the physical boundary** - Maps to Midge, defines tenant isolation
-4. **Realm is logical grouping only** - No physical storage impact
-5. **System components support domains** - Auth, control plane, routing, etc. are not domains
-6. **Clean durability boundary** - Only stream/queue/kv touch Midge
-7. **Actor model everywhere** - Pure message passing, no shared state
-8. **Sync domain logic** - Async only at transport/storage edges
-
----
-
-## Implementation Status
-
-| Component | Status | Progress |
-|-----------|--------|----------|
-| Actor Runtime | ✅ Complete | 100% |
-| TLV Protocol | ✅ Complete | 100% |
-| Midge Bridge | 🚧 Stubs | 50% |
-| Route Families | 📋 Planned | 0% |
-| Routing | 📋 Planned | 0% |
-| Sessions | 📋 Planned | 0% |
-| Stream Domain | 📋 Planned | 0% |
-| Queue Domain | 📋 Planned | 0% |
-| KV Domain | 📋 Planned | 0% |
-| Notice Domain | 📋 Planned | 0% |
-| RPC Domain | 📋 Planned | 0% |
-| Lease Domain | 📋 Planned | 0% |
-| Auth | 📋 Planned | 0% |
-| Control Plane | 📋 Planned | 0% |
-
-See [ROADMAP.md](ROADMAP.md) for detailed implementation plan.
+**Critical Rule:** Only `storage/engine/` touches Midge. No other module may perform direct storage I/O.
 
 ---
 
-## References
+## 4. Transport Layer: TLV Protocol
 
-- [ROUTING_ARCHITECTURE.md](ROUTING_ARCHITECTURE.md) - Route Family vs Realm (canonical)
-- [ROADMAP.md](ROADMAP.md) - Implementation phases
-- [Domain Specifications](domains/) - Per-domain specs
-- [Infrastructure Specifications](infrastructure/) - System component specs
+All network communication uses **TLV (Type-Length-Value)** framing:
+
+```
+┌─────────────┬──────────────┬───────────────────┐
+│ Type (u16)  │ Len (u32)    │ Value (bytes)     │
+│  2 bytes    │  4 bytes     │  variable         │
+└─────────────┴──────────────┴───────────────────┘
+```
+
+Implemented in `src/transport/codecs/`.
+
+**Example Frame Types:**
+- `0x0100` - Stream append
+- `0x0200` - Queue enqueue (not implemented)
+- `0x0300` - RPC invoke
+- `0x0400` - Lease acquire
+- `0x0500` - KV put
+- `0x0600` - Notification publish
+
+**Transports:**
+- `src/api/http/` - HTTP REST (JSON over HTTP)
+- `src/api/ws/` - WebSocket (TLV binary)
+- `src/api/cli/` - CLI (local REPL)
 
 ---
 
-**This is the authoritative Fitz v2 architecture map.**
+## 5. Security Model
 
-*Last Updated: December 11, 2025*
+Located in `src/security/`:
+
+### 5.1 Identity (`security/identity/`)
+- Token validation (JWT, API keys)
+- Principal extraction
+- Session establishment
+
+### 5.2 Claims (`security/claims/`)
+- Claims-based authorization
+- Role-based access control (RBAC)
+- Attribute-based access control (ABAC)
+
+### 5.3 Policy (`security/policy/`)
+- Policy evaluation engine
+- Route-level permissions
+- Domain-specific authorization rules
+
+**Example Authorization Flow:**
+```
+1. Client sends request with token
+2. identity/ validates token → Principal
+3. claims/ extracts claims from Principal
+4. policy/ evaluates: can Principal perform operation on route?
+5. If authorized → dispatch to domain actor
+6. If denied → return error
+```
+
+---
+
+## 6. Control Plane
+
+Located in `src/control/`:
+
+### 6.1 Node (`control/node/`)
+- Local node lifecycle management
+- Resource monitoring (CPU, memory, connections)
+- Graceful shutdown coordination
+
+### 6.2 Cluster (`control/cluster/`)
+- Cluster membership (gossip, heartbeats)
+- Leader election (for control operations)
+- Node discovery and health propagation
+
+### 6.3 Health (`control/health/`)
+- Health check endpoints
+- Readiness and liveness probes
+- Dependency health tracking
+
+### 6.4 Metrics (`control/metrics/`)
+- Metrics collection (counters, histograms, gauges)
+- Per-domain and per-actor metrics
+- Export to OTEL/Prometheus
+
+**Control actors are system-owned and not exposed to users.**
+
+---
+
+## 7. Domain Actor Details
+
+### 7.1 Notifications (`domains/notifications/`)
+
+**Purpose:** Fire-and-forget pub/sub (ephemeral)
+
+**Key Operations:**
+- `subscribe(realm, topic)` - Subscribe to topic within realm
+- `unsubscribe(realm, topic)` - Unsubscribe
+- `publish(realm, topic, payload)` - Broadcast to all subscribers
+
+**State:**
+- Subscriber registry (in-memory)
+- Topic → [subscriber IDs]
+
+**Durability:** None (ephemeral)
+
+### 7.2 Stream (`domains/stream/`)
+
+**Purpose:** Append-only logs with replay and cursors (durable)
+
+**Key Operations:**
+- `append(stream, payload)` - Append entry to log
+- `subscribe(stream, cursor)` - Subscribe from cursor position
+- `read(stream, start, end)` - Read range of entries
+
+**State:**
+- Subscriber registry (in-memory)
+- Stream → [subscriber IDs + cursors]
+
+**Durability:** Midge (via `storage/engine/`)
+
+### 7.3 RPC (`domains/rpc/`)
+
+**Purpose:** Request/response with correlation (ephemeral)
+
+**Key Operations:**
+- `invoke(route, payload, timeout)` - Send request, wait for reply
+- `register(route)` - Register as RPC handler
+- `reply(correlation_id, payload)` - Send reply
+
+**State:**
+- Correlation ID → reply channel (in-memory)
+- Route → handler actor
+
+**Durability:** None (ephemeral)
+
+### 7.4 Lease (`domains/lease/`)
+
+**Purpose:** Distributed locks with TTL (ephemeral)
+
+**Key Operations:**
+- `acquire(lease_id, ttl)` - Acquire exclusive lock
+- `renew(lease_id, ttl)` - Extend lease
+- `release(lease_id)` - Release lock
+
+**State:**
+- Lease ID → (owner, expiration timestamp)
+- TTL timers (via `runtime/context/`)
+
+**Durability:** None (ephemeral)
+
+### 7.5 KV (`domains/kv/`)
+
+**Purpose:** Durable key-value storage (durable)
+
+**Key Operations:**
+- `put(key, value)` - Store key-value pair
+- `get(key)` - Retrieve value
+- `delete(key)` - Remove key
+
+**State:**
+- Minimal (thin facade)
+
+**Durability:** Midge (via `storage/engine/`)
+
+### 7.6 Queue (NOT IMPLEMENTED)
+
+**Purpose:** Work queues with ack/redelivery (durable)
+
+**Status:** Planned but not implemented in current architecture.
+
+---
+
+## 8. Key Architectural Principles
+
+1. **Domains are messaging primitives only** - stream, kv, notifications, rpc, lease (+ queue planned)
+2. **Actor model everywhere** - Every subsystem is an actor, no shared state
+3. **Sync actors, async edges** - Actors are synchronous, only transport/storage are async
+4. **Route Family is physical boundary** - Maps to Midge, defines isolation
+5. **Realm is logical grouping only** - No physical storage impact
+6. **Clean durability boundary** - Only stream/kv touch Midge (via storage/engine)
+7. **Single storage adapter** - Only `storage/engine/` touches Midge
+8. **Message passing only** - No locks, no shared state, no channels
+
+---
+
+## 9. Implementation Status
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| Actor Runtime | `src/runtime/` | 🚧 Stubbed |
+| Transport (TLV) | `src/transport/codecs/` | 🚧 Stubbed |
+| Storage (Midge) | `src/storage/engine/` | 🚧 Stubbed |
+| Security | `src/security/` | 🚧 Stubbed |
+| Notifications | `src/domains/notifications/` | 🚧 Stubbed |
+| Stream | `src/domains/stream/` | 🚧 Stubbed |
+| RPC | `src/domains/rpc/` | 🚧 Stubbed |
+| Lease | `src/domains/lease/` | 🚧 Stubbed |
+| KV | `src/domains/kv/` | 🚧 Stubbed |
+| Queue | - | ❌ Not Implemented |
+| Control Plane | `src/control/` | 🚧 Stubbed |
+| API Layer | `src/api/` | 🚧 Stubbed |
+
+**All modules are stubbed and ready for implementation.**
+
+---
+
+## 10. Migration from v1
+
+| Aspect | v1 (Old) | v2 (New) |
+|--------|----------|----------|
+| Architecture | Async handlers + locks | Pure actor model |
+| Concurrency | Tokio tasks + Arc\<RwLock\> | Message passing only |
+| State | Shared via locks | Each actor owns state |
+| Durability | Mixed (unclear) | Clean (3 durable domains) |
+| Transport | Multiple protocols | Unified TLV |
+| Storage | Multiple callers | Only storage/engine |
+| Scheduling | Tokio async | Actor scheduler |
+| Domains | 6 domains | 5 implemented (queue missing) |
+
+---
+
+## 11. Next Steps
+
+1. **Implement actor runtime** (`src/runtime/`)
+   - Mailbox with backpressure
+   - Cooperative scheduler
+   - Supervision trees
+
+2. **Implement TLV codec** (`src/transport/codecs/`)
+   - Frame encoding/decoding
+   - Error handling
+   - Streaming support
+
+3. **Implement Midge adapter** (`src/storage/engine/`)
+   - Async bridge to Midge
+   - Batch operations
+   - Error propagation
+
+4. **Implement domain actors** (one at a time)
+   - Start with notifications (simplest)
+   - Then stream, rpc, lease, kv
+   - Queue last (most complex)
+
+5. **Implement API layer** (`src/api/`)
+   - WebSocket transport
+   - HTTP REST (optional)
+   - CLI interface
+
+6. **Implement control plane** (`src/control/`)
+   - Node management
+   - Cluster coordination
+   - Metrics collection
+
+---
+
+## 12. References
+
+- [ROADMAP.md](ROADMAP.md) - Implementation phases and timeline
+- [ROUTING_ARCHITECTURE.md](ROUTING_ARCHITECTURE.md) - Route Family vs Realm details
+- [Domain Specifications](domains/) - Per-domain specs (stream, queue, kv, notice, rpc, lease)
+- [Infrastructure Specifications](infrastructure/) - Auth, control plane, routing, etc.
+- [Test Guidelines](../docs/dev/test_guidelines.md) - Testing standards
+- [Benchmark Guidelines](../docs/dev/bench_guidelines.md) - Performance benchmarking
+
+---
+
+**This is the authoritative Fitz v2 architecture specification.**
+
+*Last Updated: January 1, 2026*

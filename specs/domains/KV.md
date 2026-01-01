@@ -229,7 +229,7 @@ All via the actor context.
 * PUT/GET/DELETE correctness
 * Range scan behavior
 * TLV validation
-* Namespace correctness
+* Area correctness
 * Error handling
 
 ### Integration

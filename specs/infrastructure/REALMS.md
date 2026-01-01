@@ -9,26 +9,26 @@
 
 ## Overview
 
-The Realms domain provides **logical grouping within a Route Family**, NOT multi-tenancy. A realm is a semantic namespace for organizing routes (like "auth", "orders", "billing"), but the actual tenant boundary is the **Route Family** (like `acme-prod`, `customer-42`).
+The Realms domain provides **logical grouping within a Route Family**, not isolation. A realm is a semantic grouping for organizing routes (like "auth", "orders", "billing"), but the actual isolation boundary is the **Route Family** (like `acme-prod`, `customer-42`).
 
 ### Critical Distinction
 
 ❌ **Realm is NOT:**
-- A tenant boundary
+- An isolation boundary
 - A storage partition
 - An isolation boundary
 - A security boundary
 
 ✅ **Realm IS:**
 - A logical grouping of routes
-- A semantic namespace
+- A semantic grouping
 - An organizational convenience
 - Optional (can use single realm per family)
 
 ### Example Hierarchy
 
 ```
-Route Family: acme-prod        ← TENANT BOUNDARY (storage partition)
+Route Family: acme-prod        ← ISOLATION BOUNDARY (storage partition)
     ├─ realm: auth             ← Logical grouping
     │   ├─ area: tokens
     │   └─ area: users
@@ -257,7 +257,7 @@ impl Actor for RealmActor {
 
 ## Realm vs Route Family
 
-### Route Family (Tenant Boundary)
+### Route Family (Isolation Boundary)
 
 ```rust
 // Different families = different tenants = different storage
@@ -273,7 +273,7 @@ Family: acme-dev
 ### Realm (Logical Grouping)
 
 ```rust
-// Different realms = same tenant = same storage family, just organized
+// Different realms = same route family = same storage family, just organized
 Family: acme-prod
   - stream://orders/events/created     realm=orders (logical)
   - stream://billing/invoices/sent     realm=billing (logical)

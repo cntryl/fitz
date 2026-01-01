@@ -58,14 +58,14 @@ Not messaging primitives, but required for the system:
 
 ### Route Family = Physical Boundary
 
-- Tenant/environment isolation
+- Isolation/environment boundary
 - Maps to Midge column families
 - Examples: `acme-prod`, `customer-42`
 
 ### Realm = Logical Grouping
 
-- NOT a tenant (Route Family is the tenant)
-- Just organizational namespace
+- NOT an isolation boundary (Route Family is the isolation boundary)
+- Just organizational grouping
 - Examples: `orders`, `auth`, `billing`
 
 ## 📋 Implementation Status
@@ -110,8 +110,8 @@ See [ROADMAP.md](ROADMAP.md) for detailed breakdown.
 |------|---------|
 | **Domain** | Messaging primitive (stream, queue, kv, notice, rpc, lease) |
 | **Persona** | Actor implementation (StreamActor, RouterActor, etc.) |
-| **Route Family** | Physical tenant boundary (acme-prod, customer-42) |
-| **Realm** | Logical namespace within a family (orders, auth) |
+| **Route Family** | Physical isolation boundary (acme-prod, customer-42) |
+| **Realm** | Logical grouping within a family (orders, auth) |
 | **Scheme** | Domain type in route (stream://, queue://, etc.) |
 | **Infrastructure** | System components that aren't domains |
 
@@ -141,15 +141,15 @@ This structure ensures:
 
 Fitz v2 has a clear top-down hierarchy:
 
-1. **Route Family** - The top-level tenant boundary and isolation unit
+1. **Route Family** - The top-level isolation boundary and storage partition
    - Maps to Midge column families for durable domains
    - Examples: `acme-prod`, `acme-dev`, `saas-customer-42`
-   - This is the **real tenant boundary**
+  - This is the **real isolation boundary**
 
 2. **Route** - Universal addressing within a family
    - Format: `{scheme}://{realm}/{area}/{resource}/{operation}`
    - `scheme` = domain (stream, queue, kv, lease, rpc, notice, etc.)
-   - `realm` = logical grouping (NOT tenant, just semantic namespace)
+  - `realm` = logical grouping (NOT an isolation boundary)
    - `area` = subsystem or category
    - `resource` = specific entity
    - `operation` = verb (optional)

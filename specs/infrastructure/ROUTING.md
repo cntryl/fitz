@@ -9,15 +9,15 @@
 
 ## Overview
 
-The Routing domain is the central dispatch mechanism in Fitz. It handles **Route Family** resolution (top-level tenant boundary) and then parses route strings within that family, interning them for efficient matching, and routing messages to the appropriate domain actors based on route scheme (stream, queue, kv, etc.).
+The Routing domain is the central dispatch mechanism in Fitz. It receives a resolved **Route Family** (top-level isolation boundary) from the session/connection context, parses route strings, interns components for efficient matching, and routes messages to the appropriate domain actors based on the route scheme (stream, queue, kv, etc.).
 
 ### Route Family vs Route Scheme
 
 **Route Family** (top-level):
-- Tenant/isolation boundary
+- Isolation boundary
 - Examples: `acme-prod`, `acme-dev`, `customer-42`
 - Maps to Midge column families
-- Determines which storage partition to use
+    - Determines which storage partition and actor set to use
 
 **Route Scheme** (within route):
 - Domain type: `stream://`, `queue://`, `kv://`, etc.
@@ -106,9 +106,9 @@ RoutingMsg::ParseRoute {
 ```rust
 #[derive(Debug, Clone)]
 pub struct ParsedRoute {
-    route_family: InternedString,  // Top-level: acme-prod, acme-dev, etc.
+    route_family: InternedString,  // From session/connection context: acme-prod, acme-dev, etc.
     scheme: RouteScheme,            // Domain type: stream, queue, kv, etc.
-    realm: InternedString,          // Logical grouping (not tenant!)
+    realm: InternedString,          // Logical grouping (not an isolation boundary!)
     area: InternedString,
     resource: InternedString,
     operation: Option<InternedString>,
@@ -127,14 +127,14 @@ pub enum RouteScheme {
     ControlConfig,
 }
 
-fn parse_route(route: &str, interner: &GlobalInternTable) -> Result<ParsedRoute, String> {
-    // Parse "family://realm/area/resource/operation"
+fn parse_route(route_family: &str, route: &str, interner: &GlobalInternTable) -> Result<ParsedRoute, String> {
+    // Parse "scheme://realm/area/resource/operation" within a resolved route_family context
     let parts: Vec<&str> = route.split("://").collect();
     if parts.len() != 2 {
         return Err("invalid route format".to_string());
     }
-    
-    let family = parse_family(parts[0])?;
+
+    let scheme = parse_scheme(parts[0])?;
     let path_parts: Vec<&str> = parts[1].split('/').collect();
     
     if path_parts.len() < 3 {
@@ -142,7 +142,8 @@ fn parse_route(route: &str, interner: &GlobalInternTable) -> Result<ParsedRoute,
     }
     
     Ok(ParsedRoute {
-        family,
+        route_family: interner.intern(route_family),
+        scheme,
         realm: interner.intern(path_parts[0]),
         area: interner.intern(path_parts[1]),
         resource: interner.intern(path_parts[2]),
@@ -170,8 +171,8 @@ RoutingMsg::Dispatch {
 **Dispatch Logic:**
 ```rust
 fn dispatch(&self, route: ParsedRoute, frame: TlvFrame, session_id: String) {
-    match route.family {
-        RouteFamily::Stream => {
+    match route.scheme {
+        RouteScheme::Stream => {
             self.stream_actor.send(StreamMsg::Handle {
                 route,
                 frame,
@@ -179,7 +180,7 @@ fn dispatch(&self, route: ParsedRoute, frame: TlvFrame, session_id: String) {
                 reply_to: ...,
             });
         }
-        RouteFamily::Queue => {
+        RouteScheme::Queue => {
             self.queue_actor.send(QueueMsg::Handle {
                 route,
                 frame,
@@ -187,7 +188,7 @@ fn dispatch(&self, route: ParsedRoute, frame: TlvFrame, session_id: String) {
                 reply_to: ...,
             });
         }
-        RouteFamily::Kv => {
+        RouteScheme::Kv => {
             // KV handled by MidgeActor
             self.midge_actor.send(MidgeMsg::KvOperation {
                 route,
@@ -195,7 +196,7 @@ fn dispatch(&self, route: ParsedRoute, frame: TlvFrame, session_id: String) {
                 reply_to: ...,
             });
         }
-        RouteFamily::Rpc => {
+        RouteScheme::Rpc => {
             self.rpc_actor.send(RpcMsg::Handle {
                 route,
                 frame,
@@ -203,14 +204,14 @@ fn dispatch(&self, route: ParsedRoute, frame: TlvFrame, session_id: String) {
                 reply_to: ...,
             });
         }
-        RouteFamily::Lease => {
+        RouteScheme::Lease => {
             self.lease_actor.send(LeaseMsg::Handle {
                 route,
                 frame,
                 reply_to: ...,
             });
         }
-        RouteFamily::Notice => {
+        RouteScheme::Notice => {
             self.notice_actor.send(NoticeMsg::Handle {
                 route,
                 frame,
@@ -218,7 +219,7 @@ fn dispatch(&self, route: ParsedRoute, frame: TlvFrame, session_id: String) {
                 reply_to: ...,
             });
         }
-        RouteFamily::Metrics => {
+        RouteScheme::Metrics => {
             self.metrics_actor.send(MetricsMsg::Handle {
                 route,
                 frame,

@@ -1,0 +1,1 @@
+//! Message encoding and decoding
