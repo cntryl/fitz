@@ -77,7 +77,7 @@ fn bench_pipeline_decode_into_route_fanout(c: &mut Criterion) {
                     out.clear();
                     decoder.decode_into(black_box(&data), &mut out).unwrap();
                     for rec in &out {
-                        let mt = rec.msg_type();
+                        let _mt = rec.msg_type();
                         let slice = rec.value();
                         let msg = mux.route(rec.clone()).unwrap();
                         for _ in 0..nsub {

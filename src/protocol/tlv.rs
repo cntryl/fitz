@@ -58,8 +58,6 @@ pub struct TlvRef<'a> {
     pub value: &'a [u8],
 }
 
-/// Zero-copy reference to a TLV record (borrows the input buffer)
-
 impl TlvRecord {
     pub fn new(msg_type: MessageType, value: Bytes) -> Self {
         Self { msg_type, value }
