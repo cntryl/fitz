@@ -119,3 +119,8 @@ path = "benches/tier2_subsystem_lease.rs"
 name = "tier2_subsystem_subscriptions"
 harness = false
 path = "benches/tier2_subsystem_subscriptions.rs"
+
+[[bench]]
+name = "tier2_subsystem_protocol"
+harness = false
+path = "benches/tier2_subsystem_protocol.rs"

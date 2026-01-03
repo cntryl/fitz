@@ -127,7 +127,7 @@ impl TlvDecoder {
 
     /// Zero-copy decode: returns (MessageType, value_slice, consumed_bytes)
     /// No allocations, suitable for hot-path routing.
-    #[inline(always)]
+    #[inline]
     pub fn decode_one_ref<'a>(&self, input: &'a [u8]) -> Result<(MessageType, &'a [u8], usize), TlvError> {
         if input.is_empty() {
             return Err(TlvError::EmptyFrame);

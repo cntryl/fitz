@@ -150,7 +150,7 @@ impl Mux {
     }
 
     /// Zero-copy hot path: route a msg by type and payload slice. No allocation.
-    #[inline(always)]
+    #[inline]
     pub fn route_ref<'a>(&mut self, msg_type: MessageType, payload: &'a [u8]) -> Result<ChannelRef<'a>, MuxError> {
         let t = msg_type.as_u16();
         let channel = self
