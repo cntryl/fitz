@@ -3,8 +3,8 @@ use criterion::{
 };
 use fitz::domains::lease::{LeaseActor, LeaseMessage};
 use fitz::runtime::actor::ActorRef;
-use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::runtime::scheduler::Scheduler;
 use std::sync::Arc;
 
 #[path = "config.rs"]

@@ -14,9 +14,9 @@
 //! - **API** (`api/tcp.rs`, `api/ws/mod.rs`) consumes this trait.
 //! - **Other session helpers** remain in their respective modules.
 
-use bytes::Bytes;
 use crate::protocol::frame::ChannelId;
 use crate::session::{CloseReason, SessionInfo};
+use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -134,7 +134,12 @@ impl Ingress for RuntimeIngress {
         Ok(session_id)
     }
 
-    async fn on_frame(&self, session_id: u64, channel_id: ChannelId, message_payload: Bytes) -> IngressDecision {
+    async fn on_frame(
+        &self,
+        session_id: u64,
+        channel_id: ChannelId,
+        message_payload: Bytes,
+    ) -> IngressDecision {
         // Verify session exists
         if !self.sessions.contains_key(&session_id) {
             eprintln!("Frame for unknown session: {}", session_id);
@@ -267,4 +272,3 @@ mod tests {
         assert_eq!(ingress.session_count(), 3);
     }
 }
-

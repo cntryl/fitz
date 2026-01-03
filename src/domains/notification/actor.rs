@@ -24,14 +24,14 @@
 //! **UnsubscribeAll**: Called when session disconnects
 //! - Removes all subscriptions for that session
 
-use crate::runtime::subscriptions::{SubscriptionIndex, SubscriptionId};
-use crate::session::session::SessionId;
 use crate::domains::notification::protocol::{
-    NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeMessage,
-    UnsubscribeAllMessage,
+    NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+    UnsubscribeMessage,
 };
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::RouteFamily;
+use crate::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
+use crate::session::session::SessionId;
 use std::collections::HashMap;
 
 /// Maps subscription ID to (session_id, subscriber_address)
@@ -77,15 +77,14 @@ impl NoticeRouteActor {
     /// Subscribe to a pattern (SessionActor has already verified authorization)
     fn handle_subscribe(&mut self, msg: SubscribeMessage, _ctx: &mut Context<Self>) {
         let subscription_id = self.allocate_subscription_id();
-        
+
         // Add subscription to the trie-based index
-        self.index.insert(self.family_id, &msg.pattern, subscription_id);
-        
+        self.index
+            .insert(self.family_id, &msg.pattern, subscription_id);
+
         // Store metadata: session_id and subscriber address
-        self.subscriptions.insert(
-            subscription_id,
-            (msg.session_id, msg.subscriber),
-        );
+        self.subscriptions
+            .insert(subscription_id, (msg.session_id, msg.subscriber));
     }
 
     /// Unsubscribe from a specific pattern
@@ -95,9 +94,7 @@ impl NoticeRouteActor {
         let to_remove: Vec<SubscriptionId> = self
             .subscriptions
             .iter()
-            .filter(|(_, (sess_id, addr))| {
-                *sess_id == msg.session_id && addr == &msg.subscriber
-            })
+            .filter(|(_, (sess_id, addr))| *sess_id == msg.session_id && addr == &msg.subscriber)
             .map(|(&id, _)| id)
             .collect();
 
@@ -128,15 +125,12 @@ impl NoticeRouteActor {
     fn handle_publish(&mut self, msg: PublishMessage, ctx: &mut Context<Self>) {
         // Find all subscription IDs that match this published route
         let matching_ids = self.index.match_all(self.family_id, &msg.route);
-        
+
         // Fan-out to each matching subscriber
         for subscription_id in matching_ids {
             if let Some((_, subscriber)) = self.subscriptions.get(&subscription_id) {
                 let notify = NotifyMessage::new(msg.route.clone(), msg.payload.clone());
-                let _ = ctx.send(
-                    subscriber.clone(),
-                    NotificationMessage::Notify(notify),
-                );
+                let _ = ctx.send(subscriber.clone(), NotificationMessage::Notify(notify));
             }
         }
     }
@@ -156,7 +150,9 @@ impl Actor for NoticeRouteActor {
             NotificationMessage::Publish(publish) => self.handle_publish(publish, ctx),
             NotificationMessage::Subscribe(subscribe) => self.handle_subscribe(subscribe, ctx),
             NotificationMessage::Unsubscribe(unsubscribe) => self.handle_unsubscribe(unsubscribe),
-            NotificationMessage::UnsubscribeAll(unsubscribe_all) => self.handle_unsubscribe_all(unsubscribe_all),
+            NotificationMessage::UnsubscribeAll(unsubscribe_all) => {
+                self.handle_unsubscribe_all(unsubscribe_all)
+            }
             NotificationMessage::Notify(_) => {
                 // NoticeRouteActor doesn't receive Notify messages
                 // (those are sent to subscribers via SessionActor)
@@ -202,12 +198,8 @@ mod tests {
         let mut actor = NoticeRouteActor::new(test_family());
         let pattern = test_route("notice://realm/orders/update");
         let subscriber = test_address("session1");
-        let _subscribe = SubscribeMessage::new(
-            test_family(),
-            pattern,
-            test_session_id(1),
-            subscriber,
-        );
+        let _subscribe =
+            SubscribeMessage::new(test_family(), pattern, test_session_id(1), subscriber);
 
         // Act
         // We'd normally call this with a Context, but for this test
@@ -226,17 +218,15 @@ mod tests {
         // Arrange
         let mut actor = NoticeRouteActor::new(test_family());
         let subscriber = test_address("subscriber");
-        
+
         // Add subscriptions for a session
-        actor.subscriptions.insert(
-            SubscriptionId(1),
-            (test_session_id(1), subscriber.clone()),
-        );
-        actor.subscriptions.insert(
-            SubscriptionId(2),
-            (test_session_id(1), subscriber.clone()),
-        );
-        
+        actor
+            .subscriptions
+            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone()));
+        actor
+            .subscriptions
+            .insert(SubscriptionId(2), (test_session_id(1), subscriber.clone()));
+
         assert_eq!(actor.subscriptions.len(), 2);
 
         // Act
@@ -253,16 +243,14 @@ mod tests {
         let mut actor = NoticeRouteActor::new(test_family());
         let sub1 = test_address("session1");
         let sub2 = test_address("session2");
-        
+
         // Add subscriptions for different sessions
-        actor.subscriptions.insert(
-            SubscriptionId(1),
-            (test_session_id(1), sub1.clone()),
-        );
-        actor.subscriptions.insert(
-            SubscriptionId(2),
-            (test_session_id(2), sub2.clone()),
-        );
+        actor
+            .subscriptions
+            .insert(SubscriptionId(1), (test_session_id(1), sub1.clone()));
+        actor
+            .subscriptions
+            .insert(SubscriptionId(2), (test_session_id(2), sub2.clone()));
 
         // Act
         // Disconnect session 1
@@ -279,11 +267,10 @@ mod tests {
         // Arrange
         let mut actor = NoticeRouteActor::new(test_family());
         let subscriber = test_address("subscriber");
-        
-        actor.subscriptions.insert(
-            SubscriptionId(1),
-            (test_session_id(1), subscriber.clone()),
-        );
+
+        actor
+            .subscriptions
+            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone()));
 
         // Act
         let unsubscribe = UnsubscribeMessage::new(
@@ -304,16 +291,15 @@ mod tests {
         // This test documents the trust assumption:
         // NoticeRouteActor performs NO authentication checks.
         // It assumes SessionActor has already verified authorization.
-        
+
         // Arrange
         let actor = NoticeRouteActor::new(test_family());
-        
+
         // If we tried to call handle_subscribe or handle_publish directly,
         // there's no check that would fail. The actor trusts completely.
         // This is intentional -- auth/authz is SessionActor's responsibility.
-        
+
         // Assert: Just verify the actor exists and has no auth logic
         assert_eq!(actor.subscriptions.len(), 0);
     }
 }
-

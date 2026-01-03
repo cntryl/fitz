@@ -41,4 +41,3 @@ pub use router::{DeliveryError, MailboxSink, RouteError, Router};
 pub use scheduler::Scheduler;
 pub use subscriptions::{SubscriptionId, SubscriptionIndex};
 pub use supervision::{SupervisionAction, SupervisorStrategy};
-

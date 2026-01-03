@@ -86,6 +86,11 @@ harness = false
 path = "benches/tier1_hotpath_matcher.rs"
 
 [[bench]]
+name = "tier1_hotpath_tlv"
+harness = false
+path = "benches/tier1_hotpath_tlv.rs"
+
+[[bench]]
 name = "tier2_subsystem_router"
 harness = false
 path = "benches/tier2_subsystem_router.rs"

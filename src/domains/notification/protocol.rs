@@ -81,7 +81,12 @@ pub struct SubscribeMessage {
 }
 
 impl SubscribeMessage {
-    pub fn new(family_id: RouteFamily, pattern: Route, session_id: SessionId, subscriber: RouteAddress) -> Self {
+    pub fn new(
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: SessionId,
+        subscriber: RouteAddress,
+    ) -> Self {
         Self {
             family_id,
             pattern,
@@ -107,7 +112,12 @@ pub struct UnsubscribeMessage {
 }
 
 impl UnsubscribeMessage {
-    pub fn new(family_id: RouteFamily, pattern: Route, session_id: SessionId, subscriber: RouteAddress) -> Self {
+    pub fn new(
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: SessionId,
+        subscriber: RouteAddress,
+    ) -> Self {
         Self {
             family_id,
             pattern,

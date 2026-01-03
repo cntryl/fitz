@@ -89,7 +89,7 @@ fn bench_negative_match_late_fail(c: &mut Criterion) {
 /// Find the depth knee: increasing route depth
 fn bench_depth_knee(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/orders/**");
-    
+
     // Varying route depths
     let route_depth1 = Route::new("notify://acme/orders/x".to_string());
     let route_depth3 = Route::new("notify://acme/orders/a/b/c".to_string());
@@ -98,7 +98,7 @@ fn bench_depth_knee(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("hotpath_matcher_depth_knee");
     group.sampling_mode(criterion::SamplingMode::Flat);
-    
+
     group.bench_function("depth_1", |b| {
         b.iter(|| pattern.matches(black_box(&route_depth1)))
     });
@@ -111,14 +111,14 @@ fn bench_depth_knee(c: &mut Criterion) {
     group.bench_function("depth_10", |b| {
         b.iter(|| pattern.matches(black_box(&route_depth10)))
     });
-    
+
     group.finish();
 }
 
 /// Find the pattern complexity knee: multiple wildcards
 fn bench_pattern_complexity_knee(c: &mut Criterion) {
     let route = Route::new("notify://acme/orders/items/history/created".to_string());
-    
+
     let pattern_literals = Pattern::new("notify://acme/orders/items/history/created");
     let pattern_one_star = Pattern::new("notify://acme/orders/*/history/created");
     let pattern_two_stars = Pattern::new("notify://acme/*/items/*/created");
@@ -127,7 +127,7 @@ fn bench_pattern_complexity_knee(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("hotpath_matcher_complexity_knee");
     group.sampling_mode(criterion::SamplingMode::Flat);
-    
+
     group.bench_function("all_literals", |b| {
         b.iter(|| pattern_literals.matches(black_box(&route)))
     });
@@ -143,7 +143,7 @@ fn bench_pattern_complexity_knee(c: &mut Criterion) {
     group.bench_function("double_star", |b| {
         b.iter(|| pattern_double_star.matches(black_box(&route)))
     });
-    
+
     group.finish();
 }
 
@@ -151,7 +151,7 @@ fn bench_pattern_complexity_knee(c: &mut Criterion) {
 fn bench_backtracking_knee(c: &mut Criterion) {
     // Pattern with ** that must backtrack through alternatives
     let pattern = Pattern::new("notify://acme/**/items/created");
-    
+
     // Routes with varying depths before "items"
     let route_depth1 = Route::new("notify://acme/items/created".to_string());
     let route_depth2 = Route::new("notify://acme/orders/items/created".to_string());
@@ -160,7 +160,7 @@ fn bench_backtracking_knee(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("hotpath_matcher_backtracking_knee");
     group.sampling_mode(criterion::SamplingMode::Flat);
-    
+
     group.bench_function("backtrack_0_segments", |b| {
         b.iter(|| pattern.matches(black_box(&route_depth1)))
     });
@@ -173,14 +173,14 @@ fn bench_backtracking_knee(c: &mut Criterion) {
     group.bench_function("backtrack_4_segments", |b| {
         b.iter(|| pattern.matches(black_box(&route_depth5)))
     });
-    
+
     group.finish();
 }
 
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = bench_exact_match, bench_single_wildcard, bench_double_star_end, bench_double_star_middle, 
+    targets = bench_exact_match, bench_single_wildcard, bench_double_star_end, bench_double_star_middle,
               bench_negative_match_late_fail, bench_depth_knee, bench_pattern_complexity_knee, bench_backtracking_knee
 }
 criterion_main!(benches);

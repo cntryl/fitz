@@ -19,5 +19,7 @@ pub mod session;
 
 pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
 pub use permissions::SessionPermissions;
-pub use session::{next_session_id, CloseReason, Session, SessionError, SessionId, SessionInfo, SessionMetadata, TransportKind};
-
+pub use session::{
+    next_session_id, CloseReason, Session, SessionError, SessionId, SessionInfo, SessionMetadata,
+    TransportKind,
+};

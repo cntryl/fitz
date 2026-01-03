@@ -22,7 +22,7 @@ pub struct IngressConfig {
 impl Default for IngressConfig {
     fn default() -> Self {
         Self {
-            max_frame_size: 1024 * 1024,           // 1 MB
+            max_frame_size: 1024 * 1024, // 1 MB
             max_connections: 10_000,
             channel_capacity: 1000,
             backpressure_timeout: Duration::from_millis(100),

@@ -15,11 +15,15 @@ pub struct SessionPermissions {
 
 impl SessionPermissions {
     pub fn new(map: HashMap<String, String>) -> Self {
-        Self { inner: Arc::new(map) }
+        Self {
+            inner: Arc::new(map),
+        }
     }
 
     pub fn empty() -> Self {
-        Self { inner: Arc::new(HashMap::new()) }
+        Self {
+            inner: Arc::new(HashMap::new()),
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {

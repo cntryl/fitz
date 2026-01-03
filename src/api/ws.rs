@@ -106,8 +106,10 @@ impl WebSocketHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{SessionInfo, TransportKind, SessionMetadata, SessionPermissions, IngressDecision};
     use crate::protocol::frame::ChannelId;
+    use crate::session::{
+        IngressDecision, SessionInfo, SessionMetadata, SessionPermissions, TransportKind,
+    };
 
     // Mock ingress for testing
     struct MockIngress;
@@ -118,7 +120,12 @@ mod tests {
             Ok(1)
         }
 
-        async fn on_frame(&self, _session_id: u64, _channel_id: ChannelId, _message_payload: Bytes) -> IngressDecision {
+        async fn on_frame(
+            &self,
+            _session_id: u64,
+            _channel_id: ChannelId,
+            _message_payload: Bytes,
+        ) -> IngressDecision {
             IngressDecision::Accept
         }
 

@@ -14,8 +14,8 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Unique session identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,7 +157,11 @@ impl Session {
     }
 
     /// Handle a raw frame
-    pub async fn on_frame(&mut self, frame: Bytes, ingress: &dyn Ingress) -> Result<(), SessionError> {
+    pub async fn on_frame(
+        &mut self,
+        frame: Bytes,
+        ingress: &dyn Ingress,
+    ) -> Result<(), SessionError> {
         let records = self
             .decoder
             .decode_all(&frame)

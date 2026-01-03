@@ -19,7 +19,11 @@ pub struct ChannelMessage {
 
 impl ChannelMessage {
     pub fn new(channel: ChannelId, msg_type: MessageType, payload: Bytes) -> Self {
-        Self { channel, msg_type, payload }
+        Self {
+            channel,
+            msg_type,
+            payload,
+        }
     }
 }
 
@@ -49,7 +53,9 @@ pub struct TypeMapping {
 
 impl TypeMapping {
     pub fn new() -> Self {
-        Self { overrides: HashMap::new() }
+        Self {
+            overrides: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, msg_type: u16, channel: ChannelId) {
@@ -115,7 +121,11 @@ impl Mux {
         }
 
         *counter += 1;
-        Ok(ChannelMessage::new(channel, record.msg_type(), record.value))
+        Ok(ChannelMessage::new(
+            channel,
+            record.msg_type(),
+            record.value,
+        ))
     }
 
     pub fn release(&mut self, channel: ChannelId) {
@@ -130,7 +140,7 @@ impl Mux {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::tlv::{TlvEncoder, TlvDecoder};
+    use crate::protocol::tlv::{TlvDecoder, TlvEncoder};
 
     #[test]
     fn should_map_default_ranges() {
@@ -171,6 +181,9 @@ mod tests {
         let (record, _) = decoder.decode_one(&data).unwrap();
 
         let _ = mux.route(record.clone()).unwrap();
-        assert!(matches!(mux.route(record), Err(MuxError::ChannelFull(ChannelId::Pub))));
+        assert!(matches!(
+            mux.route(record),
+            Err(MuxError::ChannelFull(ChannelId::Pub))
+        ));
     }
 }

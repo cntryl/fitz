@@ -53,8 +53,8 @@
 //! ```
 
 use super::protocol::{LeaseMessage, LeaseResponse};
-use crate::runtime::{ActorRef, Context};
 use crate::runtime::routing::{Route, RouteFamily};
+use crate::runtime::{ActorRef, Context};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -239,8 +239,8 @@ impl LeaseGuard {
 mod tests {
     use super::*;
     use crate::domains::lease::LeaseActor;
-    use crate::runtime::scheduler::Scheduler;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::scheduler::Scheduler;
     use parking_lot::Mutex;
     use std::sync::Arc;
     use std::time::{Duration, Instant};

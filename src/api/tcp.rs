@@ -8,9 +8,9 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
-use crate::session::{CloseReason, Session, TransportKind, SessionPermissions, SessionMetadata};
 use crate::session::manager::Ingress;
-use bytes::{Bytes, BytesMut, Buf};
+use crate::session::{CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind};
+use bytes::{Buf, Bytes, BytesMut};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
@@ -90,15 +90,14 @@ impl TcpHandler {
             while buffer.len() >= 4 {
                 // Read length field (u32 BE)
                 let len_bytes = &buffer[0..4];
-                let len = u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                    as usize;
+                let len =
+                    u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                        as usize;
 
                 // Check frame size
                 if len > self.config.max_frame_size {
-                    let reason = format!(
-                        "frame too large: {} > {}",
-                        len, self.config.max_frame_size
-                    );
+                    let reason =
+                        format!("frame too large: {} > {}", len, self.config.max_frame_size);
                     self.ingress
                         .on_close(self.session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -180,13 +179,7 @@ pub async fn create_session(
     let session_id = ingress.on_open(session.info()).await?;
 
     // Create handler
-    Ok(TcpHandler::new(
-        ingress,
-        config,
-        session_id,
-        tx,
-        stream,
-    ))
+    Ok(TcpHandler::new(ingress, config, session_id, tx, stream))
 }
 
 /// Generate a unique session ID
