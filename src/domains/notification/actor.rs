@@ -34,8 +34,9 @@ use crate::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 use crate::session::session::SessionId;
 use std::collections::HashMap;
 
-/// Maps subscription ID to (session_id, subscriber_address)
-type SubscriptionMap = HashMap<SubscriptionId, (SessionId, crate::runtime::routing::RouteAddress)>;
+/// Maps subscription ID to (session_id, subscriber_address, pattern)
+/// Pattern is stored so we can remove the subscription from the index on unsubscribe
+type SubscriptionMap = HashMap<SubscriptionId, (SessionId, crate::runtime::routing::RouteAddress, crate::runtime::routing::Route)>;
 
 /// NoticeRouteActor owns subscriptions for a specific (RouteFamily, route) pair
 ///
@@ -76,47 +77,57 @@ impl NoticeRouteActor {
 
     /// Subscribe to a pattern (SessionActor has already verified authorization)
     fn handle_subscribe(&mut self, msg: SubscribeMessage, _ctx: &mut Context<Self>) {
+        // Deduplicate identical subscriptions (session_id, subscriber, pattern)
+        let already_exists = self.subscriptions.values().any(|(sess_id, addr, pattern)| {
+            *sess_id == msg.session_id && addr == &msg.subscriber && pattern == &msg.pattern
+        });
+        if already_exists {
+            // Idempotent subscribe: no-op
+            return;
+        }
+
         let subscription_id = self.allocate_subscription_id();
 
         // Add subscription to the trie-based index
         self.index
             .insert(self.family_id, &msg.pattern, subscription_id);
 
-        // Store metadata: session_id and subscriber address
+        // Store metadata: session_id, subscriber address and pattern
         self.subscriptions
-            .insert(subscription_id, (msg.session_id, msg.subscriber));
+            .insert(subscription_id, (msg.session_id, msg.subscriber, msg.pattern));
     }
 
     /// Unsubscribe from a specific pattern
     fn handle_unsubscribe(&mut self, msg: UnsubscribeMessage) {
         // Find and remove all subscriptions matching this session + subscriber + pattern
-        // Since the index doesn't return IDs directly, we need to scan subscriptions
         let to_remove: Vec<SubscriptionId> = self
             .subscriptions
             .iter()
-            .filter(|(_, (sess_id, addr))| *sess_id == msg.session_id && addr == &msg.subscriber)
+            .filter(|(_, (sess_id, addr, pattern))| {
+                *sess_id == msg.session_id && addr == &msg.subscriber && pattern == &msg.pattern
+            })
             .map(|(&id, _)| id)
             .collect();
 
         for id in to_remove {
+            // remove from index using the pattern
+            self.index.remove(self.family_id, &msg.pattern, id);
             self.subscriptions.remove(&id);
-            // Note: The index doesn't support remove by pattern, only by ID
-            // Full cleanup would require tracking pattern->id mappings
-            // For now, dead entries will be skipped during fanout
         }
     }
 
     /// Unsubscribe all subscriptions for a session (called on disconnect)
     fn handle_unsubscribe_all(&mut self, msg: UnsubscribeAllMessage) {
-        // Remove all subscriptions for this session
-        let to_remove: Vec<SubscriptionId> = self
+        // Remove all subscriptions for this session and from index
+        let to_remove: Vec<(SubscriptionId, crate::runtime::routing::Route)> = self
             .subscriptions
             .iter()
-            .filter(|(_, (_, addr))| addr == &msg.subscriber)
-            .map(|(&id, _)| id)
+            .filter(|(_, (_, addr, _))| addr == &msg.subscriber)
+            .map(|(&id, (_, _, pattern))| (id, pattern.clone()))
             .collect();
 
-        for id in to_remove {
+        for (id, pattern) in to_remove {
+            self.index.remove(self.family_id, &pattern, id);
             self.subscriptions.remove(&id);
         }
     }
@@ -128,11 +139,21 @@ impl NoticeRouteActor {
 
         // Fan-out to each matching subscriber
         for subscription_id in matching_ids {
-            if let Some((_, subscriber)) = self.subscriptions.get(&subscription_id) {
+            if let Some((_, subscriber, _)) = self.subscriptions.get(&subscription_id) {
                 let notify = NotifyMessage::new(msg.route.clone(), msg.payload.clone());
                 let _ = ctx.send(subscriber.clone(), NotificationMessage::Notify(notify));
             }
         }
+    }
+
+    /// Testing helpers: number of tracked subscriptions
+    pub fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
+    }
+
+    /// Testing helpers: number of index subscriptions for actor's family
+    pub fn index_count(&self) -> usize {
+        self.index.count_subscriptions(self.family_id)
     }
 }
 
@@ -199,18 +220,20 @@ mod tests {
         let pattern = test_route("notice://realm/orders/update");
         let subscriber = test_address("session1");
         let _subscribe =
-            SubscribeMessage::new(test_family(), pattern, test_session_id(1), subscriber);
+            SubscribeMessage::new(test_family(), pattern.clone(), test_session_id(1), subscriber.clone());
 
         // Act
         // We'd normally call this with a Context, but for this test
         // we just verify the subscription is tracked
+        actor.index.insert(test_family(), &pattern, SubscriptionId(1));
         actor.subscriptions.insert(
             SubscriptionId(1),
-            (test_session_id(1), test_address("session1")),
+            (test_session_id(1), test_address("session1"), pattern.clone()),
         );
 
         // Assert
         assert_eq!(actor.subscriptions.len(), 1);
+        assert_eq!(actor.index.count_subscriptions(test_family()), 1);
     }
 
     #[test]
@@ -218,16 +241,20 @@ mod tests {
         // Arrange
         let mut actor = NoticeRouteActor::new(test_family());
         let subscriber = test_address("subscriber");
+        let pattern = test_route("notice://realm/orders/update");
 
-        // Add subscriptions for a session
+        // Add subscriptions for a session (index + metadata)
+        actor.index.insert(test_family(), &pattern, SubscriptionId(1));
+        actor.index.insert(test_family(), &pattern, SubscriptionId(2));
         actor
             .subscriptions
-            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone()));
+            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone(), pattern.clone()));
         actor
             .subscriptions
-            .insert(SubscriptionId(2), (test_session_id(1), subscriber.clone()));
+            .insert(SubscriptionId(2), (test_session_id(1), subscriber.clone(), pattern.clone()));
 
         assert_eq!(actor.subscriptions.len(), 2);
+        assert_eq!(actor.index.count_subscriptions(test_family()), 2);
 
         // Act
         let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), subscriber);
@@ -235,6 +262,7 @@ mod tests {
 
         // Assert
         assert_eq!(actor.subscriptions.len(), 0);
+        assert_eq!(actor.index.count_subscriptions(test_family()), 0);
     }
 
     #[test]
@@ -243,14 +271,18 @@ mod tests {
         let mut actor = NoticeRouteActor::new(test_family());
         let sub1 = test_address("session1");
         let sub2 = test_address("session2");
+        let pattern1 = test_route("notice://realm/one");
+        let pattern2 = test_route("notice://realm/two");
 
         // Add subscriptions for different sessions
+        actor.index.insert(test_family(), &pattern1, SubscriptionId(1));
+        actor.index.insert(test_family(), &pattern2, SubscriptionId(2));
         actor
             .subscriptions
-            .insert(SubscriptionId(1), (test_session_id(1), sub1.clone()));
+            .insert(SubscriptionId(1), (test_session_id(1), sub1.clone(), pattern1));
         actor
             .subscriptions
-            .insert(SubscriptionId(2), (test_session_id(2), sub2.clone()));
+            .insert(SubscriptionId(2), (test_session_id(2), sub2.clone(), pattern2));
 
         // Act
         // Disconnect session 1
@@ -260,6 +292,7 @@ mod tests {
         // Assert
         assert_eq!(actor.subscriptions.len(), 1);
         assert!(actor.subscriptions.contains_key(&SubscriptionId(2)));
+        assert_eq!(actor.index.count_subscriptions(test_family()), 1);
     }
 
     #[test]
@@ -267,15 +300,17 @@ mod tests {
         // Arrange
         let mut actor = NoticeRouteActor::new(test_family());
         let subscriber = test_address("subscriber");
+        let pattern = test_route("notice://realm/orders/*");
 
+        actor.index.insert(test_family(), &pattern, SubscriptionId(1));
         actor
             .subscriptions
-            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone()));
+            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone(), pattern.clone()));
 
         // Act
         let unsubscribe = UnsubscribeMessage::new(
             test_family(),
-            test_route("notice://realm/orders/*"),
+            pattern.clone(),
             test_session_id(1),
             subscriber.clone(),
         );
@@ -284,6 +319,7 @@ mod tests {
 
         // Assert - subscription was removed in first call
         assert_eq!(actor.subscriptions.len(), 0); // Now empty after removal
+        assert_eq!(actor.index.count_subscriptions(test_family()), 0);
     }
 
     #[test]
