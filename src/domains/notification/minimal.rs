@@ -67,9 +67,13 @@ impl Fanout {
     /// NOTE: No heap allocations or vector pushes here — only a simple counter increment and
     /// a `black_box` to represent delivery work.
     pub fn deliver(&mut self, subs: &[SubscriberId], payload: &[u8]) -> usize {
+        // Touch the payload once to avoid size-dependent behavior in per-subscriber work.
+        core::hint::black_box(payload.as_ptr());
+        core::hint::black_box(payload.len());
+
         for &id in subs {
-            // represent delivery; keep payload borrowed
-            core::hint::black_box((id, payload));
+            // per-subscriber work is intentionally tiny and payload-free
+            core::hint::black_box(id);
             self.deliveries += 1;
         }
         subs.len()
