@@ -66,7 +66,9 @@ pub struct TypeMapping {
 
 impl Default for TypeMapping {
     fn default() -> Self {
-        Self { overrides: Arc::new(Vec::new()) }
+        Self {
+            overrides: Arc::new(Vec::new()),
+        }
     }
 }
 
@@ -184,7 +186,11 @@ impl Mux {
 
     /// Zero-copy hot path: route a msg by type and payload slice. No allocation.
     #[inline]
-    pub fn route_ref<'a>(&mut self, msg_type: MessageType, payload: &'a [u8]) -> Result<ChannelRef<'a>, MuxError> {
+    pub fn route_ref<'a>(
+        &mut self,
+        msg_type: MessageType,
+        payload: &'a [u8],
+    ) -> Result<ChannelRef<'a>, MuxError> {
         let t = msg_type.as_u16();
         let channel = self
             .type_mapping
@@ -199,13 +205,25 @@ impl Mux {
         }
         *counter += 1;
 
-        Ok(ChannelRef { channel, msg_type, payload })
+        Ok(ChannelRef {
+            channel,
+            msg_type,
+            payload,
+        })
     }
 
     /// Route and return an RAII grant that will release capacity when dropped.
-    pub fn route_grant<'a>(&'a mut self, msg_type: MessageType, payload: &'a [u8]) -> Result<(ChannelRef<'a>, ChannelGrant<'a>), MuxError> {
+    pub fn route_grant<'a>(
+        &'a mut self,
+        msg_type: MessageType,
+        payload: &'a [u8],
+    ) -> Result<(ChannelRef<'a>, ChannelGrant<'a>), MuxError> {
         let cref = self.route_ref(msg_type, payload)?;
-        let grant = ChannelGrant { mux: self, channel: cref.channel, released: false };
+        let grant = ChannelGrant {
+            mux: self,
+            channel: cref.channel,
+            released: false,
+        };
         Ok((cref, grant))
     }
 

@@ -33,14 +33,26 @@ impl Matcher {
     }
 
     /// Return a borrowed slice of subscriber ids for this message (zero-alloc)
-    pub fn matching_subscribers<'a>(&'a self, msg_type: MessageType, _payload: &'a [u8]) -> Option<&'a [SubscriberId]> {
+    pub fn matching_subscribers<'a>(
+        &'a self,
+        msg_type: MessageType,
+        _payload: &'a [u8],
+    ) -> Option<&'a [SubscriberId]> {
         // For this minimal implementation, we ignore payload predicates.
-        self.subs.iter().find(|e| e.0 == msg_type.as_u16()).map(|(_, v)| &v[..])
+        self.subs
+            .iter()
+            .find(|e| e.0 == msg_type.as_u16())
+            .map(|(_, v)| &v[..])
     }
 
     /// Match into a caller-provided SmallVec without allocating.
     /// Returns the number of subscribers written into `out`.
-    pub fn match_into(&self, out: &mut smallvec::SmallVec<[SubscriberId; 8]>, msg_type: MessageType, _payload: &[u8]) -> usize {
+    pub fn match_into(
+        &self,
+        out: &mut smallvec::SmallVec<[SubscriberId; 8]>,
+        msg_type: MessageType,
+        _payload: &[u8],
+    ) -> usize {
         out.clear();
         if let Some(subs) = self.matching_subscribers(msg_type, _payload) {
             out.extend_from_slice(subs);
@@ -79,7 +91,9 @@ impl Fanout {
         subs.len()
     }
 
-    pub fn delivered_count(&self) -> usize { self.deliveries }
+    pub fn delivered_count(&self) -> usize {
+        self.deliveries
+    }
 }
 
 /// Thin NotificationDomain that composes a `Matcher` and a `Fanout` and wires the
@@ -92,7 +106,10 @@ pub struct NotificationDomain {
 
 impl NotificationDomain {
     pub fn new() -> Self {
-        Self { matcher: Matcher::new(), fanout: Fanout::new() }
+        Self {
+            matcher: Matcher::new(),
+            fanout: Fanout::new(),
+        }
     }
 
     /// Register a subscription in the underlying matcher
@@ -114,9 +131,10 @@ impl NotificationDomain {
         self.fanout.delivered_count()
     }
 
-    pub fn matcher(&self) -> &Matcher { &self.matcher }
+    pub fn matcher(&self) -> &Matcher {
+        &self.matcher
+    }
 }
-
 
 #[cfg(test)]
 mod tests {

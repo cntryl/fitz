@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::notification::minimal::NotificationDomain;
-use fitz::protocol::tlv::{TlvDecoder, TlvEncoder, MessageType};
 use fitz::protocol::mux::Mux;
+use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 
 #[path = "config.rs"]
 mod config;

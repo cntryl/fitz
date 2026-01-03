@@ -36,7 +36,14 @@ use std::collections::HashMap;
 
 /// Maps subscription ID to (session_id, subscriber_address, pattern)
 /// Pattern is stored so we can remove the subscription from the index on unsubscribe
-type SubscriptionMap = HashMap<SubscriptionId, (SessionId, crate::runtime::routing::RouteAddress, crate::runtime::routing::Route)>;
+type SubscriptionMap = HashMap<
+    SubscriptionId,
+    (
+        SessionId,
+        crate::runtime::routing::RouteAddress,
+        crate::runtime::routing::Route,
+    ),
+>;
 
 /// NoticeRouteActor owns subscriptions for a specific (RouteFamily, route) pair
 ///
@@ -93,8 +100,10 @@ impl NoticeRouteActor {
             .insert(self.family_id, &msg.pattern, subscription_id);
 
         // Store metadata: session_id, subscriber address and pattern
-        self.subscriptions
-            .insert(subscription_id, (msg.session_id, msg.subscriber, msg.pattern));
+        self.subscriptions.insert(
+            subscription_id,
+            (msg.session_id, msg.subscriber, msg.pattern),
+        );
     }
 
     /// Unsubscribe from a specific pattern
@@ -219,16 +228,26 @@ mod tests {
         let mut actor = NoticeRouteActor::new(test_family());
         let pattern = test_route("notice://realm/orders/update");
         let subscriber = test_address("session1");
-        let _subscribe =
-            SubscribeMessage::new(test_family(), pattern.clone(), test_session_id(1), subscriber.clone());
+        let _subscribe = SubscribeMessage::new(
+            test_family(),
+            pattern.clone(),
+            test_session_id(1),
+            subscriber.clone(),
+        );
 
         // Act
         // We'd normally call this with a Context, but for this test
         // we just verify the subscription is tracked
-        actor.index.insert(test_family(), &pattern, SubscriptionId(1));
+        actor
+            .index
+            .insert(test_family(), &pattern, SubscriptionId(1));
         actor.subscriptions.insert(
             SubscriptionId(1),
-            (test_session_id(1), test_address("session1"), pattern.clone()),
+            (
+                test_session_id(1),
+                test_address("session1"),
+                pattern.clone(),
+            ),
         );
 
         // Assert
@@ -244,14 +263,20 @@ mod tests {
         let pattern = test_route("notice://realm/orders/update");
 
         // Add subscriptions for a session (index + metadata)
-        actor.index.insert(test_family(), &pattern, SubscriptionId(1));
-        actor.index.insert(test_family(), &pattern, SubscriptionId(2));
         actor
-            .subscriptions
-            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone(), pattern.clone()));
+            .index
+            .insert(test_family(), &pattern, SubscriptionId(1));
         actor
-            .subscriptions
-            .insert(SubscriptionId(2), (test_session_id(1), subscriber.clone(), pattern.clone()));
+            .index
+            .insert(test_family(), &pattern, SubscriptionId(2));
+        actor.subscriptions.insert(
+            SubscriptionId(1),
+            (test_session_id(1), subscriber.clone(), pattern.clone()),
+        );
+        actor.subscriptions.insert(
+            SubscriptionId(2),
+            (test_session_id(1), subscriber.clone(), pattern.clone()),
+        );
 
         assert_eq!(actor.subscriptions.len(), 2);
         assert_eq!(actor.index.count_subscriptions(test_family()), 2);
@@ -275,14 +300,20 @@ mod tests {
         let pattern2 = test_route("notice://realm/two");
 
         // Add subscriptions for different sessions
-        actor.index.insert(test_family(), &pattern1, SubscriptionId(1));
-        actor.index.insert(test_family(), &pattern2, SubscriptionId(2));
         actor
-            .subscriptions
-            .insert(SubscriptionId(1), (test_session_id(1), sub1.clone(), pattern1));
+            .index
+            .insert(test_family(), &pattern1, SubscriptionId(1));
         actor
-            .subscriptions
-            .insert(SubscriptionId(2), (test_session_id(2), sub2.clone(), pattern2));
+            .index
+            .insert(test_family(), &pattern2, SubscriptionId(2));
+        actor.subscriptions.insert(
+            SubscriptionId(1),
+            (test_session_id(1), sub1.clone(), pattern1),
+        );
+        actor.subscriptions.insert(
+            SubscriptionId(2),
+            (test_session_id(2), sub2.clone(), pattern2),
+        );
 
         // Act
         // Disconnect session 1
@@ -302,10 +333,13 @@ mod tests {
         let subscriber = test_address("subscriber");
         let pattern = test_route("notice://realm/orders/*");
 
-        actor.index.insert(test_family(), &pattern, SubscriptionId(1));
         actor
-            .subscriptions
-            .insert(SubscriptionId(1), (test_session_id(1), subscriber.clone(), pattern.clone()));
+            .index
+            .insert(test_family(), &pattern, SubscriptionId(1));
+        actor.subscriptions.insert(
+            SubscriptionId(1),
+            (test_session_id(1), subscriber.clone(), pattern.clone()),
+        );
 
         // Act
         let unsubscribe = UnsubscribeMessage::new(

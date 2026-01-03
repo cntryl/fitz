@@ -60,7 +60,6 @@ pub struct TlvRef<'a> {
 
 /// Zero-copy reference to a TLV record (borrows the input buffer)
 
-
 impl TlvRecord {
     pub fn new(msg_type: MessageType, value: Bytes) -> Self {
         Self { msg_type, value }
@@ -138,7 +137,10 @@ impl TlvDecoder {
     /// Zero-copy decode: returns (MessageType, value_slice, consumed_bytes)
     /// No allocations, suitable for hot-path routing.
     #[inline]
-    pub fn decode_one_ref<'a>(&self, input: &'a [u8]) -> Result<(MessageType, &'a [u8], usize), TlvError> {
+    pub fn decode_one_ref<'a>(
+        &self,
+        input: &'a [u8],
+    ) -> Result<(MessageType, &'a [u8], usize), TlvError> {
         if input.is_empty() {
             return Err(TlvError::EmptyFrame);
         }
@@ -199,7 +201,10 @@ impl TlvDecoder {
     #[inline]
     pub fn decode_one(&self, input: &[u8]) -> Result<(TlvRecord, usize), TlvError> {
         let (msg_type, slice, consumed) = self.decode_one_ref(input)?;
-        Ok((TlvRecord::new(msg_type, Bytes::copy_from_slice(slice)), consumed))
+        Ok((
+            TlvRecord::new(msg_type, Bytes::copy_from_slice(slice)),
+            consumed,
+        ))
     }
 
     /// Decode all into a provided vector to reuse allocation. Returns number of records appended.
@@ -216,12 +221,19 @@ impl TlvDecoder {
     }
 
     /// Collect zero-copy refs into user-provided vector. No allocations beyond the Vec buffer itself.
-    pub fn decode_refs_into<'a>(&self, input: &'a [u8], out: &mut Vec<TlvRef<'a>>) -> Result<usize, TlvError> {
+    pub fn decode_refs_into<'a>(
+        &self,
+        input: &'a [u8],
+        out: &mut Vec<TlvRef<'a>>,
+    ) -> Result<usize, TlvError> {
         let mut offset = 0usize;
         let mut count = 0usize;
         while offset < input.len() {
             let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
-            out.push(TlvRef { ty: msg_type, value: slice });
+            out.push(TlvRef {
+                ty: msg_type,
+                value: slice,
+            });
             offset += consumed;
             count += 1;
         }
@@ -237,7 +249,11 @@ impl TlvDecoder {
 
     /// Iterator over zero-copy decoded records. Yields `Ok((MessageType, &value))` or an `Err` on first failure.
     pub fn iter<'a>(&'a self, input: &'a [u8]) -> TlvDecoderIter<'a> {
-        TlvDecoderIter { decoder: self, buf: input, offset: 0 }
+        TlvDecoderIter {
+            decoder: self,
+            buf: input,
+            offset: 0,
+        }
     }
 }
 
@@ -450,7 +466,13 @@ mod tests {
         data.extend_from_slice(&(0u32.to_be_bytes()));
 
         let decoder = TlvDecoder::new();
-        assert!(matches!(decoder.decode_one_ref(&data), Err(TlvError::InvalidTypeEncoding)));
-        assert!(matches!(decoder.decode_one(&data), Err(TlvError::InvalidTypeEncoding)));
+        assert!(matches!(
+            decoder.decode_one_ref(&data),
+            Err(TlvError::InvalidTypeEncoding)
+        ));
+        assert!(matches!(
+            decoder.decode_one(&data),
+            Err(TlvError::InvalidTypeEncoding)
+        ));
     }
 }

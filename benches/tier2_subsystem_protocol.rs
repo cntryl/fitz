@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::protocol::tlv::{TlvDecoder, TlvEncoder, MessageType, TlvRecord};
 use fitz::protocol::mux::Mux;
+use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder, TlvRecord};
 
 #[path = "config.rs"]
 mod config;
