@@ -126,6 +126,39 @@ pub struct ChannelRef<'a> {
     pub payload: &'a [u8],
 }
 
+/// RAII grant that releases channel capacity when dropped.
+///
+/// This type borrows the `Mux` mutably for its lifetime to guarantee the
+/// grant is released to the same mux instance. Holding a `ChannelGrant` will
+/// prevent other mutable operations on the same `Mux` until it is dropped.
+pub struct ChannelGrant<'a> {
+    mux: &'a mut Mux,
+    channel: ChannelId,
+    released: bool,
+}
+
+impl<'a> ChannelGrant<'a> {
+    /// Explicitly consume the grant and release capacity early.
+    pub fn release(mut self) {
+        if !self.released {
+            self.mux.release(self.channel);
+            self.released = true;
+        }
+        // Prevent Drop from running now that we've already released
+        std::mem::forget(self);
+    }
+}
+
+impl<'a> Drop for ChannelGrant<'a> {
+    fn drop(&mut self) {
+        if !self.released {
+            // Release capacity back to mux on drop.
+            self.mux.release(self.channel);
+            self.released = true;
+        }
+    }
+}
+
 impl Mux {
     pub fn new(channel_capacity: usize) -> Self {
         let mut capacities = [0usize; ChannelId::COUNT];
@@ -169,6 +202,13 @@ impl Mux {
         Ok(ChannelRef { channel, msg_type, payload })
     }
 
+    /// Route and return an RAII grant that will release capacity when dropped.
+    pub fn route_grant<'a>(&'a mut self, msg_type: MessageType, payload: &'a [u8]) -> Result<(ChannelRef<'a>, ChannelGrant<'a>), MuxError> {
+        let cref = self.route_ref(msg_type, payload)?;
+        let grant = ChannelGrant { mux: self, channel: cref.channel, released: false };
+        Ok((cref, grant))
+    }
+
     /// Convenience owning API: consumes a `TlvRecord` and returns an owned `ChannelMessage`.
     pub fn route(&mut self, record: TlvRecord) -> Result<ChannelMessage, MuxError> {
         // extract msg_type first to avoid partial moves
@@ -195,6 +235,11 @@ impl Mux {
         if self.counters[idx] > 0 {
             self.counters[idx] -= 1;
         }
+    }
+
+    /// Inspect current occupancy for a channel (useful for tests and benches)
+    pub fn occupancy(&self, channel: ChannelId) -> usize {
+        self.counters[channel.idx()]
     }
 }
 
@@ -235,7 +280,26 @@ mod tests {
         let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
         let cref = mux2.route_ref(mt, slice).unwrap();
         assert_eq!(cref.channel, ChannelId::Pub);
-        mux2.release(cref.channel);    }
+        mux2.release(cref.channel);
+
+        // RAII grant path
+        let mut mux3 = Mux::new(1);
+        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
+        {
+            let (_cref, _grant) = mux3.route_grant(mt, slice).unwrap();
+            // grant held; cannot call other mux methods while borrowed
+        }
+        // grant dropped, now routing should succeed
+        assert!(mux3.route_ref(mt, slice).is_ok());
+
+        // Explicit release
+        let mut mux4 = Mux::new(1);
+        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
+        let (_cref, grant) = mux4.route_grant(mt, slice).unwrap();
+        // Explicit release
+        grant.release();
+        assert!(mux4.route_ref(mt, slice).is_ok());
+    }
 
     #[test]
     fn should_track_backpressure() {

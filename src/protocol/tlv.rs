@@ -51,6 +51,16 @@ pub struct TlvRecord {
     pub value: Bytes,
 }
 
+/// Zero-copy reference to a TLV record (borrows the input buffer)
+#[derive(Debug, Clone, Copy)]
+pub struct TlvRef<'a> {
+    pub ty: MessageType,
+    pub value: &'a [u8],
+}
+
+/// Zero-copy reference to a TLV record (borrows the input buffer)
+
+
 impl TlvRecord {
     pub fn new(msg_type: MessageType, value: Bytes) -> Self {
         Self { msg_type, value }
@@ -199,6 +209,19 @@ impl TlvDecoder {
         while offset < input.len() {
             let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
             out.push(TlvRecord::new(msg_type, Bytes::copy_from_slice(slice)));
+            offset += consumed;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Collect zero-copy refs into user-provided vector. No allocations beyond the Vec buffer itself.
+    pub fn decode_refs_into<'a>(&self, input: &'a [u8], out: &mut Vec<TlvRef<'a>>) -> Result<usize, TlvError> {
+        let mut offset = 0usize;
+        let mut count = 0usize;
+        while offset < input.len() {
+            let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
+            out.push(TlvRef { ty: msg_type, value: slice });
             offset += consumed;
             count += 1;
         }
@@ -369,6 +392,23 @@ mod tests {
         let all = decoder.decode_all(&data).unwrap();
         assert_eq!(all[0].msg_type().as_u16(), 3);
         assert_eq!(all[1].msg_type().as_u16(), 4);
+    }
+
+    #[test]
+    fn decode_refs_into_zero_copy() {
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(7), b"hello");
+        encoder.encode(MessageType::new(8), b"world");
+        let data = encoder.finish();
+
+        let decoder = TlvDecoder::new();
+        let mut out: Vec<TlvRef> = Vec::new();
+        let n = decoder.decode_refs_into(&data, &mut out).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(out[0].ty.as_u16(), 7);
+        assert_eq!(out[1].ty.as_u16(), 8);
+        assert_eq!(out[0].value, b"hello");
+        assert_eq!(out[1].value, b"world");
     }
 
     #[test]
