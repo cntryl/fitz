@@ -6,8 +6,18 @@
 use crate::protocol::frame::ChannelId;
 use crate::protocol::tlv::{MessageType, TlvRecord};
 use bytes::Bytes;
-use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
+
+impl ChannelId {
+    /// Number of channels (stable)
+    pub const COUNT: usize = 6;
+
+    #[inline(always)]
+    pub fn idx(self) -> usize {
+        self as usize
+    }
+}
 
 /// Message routed to a channel
 #[derive(Debug, Clone)]
@@ -45,26 +55,49 @@ impl fmt::Display for MuxError {
 
 impl std::error::Error for MuxError {}
 
-/// Type-to-channel mapping with optional overrides
-#[derive(Debug, Default, Clone)]
+/// Type-to-channel mapping with optional overrides.
+///
+/// Overrides are stored in a small, shared vector (Arc) to keep hot-path reads lock-free
+/// and cache-friendly. Default routing is an inline range match.
+#[derive(Debug, Clone)]
 pub struct TypeMapping {
-    overrides: HashMap<u16, ChannelId>,
+    overrides: Arc<Vec<(u16, ChannelId)>>,
+}
+
+impl Default for TypeMapping {
+    fn default() -> Self {
+        Self { overrides: Arc::new(Vec::new()) }
+    }
 }
 
 impl TypeMapping {
     pub fn new() -> Self {
-        Self {
-            overrides: HashMap::new(),
-        }
+        Self::default()
     }
 
+    /// Register an override for a specific message type. This replaces the shared vector
+    /// with a new Arc so hot-path readers can continue without locks.
     pub fn register(&mut self, msg_type: u16, channel: ChannelId) {
-        self.overrides.insert(msg_type, channel);
+        let mut vec = (*self.overrides).clone();
+        // replace or insert
+        if let Some(entry) = vec.iter_mut().find(|e| e.0 == msg_type) {
+            entry.1 = channel;
+        } else {
+            vec.push((msg_type, channel));
+        }
+        self.overrides = Arc::new(vec);
     }
 
+    /// Get channel for msg_type. Fast path: if no overrides, do only a range check.
+    #[inline(always)]
     pub fn get_channel(&self, msg_type: u16) -> Option<ChannelId> {
-        if let Some(&channel) = self.overrides.get(&msg_type) {
-            return Some(channel);
+        // If overrides exist, do a small linear scan first (overrides rare and small)
+        if !self.overrides.is_empty() {
+            for &(t, ch) in self.overrides.iter() {
+                if t == msg_type {
+                    return Some(ch);
+                }
+            }
         }
 
         match msg_type {
@@ -81,18 +114,26 @@ impl TypeMapping {
 /// Multiplexer enforcing per-channel backpressure
 pub struct Mux {
     type_mapping: TypeMapping,
-    capacities: HashMap<ChannelId, usize>,
-    counters: HashMap<ChannelId, usize>,
+    // Fixed-size arrays for capacities and counters to avoid HashMap lookups on hot path
+    capacities: [usize; ChannelId::COUNT],
+    counters: [usize; ChannelId::COUNT],
+}
+
+/// Borrowed, zero-copy routing result
+pub struct ChannelRef<'a> {
+    pub channel: ChannelId,
+    pub msg_type: MessageType,
+    pub payload: &'a [u8],
 }
 
 impl Mux {
     pub fn new(channel_capacity: usize) -> Self {
-        let mut capacities = HashMap::new();
-        let mut counters = HashMap::new();
+        let mut capacities = [0usize; ChannelId::COUNT];
+        let mut counters = [0usize; ChannelId::COUNT];
 
         for channel in ChannelId::all() {
-            capacities.insert(channel, channel_capacity);
-            counters.insert(channel, 0);
+            capacities[channel.idx()] = channel_capacity;
+            counters[channel.idx()] = 0;
         }
 
         Self {
@@ -108,31 +149,51 @@ impl Mux {
         mux
     }
 
-    pub fn route(&mut self, record: TlvRecord) -> Result<ChannelMessage, MuxError> {
+    /// Zero-copy hot path: route a msg by type and payload slice. No allocation.
+    #[inline(always)]
+    pub fn route_ref<'a>(&mut self, msg_type: MessageType, payload: &'a [u8]) -> Result<ChannelRef<'a>, MuxError> {
+        let t = msg_type.as_u16();
         let channel = self
             .type_mapping
-            .get_channel(record.msg_type().as_u16())
-            .ok_or(MuxError::UnknownMessageType(record.msg_type().as_u16()))?;
+            .get_channel(t)
+            .ok_or(MuxError::UnknownMessageType(t))?;
 
-        let counter = self.counters.get_mut(&channel).expect("channel missing");
-        let capacity = self.capacities[&channel];
+        let idx = channel.idx();
+        let counter = &mut self.counters[idx];
+        let capacity = self.capacities[idx];
         if *counter >= capacity {
             return Err(MuxError::ChannelFull(channel));
         }
-
         *counter += 1;
-        Ok(ChannelMessage::new(
-            channel,
-            record.msg_type(),
-            record.value,
-        ))
+
+        Ok(ChannelRef { channel, msg_type, payload })
+    }
+
+    /// Convenience owning API: consumes a `TlvRecord` and returns an owned `ChannelMessage`.
+    pub fn route(&mut self, record: TlvRecord) -> Result<ChannelMessage, MuxError> {
+        // extract msg_type first to avoid partial moves
+        let mt = record.msg_type();
+        let payload = record.value;
+        let channel = self
+            .type_mapping
+            .get_channel(mt.as_u16())
+            .ok_or(MuxError::UnknownMessageType(mt.as_u16()))?;
+
+        let idx = channel.idx();
+        let counter = &mut self.counters[idx];
+        let capacity = self.capacities[idx];
+        if *counter >= capacity {
+            return Err(MuxError::ChannelFull(channel));
+        }
+        *counter += 1;
+
+        Ok(ChannelMessage::new(channel, mt, payload))
     }
 
     pub fn release(&mut self, channel: ChannelId) {
-        if let Some(counter) = self.counters.get_mut(&channel) {
-            if *counter > 0 {
-                *counter -= 1;
-            }
+        let idx = channel.idx();
+        if self.counters[idx] > 0 {
+            self.counters[idx] -= 1;
         }
     }
 }
@@ -169,7 +230,12 @@ mod tests {
         // Assert
         assert_eq!(msg.channel, ChannelId::Pub);
         mux.release(ChannelId::Pub);
-    }
+        // Zero-copy path
+        let mut mux2 = Mux::new(2);
+        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
+        let cref = mux2.route_ref(mt, slice).unwrap();
+        assert_eq!(cref.channel, ChannelId::Pub);
+        mux2.release(cref.channel);    }
 
     #[test]
     fn should_track_backpressure() {
