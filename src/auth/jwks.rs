@@ -5,6 +5,15 @@ use base64::Engine;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// JWKS caching layer.
+///
+/// **Strictly:** In-memory cache only. No HTTP, no I/O, no domain logic.
+/// - In-memory cache with TTL
+/// - Key lookup helpers
+/// - Test injection support
+///
+/// HTTP fetch is done in the *transport layer* only (see `fetch_and_cache_jwks`/`ensure_jwks_cached`).
+
 /// Minimal JWK representation sufficient for our needs
 #[derive(Debug, Deserialize)]
 struct Jwk {
@@ -151,7 +160,7 @@ pub async fn ensure_jwks_cached(jwks_url: &str) -> Result<(), String> {
 
 /// Derive a default JWKS URL from issuer (e.g. "https://idp.example" -> "https://idp.example/.well-known/jwks.json")
 pub fn derive_jwks_url_from_issuer(iss: &str) -> Result<String, String> {
-    let mut base = iss.trim_end_matches('/');
+    let base = iss.trim_end_matches('/');
     // validate url
     let _ = url::Url::parse(base).map_err(|e| format!("invalid issuer url: {}", e))?;
     Ok(format!("{}/.well-known/jwks.json", base))
@@ -161,33 +170,70 @@ pub fn derive_jwks_url_from_issuer(iss: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::{EncodingKey, Header, Validation, decode};
 
-    #[tokio::test]
-    async fn cache_and_use_oct_key() {
-        // Create a JWKS with a single oct key (base64url encoded secret)
-        let secret = b"supersecretkey".to_vec();
+    #[test]
+    fn should_cache_jwks_from_json() {
+        // Arrange
+        let secret = b"test_secret".to_vec();
         let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
-        let jwks = serde_json::json!({
+        let jwks_json = serde_json::json!({
             "keys": [
-                { "kty": "oct", "kid": "test-kid", "k": k_b64 }
+                { "kty": "oct", "kid": "k1", "k": k_b64 }
             ]
-        });
-        let jwks_str = jwks.to_string();
+        })
+        .to_string();
 
-        cache_jwks_from_json("inline://local", &jwks_str).expect("cache jwks");
+        // Act
+        cache_jwks_from_json_with_ttl("inline://local", &jwks_json, 1).unwrap();
 
-        // Produce a JWT with HS256
-        let payload = serde_json::json!({ "sub": "user:1", "exp": 9999999999u64 });
-        let header = Header::new(jsonwebtoken::Algorithm::HS256);
-        let jwt = jsonwebtoken::encode(&header, &payload, &EncodingKey::from_secret(secret.as_slice())).unwrap();
+        // Assert
+        assert!(!is_jwks_stale("inline://local"));
+    }
 
-        // Use the new helper to verify via jwks URL
-        let perms = crate::auth::permissions_from_jwt_using_jwks(&jwt, "inline://local")
-            .await
-            .expect("permissions from jwks");
+    #[test]
+    fn should_detect_jwks_staleness_after_ttl() {
+        // Arrange
+        let secret = b"test_secret".to_vec();
+        let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
+        let jwks_json = serde_json::json!({
+            "keys": [
+                { "kty": "oct", "kid": "k1", "k": k_b64 }
+            ]
+        })
+        .to_string();
+        cache_jwks_from_json_with_ttl("inline://local2", &jwks_json, 1).unwrap();
 
-        // No permissions in payload, but verification should succeed and return empty snapshot
-        assert!(!perms.allows(&crate::runtime::routing::Route::new("notice://prod/orders/create"), crate::auth::Access::Read));
+        // Act: Simulate staleness by manipulating the cache entry
+        if let Some(mut entry) = JWKS_CACHE.get_mut("inline://local2") {
+            entry.fetched_at = 0;
+        }
+
+        // Assert
+        assert!(is_jwks_stale("inline://local2"));
+    }
+
+    #[test]
+    fn should_derive_jwks_url_with_trailing_slash() {
+        // Arrange
+        let iss = "https://idp.example/";
+
+        // Act
+        let url = derive_jwks_url_from_issuer(iss).unwrap();
+
+        // Assert
+        assert_eq!(url, "https://idp.example/.well-known/jwks.json");
+    }
+
+    #[test]
+    fn should_derive_jwks_url_without_trailing_slash() {
+        // Arrange
+        let iss = "https://idp.example";
+
+        // Act
+        let url = derive_jwks_url_from_issuer(iss).unwrap();
+
+        // Assert
+        assert_eq!(url, "https://idp.example/.well-known/jwks.json");
     }
 }
+

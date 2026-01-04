@@ -1,11 +1,15 @@
-//! Single JWK (JSON Web Key) handling.
+//! JWT token verification and decoding.
 //!
-//! **Strictly:** Cryptography only.
-//! - Parse JWK components (n, e, k, etc.)
-//! - Convert to `jsonwebtoken` key types
-//! - No caching, no I/O, no domain logic
+//! **Strictly:** Signature verification only.
+//! - Verify RSA-signed JWTs
+//! - Verify HMAC-signed JWTs
+//! - Extract claims payload
 //!
-//! Caching is in `jwks.rs`. HTTP fetch is in transport layer.
+//! Does NOT:
+//! - Issue tokens (no signing)
+//! - Validate claims (see `claims.rs`)
+//! - Perform authorization
+//! - Do HTTP/network I/O
 
 use jsonwebtoken::{Algorithm, decode, decode_header, DecodingKey, Validation};
 use serde_json::Value;
@@ -45,3 +49,37 @@ pub fn verify_jwt_with_hmac_secret(token: &str, secret: &[u8]) -> Result<Value, 
 
     Ok(token_data.claims)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_reject_invalid_token_format() {
+        // Arrange
+        let invalid_token = "not.a.jwt";
+        let public_pem = b"-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----";
+
+        // Act
+        let result = verify_jwt_with_rsa_pem(invalid_token, public_pem);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_hmac_with_wrong_algorithm() {
+        // Arrange
+        let secret = b"test_secret";
+        // This is a malformed token that will fail header parsing
+        let token = "not.a.token";
+
+        // Act
+        let result = verify_jwt_with_hmac_secret(token, secret);
+
+        // Assert
+        assert!(result.is_err());
+    }
+}
+

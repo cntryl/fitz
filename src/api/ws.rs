@@ -157,6 +157,7 @@ mod tests {
             peer_addr: None,
             metadata: Arc::new(SessionMetadata::new()),
             permissions_snapshot: SessionPermissions::empty(),
+            claims: None,
             authenticated: false,
         };
 

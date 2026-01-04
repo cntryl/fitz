@@ -1,31 +1,61 @@
-use crate::auth::Access;
+use crate::auth::{Access, Claims};
 use crate::runtime::routing::Route;
 use crate::session::session::SessionId;
 use crate::session::permissions::SessionPermissions;
 use std::sync::Arc;
 
-/// Session-scoped actor helper that encapsulates authorization checks.
+/// Session-scoped actor that enforces authorization.
 ///
-/// Responsibilities:
-/// - Hold immutable `SessionPermissions` snapshot
-/// - Provide `authorize` helper for domain-level checks
+/// **Responsibility:** Check every operation against compiled permissions
+/// before calling domains. Domains are guaranteed to receive authorized requests only.
+///
+/// **Invariants:**
+/// - Claims are immutable after authentication
+/// - Permissions are compiled once, never reparsed
+/// - Authorization is mandatory for every operation
 #[derive(Debug, Clone)]
 pub struct SessionActor {
     pub session_id: SessionId,
+    /// Immutable authentication claims (set at auth time, may be None for pre-auth)
+    pub claims: Option<Arc<Claims>>,
+    /// Compiled and ready-to-match permissions
     pub permissions: Arc<SessionPermissions>,
 }
 
 impl SessionActor {
+    /// Create a new unauthenticated session actor (pre-auth state)
     pub fn new(session_id: SessionId, permissions: SessionPermissions) -> Self {
         Self {
             session_id,
+            claims: None,
             permissions: Arc::new(permissions),
         }
     }
 
-    /// Check whether this session is allowed to perform `access` on `route`.
+    /// Authenticate this actor with claims (called after auth verification)
+    pub fn authenticate(&mut self, claims: Claims, permissions: SessionPermissions) {
+        self.claims = Some(Arc::new(claims));
+        self.permissions = Arc::new(permissions);
+    }
+
+    /// Core authorization gate: check if this session is allowed to perform
+    /// `access` on `route`.
+    ///
+    /// **Every domain call must pass through this check.**
+    /// If this returns false, the operation is rejected at the session layer
+    /// and never reaches the domain.
     pub fn authorize(&self, route: &Route, access: Access) -> bool {
         self.permissions.allows(route, access)
+    }
+
+    /// Batch authorization check (useful for multi-operation requests)
+    pub fn authorize_all(&self, checks: &[(Route, Access)]) -> bool {
+        checks.iter().all(|(route, access)| self.authorize(route, *access))
+    }
+
+    /// Check if this session is authenticated
+    pub fn is_authenticated(&self) -> bool {
+        self.claims.is_some()
     }
 }
 
@@ -39,8 +69,19 @@ mod tests {
     fn should_session_actor_authorize_checks_permissions() {
         // Arrange
         let p = Permission::parse("notice://prod/orders/**#write").unwrap();
-        let perms = crate::session::permissions::SessionPermissions::from_permissions(vec![p]);
-        let actor = SessionActor::new(crate::session::session::SessionId(1), perms);
+        let perms = crate::session::permissions::SessionPermissions::from_permissions(vec![p.clone()]);
+        
+        // Create minimal claims for testing
+        let claims = crate::auth::Claims {
+            sub: "user:42".to_string(),
+            tenant: "prod".to_string(),
+            roles: vec![],
+            permissions: vec![p],
+            exp: 9999999999,
+        };
+        
+        let mut actor = SessionActor::new(crate::session::session::SessionId(1), perms.clone());
+        actor.authenticate(claims, perms);
 
         // Act
         let can_write = actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write);

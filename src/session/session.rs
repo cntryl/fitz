@@ -86,6 +86,8 @@ pub struct SessionInfo {
     pub peer_addr: Option<SocketAddr>,
     pub metadata: Arc<SessionMetadata>,
     pub permissions_snapshot: SessionPermissions,
+    /// Immutable authentication claims (set at auth time, never modified)
+    pub claims: Option<Arc<crate::auth::Claims>>,
     /// Whether the session has completed the connect/auth handshake
     pub authenticated: bool,
 }
@@ -122,7 +124,41 @@ pub struct Session {
 }
 
 impl Session {
-    /// Create a new session
+    /// Create a new session with authentication claims
+    pub fn new_authenticated(
+        session_id: u64,
+        transport_kind: TransportKind,
+        peer_addr: Option<SocketAddr>,
+        permissions: SessionPermissions,
+        claims: crate::auth::Claims,
+        metadata: SessionMetadata,
+        channel_capacity: usize,
+        type_mapping: Option<TypeMapping>,
+    ) -> Self {
+        let mux = if let Some(mapping) = type_mapping {
+            Mux::with_mapping(channel_capacity, mapping)
+        } else {
+            Mux::new(channel_capacity)
+        };
+
+        let info = SessionInfo {
+            session_id,
+            transport_kind,
+            peer_addr,
+            metadata: Arc::new(metadata),
+            permissions_snapshot: permissions.clone(),
+            claims: Some(Arc::new(claims)),
+            authenticated: true,
+        };
+
+        Self {
+            info,
+            decoder: TlvDecoder::new(),
+            mux,
+        }
+    }
+
+    /// Create a new unauthenticated session (pre-auth)
     pub fn new(
         session_id: u64,
         transport_kind: TransportKind,
@@ -144,6 +180,7 @@ impl Session {
             peer_addr,
             metadata: Arc::new(metadata),
             permissions_snapshot: permissions.clone(),
+            claims: None,
             authenticated: false,
         };
 
@@ -200,6 +237,39 @@ impl Session {
     /// Access permissions snapshot
     pub fn permissions(&self) -> &SessionPermissions {
         &self.info.permissions_snapshot
+    }
+
+    /// Get the immutable claims for this session (if authenticated)
+    pub fn claims(&self) -> Option<&crate::auth::Claims> {
+        self.info.claims.as_ref().map(|c| c.as_ref())
+    }
+
+    /// Authenticate this session with new claims and update permissions
+    ///
+    /// **Important:** This replaces both claims AND permissions atomically.
+    /// Used for initial auth and re-auth flows.
+    pub fn authenticate(
+        &mut self,
+        claims: crate::auth::Claims,
+        permissions: SessionPermissions,
+    ) -> Result<(), String> {
+        // Update both atomically
+        self.info.claims = Some(Arc::new(claims));
+        self.info.permissions_snapshot = permissions;
+        self.info.authenticated = true;
+        Ok(())
+    }
+
+    /// Check expiration of claims (if authenticated)
+    pub fn check_expiration(&self, now: u64) -> Result<(), String> {
+        if let Some(claims) = self.claims() {
+            if now >= claims.exp {
+                return Err("token expired".to_string());
+            }
+            Ok(())
+        } else {
+            Err("not authenticated".to_string())
+        }
     }
 }
 
