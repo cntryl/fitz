@@ -1,5 +1,4 @@
-mod common;
-use common::harness_notification::*;
+﻿use fitz::testkit::notification::*;
 
 // This file asserts end-to-end scale: does not fall over and delivers correct counts under load.
 // These tests must be robust and non-flaky; avoid timing assertions.

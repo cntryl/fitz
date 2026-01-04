@@ -1,15 +1,21 @@
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use fitz::runtime::envelope::Envelope;
-use fitz::runtime::router::{MailboxSink, Router};
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::session::session::SessionId;
+use crate::runtime::envelope::Envelope;
+use crate::runtime::router::{MailboxSink, Router};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::session::session::SessionId;
 
 /// Simple test mailbox sink that records delivered envelopes.
 #[derive(Clone)]
 pub struct TestSink {
     delivered: Arc<Mutex<Vec<Envelope>>>,
+}
+
+impl Default for TestSink {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestSink {
@@ -25,7 +31,7 @@ impl TestSink {
 }
 
 impl MailboxSink for TestSink {
-    fn deliver(&self, envelope: Envelope) -> Result<(), fitz::runtime::router::DeliveryError> {
+    fn deliver(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
         self.delivered.lock().push(envelope);
         Ok(())
     }
@@ -49,5 +55,3 @@ pub fn addr(path: &str) -> RouteAddress {
 pub fn session_id(n: u64) -> SessionId {
     SessionId(n)
 }
-
-

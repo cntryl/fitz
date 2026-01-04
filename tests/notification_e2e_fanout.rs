@@ -1,8 +1,7 @@
-mod common;
-use common::harness_notification::*;
+﻿use fitz::testkit::notification::*;
 
 // This file asserts E2E fanout correctness: realistic overlapping subscriptions and no duplicate deliveries.
-// Keep subscriber counts modest (≤64) — large-scale tests belong in `notification_e2e_scale.rs`.
+// Keep subscriber counts modest (â‰¤64) â€” large-scale tests belong in `notification_e2e_scale.rs`.
 
 
 use bytes::Bytes;

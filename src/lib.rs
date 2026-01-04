@@ -14,3 +14,7 @@ pub mod security;
 pub mod session;
 pub mod storage;
 pub mod utils;
+
+// Test utilities for integration tests
+#[cfg_attr(not(test), doc(hidden))]
+pub mod testkit;

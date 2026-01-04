@@ -97,7 +97,7 @@ fn should_not_consider_unauthenticated_session_expired() {
 }
 
 #[test]
-fn should_reauth_replace_claims_and_permissions() {
+fn should_replace_permissions_on_reauth() {
     // Arrange
     let p1 = Permission::parse("notice://prod/orders/**#read").unwrap();
     let perms1 = SessionPermissions::from_permissions(vec![p1.clone()]);
@@ -113,11 +113,6 @@ fn should_reauth_replace_claims_and_permissions() {
     let mut actor = SessionActor::new(SessionId(1), perms1.clone());
     actor.authenticate(claims1, perms1);
 
-    // Verify initial state
-    assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::Read));
-    assert!(!actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write));
-
-    // Act: Reauth with new permissions
     let p2 = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms2 = SessionPermissions::from_permissions(vec![p2.clone()]);
     
@@ -128,10 +123,11 @@ fn should_reauth_replace_claims_and_permissions() {
         permissions: vec![p2],
         exp: 9999999999,
     };
-    
+
+    // Act
     actor.reauth(claims2, perms2);
 
-    // Assert: New permissions active
+    // Assert
     assert!(!actor.authorize(&Route::new("notice://prod/orders/create"), Access::Read));
     assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write));
 }
@@ -254,14 +250,19 @@ fn should_wildcard_permissions_match_multiple_routes() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act & Assert
-    assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write));
-    assert!(actor.authorize(&Route::new("notice://prod/events/publish"), Access::Write));
-    assert!(actor.authorize(&Route::new("notice://prod/any/nested/route"), Access::Write));
+    // Act
+    let result1 = actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write);
+    let result2 = actor.authorize(&Route::new("notice://prod/events/publish"), Access::Write);
+    let result3 = actor.authorize(&Route::new("notice://prod/any/nested/route"), Access::Write);
+
+    // Assert
+    assert!(result1);
+    assert!(result2);
+    assert!(result3);
 }
 
 #[test]
-fn should_access_all_permission_match_read_and_write() {
+fn should_grant_all_access_when_permission_has_no_access_specifier() {
     // Arrange
     let p = Permission::parse("notice://prod/orders/**").unwrap(); // No #access = All
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
@@ -277,8 +278,13 @@ fn should_access_all_permission_match_read_and_write() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act & Assert
-    assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::Read));
-    assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write));
-    assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::All));
+    // Act
+    let read_access = actor.authorize(&Route::new("notice://prod/orders/create"), Access::Read);
+    let write_access = actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write);
+    let all_access = actor.authorize(&Route::new("notice://prod/orders/create"), Access::All);
+
+    // Assert
+    assert!(read_access);
+    assert!(write_access);
+    assert!(all_access);
 }

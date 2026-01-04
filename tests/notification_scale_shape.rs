@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notification::route_actor::NoticeRouteActor;
@@ -8,8 +8,7 @@ use fitz::domains::notification::protocol::{
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 
-mod common;
-use common::harness_notification::{addr, make_router, route, session_id, TestSink};
+use fitz::testkit::notification::{addr, make_router, route, session_id, TestSink};
 
 // This file asserts scale & shape invariants: relative growth and failure modes.
 // It MUST NOT assert absolute durations or performance claims.
@@ -73,7 +72,7 @@ fn should_scale_linearly_with_subscription_count() {
     let small_total: usize = small_sinks.iter().map(|s| s.count()).sum();
     let large_total: usize = large_sinks.iter().map(|s| s.count()).sum();
 
-    // Assert: deliveries scale linearly (large ≈ 4 * small)
+    // Assert: deliveries scale linearly (large â‰ˆ 4 * small)
     assert_eq!(small_total, small_n);
     assert_eq!(large_total, large_n);
     assert!(large_total >= small_total * 4, "expected large >= 4*small");
