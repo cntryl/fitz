@@ -3,6 +3,7 @@ use crate::runtime::routing::Route;
 use crate::session::session::SessionId;
 use crate::session::permissions::SessionPermissions;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Session-scoped actor that enforces authorization.
 ///
@@ -38,13 +39,49 @@ impl SessionActor {
         self.permissions = Arc::new(permissions);
     }
 
+    /// Re-authenticate this actor with new claims (token refresh/rotation)
+    ///
+    /// Replaces existing claims and recompiles permissions atomically.
+    /// Use this for token refresh flows without tearing down the session.
+    pub fn reauth(&mut self, claims: Claims, permissions: SessionPermissions) {
+        self.claims = Some(Arc::new(claims));
+        self.permissions = Arc::new(permissions);
+    }
+
+    /// Check if the current token is expired
+    ///
+    /// Returns true if authenticated and token is expired, false otherwise.
+    /// Unauthenticated sessions are never considered expired.
+    pub fn is_token_expired(&self) -> bool {
+        if let Some(claims) = &self.claims {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            return claims.exp <= now;
+        }
+        false
+    }
+
+    /// Get the current token expiration time (unix epoch seconds)
+    pub fn token_expiration(&self) -> Option<u64> {
+        self.claims.as_ref().map(|c| c.exp)
+    }
+
     /// Core authorization gate: check if this session is allowed to perform
     /// `access` on `route`.
     ///
     /// **Every domain call must pass through this check.**
     /// If this returns false, the operation is rejected at the session layer
     /// and never reaches the domain.
+    ///
+    /// **Security:** This check includes token expiration validation.
+    /// Expired tokens are automatically rejected.
     pub fn authorize(&self, route: &Route, access: Access) -> bool {
+        // Reject if token is expired
+        if self.is_token_expired() {
+            return false;
+        }
         self.permissions.allows(route, access)
     }
 

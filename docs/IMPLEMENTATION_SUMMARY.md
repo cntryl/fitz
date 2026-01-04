@@ -222,11 +222,11 @@ pub struct DomainRequest {
    - Expiration checking
 
 3. **Documentation**
-   - AUTH_INVARIANTS.md
-   - AUTH_SESSION_ARCHITECTURE.md
+   - AUTH.md (consolidated auth design — canonical)
    - DOMAIN_INVARIANTS.md
    - COMPLETE_REQUEST_FLOW.md (this document)
    - INVARIANT_VIOLATIONS.md
+   - Note: `docs/AUTH_INVARIANTS.md` and `docs/AUTH_SESSION_ARCHITECTURE.md` are retained as historical references.
 
 ### 🔄 In Progress / Partial
 
@@ -257,11 +257,12 @@ pub struct DomainRequest {
 ## Files Modified/Created
 
 ### Documentation (New)
-- `docs/AUTH_INVARIANTS.md`
-- `docs/AUTH_SESSION_ARCHITECTURE.md`
+- `docs/AUTH.md` (canonical auth design)
 - `docs/DOMAIN_INVARIANTS.md`
 - `docs/COMPLETE_REQUEST_FLOW.md`
 - `docs/INVARIANT_VIOLATIONS.md`
+
+*Note: `docs/AUTH_INVARIANTS.md` and `docs/AUTH_SESSION_ARCHITECTURE.md` were consolidated into `docs/AUTH.md` and are kept for historical reference.*
 
 ### Code (Modified)
 - `src/auth/mod.rs` — Cleaned boundaries, removed domain refs
