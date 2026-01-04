@@ -5,6 +5,7 @@
 //! operations fail.
 
 use std::fmt;
+use uuid::Uuid;
 
 /// RPC error codes as defined in the spec
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +51,7 @@ impl fmt::Display for RpcErrorCode {
 #[derive(Debug, Clone)]
 pub struct RpcError {
     /// Correlation ID from the original request
-    pub correlation_id: String,
+    pub correlation_id: Uuid,
     /// Error code
     pub code: RpcErrorCode,
     /// Human-readable error message
@@ -59,7 +60,7 @@ pub struct RpcError {
 
 impl RpcError {
     /// Create new RPC error
-    pub fn new(correlation_id: String, code: RpcErrorCode, message: String) -> Self {
+    pub fn new(correlation_id: Uuid, code: RpcErrorCode, message: String) -> Self {
         Self {
             correlation_id,
             code,
@@ -68,7 +69,7 @@ impl RpcError {
     }
 
     /// Create timeout error
-    pub fn timeout(correlation_id: String) -> Self {
+    pub fn timeout(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::Timeout,
@@ -77,7 +78,7 @@ impl RpcError {
     }
 
     /// Create backpressure error
-    pub fn backpressure(correlation_id: String) -> Self {
+    pub fn backpressure(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::Backpressure,
@@ -86,7 +87,7 @@ impl RpcError {
     }
 
     /// Create unauthorized error
-    pub fn unauthorized(correlation_id: String) -> Self {
+    pub fn unauthorized(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::Unauthorized,
@@ -95,7 +96,7 @@ impl RpcError {
     }
 
     /// Create invalid route error
-    pub fn invalid_route(correlation_id: String) -> Self {
+    pub fn invalid_route(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::InvalidRoute,
@@ -104,7 +105,7 @@ impl RpcError {
     }
 
     /// Create stream gap error
-    pub fn stream_gap(correlation_id: String, expected: u64, received: u64) -> Self {
+    pub fn stream_gap(correlation_id: Uuid, expected: u64, received: u64) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::StreamGap,
@@ -116,7 +117,7 @@ impl RpcError {
     }
 
     /// Create client disconnected error
-    pub fn client_disconnected(correlation_id: String) -> Self {
+    pub fn client_disconnected(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::ClientDisconnected,
@@ -125,7 +126,7 @@ impl RpcError {
     }
 
     /// Create worker crashed error
-    pub fn worker_crashed(correlation_id: String) -> Self {
+    pub fn worker_crashed(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::WorkerCrashed,
@@ -146,8 +147,14 @@ mod tests {
 
     #[test]
     fn should_create_backpressure_error() {
-        let err = RpcError::backpressure("req-001".to_string());
-        assert_eq!(err.correlation_id, "req-001");
+        // Arrange
+        let correlation_id = Uuid::new_v4();
+
+        // Act
+        let err = RpcError::backpressure(correlation_id);
+
+        // Assert
+        assert_eq!(err.correlation_id, correlation_id);
         assert_eq!(err.code, RpcErrorCode::Backpressure);
     }
 }

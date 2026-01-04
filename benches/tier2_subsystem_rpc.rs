@@ -1,6 +1,8 @@
+use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
 use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
+use uuid::Uuid;
 use fitz::prelude::Actor;
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
@@ -105,10 +107,10 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
                     let data = &requests[idx % requests.len()];
                     
                     // Parse TLV
-                    let mut correlation_id = String::new();
+                            let mut correlation_id: Option<Uuid> = None;
                     let mut route = String::new();
                     let mut reply_route = String::new();
-                    let mut body = Vec::new();
+                    let mut body = Bytes::from(vec![]);
                     
                     for res in decoder.iter(black_box(data)) {
                         let (mt, slice) = res.unwrap();
@@ -116,18 +118,22 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
                         // Route through mux
                         if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
                             match mt.as_u16() {
-                                1 => correlation_id = String::from_utf8_lossy(slice).to_string(),
+                                1 => {
+                                    let id_str = String::from_utf8_lossy(slice);
+                                    correlation_id = Some(Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()));
+                                },
                                 2 => route = String::from_utf8_lossy(slice).to_string(),
                                 3 => reply_route = String::from_utf8_lossy(slice).to_string(),
-                                4 => body = slice.to_vec(),
+                                4 => body = Bytes::from(slice.to_vec()),
                                 _ => {}
                             }
                         }
                     }
                     
                     // Dispatch to actor
+                    let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                     let req = RpcRequest {
-                        correlation_id,
+                        correlation_id: cid,
                         route: Route::new(route),
                         reply_route: Route::new(reply_route),
                         body,
@@ -166,17 +172,18 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
         );
 
         // Dispatch initial request to establish lease
+        let initial_cid = Uuid::new_v4();
         let initial_req = RpcRequest {
-            correlation_id: "initial-req".to_string(),
+            correlation_id: initial_cid,
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: vec![0u8; size],
+            body: Bytes::from(vec![0u8; size]),
         };
         actor.receive(RpcMessage::Request(initial_req), &mut ctx);
 
         // Precompute TLV-encoded responses
         let body = vec![0u8; size];
-        let response_data = encode_rpc_response("initial-req", 0, true, &body);
+        let response_data = encode_rpc_response(&initial_cid.to_string(), 0, true, &body);
 
         let mut mux = Mux::new(256);
         let decoder = TlvDecoder::new();
@@ -187,10 +194,10 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
         group.bench_function(&name, |b| {
             b.iter(|| {
                 // Parse TLV
-                let mut correlation_id = String::new();
+                let mut correlation_id: Option<Uuid> = None;
                 let mut seq = 0u64;
                 let mut stream_end = false;
-                let mut body = Vec::new();
+                let mut body = Bytes::from(vec![]);
                 
                 for res in decoder.iter(black_box(&response_data)) {
                     let (mt, slice) = res.unwrap();
@@ -198,22 +205,23 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
                     // Route through mux
                     if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
                         match mt.as_u16() {
-                            10 => correlation_id = String::from_utf8_lossy(slice).to_string(),
+                            10 => correlation_id = Some(Uuid::parse_str(&String::from_utf8_lossy(slice)).unwrap_or_else(|_| Uuid::new_v4())),
                             11 => {
                                 if slice.len() >= 4 {
                                     seq = u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]) as u64;
                                 }
                             }
-                            12 => stream_end = slice.get(0).copied().unwrap_or(0) != 0,
-                            13 => body = slice.to_vec(),
+                            12 => stream_end = slice.first().copied().unwrap_or(0) != 0,
+                            13 => body = Bytes::from(slice.to_vec()),
                             _ => {}
                         }
                     }
                 }
                 
                 // Handle response
+                let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                 let resp = RpcResponse {
-                    correlation_id: correlation_id.clone(),
+                    correlation_id: cid,
                     seq,
                     stream_end,
                     body,
@@ -222,10 +230,10 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
                 
                 // Re-establish lease for next iteration
                 let req = RpcRequest {
-                    correlation_id: "initial-req".to_string(),
+                    correlation_id: initial_cid,
                     route: Route::new("rpc://realm/service/operation"),
                     reply_route: Route::new("inbox://session/1"),
-                    body: vec![0u8; size],
+                    body: Bytes::from(vec![0u8; size]),
                 };
                 actor.receive(RpcMessage::Request(req), &mut ctx);
             })
@@ -260,11 +268,12 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
             );
 
             // Dispatch initial request
+            let initial_cid = Uuid::new_v4();
             let initial_req = RpcRequest {
-                correlation_id: "stream-req".to_string(),
+                correlation_id: initial_cid,
                 route: Route::new("rpc://realm/service/operation"),
                 reply_route: Route::new("inbox://session/1"),
-                body: vec![0u8; 64],
+                body: Bytes::from(vec![0u8; 64]),
             };
             actor.receive(RpcMessage::Request(initial_req), &mut ctx);
 
@@ -273,7 +282,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
                 .map(|i| {
                     let body = vec![0u8; chunk_size];
                     let is_last = i == chunk_count - 1;
-                    encode_rpc_response("stream-req", i as u32, is_last, &body)
+                    encode_rpc_response(&initial_cid.to_string(), i as u32, is_last, &body)
                 })
                 .collect();
 
@@ -287,45 +296,46 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
                 b.iter(|| {
                     for data in &responses {
                         // Parse TLV
-                        let mut correlation_id = String::new();
+                        let mut correlation_id: Option<Uuid> = None;
                         let mut seq = 0u64;
                         let mut stream_end = false;
-                        let mut body = Vec::new();
+                        let mut body = Bytes::from(vec![]);
                         
                         for res in decoder.iter(black_box(data)) {
                             let (mt, slice) = res.unwrap();
                             
                             if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
-                                match mt.as_u16() {
-                                    10 => correlation_id = String::from_utf8_lossy(slice).to_string(),
+                                        match mt.as_u16() {
+                                    10 => correlation_id = Some(Uuid::parse_str(&String::from_utf8_lossy(slice)).unwrap_or_else(|_| Uuid::new_v4())),
                                     11 => {
                                         if slice.len() >= 4 {
                                             seq = u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]) as u64;
                                         }
                                     }
-                                    12 => stream_end = slice.get(0).copied().unwrap_or(0) != 0,
-                                    13 => body = slice.to_vec(),
+                                    12 => stream_end = slice.first().copied().unwrap_or(0) != 0,
+                                    13 => body = Bytes::from(slice.to_vec()),
                                     _ => {}
                                 }
                             }
                         }
                         
                         // Handle response chunk
+                        let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                         let resp = RpcResponse {
-                            correlation_id: correlation_id.clone(),
+                            correlation_id: cid,
                             seq,
                             stream_end,
-                            body,
+                            body: body.clone(),
                         };
                         actor.receive(RpcMessage::Response(resp), &mut ctx);
                     }
                     
                     // Re-establish request for next iteration
                     let req = RpcRequest {
-                        correlation_id: "stream-req".to_string(),
+                        correlation_id: initial_cid,
                         route: Route::new("rpc://realm/service/operation"),
                         reply_route: Route::new("inbox://session/1"),
-                        body: vec![0u8; 64],
+                        body: Bytes::from(vec![0u8; 64]),
                     };
                     actor.receive(RpcMessage::Request(req), &mut ctx);
                 })
@@ -345,10 +355,10 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
     for &request_count in &request_counts {
         // Precompute TLV-encoded requests
         let requests: Vec<Vec<u8>> = (0..request_count)
-            .map(|i| {
+            .map(|_| {
                 let body = vec![0u8; 64];
                 encode_rpc_request(
-                    &format!("req-{}", i),
+                    &Uuid::new_v4().to_string(),
                     "rpc://realm/service/operation",
                     &body,
                 )
@@ -369,28 +379,29 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
             b.iter(|| {
                 for data in &requests {
                     // Parse TLV
-                    let mut correlation_id = String::new();
+                    let mut correlation_id: Option<Uuid> = None;
                     let mut route = String::new();
                     let mut reply_route = String::new();
-                    let mut body = Vec::new();
+                    let mut body = Bytes::from(vec![]);
                     
                     for res in decoder.iter(black_box(data)) {
                         let (mt, slice) = res.unwrap();
                         
                         if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
                             match mt.as_u16() {
-                                1 => correlation_id = String::from_utf8_lossy(slice).to_string(),
+                                1 => correlation_id = Some(Uuid::parse_str(&String::from_utf8_lossy(slice)).unwrap_or_else(|_| Uuid::new_v4())),
                                 2 => route = String::from_utf8_lossy(slice).to_string(),
                                 3 => reply_route = String::from_utf8_lossy(slice).to_string(),
-                                4 => body = slice.to_vec(),
+                                4 => body = Bytes::from(slice.to_vec()),
                                 _ => {}
                             }
                         }
                     }
                     
                     // Enqueue request
+                    let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                     let req = RpcRequest {
-                        correlation_id,
+                        correlation_id: cid,
                         route: Route::new(route),
                         reply_route: Route::new(reply_route),
                         body,

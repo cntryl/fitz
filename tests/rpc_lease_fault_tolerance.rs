@@ -1,8 +1,10 @@
-//! RPC domain lease and fault tolerance tests
+﻿//! RPC domain lease and fault tolerance tests
 //!
 //! Tests the lease mechanism, timeout handling, re-enqueue logic, and error responses.
 
 use fitz::domains::rpc::{RpcError, RpcErrorCode, RpcRouteActor, RpcRequest, RpcResponse};
+use uuid::Uuid;
+use bytes::Bytes;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::actor::{Actor, Context};
 use std::time::Duration;
@@ -15,12 +17,12 @@ fn create_actor_with_timeout(timeout_ms: u64) -> RpcRouteActor {
     )
 }
 
-fn create_request(correlation_id: &str) -> RpcRequest {
+fn create_request(correlation_id: Uuid) -> RpcRequest {
     RpcRequest::new(
-        correlation_id.to_string(),
+        correlation_id,
         Route::new("rpc://test/area/resource/operation"),
         Route::new("inbox://session/123"),
-        vec![1, 2, 3],
+        Bytes::from(vec![1, 2, 3]),
     )
 }
 
@@ -50,7 +52,7 @@ fn should_track_active_leases_when_dispatching_request() {
     actor.receive(fitz::domains::rpc::RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
     
     // Act
-    let request = create_request("req-001");
+    let request = create_request(Uuid::new_v4());
     actor.receive(fitz::domains::rpc::RpcMessage::Request(request), &mut ctx);
     
     // Assert
@@ -63,13 +65,14 @@ fn should_release_lease_when_receiving_stream_end_response() {
     let mut actor = create_actor_with_timeout(5000);
     let mut ctx = create_context();
     let worker_addr = create_worker_addr(1);
+    let correlation_id = Uuid::new_v4();
     
     actor.receive(fitz::domains::rpc::RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
-    let request = create_request("req-001");
+    let request = create_request(correlation_id);
     actor.receive(fitz::domains::rpc::RpcMessage::Request(request), &mut ctx);
     
     // Act
-    let response = RpcResponse::single("req-001".to_string(), vec![4, 5, 6]);
+    let response = RpcResponse::single(correlation_id, Bytes::from(vec![4, 5, 6]));
     actor.receive(fitz::domains::rpc::RpcMessage::Response(response), &mut ctx);
     
     // Assert
@@ -82,13 +85,14 @@ fn should_release_lease_when_receiving_ack() {
     let mut actor = create_actor_with_timeout(5000);
     let mut ctx = create_context();
     let worker_addr = create_worker_addr(1);
+    let correlation_id = Uuid::new_v4();
     
     actor.receive(fitz::domains::rpc::RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
-    let request = create_request("req-001");
+    let request = create_request(correlation_id);
     actor.receive(fitz::domains::rpc::RpcMessage::Request(request), &mut ctx);
     
     // Act
-    actor.receive(fitz::domains::rpc::RpcMessage::Ack { correlation_id: "req-001".to_string() }, &mut ctx);
+    actor.receive(fitz::domains::rpc::RpcMessage::Ack { correlation_id }, &mut ctx);
     
     // Assert
     assert_eq!(actor.active_leases(), 0);
@@ -100,10 +104,12 @@ fn should_allow_worker_to_take_next_request_after_lease_released() {
     let mut actor = create_actor_with_timeout(5000);
     let mut ctx = create_context();
     let worker_addr = create_worker_addr(1);
+    let correlation_id_1 = Uuid::new_v4();
+    let correlation_id_2 = Uuid::new_v4();
     
     actor.receive(fitz::domains::rpc::RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
-    let req1 = create_request("req-001");
-    let req2 = create_request("req-002");
+    let req1 = create_request(correlation_id_1);
+    let req2 = create_request(correlation_id_2);
     
     // Act - dispatch first request
     actor.receive(fitz::domains::rpc::RpcMessage::Request(req1), &mut ctx);
@@ -114,7 +120,7 @@ fn should_allow_worker_to_take_next_request_after_lease_released() {
     assert_eq!(actor.pending_count(), 1);
     
     // Release first request
-    let response = RpcResponse::single("req-001".to_string(), vec![]);
+    let response = RpcResponse::single(correlation_id_1, Bytes::from(vec![]));
     actor.receive(fitz::domains::rpc::RpcMessage::Response(response), &mut ctx);
     
     // Assert - second request should now be dispatched
@@ -128,9 +134,9 @@ fn should_handle_backpressure_when_queue_full() {
     let mut ctx = create_context();
     
     // Act - fill queue past capacity
-    actor.receive(fitz::domains::rpc::RpcMessage::Request(create_request("req-001")), &mut ctx);
-    actor.receive(fitz::domains::rpc::RpcMessage::Request(create_request("req-002")), &mut ctx);
-    actor.receive(fitz::domains::rpc::RpcMessage::Request(create_request("req-003")), &mut ctx);
+    actor.receive(fitz::domains::rpc::RpcMessage::Request(create_request(Uuid::new_v4())), &mut ctx);
+    actor.receive(fitz::domains::rpc::RpcMessage::Request(create_request(Uuid::new_v4())), &mut ctx);
+    actor.receive(fitz::domains::rpc::RpcMessage::Request(create_request(Uuid::new_v4())), &mut ctx);
     
     // Assert - only 2 requests queued (third rejected with backpressure)
     assert_eq!(actor.pending_count(), 2);
@@ -142,16 +148,17 @@ fn should_drop_late_response_after_lease_expired() {
     let mut actor = create_actor_with_timeout(5000);
     let mut ctx = create_context();
     let worker_addr = create_worker_addr(1);
+    let correlation_id = Uuid::new_v4();
     
     actor.receive(fitz::domains::rpc::RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
-    let request = create_request("req-001");
+    let request = create_request(correlation_id);
     actor.receive(fitz::domains::rpc::RpcMessage::Request(request), &mut ctx);
     
     // Release lease manually
-    actor.receive(fitz::domains::rpc::RpcMessage::Ack { correlation_id: "req-001".to_string() }, &mut ctx);
+    actor.receive(fitz::domains::rpc::RpcMessage::Ack { correlation_id }, &mut ctx);
     
     // Act - send response after lease released
-    let response = RpcResponse::single("req-001".to_string(), vec![]);
+    let response = RpcResponse::single(correlation_id, Bytes::from(vec![]));
     actor.receive(fitz::domains::rpc::RpcMessage::Response(response), &mut ctx);
     
     // Assert - should not panic, just drop the late response
@@ -175,9 +182,9 @@ fn should_track_multiple_concurrent_leases() {
     }
     
     // Act - dispatch 3 requests to 3 workers
-    for i in 1..=3 {
+    for _i in 1..=3 {
         actor.receive(
-            fitz::domains::rpc::RpcMessage::Request(create_request(&format!("req-{:03}", i))), 
+            fitz::domains::rpc::RpcMessage::Request(create_request(Uuid::new_v4())), 
             &mut ctx
         );
     }
@@ -196,13 +203,13 @@ fn should_format_error_codes_correctly() {
 #[test]
 fn should_create_backpressure_error_with_correlation_id() {
     // Arrange
-    // (No setup needed)
+    let correlation_id = Uuid::new_v4();
     
     // Act
-    let error = RpcError::backpressure("req-001".to_string());
+    let error = RpcError::backpressure(correlation_id);
     
     // Assert
-    assert_eq!(error.correlation_id, "req-001");
+    assert_eq!(error.correlation_id, correlation_id);
     assert_eq!(error.code, RpcErrorCode::Backpressure);
     assert!(error.message.contains("capacity"));
 }
@@ -210,13 +217,18 @@ fn should_create_backpressure_error_with_correlation_id() {
 #[test]
 fn should_create_timeout_error_with_correlation_id() {
     // Arrange
-    // (No setup needed)
+    let correlation_id = Uuid::new_v4();
     
     // Act
-    let error = RpcError::timeout("req-001".to_string());
+    let error = RpcError::timeout(correlation_id);
     
     // Assert
-    assert_eq!(error.correlation_id, "req-001");
+    assert_eq!(error.correlation_id, correlation_id);
     assert_eq!(error.code, RpcErrorCode::Timeout);
     assert!(error.message.contains("timeout"));
 }
+
+
+
+
+

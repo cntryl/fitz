@@ -1,4 +1,6 @@
-use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest};
+﻿use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest};
+use uuid::Uuid;
+use bytes::Bytes;
 use fitz::domains::rpc::session::SessionActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
@@ -42,10 +44,10 @@ fn should_reject_rpc_request_without_call_permission() {
 
     // Request without required permission
     let request = RpcRequest {
-        correlation_id: "req-no-permission".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/unauthorized"),
-        body: b"{ \"username\": \"hacker\" }".to_vec(),
+        body: Bytes::from(b"{ \"username\": \"hacker\" }".to_vec()),
     };
 
     // Act
@@ -80,10 +82,10 @@ fn should_allow_rpc_request_with_valid_call_permission() {
 
     // Request with proper permission granted
     let request = RpcRequest {
-        correlation_id: "req-authorized".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/authorized"),
-        body: b"{ \"username\": \"alice\" }".to_vec(),
+        body: Bytes::from(b"{ \"username\": \"alice\" }".to_vec()),
     };
 
     // Act
@@ -120,10 +122,10 @@ fn should_enforce_realm_isolation_in_authorization() {
 
     // Try to call acme RPC with corp realm permissions (should fail)
     let request_cross_realm = RpcRequest {
-        correlation_id: "req-cross-realm".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/data/query/execute"),
         reply_route: Route::new("inbox://session/corp123"),
-        body: b"{ \"query\": \"SELECT *\" }".to_vec(),
+        body: Bytes::from(b"{ \"query\": \"SELECT *\" }".to_vec()),
     };
 
     // Act
@@ -208,10 +210,10 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
 
     // Request to billing service with only read permissions (needs write)
     let request = RpcRequest {
-        correlation_id: "req-scope-violation".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/billing/invoice/create"),
         reply_route: Route::new("inbox://session/limited"),
-        body: b"{ \"amount\": 100 }".to_vec(),
+        body: Bytes::from(b"{ \"amount\": 100 }".to_vec()),
     };
 
     // Act
@@ -246,10 +248,10 @@ fn should_allow_requests_within_granted_scope() {
 
     // Request with proper scope
     let request = RpcRequest {
-        correlation_id: "req-valid-scope".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/billing/invoice/query"),
         reply_route: Route::new("inbox://session/authorized"),
-        body: b"{ \"invoice_id\": \"inv-123\" }".to_vec(),
+        body: Bytes::from(b"{ \"invoice_id\": \"inv-123\" }".to_vec()),
     };
 
     // Act
@@ -286,19 +288,19 @@ fn should_validate_permissions_per_request() {
     // Act - Send authorized and unauthorized requests
     // First request - authorized
     let request1 = RpcRequest {
-        correlation_id: "req-authorized-1".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/users/profile/read"),
         reply_route: Route::new("inbox://session/auth1"),
-        body: b"{ \"user_id\": \"alice\" }".to_vec(),
+        body: Bytes::from(b"{ \"user_id\": \"alice\" }".to_vec()),
     };
     let result1 = session.call_rpc(request1, &mut actor, &mut ctx);
 
     // Second request - unauthorized (different operation not in permission scope)
     let request2 = RpcRequest {
-        correlation_id: "req-unauthorized-2".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/users/profile/delete"),
         reply_route: Route::new("inbox://session/auth1"),
-        body: b"{ \"user_id\": \"bob\" }".to_vec(),
+        body: Bytes::from(b"{ \"user_id\": \"bob\" }".to_vec()),
     };
     let result2 = session.call_rpc(request2, &mut actor, &mut ctx);
 
@@ -307,3 +309,8 @@ fn should_validate_permissions_per_request() {
     assert!(result2.is_err());
     assert_eq!(actor.worker_count(), 1);
 }
+
+
+
+
+

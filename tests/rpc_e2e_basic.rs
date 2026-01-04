@@ -1,4 +1,6 @@
-use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest, RpcResponse};
+﻿use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest, RpcResponse};
+use uuid::Uuid;
+use bytes::Bytes;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
@@ -35,19 +37,19 @@ fn should_complete_basic_request_response_cycle() {
     );
 
     let request = RpcRequest {
-        correlation_id: "req-create-user-001".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/abc123"),
-        body: b"{ \"username\": \"alice\", \"email\": \"alice@example.com\" }".to_vec(),
+        body: Bytes::from(b"{ \"username\": \"alice\", \"email\": \"alice@example.com\" }".to_vec()),
     };
 
     // Act
     actor.receive(RpcMessage::Request(request), &mut ctx);
 
     let response = RpcResponse {
-        correlation_id: "req-create-user-001".to_string(),
+        correlation_id: Uuid::new_v4(),
         seq: 0,
-        body: b"{ \"user_id\": \"12345\", \"status\": \"created\" }".to_vec(),
+        body: Bytes::from(b"{ \"user_id\": \"12345\", \"status\": \"created\" }".to_vec()),
         stream_end: true,
     };
     actor.receive(RpcMessage::Response(response), &mut ctx);
@@ -76,10 +78,10 @@ fn should_handle_streaming_report_generation() {
     );
 
     let request = RpcRequest {
-        correlation_id: "req-report-monthly".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/reports/monthly/generate"),
         reply_route: Route::new("inbox://session/xyz789"),
-        body: b"{ \"month\": \"2025-12\" }".to_vec(),
+        body: Bytes::from(b"{ \"month\": \"2025-12\" }".to_vec()),
     };
 
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -93,9 +95,9 @@ fn should_handle_streaming_report_generation() {
 
     for (seq, chunk) in chunks.iter().enumerate() {
         let response = RpcResponse {
-            correlation_id: "req-report-monthly".to_string(),
+            correlation_id: Uuid::new_v4(),
             seq: seq as u64,
-            body: chunk.clone(),
+            body: Bytes::from(chunk.clone()),
             stream_end: seq == chunks.len() - 1,
         };
         actor.receive(RpcMessage::Response(response), &mut ctx);
@@ -135,17 +137,17 @@ fn should_maintain_isolation_across_realms() {
     );
 
     let request_acme = RpcRequest {
-        correlation_id: "req-acme-001".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/inventory/item/update"),
         reply_route: Route::new("inbox://session/acme123"),
-        body: b"{ \"item_id\": \"widget-1\" }".to_vec(),
+        body: Bytes::from(b"{ \"item_id\": \"widget-1\" }".to_vec()),
     };
 
     let request_corp = RpcRequest {
-        correlation_id: "req-corp-001".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://corp/inventory/item/update"),
         reply_route: Route::new("inbox://session/corp456"),
-        body: b"{ \"item_id\": \"gadget-1\" }".to_vec(),
+        body: Bytes::from(b"{ \"item_id\": \"gadget-1\" }".to_vec()),
     };
 
     // Act
@@ -180,12 +182,12 @@ fn should_handle_multiple_workers_for_same_route() {
     }
 
     // Act - Send 10 requests (more than workers)
-    for i in 0..10 {
+    for _i in 0..10 {
         let request = RpcRequest {
-            correlation_id: format!("req-embedding-{:03}", i),
+            correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://acme/ai/embedding/generate"),
             reply_route: Route::new("inbox://session/ai789"),
-            body: format!("{{ \"text\": \"sample text {}\" }}", i).into_bytes(),
+            body: Bytes::from(format!("{{ \"text\": \"sample text {}\" }}", _i).into_bytes()),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
     }
@@ -215,10 +217,10 @@ fn should_queue_requests_when_worker_unregisters() {
     );
 
     let request1 = RpcRequest {
-        correlation_id: "req-query-001".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/analytics/query/run"),
         reply_route: Route::new("inbox://session/analytics1"),
-        body: b"SELECT * FROM events".to_vec(),
+        body: Bytes::from(b"SELECT * FROM events".to_vec()),
     };
     actor.receive(RpcMessage::Request(request1), &mut ctx);
 
@@ -231,10 +233,10 @@ fn should_queue_requests_when_worker_unregisters() {
     );
 
     let request2 = RpcRequest {
-        correlation_id: "req-query-002".to_string(),
+        correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/analytics/query/run"),
         reply_route: Route::new("inbox://session/analytics2"),
-        body: b"SELECT * FROM logs".to_vec(),
+        body: Bytes::from(b"SELECT * FROM logs".to_vec()),
     };
     actor.receive(RpcMessage::Request(request2), &mut ctx);
 
@@ -242,3 +244,8 @@ fn should_queue_requests_when_worker_unregisters() {
     assert_eq!(actor.worker_count(), 0);
     assert_eq!(actor.pending_count(), 1);
 }
+
+
+
+
+

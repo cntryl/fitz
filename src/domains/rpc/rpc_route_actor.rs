@@ -33,6 +33,7 @@ use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::{RouteAddress, RouteFamily};
 use std::collections::{VecDeque, HashMap};
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 /// Default queue capacity per route
 const DEFAULT_QUEUE_CAPACITY: usize = 1000;
@@ -41,10 +42,10 @@ const DEFAULT_QUEUE_CAPACITY: usize = 1000;
 const DEFAULT_LEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Tracks a leased request assigned to a worker
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct Lease {
-    #[allow(dead_code)] // Used as HashMap key
-    correlation_id: String,
+    correlation_id: Uuid,
     worker_addr: RouteAddress,
     request: RpcRequest,
     expiration: Instant,
@@ -78,6 +79,7 @@ impl WorkerRegistration {
 ///
 /// Maintains a queue of pending requests and a pool of registered workers.
 /// Dispatches requests to workers in round-robin fashion with lease tracking.
+/// Uses a ready queue for O(1) worker selection.
 pub struct RpcRouteActor {
     /// Route family this actor belongs to
     _family: RouteFamily,
@@ -88,14 +90,14 @@ pub struct RpcRouteActor {
     /// Registered workers
     workers: Vec<WorkerRegistration>,
     
-    /// Next worker index for round-robin
-    next_worker_idx: usize,
+    /// Ready queue: indices of workers available to take requests (O(1) selection)
+    ready_queue: VecDeque<usize>,
     
     /// Maximum queue size
     capacity: usize,
     
     /// Active leases (correlation_id → Lease)
-    leases: HashMap<String, Lease>,
+    leases: HashMap<Uuid, Lease>,
     
     /// Lease timeout duration
     lease_timeout: Duration,
@@ -111,11 +113,11 @@ impl RpcRouteActor {
     pub fn with_capacity(family: RouteFamily, capacity: usize) -> Self {
         Self {
             _family: family,
-            pending: VecDeque::new(),
-            workers: Vec::new(),
-            next_worker_idx: 0,
+            pending: VecDeque::with_capacity(capacity), // Pre-allocate
+            workers: Vec::with_capacity(16), // Reserve space for typical worker count
+            ready_queue: VecDeque::with_capacity(16),
             capacity,
-            leases: HashMap::new(),
+            leases: HashMap::with_capacity(capacity), // Pre-allocate for expected load
             lease_timeout: DEFAULT_LEASE_TIMEOUT,
         }
     }
@@ -124,11 +126,11 @@ impl RpcRouteActor {
     pub fn with_timeout(family: RouteFamily, capacity: usize, lease_timeout: Duration) -> Self {
         Self {
             _family: family,
-            pending: VecDeque::new(),
-            workers: Vec::new(),
-            next_worker_idx: 0,
+            pending: VecDeque::with_capacity(capacity),
+            workers: Vec::with_capacity(16),
+            ready_queue: VecDeque::with_capacity(16),
             capacity,
-            leases: HashMap::new(),
+            leases: HashMap::with_capacity(capacity),
             lease_timeout,
         }
     }
@@ -151,7 +153,11 @@ impl RpcRouteActor {
     /// Handle worker subscription
     fn handle_subscribe(&mut self, worker_addr: RouteAddress, ctx: &mut Context<Self>) {
         // Add worker to pool
+        let worker_idx = self.workers.len();
         self.workers.push(WorkerRegistration::new(worker_addr));
+        
+        // Add to ready queue (new workers are available)
+        self.ready_queue.push_back(worker_idx);
         
         // Try to dispatch pending requests
         self.try_dispatch_pending(ctx);
@@ -159,7 +165,18 @@ impl RpcRouteActor {
     
     /// Handle worker unsubscription
     fn handle_unsubscribe(&mut self, worker_addr: &RouteAddress) {
-        self.workers.retain(|w| w.addr != *worker_addr);
+        if let Some(idx) = self.workers.iter().position(|w| w.addr == *worker_addr) {
+            self.workers.remove(idx);
+            
+            // Remove from ready queue and adjust indices
+            self.ready_queue.retain(|&i| i != idx);
+            // Adjust indices > removed index
+            for ready_idx in &mut self.ready_queue {
+                if *ready_idx > idx {
+                    *ready_idx -= 1;
+                }
+            }
+        }
     }
     
     /// Handle incoming request
@@ -170,7 +187,7 @@ impl RpcRouteActor {
         // Check queue capacity
         if self.pending.len() >= self.capacity {
             // Send backpressure error to client
-            let error = RpcError::backpressure(request.correlation_id.clone());
+            let error = RpcError::backpressure(request.correlation_id);
             let reply_route = request.reply_route.clone();
             self.send_error(error, &reply_route);
             return;
@@ -197,7 +214,7 @@ impl RpcRouteActor {
             
             // If this is the final chunk, release the lease
             if response.stream_end {
-                let correlation_id = response.correlation_id.clone();
+                let correlation_id = response.correlation_id;
                 self.release_lease(&correlation_id, ctx);
             }
         }
@@ -205,33 +222,32 @@ impl RpcRouteActor {
     }
     
     /// Handle worker acknowledgment
-    fn handle_ack(&mut self, correlation_id: String, ctx: &mut Context<Self>) {
+    fn handle_ack(&mut self, correlation_id: Uuid, ctx: &mut Context<Self>) {
         // Worker completed processing, release the lease
         self.release_lease(&correlation_id, ctx);
     }
     
-    /// Dispatch request to a worker using round-robin
+    /// Dispatch request to a worker using ready queue (O(1) selection)
     fn dispatch_to_worker(&mut self, request: RpcRequest, _ctx: &mut Context<Self>) {
-        // Find next available worker
-        let available_worker_idx = (0..self.workers.len())
-            .map(|i| (self.next_worker_idx + i) % self.workers.len())
-            .find(|&idx| self.workers[idx].is_available());
-        
-        if let Some(idx) = available_worker_idx {
-            self.next_worker_idx = (idx + 1) % self.workers.len();
-            
+        // Pop next ready worker from queue
+        if let Some(idx) = self.ready_queue.pop_front() {
             // Track in-flight request
             self.workers[idx].in_flight += 1;
             let worker_addr = self.workers[idx].addr.clone();
             
+            // If worker still has capacity, put it back in ready queue
+            if self.workers[idx].is_available() {
+                self.ready_queue.push_back(idx);
+            }
+            
             // Create lease
             let lease = Lease {
-                correlation_id: request.correlation_id.clone(),
+                correlation_id: request.correlation_id,
                 worker_addr: worker_addr.clone(),
                 request: request.clone(),
                 expiration: Instant::now() + self.lease_timeout,
             };
-            self.leases.insert(request.correlation_id.clone(), lease);
+            self.leases.insert(request.correlation_id, lease);
             
             // Create work item
             let work_item = RpcWorkItem::from_request(&request);
@@ -245,19 +261,26 @@ impl RpcRouteActor {
     }
     
     /// Release a lease without dispatching pending (internal use)
-    fn release_lease_internal(&mut self, correlation_id: &str) {
+    fn release_lease_internal(&mut self, correlation_id: &Uuid) {
         if let Some(lease) = self.leases.remove(correlation_id) {
             // Find the worker and decrement in-flight count
-            if let Some(worker) = self.workers.iter_mut()
-                .find(|w| w.addr == lease.worker_addr) 
+            if let Some((idx, worker)) = self.workers.iter_mut()
+                .enumerate()
+                .find(|(_, w)| w.addr == lease.worker_addr) 
             {
+                let was_full = !worker.is_available();
                 worker.in_flight = worker.in_flight.saturating_sub(1);
+                
+                // If worker was full and now has capacity, add back to ready queue
+                if was_full && worker.is_available() {
+                    self.ready_queue.push_back(idx);
+                }
             }
         }
     }
     
     /// Release a lease and try to dispatch pending requests
-    fn release_lease(&mut self, correlation_id: &str, ctx: &mut Context<Self>) {
+    fn release_lease(&mut self, correlation_id: &Uuid, ctx: &mut Context<Self>) {
         self.release_lease_internal(correlation_id);
         self.try_dispatch_pending(ctx);
     }
@@ -265,9 +288,9 @@ impl RpcRouteActor {
     /// Check for expired leases and re-enqueue requests
     fn check_expired_leases(&mut self, ctx: &mut Context<Self>) {
         let now = Instant::now();
-        let expired: Vec<String> = self.leases.iter()
+        let expired: Vec<Uuid> = self.leases.iter()
             .filter(|(_, lease)| lease.expiration <= now)
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| *id)
             .collect();
         
         let had_expired = !expired.is_empty();
@@ -275,10 +298,17 @@ impl RpcRouteActor {
         for correlation_id in expired {
             if let Some(lease) = self.leases.remove(&correlation_id) {
                 // Decrement worker in-flight count
-                if let Some(worker) = self.workers.iter_mut()
-                    .find(|w| w.addr == lease.worker_addr) 
+                if let Some((idx, worker)) = self.workers.iter_mut()
+                    .enumerate()
+                    .find(|(_, w)| w.addr == lease.worker_addr) 
                 {
+                    let was_full = !worker.is_available();
                     worker.in_flight = worker.in_flight.saturating_sub(1);
+                    
+                    // If worker was full and now has capacity, add back to ready queue
+                    if was_full && worker.is_available() {
+                        self.ready_queue.push_back(idx);
+                    }
                 }
                 
                 // Send timeout error to client
@@ -311,9 +341,9 @@ impl RpcRouteActor {
         }
     }
     
-    /// Check if any worker is available
+    /// Check if any worker is available (O(1) with ready_queue)
     fn has_available_worker(&self) -> bool {
-        self.workers.iter().any(|w| w.is_available())
+        !self.ready_queue.is_empty()
     }
 }
 
@@ -345,6 +375,7 @@ impl Actor for RpcRouteActor {
 mod tests {
     use super::*;
     use crate::runtime::routing::Route;
+    use bytes::Bytes;
     
     #[test]
     fn should_create_actor_with_default_capacity() {
@@ -419,10 +450,10 @@ mod tests {
         let mut ctx = Context::new(addr, router);
         
         let request = RpcRequest {
-            correlation_id: "test-001".to_string(),
+            correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://test/route"),
             reply_route: Route::new("inbox://session/123"),
-            body: vec![1, 2, 3],
+            body: Bytes::from(vec![1, 2, 3]),
         };
         
         // Act

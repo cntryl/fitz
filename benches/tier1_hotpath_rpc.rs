@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
 use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
 use fitz::prelude::Actor;
@@ -6,6 +6,8 @@ use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
+use uuid::Uuid;
+use bytes::Bytes;
 
 #[path = "config.rs"]
 mod config;
@@ -68,11 +70,11 @@ fn bench_request_dispatch(c: &mut Criterion) {
 
     // Precompute requests outside the hot path
     let requests: Vec<RpcRequest> = (0..256)
-        .map(|i| RpcRequest {
-            correlation_id: format!("req-{}", i),
+        .map(|_| RpcRequest {
+            correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: vec![0u8; 64],
+            body: Bytes::from(vec![0u8; 64])
         })
         .collect();
 
@@ -110,11 +112,11 @@ fn bench_request_enqueue(c: &mut Criterion) {
 
     // Precompute requests outside the hot path
     let requests: Vec<RpcRequest> = (0..256)
-        .map(|i| RpcRequest {
-            correlation_id: format!("req-{}", i),
+        .map(|_| RpcRequest {
+            correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: vec![0u8; 64],
+            body: Bytes::from(vec![0u8; 64])
         })
         .collect();
 
@@ -153,25 +155,25 @@ fn bench_response_routing(c: &mut Criterion) {
     );
 
     // Dispatch initial request to establish lease
+    let initial_cid = Uuid::new_v4();
     let initial_req = RpcRequest {
-        correlation_id: "initial-req".to_string(),
+        correlation_id: initial_cid,
         route: Route::new("rpc://realm/service/operation"),
         reply_route: Route::new("inbox://session/1"),
-        body: vec![0u8; 64],
+        body: Bytes::from(vec![0u8; 64]),
     };
     actor.receive(RpcMessage::Request(initial_req), &mut ctx);
 
     // Precompute responses outside the hot path
     let responses: Vec<RpcResponse> = (0..256)
-        .map(|i| RpcResponse {
-            correlation_id: if i == 0 {
-                "initial-req".to_string()
-            } else {
-                format!("req-{}", i)
-            },
-            seq: 0,
-            stream_end: true,
-            body: vec![0u8; 64],
+        .map(|i| {
+            let cid = if i == 0 { initial_cid } else { Uuid::new_v4() };
+            RpcResponse {
+                correlation_id: cid,
+                seq: 0,
+                stream_end: true,
+                body: Bytes::from(vec![0u8; 64]),
+            }
         })
         .collect();
 
@@ -183,10 +185,10 @@ fn bench_response_routing(c: &mut Criterion) {
             
             // Re-establish lease for next iteration
             let req = RpcRequest {
-                correlation_id: "initial-req".to_string(),
+                correlation_id: initial_cid,
                 route: Route::new("rpc://realm/service/operation"),
                 reply_route: Route::new("inbox://session/1"),
-                body: vec![0u8; 64],
+                body: Bytes::from(vec![0u8; 64]),
             };
             actor.receive(RpcMessage::Request(req), &mut ctx);
         })
@@ -216,11 +218,11 @@ fn bench_lease_tracking(c: &mut Criterion) {
 
     // Precompute requests
     let requests: Vec<RpcRequest> = (0..256)
-        .map(|i| RpcRequest {
-            correlation_id: format!("req-{}", i),
+        .map(|_| RpcRequest {
+            correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: vec![0u8; 64],
+            body: Bytes::from(vec![0u8; 64])
         })
         .collect();
 
@@ -262,11 +264,11 @@ fn bench_round_robin_distribution(c: &mut Criterion) {
 
         // Precompute requests
         let requests: Vec<RpcRequest> = (0..256)
-            .map(|i| RpcRequest {
-                correlation_id: format!("req-{}", i),
+            .map(|_| RpcRequest {
+                correlation_id: Uuid::new_v4(),
                 route: Route::new("rpc://realm/service/operation"),
                 reply_route: Route::new("inbox://session/1"),
-                body: vec![0u8; 64],
+                body: Bytes::from(vec![0u8; 64])
             })
             .collect();
 
@@ -301,3 +303,6 @@ criterion_group! {
         bench_round_robin_distribution
 }
 criterion_main!(benches);
+
+
+

@@ -1,4 +1,4 @@
-//! Lightweight SessionActor helpers for the RPC domain
+﻿//! Lightweight SessionActor helpers for the RPC domain
 //!
 //! Responsibilities:
 //! - Enforce session-level authorization for RPC call/subscribe operations
@@ -78,6 +78,8 @@ mod tests {
     use crate::session::permissions::SessionPermissions;
     use crate::auth::Permission;
     use std::sync::Arc;
+    use bytes::Bytes;
+    use uuid::Uuid;
     use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
 
     fn make_ctx() -> Context<RpcRouteActor> {
@@ -97,11 +99,10 @@ mod tests {
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
 
-        let request = RpcRequest::new(
-            "req-001".to_string(),
+        let request = RpcRequest::new(Uuid::new_v4(),
             Route::new("rpc://realm/area/resource/create"),
             Route::new("inbox://session/1"),
-            vec![1, 2, 3],
+            Bytes::from(vec![1, 2, 3]),
         );
 
         // Act
@@ -130,11 +131,10 @@ mod tests {
         let session_perms = SessionPermissions::from_permissions(perms);
         let session = SessionActor::new(SessionId(1), session_perms);
 
-        let request = RpcRequest::new(
-            "req-001".to_string(),
+        let request = RpcRequest::new(Uuid::new_v4(),
             Route::new("rpc://realm/area/resource/create"),
             Route::new("inbox://session/1"),
-            vec![1, 2, 3],
+            Bytes::from(vec![1, 2, 3]),
         );
 
         // Act
@@ -195,3 +195,5 @@ mod tests {
         assert_eq!(actor.worker_count(), 1);
     }
 }
+
+

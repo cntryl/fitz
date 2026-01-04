@@ -20,6 +20,8 @@
 //! - Middle chunks: seq=N, stream_end=false
 //! - Final chunk: seq=M, stream_end=true
 
+use bytes::Bytes;
+use uuid::Uuid;
 use crate::runtime::routing::{Route, RouteAddress};
 
 /// RPC request from client to route actor
@@ -28,8 +30,8 @@ use crate::runtime::routing::{Route, RouteAddress};
 /// Contains all information needed for routing, correlation, and reply delivery.
 #[derive(Debug, Clone)]
 pub struct RpcRequest {
-    /// Unique correlation ID for matching responses
-    pub correlation_id: String,
+    /// Unique correlation ID for matching responses (UUID for distributed tracing)
+    pub correlation_id: Uuid,
     
     /// Target RPC route (e.g., "rpc://acme/auth/user/create")
     pub route: Route,
@@ -37,17 +39,17 @@ pub struct RpcRequest {
     /// Reply inbox route (e.g., "inbox://session/123")
     pub reply_route: Route,
     
-    /// Request payload
-    pub body: Vec<u8>,
+    /// Request payload (Bytes for zero-copy)
+    pub body: Bytes,
 }
 
 impl RpcRequest {
     /// Create new RPC request
     pub fn new(
-        correlation_id: String,
+        correlation_id: Uuid,
         route: Route,
         reply_route: Route,
-        body: Vec<u8>,
+        body: Bytes,
     ) -> Self {
         Self {
             correlation_id,
@@ -65,14 +67,14 @@ impl RpcRequest {
 /// seq numbers and mark the final chunk with stream_end=true.
 #[derive(Debug, Clone)]
 pub struct RpcResponse {
-    /// Correlation ID matching the request
-    pub correlation_id: String,
+    /// Correlation ID matching the request (UUID for distributed tracing)
+    pub correlation_id: Uuid,
     
     /// Sequence number for streaming (starts at 0)
     pub seq: u64,
     
-    /// Response payload chunk
-    pub body: Vec<u8>,
+    /// Response payload chunk (Bytes for zero-copy)
+    pub body: Bytes,
     
     /// True if this is the final chunk
     pub stream_end: bool,
@@ -80,7 +82,7 @@ pub struct RpcResponse {
 
 impl RpcResponse {
     /// Create single-chunk response (non-streaming)
-    pub fn single(correlation_id: String, body: Vec<u8>) -> Self {
+    pub fn single(correlation_id: Uuid, body: Bytes) -> Self {
         Self {
             correlation_id,
             seq: 0,
@@ -90,7 +92,7 @@ impl RpcResponse {
     }
     
     /// Create streaming response chunk
-    pub fn chunk(correlation_id: String, seq: u64, body: Vec<u8>, stream_end: bool) -> Self {
+    pub fn chunk(correlation_id: Uuid, seq: u64, body: Bytes, stream_end: bool) -> Self {
         Self {
             correlation_id,
             seq,
@@ -141,7 +143,7 @@ pub enum RpcMessage {
     /// and allow the worker to receive additional requests.
     Ack {
         /// Correlation ID of completed request
-        correlation_id: String,
+        correlation_id: Uuid,
     },
 }
 
@@ -167,7 +169,7 @@ impl RpcMessage {
     }
     
     /// Create Ack message
-    pub fn ack(correlation_id: String) -> Self {
+    pub fn ack(correlation_id: Uuid) -> Self {
         Self::Ack { correlation_id }
     }
 }
@@ -180,27 +182,27 @@ impl RpcMessage {
 #[derive(Debug, Clone)]
 pub struct RpcWorkItem {
     /// Correlation ID for tracking
-    pub correlation_id: String,
+    pub correlation_id: Uuid,
     
     /// Reply route for sending responses
     pub reply_route: Route,
     
     /// Request payload
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 impl RpcWorkItem {
     /// Create work item from request
     pub fn from_request(req: &RpcRequest) -> Self {
         Self {
-            correlation_id: req.correlation_id.clone(),
+            correlation_id: req.correlation_id,
             reply_route: req.reply_route.clone(),
             body: req.body.clone(),
         }
     }
     
     /// Create work item directly
-    pub fn new(correlation_id: String, reply_route: Route, body: Vec<u8>) -> Self {
+    pub fn new(correlation_id: Uuid, reply_route: Route, body: Bytes) -> Self {
         Self {
             correlation_id,
             reply_route,

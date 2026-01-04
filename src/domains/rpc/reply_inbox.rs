@@ -19,6 +19,7 @@ use crate::domains::rpc::errors::RpcError;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::RouteFamily;
 use std::collections::{HashMap, BTreeMap};
+use uuid::Uuid;
 
 /// Tracks streaming state for a single correlation ID
 #[derive(Debug)]
@@ -46,7 +47,7 @@ pub enum InboxMessage {
     /// Error to be delivered to client
     Error(RpcError),
     /// Clean up state for a correlation ID
-    Cleanup { correlation_id: String },
+    Cleanup { correlation_id: Uuid },
 }
 
 /// ReplyInboxActor manages response ordering and delivery for one client
@@ -57,7 +58,7 @@ pub struct ReplyInboxActor {
     /// Route family for isolation
     _family: RouteFamily,
     /// Streaming state per correlation ID
-    streams: HashMap<String, StreamState>,
+    streams: HashMap<Uuid, StreamState>,
     /// Maximum number of buffered chunks per stream
     max_buffer_size: usize,
 }
@@ -67,7 +68,7 @@ impl ReplyInboxActor {
     pub fn new(family: RouteFamily) -> Self {
         Self {
             _family: family,
-            streams: HashMap::new(),
+            streams: HashMap::with_capacity(64), // Pre-allocate for typical concurrent requests
             max_buffer_size: 100, // Default: buffer up to 100 out-of-order chunks
         }
     }
@@ -76,17 +77,17 @@ impl ReplyInboxActor {
     pub fn with_buffer_size(family: RouteFamily, max_buffer_size: usize) -> Self {
         Self {
             _family: family,
-            streams: HashMap::new(),
+            streams: HashMap::with_capacity(64),
             max_buffer_size,
         }
     }
 
     /// Handle incoming response chunk
     fn handle_response(&mut self, response: RpcResponse, _ctx: &mut Context<Self>) {
-        let correlation_id = response.correlation_id.clone();
+        let correlation_id = response.correlation_id;
         
         // Get or create stream state
-        let stream = self.streams.entry(correlation_id.clone())
+        let stream = self.streams.entry(correlation_id)
             .or_insert_with(StreamState::new);
 
         // Check sequence number
@@ -122,7 +123,7 @@ impl ReplyInboxActor {
     }
 
     /// Flush buffered chunks that are now in order
-    fn flush_buffer(&mut self, correlation_id: &str) {
+    fn flush_buffer(&mut self, correlation_id: &Uuid) {
         loop {
             let should_remove = {
                 let Some(stream) = self.streams.get_mut(correlation_id) else {
@@ -165,7 +166,7 @@ impl ReplyInboxActor {
     }
 
     /// Clean up state for a correlation ID
-    fn handle_cleanup(&mut self, correlation_id: String) {
+    fn handle_cleanup(&mut self, correlation_id: Uuid) {
         self.streams.remove(&correlation_id);
     }
 
@@ -175,7 +176,7 @@ impl ReplyInboxActor {
     }
 
     /// Get buffered chunk count for a correlation ID
-    pub fn buffered_count(&self, correlation_id: &str) -> usize {
+    pub fn buffered_count(&self, correlation_id: &Uuid) -> usize {
         self.streams.get(correlation_id)
             .map(|s| s.buffer.len())
             .unwrap_or(0)
@@ -209,11 +210,11 @@ mod tests {
         ReplyInboxActor::new(RouteFamily::new(1))
     }
 
-    fn create_response(correlation_id: &str, seq: u64, stream_end: bool) -> RpcResponse {
+    fn create_response(correlation_id: Uuid, seq: u64, stream_end: bool) -> RpcResponse {
         RpcResponse {
-            correlation_id: correlation_id.to_string(),
+            correlation_id,
             seq,
-            body: vec![],
+            body: bytes::Bytes::new(),
             stream_end,
         }
     }
@@ -231,7 +232,8 @@ mod tests {
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
         let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://test"));
         let mut ctx = Context::new(addr, router);
-        let response = create_response("req-001", 0, true);
+        let correlation_id = Uuid::new_v4();
+        let response = create_response(correlation_id, 0, true);
 
         // Act
         inbox.handle_response(response, &mut ctx);
@@ -247,13 +249,14 @@ mod tests {
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
         let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://test"));
         let mut ctx = Context::new(addr, router);
+        let correlation_id = Uuid::new_v4();
 
         // Act - receive seq 2 before seq 0 and 1
-        inbox.handle_response(create_response("req-001", 2, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
 
         // Assert
         assert_eq!(inbox.active_streams(), 1);
-        assert_eq!(inbox.buffered_count("req-001"), 1);
+        assert_eq!(inbox.buffered_count(&correlation_id), 1);
     }
 
     #[test]
@@ -263,14 +266,15 @@ mod tests {
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
         let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://test"));
         let mut ctx = Context::new(addr, router);
+        let correlation_id = Uuid::new_v4();
 
         // Act - receive out of order, then fill gap
-        inbox.handle_response(create_response("req-001", 2, false), &mut ctx);
-        inbox.handle_response(create_response("req-001", 0, false), &mut ctx);
-        inbox.handle_response(create_response("req-001", 1, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 1, false), &mut ctx);
 
         // Assert - seq 2 should have been flushed when we filled the gap
-        assert_eq!(inbox.buffered_count("req-001"), 0);
+        assert_eq!(inbox.buffered_count(&correlation_id), 0);
     }
 
     #[test]
@@ -280,10 +284,11 @@ mod tests {
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
         let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://test"));
         let mut ctx = Context::new(addr, router);
+        let correlation_id = Uuid::new_v4();
 
         // Act - receive seq 0 twice
-        inbox.handle_response(create_response("req-001", 0, false), &mut ctx);
-        inbox.handle_response(create_response("req-001", 0, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
 
         // Assert - duplicate dropped, only expecting seq 1 now
         assert_eq!(inbox.active_streams(), 1);
