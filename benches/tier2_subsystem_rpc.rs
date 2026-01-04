@@ -133,6 +133,7 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
                     // Dispatch to actor
                     let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                     let req = RpcRequest {
+                        family_id: RouteFamily::new(1),
                         correlation_id: cid,
                         route: Route::new(route),
                         reply_route: Route::new(reply_route),
@@ -174,6 +175,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
         // Dispatch initial request to establish lease
         let initial_cid = Uuid::new_v4();
         let initial_req = RpcRequest {
+            family_id: RouteFamily::new(1),
             correlation_id: initial_cid,
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
@@ -230,6 +232,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
                 
                 // Re-establish lease for next iteration
                 let req = RpcRequest {
+                    family_id: RouteFamily::new(1),
                     correlation_id: initial_cid,
                     route: Route::new("rpc://realm/service/operation"),
                     reply_route: Route::new("inbox://session/1"),
@@ -270,6 +273,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
             // Dispatch initial request
             let initial_cid = Uuid::new_v4();
             let initial_req = RpcRequest {
+                family_id: RouteFamily::new(1),
                 correlation_id: initial_cid,
                 route: Route::new("rpc://realm/service/operation"),
                 reply_route: Route::new("inbox://session/1"),
@@ -332,6 +336,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
                     
                     // Re-establish request for next iteration
                     let req = RpcRequest {
+                        family_id: RouteFamily::new(1),
                         correlation_id: initial_cid,
                         route: Route::new("rpc://realm/service/operation"),
                         reply_route: Route::new("inbox://session/1"),
@@ -401,6 +406,7 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
                     // Enqueue request
                     let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                     let req = RpcRequest {
+                        family_id: RouteFamily::new(1),
                         correlation_id: cid,
                         route: Route::new(route),
                         reply_route: Route::new(reply_route),

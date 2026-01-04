@@ -20,7 +20,7 @@ fn make_ctx() -> Context<LeaseActor> {
 #[test]
 fn should_reject_unauthenticated_lease_acquire() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -43,7 +43,7 @@ fn should_reject_unauthenticated_lease_acquire() {
 #[test]
 fn should_reject_lease_acquire_with_read_only_permission() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let perms = vec![Permission::parse("lease://realm/locks/**#read").unwrap()];
@@ -68,7 +68,7 @@ fn should_reject_lease_acquire_with_read_only_permission() {
 #[test]
 fn should_allow_lease_acquire_with_write_permission() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let perms = vec![Permission::parse("lease://realm/locks/**#write").unwrap()];
@@ -92,7 +92,7 @@ fn should_allow_lease_acquire_with_write_permission() {
 #[test]
 fn should_reject_unauthorized_lease_renew() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -116,7 +116,7 @@ fn should_reject_unauthorized_lease_renew() {
 #[test]
 fn should_reject_unauthorized_lease_release() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -139,7 +139,7 @@ fn should_reject_unauthorized_lease_release() {
 #[test]
 fn should_allow_lease_query_with_read_permission() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let perms = vec![Permission::parse("lease://realm/locks/**#read").unwrap()];
@@ -161,7 +161,7 @@ fn should_allow_lease_query_with_read_permission() {
 #[test]
 fn should_reject_unauthorized_lease_query() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -182,7 +182,7 @@ fn should_reject_unauthorized_lease_query() {
 #[test]
 fn should_enforce_realm_boundary_for_lease_operations() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     // Permission for prod realm only

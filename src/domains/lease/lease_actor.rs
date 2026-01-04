@@ -271,7 +271,7 @@ impl LeaseActor {
 
 impl Default for LeaseActor {
     fn default() -> Self {
-        Self::new()
+        Self::new(crate::runtime::routing::RouteFamily::new(0))
     }
 }
 
@@ -367,6 +367,7 @@ impl LeaseActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::routing::RouteFamily;
     use parking_lot::Mutex;
     use std::sync::Arc;
 
@@ -406,7 +407,7 @@ mod tests {
     #[test]
     fn should_acquire_unowned_lease() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
 
         // Act
         let response =
@@ -422,7 +423,7 @@ mod tests {
     #[test]
     fn should_return_existing_token_for_idempotent_acquire() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let first =
             actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let first_token = match first {
@@ -446,7 +447,7 @@ mod tests {
     #[test]
     fn should_reject_acquire_when_held_by_other() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act
@@ -467,7 +468,7 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
-        let mut actor = LeaseActor::with_clock(Box::new(MockClock {
+        let mut actor = LeaseActor::with_clock(RouteFamily::new(1), Box::new(MockClock {
             now: clock_ref.now.clone(),
         }));
 
@@ -492,7 +493,7 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
-        let mut actor = LeaseActor::with_clock(Box::new(MockClock {
+        let mut actor = LeaseActor::with_clock(RouteFamily::new(1), Box::new(MockClock {
             now: clock_ref.now.clone(),
         }));
 
@@ -520,7 +521,7 @@ mod tests {
     #[test]
     fn should_renew_lease_with_valid_token() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let response =
             actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let token = match response {
@@ -548,7 +549,7 @@ mod tests {
     #[test]
     fn should_reject_renew_with_wrong_token() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act
@@ -571,7 +572,7 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
-        let mut actor = LeaseActor::with_clock(Box::new(MockClock {
+        let mut actor = LeaseActor::with_clock(RouteFamily::new(1), Box::new(MockClock {
             now: clock_ref.now.clone(),
         }));
 
@@ -600,7 +601,7 @@ mod tests {
     #[test]
     fn should_release_lease_with_valid_token() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let response =
             actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let token = match response {
@@ -622,7 +623,7 @@ mod tests {
     #[test]
     fn should_reject_release_with_wrong_token() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act
@@ -642,7 +643,7 @@ mod tests {
     #[test]
     fn should_allow_reacquire_after_release() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let response =
             actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
         let token = match response {
@@ -669,7 +670,7 @@ mod tests {
     #[test]
     fn should_query_lease_status() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 60);
 
         // Act

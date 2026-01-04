@@ -291,7 +291,7 @@ fn should_isolate_requests_across_route_families() {
     };
 
     let request2 = RpcRequest {
-        family_id: RouteFamily::new(1),
+        family_id: RouteFamily::new(2),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
         reply_route: Route::new("inbox://session/456"),
@@ -321,6 +321,7 @@ fn should_cleanup_state_after_request_completion() {
 
     let correlation_id = Uuid::new_v4();
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id,
         route: Route::new("rpc://realm/inventory/item/update"),
         reply_route: Route::new("inbox://session/123"),

@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn should_reject_unauthenticated_acquire() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn should_reject_unauthorized_acquire() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         // Create a session with read-only permission
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn should_allow_authorized_acquire() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let perms = vec![Permission::parse("lease://realm/locks/**#write").unwrap()];
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn should_reject_unauthorized_renew() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn should_reject_unauthorized_release() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn should_allow_authorized_query_with_read_permission() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let perms = vec![Permission::parse("lease://realm/locks/**#read").unwrap()];
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn should_reject_unauthorized_query() {
         // Arrange
-        let mut actor = LeaseActor::new();
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());

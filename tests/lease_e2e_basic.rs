@@ -20,7 +20,7 @@ fn make_ctx() -> Context<LeaseActor> {
 #[test]
 fn should_acquire_lease_successfully() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let msg = LeaseMessage::Acquire {
@@ -41,7 +41,7 @@ fn should_acquire_lease_successfully() {
 #[test]
 fn should_renew_lease_successfully() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -73,7 +73,7 @@ fn should_renew_lease_successfully() {
 #[test]
 fn should_release_lease_successfully() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");

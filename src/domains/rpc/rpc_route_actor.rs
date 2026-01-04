@@ -220,6 +220,7 @@ impl RpcRouteActor {
         if request.family_id != self.family {
             let error = RpcError::new(
                 request.correlation_id,
+                crate::domains::rpc::errors::RpcErrorCode::InvalidRoute,
                 format!("Route family mismatch: request family {:?} != actor family {:?}", 
                     request.family_id, self.family)
             );
@@ -382,7 +383,7 @@ impl RpcRouteActor {
                 
                 // Send timeout error to client
                 let error = RpcError::timeout(correlation_id);
-                self.send_error(error, &*lease.reply_route);
+                self.send_error(error, &lease.reply_route);
                 
                 // NOTE: We don't re-enqueue for retry since we don't have the original request
                 // (removed request clone for performance). Client should retry if needed.

@@ -135,6 +135,11 @@ impl NoticeRouteActor {
     /// - Old: 1000 route clones + 1000 payload clones (~70-150µs)
     /// - New: 1 Arc allocation + 1000 Arc::clone (~<1µs, 100-150x faster)
     fn handle_publish(&mut self, msg: PublishMessage, ctx: &mut Context<Self>) {
+        // Validate family isolation
+        if msg.family_id != self.family_id {
+            return; // Silently drop misrouted messages
+        }
+
         // Find all subscription IDs that match this published route
         let matching_ids = self.index.match_all(self.family_id, &msg.route);
 

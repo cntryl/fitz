@@ -40,7 +40,7 @@
 //! use fitz::runtime::scheduler::Scheduler;
 //!
 //! let scheduler = Scheduler::new(1);
-//! let lease_actor = LeaseActor::new();
+//! let lease_actor = LeaseActor::new(RouteFamily::new(1));
 //! let actor_ref = scheduler.spawn(lease_actor, 100);
 //!
 //! // Acquire a lease

@@ -99,7 +99,9 @@ mod tests {
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
 
-        let request = RpcRequest::new(Uuid::new_v4(),
+        let request = RpcRequest::new(
+            RouteFamily::new(1),
+            Uuid::new_v4(),
             Route::new("rpc://realm/area/resource/create"),
             Route::new("inbox://session/1"),
             Bytes::from(vec![1, 2, 3]),
@@ -131,7 +133,9 @@ mod tests {
         let session_perms = SessionPermissions::from_permissions(perms);
         let session = SessionActor::new(SessionId(1), session_perms);
 
-        let request = RpcRequest::new(Uuid::new_v4(),
+        let request = RpcRequest::new(
+            RouteFamily::new(1),
+            Uuid::new_v4(),
             Route::new("rpc://realm/area/resource/create"),
             Route::new("inbox://session/1"),
             Bytes::from(vec![1, 2, 3]),

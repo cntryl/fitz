@@ -48,9 +48,9 @@ fn bench_fanout_scaling(c: &mut Criterion) {
     for sub_count in [1, 10, 100, 1000] {
         group.throughput(Throughput::Elements(sub_count));
 
-        // Old approach (per-subscriber clone) - for comparison
+        // Old approach (per-subscriber clone) - DEPRECATED, kept for comparison only
         group.bench_with_input(
-            BenchmarkId::new("clone_per_subscriber", sub_count),
+            BenchmarkId::new("old_clone_per_subscriber", sub_count),
             &sub_count,
             |b, &count| {
                 b.iter(|| {

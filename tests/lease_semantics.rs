@@ -19,7 +19,7 @@ fn make_ctx() -> Context<LeaseActor> {
 #[test]
 fn should_grant_lease_to_first_requester() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let msg = LeaseMessage::Acquire {
@@ -40,7 +40,7 @@ fn should_grant_lease_to_first_requester() {
 #[test]
 fn should_reject_second_requester_when_lease_is_held() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -70,7 +70,7 @@ fn should_reject_second_requester_when_lease_is_held() {
 #[test]
 fn should_return_same_token_for_idempotent_acquire() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -99,7 +99,7 @@ fn should_return_same_token_for_idempotent_acquire() {
 #[test]
 fn should_renew_lease_with_valid_token() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -130,7 +130,7 @@ fn should_renew_lease_with_valid_token() {
 #[test]
 fn should_release_lease_with_valid_token() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -160,7 +160,7 @@ fn should_release_lease_with_valid_token() {
 #[test]
 fn should_allow_new_owner_after_release() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -198,7 +198,7 @@ fn should_allow_new_owner_after_release() {
 #[test]
 fn should_issue_monotonically_increasing_tokens() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route1 = Route::new("lease://realm/locks/lock1/acquire");
@@ -237,7 +237,7 @@ fn should_issue_monotonically_increasing_tokens() {
 #[test]
 fn should_isolate_leases_across_route_families() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
@@ -259,14 +259,14 @@ fn should_isolate_leases_across_route_families() {
     };
     actor.receive(msg2, &mut ctx);
 
-    // Assert - Two separate leases
-    assert_eq!(actor.lease_count(), 2);
+    // Assert - Only one lease (family=1) because family=2 message is rejected
+    assert_eq!(actor.lease_count(), 1);
 }
 
 #[test]
 fn should_query_lease_status() {
     // Arrange
-    let mut actor = LeaseActor::new();
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
