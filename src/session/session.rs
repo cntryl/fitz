@@ -123,10 +123,19 @@ pub struct Session {
     mux: Mux,
 }
 
-impl Session {
-    /// Create a new session with authentication claims
-    pub fn new_authenticated(
-        session_id: u64,
+/// Configuration used to create sessions. Grouped to avoid long parameter lists.
+pub struct NewSessionConfig {
+    pub transport_kind: TransportKind,
+    pub peer_addr: Option<SocketAddr>,
+    pub permissions: SessionPermissions,
+    pub claims: Option<crate::auth::Claims>,
+    pub metadata: SessionMetadata,
+    pub channel_capacity: usize,
+    pub type_mapping: Option<TypeMapping>,
+}
+
+impl NewSessionConfig {
+    pub fn authenticated(
         transport_kind: TransportKind,
         peer_addr: Option<SocketAddr>,
         permissions: SessionPermissions,
@@ -135,20 +144,57 @@ impl Session {
         channel_capacity: usize,
         type_mapping: Option<TypeMapping>,
     ) -> Self {
-        let mux = if let Some(mapping) = type_mapping {
-            Mux::with_mapping(channel_capacity, mapping)
+        Self {
+            transport_kind,
+            peer_addr,
+            permissions,
+            claims: Some(claims),
+            metadata,
+            channel_capacity,
+            type_mapping,
+        }
+    }
+
+    pub fn unauthenticated(
+        transport_kind: TransportKind,
+        peer_addr: Option<SocketAddr>,
+        permissions: SessionPermissions,
+        metadata: SessionMetadata,
+        channel_capacity: usize,
+        type_mapping: Option<TypeMapping>,
+    ) -> Self {
+        Self {
+            transport_kind,
+            peer_addr,
+            permissions,
+            claims: None,
+            metadata,
+            channel_capacity,
+            type_mapping,
+        }
+    }
+}
+
+impl Session {
+    /// Create a new session with authentication claims
+    pub fn new_authenticated(session_id: u64, cfg: NewSessionConfig) -> Self {
+        let mux = if let Some(mapping) = cfg.type_mapping {
+            Mux::with_mapping(cfg.channel_capacity, mapping)
         } else {
-            Mux::new(channel_capacity)
+            Mux::new(cfg.channel_capacity)
         };
+
+        let authenticated = cfg.claims.is_some();
+        let claims = cfg.claims.map(Arc::new);
 
         let info = SessionInfo {
             session_id,
-            transport_kind,
-            peer_addr,
-            metadata: Arc::new(metadata),
-            permissions_snapshot: permissions.clone(),
-            claims: Some(Arc::new(claims)),
-            authenticated: true,
+            transport_kind: cfg.transport_kind,
+            peer_addr: cfg.peer_addr,
+            metadata: Arc::new(cfg.metadata),
+            permissions_snapshot: cfg.permissions.clone(),
+            claims,
+            authenticated,
         };
 
         Self {

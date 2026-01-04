@@ -13,20 +13,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// - Test injection support
 ///
 /// HTTP fetch is done in the *transport layer* only (see `fetch_and_cache_jwks`/`ensure_jwks_cached`).
-
 /// Minimal JWK representation sufficient for our needs
 #[derive(Debug, Deserialize)]
 struct Jwk {
     pub kty: String,
     pub kid: Option<String>,
-    pub alg: Option<String>,
+    pub _alg: Option<String>,
     #[serde(rename = "use")]
-    pub use_: Option<String>,
+    pub _use_: Option<String>,
     pub n: Option<String>,
     pub e: Option<String>,
     pub k: Option<String>,
-    pub x5c: Option<Vec<String>>,
-}
+    pub _x5c: Option<Vec<String>>,
+} 
 
 #[derive(Debug, Deserialize)]
 struct Jwks {
@@ -48,7 +47,7 @@ struct CachedJwksEntry {
     pub ttl_seconds: u64,
 }
 
-static JWKS_CACHE: Lazy<DashMap<String, CachedJwksEntry>> = Lazy::new(|| DashMap::new());
+static JWKS_CACHE: Lazy<DashMap<String, CachedJwksEntry>> = Lazy::new(DashMap::new);
 
 fn now_epoch_secs() -> u64 {
     SystemTime::now()

@@ -11,8 +11,7 @@ use crate::auth::Permission;
 ///
 /// - `RawClaims`: unparsed claims from JWT payload
 /// - `Claims`: fully normalized, immutable claims suitable for authorization checks
-
-/// Portion of the OIDC JWT reserved for Fitz-specific data.
+///   Portion of the OIDC JWT reserved for Fitz-specific data.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FitzClaims {
     pub permissions: Option<Vec<String>>,
@@ -243,7 +242,7 @@ pub struct Claims {
 impl RawClaims {
     /// Validate and normalize into a `Claims` object. This performs the same
     /// validation as `RawClaims::validate` and resolves tenant + permissions.
-    pub fn normalize(mut self, allowlist: &[&str], audience: &str, now: u64) -> Result<Claims, String> {
+    pub fn normalize(self, allowlist: &[&str], audience: &str, now: u64) -> Result<Claims, String> {
         // Basic validation (issuer, audience, time checks, tenant resolution)
         self.validate(allowlist, audience, now)?;
 
@@ -353,7 +352,7 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
 
 #[cfg(test)]
 mod claims_tests {
-    use crate::auth::{parse_jwt_noverify, RawClaims};
+    use crate::auth::parse_jwt_noverify;
     use base64::Engine;
 
     #[test]

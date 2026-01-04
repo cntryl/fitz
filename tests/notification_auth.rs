@@ -3,7 +3,6 @@ use bytes::Bytes;
 use fitz::domains::notification::actor::NoticeRouteActor;
 use fitz::domains::notification::session::SessionActor;
 use fitz::session::permissions::SessionPermissions;
-use fitz::domains::notification::protocol::PublishMessage;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};

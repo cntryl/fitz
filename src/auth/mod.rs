@@ -15,7 +15,6 @@
 //! **Auth answers:** "Who are you and what do you claim?"
 //! **Domains answer:** "Are you allowed to do this?"
 
-mod jwk;
 mod token;
 mod jwks;
 mod claims;
