@@ -25,11 +25,21 @@ pub struct LeaseKey {
 impl LeaseKey {
     /// Parse a route into lease key
     ///
-    /// Expected route format: `/{realm}/{area}/{resource}/{operation}`
+    /// Expected route format: `{scheme}://{realm}/{area}/{resource}/{operation}`
+    /// or `/{realm}/{area}/{resource}/{operation}`
     ///
     /// Returns None if the route doesn't match the expected format.
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
-        let parts: Vec<&str> = route.as_str().trim_start_matches('/').split('/').collect();
+        let path = route.as_str();
+        
+        // Strip scheme if present (e.g., "lease://..." → "...")
+        let path_without_scheme = if let Some(pos) = path.find("://") {
+            &path[pos + 3..]
+        } else {
+            path
+        };
+        
+        let parts: Vec<&str> = path_without_scheme.trim_start_matches('/').split('/').collect();
 
         if parts.len() >= 4 {
             Some(LeaseKey {

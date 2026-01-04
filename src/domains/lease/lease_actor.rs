@@ -332,6 +332,11 @@ impl LeaseActor {
         self.leases
             .retain(|_lease_id, state| !state.is_expired(now));
     }
+
+    /// Testing helper: get the number of active leases
+    pub fn lease_count(&self) -> usize {
+        self.leases.len()
+    }
 }
 
 #[cfg(test)]
