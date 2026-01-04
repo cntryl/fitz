@@ -135,7 +135,9 @@ mod tests {
 
     #[test]
     fn should_generate_unique_session_ids() {
-        // Arrange & Act
+        // Arrange
+
+        // Act
         let id1 = crate::session::next_session_id();
         let id2 = crate::session::next_session_id();
         let id3 = crate::session::next_session_id();

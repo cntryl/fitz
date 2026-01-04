@@ -268,13 +268,24 @@ mod tests {
 
     #[test]
     fn should_map_default_ranges() {
+        // Arrange
         let mapping = TypeMapping::new();
-        assert_eq!(mapping.get_channel(50), Some(ChannelId::Control));
-        assert_eq!(mapping.get_channel(150), Some(ChannelId::Pub));
-        assert_eq!(mapping.get_channel(250), Some(ChannelId::Sub));
-        assert_eq!(mapping.get_channel(350), Some(ChannelId::Rpc));
-        assert_eq!(mapping.get_channel(450), Some(ChannelId::Lease));
-        assert_eq!(mapping.get_channel(999), None);
+
+        // Act
+        let c1 = mapping.get_channel(50);
+        let c2 = mapping.get_channel(150);
+        let c3 = mapping.get_channel(250);
+        let c4 = mapping.get_channel(350);
+        let c5 = mapping.get_channel(450);
+        let c6 = mapping.get_channel(999);
+
+        // Assert
+        assert_eq!(c1, Some(ChannelId::Control));
+        assert_eq!(c2, Some(ChannelId::Pub));
+        assert_eq!(c3, Some(ChannelId::Sub));
+        assert_eq!(c4, Some(ChannelId::Rpc));
+        assert_eq!(c5, Some(ChannelId::Lease));
+        assert_eq!(c6, None);
     }
 
     #[test]
@@ -321,6 +332,7 @@ mod tests {
 
     #[test]
     fn should_track_backpressure() {
+        // Arrange
         let mut mux = Mux::new(1);
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(100), b"value");
@@ -328,10 +340,11 @@ mod tests {
         let decoder = TlvDecoder::new();
         let (record, _) = decoder.decode_one(&data).unwrap();
 
+        // Act
         let _ = mux.route(record.clone()).unwrap();
-        assert!(matches!(
-            mux.route(record),
-            Err(MuxError::ChannelFull(ChannelId::Pub))
-        ));
+        let res = mux.route(record);
+
+        // Assert
+        assert!(matches!(res, Err(MuxError::ChannelFull(ChannelId::Pub))));
     }
 }

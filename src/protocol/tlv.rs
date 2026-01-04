@@ -347,14 +347,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_single_byte_type() {
+    fn should_decode_single_byte_type() {
+        // Arrange
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(42), b"hello");
         let data = encoder.finish();
 
+        // Act
         let decoder = TlvDecoder::new();
         let (record, consumed) = decoder.decode_one(&data).unwrap();
 
+        // Assert
         assert_eq!(record.msg_type().as_u16(), 42);
         assert_eq!(record.value(), b"hello");
         assert_eq!(consumed, 1 + 4 + 5);
@@ -367,15 +370,18 @@ mod tests {
     }
 
     #[test]
-    fn decode_multiple_records() {
+    fn should_decode_multiple_records() {
+        // Arrange
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(1), b"first");
         encoder.encode(MessageType::new(2), b"second");
         let data = encoder.finish();
 
+        // Act
         let decoder = TlvDecoder::new();
         let records = decoder.decode_all(&data).unwrap();
 
+        // Assert
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].msg_type().as_u16(), 1);
         assert_eq!(records[1].msg_type().as_u16(), 2);
@@ -392,34 +398,55 @@ mod tests {
     }
 
     #[test]
-    fn decode_into_and_decode_all_consistency() {
+    fn should_decode_into() {
+        // Arrange
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(3), b"foo");
         encoder.encode(MessageType::new(4), b"bar");
         let data = encoder.finish();
 
+        // Act
         let decoder = TlvDecoder::new();
         let mut vec = Vec::new();
         let n = decoder.decode_into(&data, &mut vec).unwrap();
+
+        // Assert
         assert_eq!(n, 2);
         assert_eq!(vec[0].msg_type().as_u16(), 3);
         assert_eq!(vec[1].msg_type().as_u16(), 4);
+    }
 
+    #[test]
+    fn should_decode_all_consistently() {
+        // Arrange
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(3), b"foo");
+        encoder.encode(MessageType::new(4), b"bar");
+        let data = encoder.finish();
+
+        // Act
+        let decoder = TlvDecoder::new();
         let all = decoder.decode_all(&data).unwrap();
+
+        // Assert
         assert_eq!(all[0].msg_type().as_u16(), 3);
         assert_eq!(all[1].msg_type().as_u16(), 4);
     }
 
     #[test]
-    fn decode_refs_into_zero_copy() {
+    fn should_decode_refs_into_zero_copy() {
+        // Arrange
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(7), b"hello");
         encoder.encode(MessageType::new(8), b"world");
         let data = encoder.finish();
 
+        // Act
         let decoder = TlvDecoder::new();
         let mut out: Vec<TlvRef> = Vec::new();
         let n = decoder.decode_refs_into(&data, &mut out).unwrap();
+
+        // Assert
         assert_eq!(n, 2);
         assert_eq!(out[0].ty.as_u16(), 7);
         assert_eq!(out[1].ty.as_u16(), 8);
@@ -428,36 +455,40 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_value() {
+    fn should_fail_on_incomplete_value() {
+        // Arrange
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(1), b"hello");
         let mut data = encoder.finish().to_vec();
         data.truncate(7);
 
+        // Act
         let decoder = TlvDecoder::new();
-        assert!(matches!(
-            decoder.decode_one(&data),
-            Err(TlvError::IncompleteValue { .. })
-        ));
+        let res = decoder.decode_one(&data);
+
+        // Assert
+        assert!(matches!(res, Err(TlvError::IncompleteValue { .. })));
     }
 
     #[test]
-    fn oversized_value() {
+    fn should_fail_on_oversized_value() {
+        // Arrange
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(1), b"data");
         let mut data = encoder.finish().to_vec();
         data[1..5].copy_from_slice(&1_000_000_000u32.to_be_bytes());
 
+        // Act
         let decoder = TlvDecoder::with_max_len(1024);
-        assert!(matches!(
-            decoder.decode_one(&data),
-            Err(TlvError::LengthTooLarge(_))
-        ));
+        let res = decoder.decode_one(&data);
+
+        // Assert
+        assert!(matches!(res, Err(TlvError::LengthTooLarge(_))));
     }
 
     #[test]
-    fn invalid_escape_encoding() {
-        // Build an escaped type whose value is <= MAX_SINGLE_BYTE (invalid)
+    fn should_reject_invalid_escape_encoding() {
+        // Arrange: Build an escaped type whose value is <= MAX_SINGLE_BYTE (invalid)
         let mut data = Vec::new();
         data.push(MessageType::ESCAPE_MARKER);
         // encode 42 as two-byte BE => invalid, should be rejected
@@ -465,14 +496,13 @@ mod tests {
         // write length 0
         data.extend_from_slice(&(0u32.to_be_bytes()));
 
+        // Act
         let decoder = TlvDecoder::new();
-        assert!(matches!(
-            decoder.decode_one_ref(&data),
-            Err(TlvError::InvalidTypeEncoding)
-        ));
-        assert!(matches!(
-            decoder.decode_one(&data),
-            Err(TlvError::InvalidTypeEncoding)
-        ));
+        let res_ref = decoder.decode_one_ref(&data);
+        let res = decoder.decode_one(&data);
+
+        // Assert
+        assert!(matches!(res_ref, Err(TlvError::InvalidTypeEncoding)));
+        assert!(matches!(res, Err(TlvError::InvalidTypeEncoding)));
     }
 }

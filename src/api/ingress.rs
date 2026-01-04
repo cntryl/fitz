@@ -96,7 +96,9 @@ mod tests {
 
     #[test]
     fn should_create_default_ingress_config() {
-        // Arrange & Act
+        // Arrange
+
+        // Act
         let config = IngressConfig::default();
 
         // Assert
@@ -107,7 +109,9 @@ mod tests {
 
     #[test]
     fn should_configure_with_builder_methods() {
-        // Arrange & Act
+        // Arrange
+
+        // Act
         let config = IngressConfig::default()
             .with_frame_size(512 * 1024)
             .with_max_connections(5_000)
@@ -134,9 +138,13 @@ mod tests {
             IngressError::TransportError("connection reset".to_string()),
         ];
 
-        // Act & Assert
+        // Act
+        let mut outputs: Vec<String> = Vec::new();
         for error in errors {
-            let _str = format!("{}", error);
+            outputs.push(format!("{}", error));
         }
+
+        // Assert
+        assert_eq!(outputs.len(), 6);
     }
 }

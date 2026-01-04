@@ -215,7 +215,9 @@ mod tests {
 
     #[test]
     fn should_create_notice_route_actor() {
-        // Arrange & Act
+        // Arrange
+
+        // Act
         let actor = NoticeRouteActor::new(test_family());
 
         // Assert
@@ -358,16 +360,11 @@ mod tests {
 
     #[test]
     fn should_trust_session_actor_for_auth() {
-        // This test documents the trust assumption:
-        // NoticeRouteActor performs NO authentication checks.
-        // It assumes SessionActor has already verified authorization.
-
         // Arrange
         let actor = NoticeRouteActor::new(test_family());
 
-        // If we tried to call handle_subscribe or handle_publish directly,
-        // there's no check that would fail. The actor trusts completely.
-        // This is intentional -- auth/authz is SessionActor's responsibility.
+        // Act
+        let _exists = actor.subscriptions.len();
 
         // Assert: Just verify the actor exists and has no auth logic
         assert_eq!(actor.subscriptions.len(), 0);

@@ -68,24 +68,36 @@ mod tests {
     use crate::runtime::routing::Route;
 
     #[test]
-    fn snapshot_survives_clone() {
+    fn should_snapshot_survive_clone() {
+        // Arrange
         let mut map = HashMap::new();
         map.insert("role".to_string(), "admin".to_string());
         let perms = SessionPermissions::new(map);
+
+        // Act
         let clone = perms.clone();
+
+        // Assert
         assert_eq!(clone.get("role"), Some("admin"));
     }
 
     #[test]
-    fn allows_checks_permissions() {
+    fn should_check_allows_permissions() {
+        // Arrange
         let p = Permission::parse("notice://prod/orders/**#write").unwrap();
         let perms = SessionPermissions::from_permissions(vec![p]);
 
         let route_allowed = Route::new("notice://prod/orders/create");
         let route_denied = Route::new("notice://prod/other/create");
 
-        assert!(perms.allows(&route_allowed, Access::Write));
-        assert!(!perms.allows(&route_allowed, Access::Read));
-        assert!(!perms.allows(&route_denied, Access::Write));
+        // Act
+        let can_write_allowed = perms.allows(&route_allowed, Access::Write);
+        let can_read_allowed = perms.allows(&route_allowed, Access::Read);
+        let can_write_denied = perms.allows(&route_denied, Access::Write);
+
+        // Assert
+        assert!(can_write_allowed);
+        assert!(!can_read_allowed);
+        assert!(!can_write_denied);
     }
 }

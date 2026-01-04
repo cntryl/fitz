@@ -195,7 +195,9 @@ mod tests {
 
     #[test]
     fn should_generate_unique_session_ids() {
-        // Arrange & Act
+        // Arrange
+
+        // Act
         let id1 = generate_session_id();
         let id2 = generate_session_id();
         let id3 = generate_session_id();

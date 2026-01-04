@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn domain_handles_and_fanouts() {
+    fn should_dispatch_to_fanout_on_match() {
         // Arrange
         let mut d = NotificationDomain::new();
         d.register(10, 3);
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_returns_zero_when_no_subs() {
+    fn should_return_zero_when_no_subscribers() {
         // Arrange
         let mut d = NotificationDomain::new();
 

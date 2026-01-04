@@ -84,12 +84,14 @@ mod tests {
     }
 
     #[test]
-    fn reject_unauthenticated_subscribe() {
+    fn should_reject_unauthenticated_subscribe() {
+        // Arrange
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
 
+        // Act
         let res = session.subscribe(
             RouteFamily::new(1),
             Route::new("notify://realm/area/orders/*"),
@@ -97,12 +99,14 @@ mod tests {
             &mut ctx,
         );
 
+        // Assert
         assert!(res.is_err());
         assert_eq!(actor.subscription_count(), 0);
     }
 
     #[test]
-    fn reject_unauthorized_publish() {
+    fn should_reject_unauthorized_publish() {
+        // Arrange
         let router = Router::new();
         let subscriber = RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
@@ -113,6 +117,7 @@ mod tests {
         let session_perms = SessionPermissions::from_permissions(perms);
         let session = SessionActor::new(SessionId(1), session_perms);
 
+        // Act
         let res = session.publish(
             RouteFamily::new(1),
             Route::new("notify://prod/orders/create"),
@@ -121,7 +126,7 @@ mod tests {
             &mut ctx,
         );
 
-        // Permission is read-only, but publish requires write: expect Err
+        // Assert: Permission is read-only, but publish requires write
         assert!(res.is_err());
         assert_eq!(actor.subscription_count(), 0);
     }

@@ -23,6 +23,7 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 once_cell = "1.19"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.21"
+jsonwebtoken = "8"
 sha1 = "0.10"
 hmac = "0.12"
 sha2 = "0.10"

@@ -36,12 +36,18 @@ mod tests {
     use crate::runtime::routing::Route;
 
     #[test]
-    fn session_actor_authorize_checks_permissions() {
+    fn should_session_actor_authorize_checks_permissions() {
+        // Arrange
         let p = Permission::parse("notice://prod/orders/**#write").unwrap();
         let perms = crate::session::permissions::SessionPermissions::from_permissions(vec![p]);
         let actor = SessionActor::new(crate::session::session::SessionId(1), perms);
 
-        assert!(actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write));
-        assert!(!actor.authorize(&Route::new("notice://prod/orders/create"), Access::Read));
+        // Act
+        let can_write = actor.authorize(&Route::new("notice://prod/orders/create"), Access::Write);
+        let can_read = actor.authorize(&Route::new("notice://prod/orders/create"), Access::Read);
+
+        // Assert
+        assert!(can_write);
+        assert!(!can_read);
     }
 }
