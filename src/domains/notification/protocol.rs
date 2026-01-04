@@ -1,28 +1,11 @@
-//! Notification protocol definitions
+//! Notification protocol message types
 //!
-//! The notification protocol supports fire-and-forget pub/sub with wildcard routing.
-//!
-//! # Architecture
-//!
-//! - **SessionActor** enforces all authentication and authorization
-//! - **NoticeRouteActor** owns subscriptions and performs fanout (trusts SessionActor)
-//! - Subscriptions are session-scoped and cleaned up on disconnect
-//! - Authorization is prefix-based and evaluated only at subscribe/publish time
-//!
-//! # Message Types
-//!
-//! - **Publish**: Send a message to all subscribers matching a pattern
-//! - **Subscribe**: Register a session to receive messages on a pattern
-//! - **Unsubscribe**: Unregister a session from a subscription
-//! - **UnsubscribeAll**: Called on session disconnect to clean up all subscriptions
-//! - **Notify**: Deliver a published message to a subscribed session
-//!
-//! # Semantics
-//!
-//! - Fire-and-forget: No acknowledgements, retries, or delivery guarantees
-//! - Best-effort: Messages are delivered only to subscribers alive at publish time
-//! - Isolated: All messaging is scoped to (RouteFamilyId, route) pairs
-//! - Session-scoped: Subscriptions vanish on disconnect
+//! Defines the message types used for pub/sub operations:
+//! - **Publish**: Send message to matching subscribers
+//! - **Subscribe**: Register pattern subscription
+//! - **Unsubscribe**: Remove specific subscription
+//! - **UnsubscribeAll**: Clean up session subscriptions on disconnect
+//! - **Notify**: Deliver published message to subscriber
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::session::SessionId;

@@ -1,6 +1,10 @@
-//! Minimal, zero-copy notification plumbing used for perf proofs.
+//! Zero-copy notification primitives for benchmarking
 //!
-//! This is intentionally small and avoids allocations in the hot path.
+//! This module provides allocation-free matching and fanout primitives
+//! used to measure notification domain hot-path performance.
+//!
+//! **Purpose**: Performance benchmarking only
+//! **Not used in production code**: These are simplified primitives for measuring overhead
 
 use crate::protocol::tlv::MessageType;
 

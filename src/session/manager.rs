@@ -750,7 +750,7 @@ fn should_update_session_actor_on_connect() {
         // Arrange
         use base64::Engine;
         use crate::domains::notification::session as notice_session;
-        use crate::domains::notification::actor::NoticeRouteActor;
+        use crate::domains::notification::route_actor::NoticeRouteActor;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
@@ -809,7 +809,7 @@ fn should_update_session_actor_on_connect() {
         // Arrange
         use base64::Engine;
         use crate::domains::notification::session as notice_session;
-        use crate::domains::notification::actor::NoticeRouteActor;
+        use crate::domains::notification::route_actor::NoticeRouteActor;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteFamily, RouteAddress};

@@ -1,26 +1,17 @@
-//! Lease domain implementation
+//! LeaseActor: manages lease state and enforces invariants
 //!
-//! The lease protocol provides distributed locking with fencing tokens.
 //! Each lease has:
-//! - Identity: (realm, area, resource) extracted from route
+//! - Identity: (realm, area, resource) from route
 //! - Current owner
 //! - Fencing token (monotonically increasing)
 //! - Expiration time (TTL-based)
 //!
-//! # Route Format
-//!
-//! Leases use hierarchical routes: `/{realm}/{area}/{resource}/{operation}`
-//! Example: `/acme/locks/db/migration/acquire`
-//!
-//! The lease key is `(realm, area, resource)` - e.g., `("acme", "locks", "db/migration")`
-//!
 //! # Invariants
 //!
-//! 1. **Exclusive ownership**: At most one owner per lease at any given time
-//! 2. **Monotonic tokens**: Fencing tokens never decrease for a lease
-//! 3. **Expiration semantics**: A lease with expiry <= now() is expired and can be taken
+//! 1. **Exclusive ownership**: At most one owner per lease at any time
+//! 2. **Monotonic tokens**: Fencing tokens never decrease
+//! 3. **Expiration semantics**: Lease with expiry <= now() is expired and can be taken
 //! 4. **Idempotency**: Same operation by same owner produces same result
-//! 5. **Crash safety**: State transitions are designed to be replayable from persistent log
 //!
 //! # State Model
 //!
@@ -31,10 +22,6 @@
 //!     |                      |
 //!     |--acquire(other)------|  (if expired)
 //! ```
-//!
-//! # Time Abstraction
-//!
-//! Uses a `Clock` trait for testing and determinism. In production, uses system time.
 
 use super::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 use crate::runtime::actor::{Actor, Context};

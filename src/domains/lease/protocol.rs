@@ -1,44 +1,11 @@
-//! Lease domain protocol and message types
+//! Lease protocol message types and responses
 //!
-//! The lease protocol provides distributed locking with fencing tokens
-//! for ordering guarantees. Leases have time-to-live (TTL) and can be
-//! acquired, renewed, and released.
-//!
-//! # Route Format
-//!
-//! Leases use hierarchical routes with the format:
-//! ```text
-//! lease://{realm}/{area}/{resource}/{operation}
-//! ```
-//!
-//! Example: `lease://acme/locks/db/migration/acquire`
-//!
-//! Where:
-//! - realm: Top-level namespace (e.g., "acme")
-//! - area: Subdomain within realm (e.g., "locks")
-//! - resource: Specific resource identifier (e.g., "db/migration")
-//! - operation: acquire, renew, release, or query
-//!
-//! Lease identity is the triple `(realm, area, resource)` extracted from the route.
-//!
-//! # Fencing Tokens
-//!
-//! Each lease acquisition returns a monotonically increasing fencing token.
-//! Clients must include this token in subsequent operations. This provides
-//! ordering guarantees and prevents "split brain" scenarios where an old
-//! lease holder believes it still owns the lease.
-//!
-//! # Expiration
-//!
-//! Leases expire after their TTL. An expired lease can be acquired by a new
-//! owner. The new owner receives a higher fencing token.
-//!
-//! # Idempotency
-//!
-//! All operations are idempotent:
-//! - Acquiring an already-held lease returns the existing token
-//! - Renewing with the current token succeeds
-//! - Releasing with an outdated token fails safely
+//! Defines the message types for lease operations:
+//! - **Acquire**: Request exclusive ownership
+//! - **Renew**: Extend lease expiration
+//! - **Release**: Relinquish ownership
+//! - **Query**: Inspect lease status (debugging)
+//! - **Tick**: Runtime-driven expiration (scheduler)
 
 use crate::runtime::routing::{Route, RouteFamily};
 

@@ -1,50 +1,29 @@
-//! Lease-backed execution guard
+//! Lease handle and guard for coordinated execution
 //!
-//! Provides coordination primitives for executing work under lease protection.
-//! This allows higher-level domains (RPC, Stream, KV) to coordinate
-//! exclusive access to resources.
+//! Provides wrappers for holding acquired leases and validating them before critical work.
 //!
-//! # Design
+//! # Components
 //!
-//! The guard integrates with the actor messaging system. Since domains are
-//! 100% synchronous and cannot block waiting for responses, the guard provides:
+//! - **LeaseHandle**: Holds an acquired lease with fencing token and expiration
+//! - **LeaseGuard**: Helper for acquiring leases and creating handles
+//! - **LeaseError**: Lease operation errors
 //!
-//! 1. **LeaseHandle** - holds an acquired lease with fencing token
-//! 2. **validate()** - checks if the handle is still valid
-//! 3. **release()** - releases the lease when done
+//! # Usage Pattern
 //!
-//! The pattern is:
-//! 1. Send LeaseMessage::Acquire, receive LeaseResponse::Acquired
-//! 2. Create a LeaseHandle from the response
-//! 3. Before critical work, validate() the handle
-//! 4. Execute work with the fencing token
-//! 5. Release the lease via handle.release()
-//!
-//! # Expiration
-//!
-//! Lease expiration is driven by the runtime scheduler via periodic
-//! Tick messages. If a lease expires, validate() will return false and
-//! subsequent operations with the stale token will be rejected.
-//!
-//! # Non-Durable Design
-//!
-//! **CRITICAL: Leases are 100% in-memory and non-durable.**
-//!
-//! - If the runtime restarts, all leases are lost
-//! - Callers must re-acquire leases after restart
-//! - No persistence or replay mechanism exists
-//! - This is by design for performance and simplicity
+//! 1. Send `LeaseMessage::Acquire`, receive `LeaseResponse::Acquired`
+//! 2. Create `LeaseHandle` from the response
+//! 3. Before critical work, call `handle.is_valid()`
+//! 4. Execute work with `handle.fencing_token()`
+//! 5. Release via `handle.release(ctx)`
 //!
 //! # Example
 //!
 //! ```ignore
-//! // In an actor's receive() method:
 //! match msg {
 //!     DoWork { lease_handle } => {
 //!         if !lease_handle.is_valid() {
 //!             return Err("Lease expired");
 //!         }
-//!         // Use lease_handle.fencing_token() for ordering
 //!         perform_critical_work(lease_handle.fencing_token())?;
 //!         lease_handle.release(ctx)?;
 //!         Ok(())

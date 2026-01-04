@@ -1,28 +1,15 @@
-//! Notification actor implementation
+//! NoticeRouteActor: subscription management and fanout
 //!
-//! **Architecture:**
-//! - NoticeRouteActor owns subscriptions for a specific (RouteFamily, route) pair
-//! - SessionActor enforces all authentication and authorization before sending messages
-//! - NoticeRouteActor trusts SessionActor and performs no auth checks
-//! - Subscriptions are session-scoped and cleaned up via UnsubscribeAll on disconnect
+//! Owns subscriptions for a specific (RouteFamily, route) pair and performs
+//! wildcard matching and fanout when messages are published.
 //!
-//! **Operations:**
+//! **Trust model**: SessionActor enforces all auth; this actor trusts incoming messages.
 //!
-//! **Publish**: Fan-out payload to all subscribers whose patterns match the route
-//! - Matches are computed against all patterns in this route's scope
-//! - Matching uses wildcard rules (* and **)
-//! - Delivery is fire-and-forget via actor messaging
-//!
-//! **Subscribe**: Register a new pattern+session+subscriber
-//! - SessionActor has already verified authorization
-//! - Creates subscription entry scoped by session_id
-//! - Multiple subscribers per pattern allowed
-//!
-//! **Unsubscribe**: Remove a specific subscription
-//! - Idempotent: unsubscribing non-existent subscription is safe
-//!
-//! **UnsubscribeAll**: Called when session disconnects
-//! - Removes all subscriptions for that session
+//! **Operations**:
+//! - **Publish**: Fan-out to all subscribers matching the route pattern
+//! - **Subscribe**: Register pattern + session + subscriber (post-auth)
+//! - **Unsubscribe**: Remove specific subscription
+//! - **UnsubscribeAll**: Clean up all subscriptions for a disconnected session
 
 use crate::domains::notification::protocol::{
     NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,

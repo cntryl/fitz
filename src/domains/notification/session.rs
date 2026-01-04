@@ -1,5 +1,5 @@
 use crate::domains::notification::protocol::{PublishMessage, SubscribeMessage};
-use crate::domains::notification::actor::NoticeRouteActor;
+use crate::domains::notification::route_actor::NoticeRouteActor;
 use crate::runtime::actor::{Context, Actor};
 use crate::session::permissions::SessionPermissions;
 use crate::runtime::routing::Route;
@@ -75,7 +75,7 @@ mod tests {
     use crate::auth::Permission;
     use bytes::Bytes;
     use std::sync::Arc;
-    use crate::domains::notification::actor::NoticeRouteActor;
+    use crate::domains::notification::route_actor::NoticeRouteActor;
 
     fn make_ctx() -> Context<NoticeRouteActor> {
         let router = Router::new();

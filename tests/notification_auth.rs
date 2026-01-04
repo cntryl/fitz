@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use bytes::Bytes;
-use fitz::domains::notification::actor::NoticeRouteActor;
+use fitz::domains::notification::route_actor::NoticeRouteActor;
 use fitz::domains::notification::session::SessionActor;
 use fitz::session::permissions::SessionPermissions;
 use fitz::runtime::actor::Context;

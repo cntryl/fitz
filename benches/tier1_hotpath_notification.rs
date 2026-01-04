@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::domains::notification::minimal::Matcher;
+use fitz::domains::notification::bench::Matcher;
 use fitz::protocol::tlv::MessageType;
 
 #[path = "config.rs"]

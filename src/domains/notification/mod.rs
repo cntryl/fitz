@@ -1,13 +1,10 @@
-//! Notification domain (pub/sub with wildcard fan-out)
-//!
-//! Fire-and-forget pub/sub messaging with NATS-like wildcard routing.
+//! Notification domain: fire-and-forget pub/sub with wildcard routing
 //!
 //! # Architecture
 //!
-//! - **SessionActor**: Enforces all authentication and authorization
-//! - **NoticeRouteActor**: Owns subscriptions per route, trusts SessionActor, performs fanout
+//! - **NoticeRouteActor** ([route_actor]): Owns subscriptions per route, performs wildcard matching and fanout
+//! - **SessionActor**: Enforces authentication/authorization before forwarding to NoticeRouteActor
 //! - Subscriptions are session-scoped and cleaned up on disconnect
-//! - Authorization is prefix-based (exact, area wildcard, realm wildcard, global)
 //!
 //! # Semantics
 //!
@@ -33,8 +30,12 @@
 //! // Matches above subscription
 //! ```
 
-pub mod actor;
+pub mod route_actor;
 pub mod protocol;
+
+// Test helper - lightweight SessionActor stub for testing notification authorization
+// Available in tests (both unit tests and integration tests)
+#[cfg_attr(not(test), doc(hidden))]
 pub mod session;
 
-pub mod minimal; // small, zero-copy notification plumbing for perf proofs
+pub mod bench; // Zero-copy notification primitives for benchmarking

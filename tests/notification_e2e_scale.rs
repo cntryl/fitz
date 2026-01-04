@@ -6,7 +6,7 @@ use common::harness_notification::*;
 
 
 use bytes::Bytes;
-use fitz::domains::notification::actor::NoticeRouteActor;
+use fitz::domains::notification::route_actor::NoticeRouteActor;
 use fitz::domains::notification::protocol::{
     NotificationMessage, PublishMessage, SubscribeMessage,
 };

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use fitz::domains::notification::actor::NoticeRouteActor;
+use fitz::domains::notification::route_actor::NoticeRouteActor;
 use fitz::domains::notification::protocol::{
     NotificationMessage, PublishMessage, SubscribeMessage,
 };
