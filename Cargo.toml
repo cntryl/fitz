@@ -135,3 +135,13 @@ path = "benches/tier1_hotpath_notification.rs"
 name = "tier2_notification_pipeline"
 harness = false
 path = "benches/tier2_notification_pipeline.rs"
+
+[[bench]]
+name = "tier1_hotpath_rpc"
+harness = false
+path = "benches/tier1_hotpath_rpc.rs"
+
+[[bench]]
+name = "tier2_subsystem_rpc"
+harness = false
+path = "benches/tier2_subsystem_rpc.rs"
