@@ -111,8 +111,8 @@ impl WorkerRegistration {
 /// Dispatches requests to workers in round-robin fashion with lease tracking.
 /// Uses a ready queue for O(1) worker selection.
 pub struct RpcRouteActor {
-    /// Route family this actor belongs to
-    _family: RouteFamily,
+    /// Route family this actor belongs to (for validation)
+    family: RouteFamily,
     
     /// Queue of pending requests
     pending: VecDeque<RpcRequest>,
@@ -145,7 +145,7 @@ impl RpcRouteActor {
     /// Create new RPC route actor with specific capacity
     pub fn with_capacity(family: RouteFamily, capacity: usize) -> Self {
         Self {
-            _family: family,
+            family,
             pending: VecDeque::with_capacity(capacity), // Pre-allocate
             workers: Vec::with_capacity(16), // Reserve space for typical worker count
             ready_queue: VecDeque::with_capacity(16),
@@ -159,7 +159,7 @@ impl RpcRouteActor {
     /// Create RPC route actor with custom lease timeout
     pub fn with_timeout(family: RouteFamily, capacity: usize, lease_timeout: Duration) -> Self {
         Self {
-            _family: family,
+            family,
             pending: VecDeque::with_capacity(capacity),
             workers: Vec::with_capacity(16),
             ready_queue: VecDeque::with_capacity(16),
@@ -216,6 +216,17 @@ impl RpcRouteActor {
     
     /// Handle incoming request
     fn handle_request(&mut self, request: RpcRequest, ctx: &mut Context<Self>) {
+        // Validate route family matches actor family
+        if request.family_id != self.family {
+            let error = RpcError::new(
+                request.correlation_id,
+                format!("Route family mismatch: request family {:?} != actor family {:?}", 
+                    request.family_id, self.family)
+            );
+            self.send_error(error, &request.reply_route);
+            return;
+        }
+        
         // Check for expired leases first
         self.check_expired_leases(ctx);
         
@@ -507,6 +518,7 @@ mod tests {
         let mut ctx = Context::new(addr, router);
         
         let request = RpcRequest {
+            family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://test/route"),
             reply_route: Route::new("inbox://session/123"),

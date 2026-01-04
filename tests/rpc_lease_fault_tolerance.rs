@@ -19,6 +19,7 @@ fn create_actor_with_timeout(timeout_ms: u64) -> RpcRouteActor {
 
 fn create_request(correlation_id: Uuid) -> RpcRequest {
     RpcRequest::new(
+        RouteFamily::new(1),
         correlation_id,
         Route::new("rpc://test/area/resource/operation"),
         Route::new("inbox://session/123"),

@@ -37,6 +37,7 @@ fn should_complete_basic_request_response_cycle() {
     );
 
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/abc123"),
@@ -78,6 +79,7 @@ fn should_handle_streaming_report_generation() {
     );
 
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/reports/monthly/generate"),
         reply_route: Route::new("inbox://session/xyz789"),
@@ -137,6 +139,7 @@ fn should_maintain_isolation_across_realms() {
     );
 
     let request_acme = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/inventory/item/update"),
         reply_route: Route::new("inbox://session/acme123"),
@@ -144,6 +147,7 @@ fn should_maintain_isolation_across_realms() {
     };
 
     let request_corp = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://corp/inventory/item/update"),
         reply_route: Route::new("inbox://session/corp456"),
@@ -184,6 +188,7 @@ fn should_handle_multiple_workers_for_same_route() {
     // Act - Send 10 requests (more than workers)
     for _i in 0..10 {
         let request = RpcRequest {
+            family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://acme/ai/embedding/generate"),
             reply_route: Route::new("inbox://session/ai789"),
@@ -217,6 +222,7 @@ fn should_queue_requests_when_worker_unregisters() {
     );
 
     let request1 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/analytics/query/run"),
         reply_route: Route::new("inbox://session/analytics1"),
@@ -233,6 +239,7 @@ fn should_queue_requests_when_worker_unregisters() {
     );
 
     let request2 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/analytics/query/run"),
         reply_route: Route::new("inbox://session/analytics2"),

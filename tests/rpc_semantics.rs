@@ -36,6 +36,7 @@ fn should_route_request_to_available_worker() {
     actor.receive(subscribe_msg, &mut ctx);
 
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/service/handler/call"),
         reply_route: Route::new("inbox://session/123"),
@@ -58,6 +59,7 @@ fn should_enqueue_request_when_no_workers_available() {
     let mut ctx = make_ctx();
 
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
         reply_route: Route::new("inbox://session/123"),
@@ -90,6 +92,7 @@ fn should_correlate_response_with_request() {
     actor.receive(subscribe_msg, &mut ctx);
 
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
         reply_route: Route::new("inbox://session/123"),
@@ -119,6 +122,7 @@ fn should_reject_request_when_queue_is_full() {
     // Fill the queue
     for _i in 0..2 {
         let request = RpcRequest {
+            family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
             reply_route: Route::new("inbox://session/123"),
@@ -128,6 +132,7 @@ fn should_reject_request_when_queue_is_full() {
     }
 
     let overflow_request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
         reply_route: Route::new("inbox://session/123"),
@@ -162,6 +167,7 @@ fn should_distribute_requests_across_multiple_workers() {
     // Act - Send three requests
     for _i in 0..3 {
         let request = RpcRequest {
+            family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
             reply_route: Route::new("inbox://session/123"),
@@ -210,6 +216,7 @@ fn should_maintain_request_order_in_queue() {
     // Enqueue three requests
     for _i in 0..3 {
         let request = RpcRequest {
+            family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
             reply_route: Route::new("inbox://session/123"),
@@ -245,6 +252,7 @@ fn should_handle_streaming_response_with_multiple_chunks() {
     actor.receive(RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
 
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/reports/monthly/generate"),
         reply_route: Route::new("inbox://session/123"),
@@ -275,6 +283,7 @@ fn should_isolate_requests_across_route_families() {
     let mut ctx = make_ctx();
 
     let request1 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
         reply_route: Route::new("inbox://session/123"),
@@ -282,6 +291,7 @@ fn should_isolate_requests_across_route_families() {
     };
 
     let request2 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
         reply_route: Route::new("inbox://session/456"),
@@ -329,6 +339,7 @@ fn should_cleanup_state_after_request_completion() {
 
     // Send a second request to verify clean state
     let request2 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/inventory/item/update"),
         reply_route: Route::new("inbox://session/123"),

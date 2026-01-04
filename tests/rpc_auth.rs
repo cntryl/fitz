@@ -44,6 +44,7 @@ fn should_reject_rpc_request_without_call_permission() {
 
     // Request without required permission
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/unauthorized"),
@@ -82,6 +83,7 @@ fn should_allow_rpc_request_with_valid_call_permission() {
 
     // Request with proper permission granted
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/authorized"),
@@ -122,6 +124,7 @@ fn should_enforce_realm_isolation_in_authorization() {
 
     // Try to call acme RPC with corp realm permissions (should fail)
     let request_cross_realm = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/data/query/execute"),
         reply_route: Route::new("inbox://session/corp123"),
@@ -210,6 +213,7 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
 
     // Request to billing service with only read permissions (needs write)
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/billing/invoice/create"),
         reply_route: Route::new("inbox://session/limited"),
@@ -248,6 +252,7 @@ fn should_allow_requests_within_granted_scope() {
 
     // Request with proper scope
     let request = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/billing/invoice/query"),
         reply_route: Route::new("inbox://session/authorized"),
@@ -288,6 +293,7 @@ fn should_validate_permissions_per_request() {
     // Act - Send authorized and unauthorized requests
     // First request - authorized
     let request1 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/users/profile/read"),
         reply_route: Route::new("inbox://session/auth1"),
@@ -297,6 +303,7 @@ fn should_validate_permissions_per_request() {
 
     // Second request - unauthorized (different operation not in permission scope)
     let request2 = RpcRequest {
+        family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/users/profile/delete"),
         reply_route: Route::new("inbox://session/auth1"),

@@ -75,6 +75,7 @@ impl LeaseState {
 ///
 /// # State
 ///
+/// - `family`: RouteFamily this actor serves (for validation)
 /// - `leases`: Map of (RouteFamily, Route) → LeaseState
 /// - `next_token`: Global token counter (monotonic)
 /// - `clock`: Time source for expiration checks
@@ -88,6 +89,9 @@ impl LeaseState {
 ///
 /// On recovery, replay the log to reconstruct state.
 pub struct LeaseActor {
+    /// Route family this actor serves (for validation)
+    family: crate::runtime::routing::RouteFamily,
+    
     /// Map of LeaseKey to current lease state
     leases: HashMap<LeaseKey, LeaseState>,
 
@@ -100,13 +104,14 @@ pub struct LeaseActor {
 
 impl LeaseActor {
     /// Create a new lease actor with system clock
-    pub fn new() -> Self {
-        Self::with_clock(Box::new(SystemClock))
+    pub fn new(family: crate::runtime::routing::RouteFamily) -> Self {
+        Self::with_clock(family, Box::new(SystemClock))
     }
 
     /// Create a new lease actor with a custom clock (for testing)
-    pub fn with_clock(clock: Box<dyn Clock>) -> Self {
+    pub fn with_clock(family: crate::runtime::routing::RouteFamily, clock: Box<dyn Clock>) -> Self {
         Self {
+            family,
             leases: HashMap::new(),
             next_token: 1,
             clock,
@@ -280,9 +285,15 @@ impl Actor for LeaseActor {
                 route,
                 owner_id,
                 ttl_secs,
-            } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
-                None => LeaseResponse::NotFound,
+            } => {
+                // Validate family_id matches actor's family
+                if family_id != self.family {
+                    return; // Silently drop misrouted messages
+                }
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
+                    None => LeaseResponse::NotFound,
+                }
             },
             LeaseMessage::Renew {
                 family_id,
@@ -290,21 +301,35 @@ impl Actor for LeaseActor {
                 owner_id,
                 fencing_token,
                 ttl_secs,
-            } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
-                None => LeaseResponse::NotFound,
+            } => {
+                // Validate family_id matches actor's family
+                if family_id != self.family {
+                    return; // Silently drop misrouted messages
+                }
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
+                    None => LeaseResponse::NotFound,
+                }
             },
             LeaseMessage::Release {
                 family_id,
                 route,
                 owner_id,
                 fencing_token,
-            } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_release(key, owner_id, fencing_token),
-                None => LeaseResponse::NotFound,
-            },
-            LeaseMessage::Query { family_id, route } => {
+            } => {
+                // Validate family_id matches actor's family
+                if family_id != self.family {
+                    return; // Silently drop misrouted messages
+                }
                 match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_release(key, owner_id, fencing_token),
+                    None => LeaseResponse::NotFound,
+                }
+            },
+            LeaseMessage::Query { family_id, route } => {                // Validate family_id matches actor's family
+                if family_id != self.family {
+                    return; // Silently drop misrouted messages
+                }                match LeaseKey::from_route(family_id, &route) {
                     Some(key) => self.handle_query(key),
                     None => LeaseResponse::NotFound,
                 }

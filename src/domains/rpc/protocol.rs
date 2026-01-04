@@ -22,7 +22,7 @@
 
 use bytes::Bytes;
 use uuid::Uuid;
-use crate::runtime::routing::{Route, RouteAddress};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 /// RPC request from client to route actor
 ///
@@ -30,6 +30,9 @@ use crate::runtime::routing::{Route, RouteAddress};
 /// Contains all information needed for routing, correlation, and reply delivery.
 #[derive(Debug, Clone)]
 pub struct RpcRequest {
+    /// Route family for isolation
+    pub family_id: RouteFamily,
+    
     /// Unique correlation ID for matching responses (UUID for distributed tracing)
     pub correlation_id: Uuid,
     
@@ -46,12 +49,14 @@ pub struct RpcRequest {
 impl RpcRequest {
     /// Create new RPC request
     pub fn new(
+        family_id: RouteFamily,
         correlation_id: Uuid,
         route: Route,
         reply_route: Route,
         body: Bytes,
     ) -> Self {
         Self {
+            family_id,
             correlation_id,
             route,
             reply_route,
