@@ -13,6 +13,8 @@ impl MessageType {
     pub const ESCAPE_MARKER: u8 = 0xFF;
     pub const MAX_SINGLE_BYTE: u16 = 0xFE;
 
+    pub const CONNECT: MessageType = MessageType(1); // control connect message
+
     pub fn new(value: u16) -> Self {
         Self(value)
     }

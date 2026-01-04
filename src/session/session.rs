@@ -86,6 +86,8 @@ pub struct SessionInfo {
     pub peer_addr: Option<SocketAddr>,
     pub metadata: Arc<SessionMetadata>,
     pub permissions_snapshot: SessionPermissions,
+    /// Whether the session has completed the connect/auth handshake
+    pub authenticated: bool,
 }
 
 /// Errors that can occur while handling a frame
@@ -142,6 +144,7 @@ impl Session {
             peer_addr,
             metadata: Arc::new(metadata),
             permissions_snapshot: permissions.clone(),
+            authenticated: false,
         };
 
         Self {
@@ -170,7 +173,12 @@ impl Session {
         for record in records {
             let message = self.mux.route(record).map_err(SessionError::Mux)?;
             let decision = ingress
-                .on_frame(self.info.session_id, message.channel, message.payload)
+                .on_frame(
+                    self.info.session_id,
+                    message.channel,
+                    message.msg_type,
+                    message.payload,
+                )
                 .await;
 
             self.mux.release(message.channel);

@@ -124,6 +124,7 @@ mod tests {
             &self,
             _session_id: u64,
             _channel_id: ChannelId,
+            _msg_type: crate::protocol::tlv::MessageType,
             _message_payload: Bytes,
         ) -> IngressDecision {
             IngressDecision::Accept
@@ -154,6 +155,7 @@ mod tests {
             peer_addr: None,
             metadata: Arc::new(SessionMetadata::new()),
             permissions_snapshot: SessionPermissions::empty(),
+            authenticated: false,
         };
 
         // Act

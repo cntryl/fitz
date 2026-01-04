@@ -3,6 +3,7 @@
 //! This module keeps a read-only view of permissions that transports can capture
 //! when the session is created. It's opaque to the transport layer.
 
+use crate::auth::{Access, Permission};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -10,24 +11,47 @@ use std::sync::Arc;
 /// Opaque permission snapshot
 #[derive(Debug, Clone)]
 pub struct SessionPermissions {
+    /// Generic key/value snapshot for compatibility with transports
     inner: Arc<HashMap<String, String>>,
+    /// Compiled Fitz permissions used by authorization checks
+    compiled: Arc<Vec<Permission>>,
 }
 
 impl SessionPermissions {
     pub fn new(map: HashMap<String, String>) -> Self {
         Self {
             inner: Arc::new(map),
+            compiled: Arc::new(Vec::new()),
+        }
+    }
+
+    /// Create permissions from parsed `Permission` structs
+    pub fn from_permissions(perms: Vec<Permission>) -> Self {
+        Self {
+            inner: Arc::new(HashMap::new()),
+            compiled: Arc::new(perms),
         }
     }
 
     pub fn empty() -> Self {
         Self {
             inner: Arc::new(HashMap::new()),
+            compiled: Arc::new(Vec::new()),
         }
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
         self.inner.get(key).map(|s| s.as_str())
+    }
+
+    /// Check whether the permission set allows the given access to the route
+    pub fn allows(&self, route: &crate::runtime::routing::Route, access: Access) -> bool {
+        for p in self.compiled.iter() {
+            if p.matches(route, &access) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -40,6 +64,8 @@ impl fmt::Display for SessionPermissions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{Permission, Access};
+    use crate::runtime::routing::Route;
 
     #[test]
     fn snapshot_survives_clone() {
@@ -48,5 +74,18 @@ mod tests {
         let perms = SessionPermissions::new(map);
         let clone = perms.clone();
         assert_eq!(clone.get("role"), Some("admin"));
+    }
+
+    #[test]
+    fn allows_checks_permissions() {
+        let p = Permission::parse("notice://prod/orders/**#write").unwrap();
+        let perms = SessionPermissions::from_permissions(vec![p]);
+
+        let route_allowed = Route::new("notice://prod/orders/create");
+        let route_denied = Route::new("notice://prod/other/create");
+
+        assert!(perms.allows(&route_allowed, Access::Write));
+        assert!(!perms.allows(&route_allowed, Access::Read));
+        assert!(!perms.allows(&route_denied, Access::Write));
     }
 }

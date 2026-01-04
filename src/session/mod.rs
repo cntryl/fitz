@@ -16,6 +16,9 @@
 pub mod manager;
 pub mod permissions;
 pub mod session;
+pub mod actor;
+
+pub use actor::SessionActor;
 
 pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
 pub use permissions::SessionPermissions;

@@ -35,5 +35,6 @@
 
 pub mod actor;
 pub mod protocol;
+pub mod session;
 
 pub mod minimal; // small, zero-copy notification plumbing for perf proofs
