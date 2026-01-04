@@ -54,6 +54,7 @@ impl SessionActor {
     }
 
     /// Attempt to renew a lease. Returns Err if authorization fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn renew(
         &self,
         family: RouteFamily,
