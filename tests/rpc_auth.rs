@@ -5,7 +5,7 @@ use fitz::runtime::actor::Context;
 use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
 use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
-use fitz::auth::{Permission, Access};
+use fitz::auth::Permission;
 use std::sync::Arc;
 
 // This file tests RPC authorization: verifies that SessionActor properly enforces
@@ -140,8 +140,8 @@ fn should_allow_worker_subscription_with_valid_permissions() {
     let mut actor = RpcRouteActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
 
-    // Session with admin permission to register workers
-    let perms = vec![Permission::parse("rpc://acme/inventory/**#admin").unwrap()];
+    // Session with all permission to register workers
+    let perms = vec![Permission::parse("rpc://acme/inventory/**#*").unwrap()];
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(SessionId(1), session_perms);
 
@@ -278,6 +278,11 @@ fn should_validate_permissions_per_request() {
         &mut ctx,
     );
 
+    // Session with write permission for profile read/update but not delete
+    let perms = vec![Permission::parse("rpc://acme/users/profile/read#write").unwrap()];
+    let session_perms = SessionPermissions::from_permissions(perms);
+    let session = SessionActor::new(SessionId(1), session_perms);
+
     // Act - Send authorized and unauthorized requests
     // First request - authorized
     let request1 = RpcRequest {
@@ -286,18 +291,19 @@ fn should_validate_permissions_per_request() {
         reply_route: Route::new("inbox://session/auth1"),
         body: b"{ \"user_id\": \"alice\" }".to_vec(),
     };
-    actor.receive(RpcMessage::Request(request1), &mut ctx);
+    let result1 = session.call_rpc(request1, &mut actor, &mut ctx);
 
-    // Second request - unauthorized (different operation)
+    // Second request - unauthorized (different operation not in permission scope)
     let request2 = RpcRequest {
         correlation_id: "req-unauthorized-2".to_string(),
         route: Route::new("rpc://acme/users/profile/delete"),
         reply_route: Route::new("inbox://session/auth1"),
         body: b"{ \"user_id\": \"bob\" }".to_vec(),
     };
-    actor.receive(RpcMessage::Request(request2), &mut ctx);
+    let result2 = session.call_rpc(request2, &mut actor, &mut ctx);
 
     // Assert - First processed, second rejected
-    // (exact count depends on whether first completed)
+    assert!(result1.is_ok());
+    assert!(result2.is_err());
     assert_eq!(actor.worker_count(), 1);
 }

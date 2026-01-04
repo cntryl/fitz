@@ -50,7 +50,7 @@ impl SessionActor {
 
     /// Attempt to subscribe as a worker. Returns Err if authorization fails.
     ///
-    /// Requires "subscribe" permission (represented as Admin access) on the RPC route.
+    /// Requires "subscribe" permission (represented as All access) on the RPC route.
     pub fn subscribe_worker(
         &self,
         worker_addr: RouteAddress,
@@ -58,8 +58,8 @@ impl SessionActor {
         rpc_actor: &mut RpcRouteActor,
         ctx: &mut Context<RpcRouteActor>,
     ) -> Result<(), String> {
-        // Worker subscription requires admin access (permission to handle calls)
-        if !self.permissions.allows(route, Access::Admin) {
+        // Worker subscription requires All access (permission to handle calls)
+        if !self.permissions.allows(route, Access::All) {
             return Err("unauthorized: worker subscribe".to_string());
         }
 
@@ -171,13 +171,13 @@ mod tests {
     }
 
     #[test]
-    fn should_allow_worker_subscription_with_admin_permission() {
+    fn should_allow_worker_subscription_with_all_permission() {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
 
-        // Session with admin permission
-        let perms = vec![Permission::parse("rpc://realm/area/**#admin").unwrap()];
+        // Session with all permission
+        let perms = vec![Permission::parse("rpc://realm/area/**#*").unwrap()];
         let session_perms = SessionPermissions::from_permissions(perms);
         let session = SessionActor::new(SessionId(1), session_perms);
 
