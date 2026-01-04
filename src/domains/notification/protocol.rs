@@ -10,6 +10,7 @@
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::session::SessionId;
 use bytes::Bytes;
+use std::sync::Arc;
 
 /// Messages for the notification domain
 #[derive(Debug, Clone)]
@@ -132,16 +133,28 @@ impl UnsubscribeAllMessage {
 }
 
 /// Notification delivered to a subscriber
+///
+/// Uses Arc for route and payload to enable zero-allocation fanout.
+/// Multiple subscribers share the same Arc pointers, avoiding per-subscriber clones.
 #[derive(Debug, Clone)]
 pub struct NotifyMessage {
-    /// The route that was published to
-    pub route: Route,
-    /// The payload published
-    pub payload: Bytes,
+    /// The route that was published to (shared via Arc)
+    pub route: Arc<Route>,
+    /// The payload published (shared via Arc)
+    pub payload: Arc<Bytes>,
 }
 
 impl NotifyMessage {
+    /// Create notification with owned data (converts to Arc)
     pub fn new(route: Route, payload: Bytes) -> Self {
+        Self {
+            route: Arc::new(route),
+            payload: Arc::new(payload),
+        }
+    }
+
+    /// Create notification from Arc-shared data (zero-allocation fanout path)
+    pub fn new_shared(route: Arc<Route>, payload: Arc<Bytes>) -> Self {
         Self { route, payload }
     }
 }
