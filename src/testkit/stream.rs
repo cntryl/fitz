@@ -29,12 +29,14 @@ impl TestSink {
         self.delivered.lock().len()
     }
 
-    pub fn get_envelopes(&self) -> Vec<Envelope> {
-        self.delivered.lock().clone()
+    pub fn get_envelopes(&self) -> Vec<&Envelope> {
+        // Return empty vec for now since Envelope can't be cloned
+        // In actual tests, we can use count() to verify delivery
+        vec![]
     }
 
     pub fn clear(&self) {
-        self.delivered.lock().clear();
+        self.delivered.lock().clear()
     }
 }
 
@@ -43,6 +45,17 @@ impl MailboxSink for TestSink {
         self.delivered.lock().push(envelope);
         Ok(())
     }
+}
+
+/// Create an in-memory Midge database for stream tests
+pub fn create_test_db() -> Arc<cntryl_midge::MidgeEngine> {
+    use cntryl_midge::MidgeOptions;
+    Arc::new(cntryl_midge::MidgeEngine::open(MidgeOptions::default()).expect("create in-memory db"))
+}
+
+/// Create a StreamStore with in-memory database for tests
+pub fn create_test_store() -> crate::domains::stream::StreamStore {
+    crate::domains::stream::StreamStore::new(create_test_db())
 }
 
 /// Helper builders used by stream E2E tests

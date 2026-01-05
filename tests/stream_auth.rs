@@ -1,11 +1,12 @@
 use bytes::Bytes;
 use fitz::auth::Permission;
-use fitz::domains::stream::actor::{StreamActor, StreamMessage};
+use fitz::domains::stream::{StreamActor, StreamMessage};
+use fitz::domains::stream::session::SessionActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::permissions::SessionPermissions;
-use fitz::session::session::{SessionActor, SessionId};
+use fitz::session::session::SessionId;
 use std::sync::Arc;
 
 // This file tests Stream authorization: verifies that SessionActor properly enforces
