@@ -50,25 +50,18 @@ impl RealmActor {
     fn handle_request_realm_lease(
         &mut self,
         count: u64,
-        ctx: &mut Context<Self>,
+        _ctx: &mut Context<Self>,
     ) -> LeaseGrant {
         let start = self.next_realm_offset;
-        let end = start + count;
-        self.next_realm_offset = end;
+        let end_excl = start + count;
+        self.next_realm_offset = end_excl;
         
-        let grant = LeaseGrant {
+        LeaseGrant {
             area_start: 0,  // Will be filled by AreaActor
-            area_end: 0,
+            area_end_exclusive: 0,
             realm_start: start,
-            realm_end: end - 1,  // inclusive (protocol uses inclusive)
-        };
-        
-        // Send grant back to requesting AreaActor
-        // Note: In full impl, would extract reply_to from request
-        // For now, this is fire-and-forget
-        let _ = ctx;
-        
-        grant
+            realm_end_exclusive: end_excl,  // End-exclusive
+        }
     }
     
     /// Handle AreaWatermarkAdvanced from AreaActor
@@ -103,7 +96,7 @@ impl RealmActor {
         
         self.realm_watermark = new_watermark;
         
-        // Emit realm watermark notification only if watermark advanced
+        // Emit realm watermark notification ONLY if watermark advanced
         if new_watermark > old_watermark {
             let route_str = format!("notice://{}/*/*/watermark", self.realm);
             let route = Route::new(route_str);

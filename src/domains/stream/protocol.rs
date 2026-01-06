@@ -8,13 +8,13 @@ use crate::runtime::routing::{Route, RouteFamily};
 /// A durable event record in a stream
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRecord {
-    /// Strict order within resource stream (caller-assigned)
+    /// Strict order within resource stream (server-assigned by StreamActor, strictly increasing)
     pub resource_offset: u64,
     
-    /// Global order within area (system-assigned)
+    /// Global order within area (server-assigned via leased offsets on commit)
     pub area_offset: Option<u64>,
     
-    /// Global order within realm (system-assigned)
+    /// Global order within realm (server-assigned via leased offsets on commit)
     pub realm_offset: Option<u64>,
     
     /// Event payload
@@ -82,8 +82,14 @@ pub enum StreamMessage {
         route: Route,
     },
     
+    /// Get stream metadata and current state
+    GetMetadata {
+        family_id: RouteFamily,
+        route: Route,
+    },
+    
     // Internal actor messages
-    /// Request more offsets from AreaActor (StreamActor -> AreaActor)
+    /// Request paired area+realm offsets from AreaActor (StreamActor -> AreaActor)
     RequestLease {
         realm: String,
         area: String,
@@ -91,19 +97,14 @@ pub enum StreamMessage {
         reply_to: String,
     },
     
-    /// Request area offsets (alias for RequestLease)
-    RequestAreaLease {
-        count: u64,
-    },
-    
-    /// Request realm offsets from RealmActor
-    RequestRealmLease {
-        count: u64,
-    },
-    
     /// Lease granted from AreaActor to StreamActor
     LeaseGranted {
         grant: LeaseGranted,
+    },
+    
+    /// Request realm offsets from RealmActor (AreaActor -> RealmActor, internal only)
+    RequestRealmLease {
+        count: u64,
     },
     
     /// Batch committed notification from StreamActor to AreaActor
@@ -135,13 +136,16 @@ pub struct RequestLease {
     pub reply_to: String, // StreamActor ID
 }
 
-/// Lease granted by AreaActor
+/// Lease granted by AreaActor (paired area+realm ranges)
+/// 
+/// **CRITICAL: All ranges are END-EXCLUSIVE**
+/// Valid range: [start, end_exclusive)
 #[derive(Debug, Clone)]
 pub struct LeaseGranted {
     pub area_start: u64,
-    pub area_end: u64,      // inclusive
+    pub area_end_exclusive: u64,
     pub realm_start: u64,
-    pub realm_end: u64,     // inclusive
+    pub realm_end_exclusive: u64,
 }
 
 // Backward compatibility alias (for gradual migration)
@@ -215,6 +219,34 @@ pub struct PeekResponse {
     pub record: Option<StreamRecord>,
 }
 
+/// Stream metadata and current state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamMetadata {
+    /// Maximum events per batch
+    pub max_batch_events: usize,
+    
+    /// Maximum bytes per batch
+    pub max_batch_bytes: usize,
+    
+    /// TTL in seconds (None = no expiration)
+    pub ttl_seconds: Option<u64>,
+    
+    /// Last committed resource offset (None if stream empty)
+    pub last_resource_offset: Option<u64>,
+    
+    /// Area watermark (highest contiguous area offset)
+    pub area_watermark: u64,
+    
+    /// Realm watermark (minimum of all area watermarks in realm)
+    pub realm_watermark: u64,
+}
+
+/// Response for get metadata operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetMetadataResponse {
+    pub metadata: StreamMetadata,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -234,9 +266,6 @@ pub enum StreamError {
     /// Invalid read bounds (2004)
     InvalidReadBound,
     
-    /// Read beyond watermark (2005)
-    ReadBeyondWatermark,
-    
     /// Event too large (2006)
     EventTooLarge,
     
@@ -254,7 +283,6 @@ impl StreamError {
             StreamError::SessionAlreadyActive => 2002,
             StreamError::SessionNotFound => 2003,
             StreamError::InvalidReadBound => 2004,
-            StreamError::ReadBeyondWatermark => 2005,
             StreamError::EventTooLarge => 2006,
             StreamError::SessionFull => 2007,
             StreamError::BatchTooLarge => 2008,

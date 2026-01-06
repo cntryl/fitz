@@ -66,13 +66,16 @@ impl AreaActor {
         RouteAddress::new(self.family_id, route)
     }
     
-    /// Grant area offset lease to StreamActor
-    fn handle_request_area_lease(
+    /// Handle RequestLease from StreamActor and mint paired area+realm offsets
+    fn handle_request_lease(
         &mut self,
+        realm: &str,
+        area: &str,
         count: u64,
+        reply_to: &str,
         ctx: &mut Context<Self>,
-    ) -> LeaseGrant {
-        // Check if we have enough realm lease
+    ) {
+        // Ensure we have sufficient realm lease capacity
         let realm_remaining = if self.realm_lease_end > self.realm_lease_next {
             self.realm_lease_end - self.realm_lease_next
         } else {
@@ -80,32 +83,39 @@ impl AreaActor {
         };
         
         if realm_remaining < count {
-            // Request more realm offsets from RealmActor
-            let lease_size = 1000_u64.max(count);
+            // Request realm lease from RealmActor
+            const DEFAULT_REALM_LEASE_BLOCK: u64 = 1000;
+            let lease_size = DEFAULT_REALM_LEASE_BLOCK.max(count);
             let lease_req = StreamMessage::RequestRealmLease { count: lease_size };
             let realm_addr = self.realm_actor_address();
             let _ = ctx.send(realm_addr, lease_req);
             
-            // Return a grant with what we have (partial grant)
-            // In full impl, would wait for LeaseGranted before responding
+            // TODO: In full async impl, would await RealmLeaseGranted
+            // For now, mint with available capacity (may be partial)
         }
         
-        // Allocate area offsets
+        // Mint paired area+realm ranges with END-EXCLUSIVE semantics
         let area_start = self.next_area_offset;
-        let area_end = area_start + count;
-        self.next_area_offset = area_end;
+        let area_end_excl = area_start + count;
+        self.next_area_offset = area_end_excl;
         
-        // Allocate realm offsets from our lease
         let realm_start = self.realm_lease_next;
-        let realm_end = realm_start + count.min(realm_remaining);
-        self.realm_lease_next = realm_end;
+        let realm_count = count.min(realm_remaining);
+        let realm_end_excl = realm_start + realm_count;
+        self.realm_lease_next = realm_end_excl;
         
-        LeaseGrant {
+        // Build paired grant
+        let grant = LeaseGrant {
             area_start,
-            area_end: area_end - 1,  // inclusive (protocol uses inclusive)
+            area_end_exclusive: area_end_excl,
             realm_start,
-            realm_end: realm_end - 1,  // inclusive (protocol uses inclusive)
-        }
+            realm_end_exclusive: realm_end_excl,
+        };
+        
+        // Reply to StreamActor
+        let reply_route = Route::new(format!("stream://{}/{}/{}", realm, area, reply_to));
+        let reply_addr = RouteAddress::new(self.family_id, reply_route);
+        let _ = ctx.send(reply_addr, StreamMessage::LeaseGranted { grant });
     }
     
     /// Handle BatchCommitted from StreamActor
@@ -154,39 +164,48 @@ impl AreaActor {
         }
     }
     
-    /// Advance watermark to highest contiguous offset
+    /// Advance watermark to highest contiguous offset (NO GAP SKIPPING)
+    /// 
+    /// **CRITICAL**: Watermark can only advance when there is a range whose
+    /// start == watermark + 1 (strict contiguity).
+    /// 
+    /// This prevents bridging gaps where offsets are missing.
     fn advance_watermark(&mut self) {
-        let mut watermark = self.area_watermark;
-        
-        // Find all ranges that can extend the watermark
         loop {
-            let mut found = false;
+            let next_offset = self.area_watermark + 1;
+            let mut found_range: Option<(u64, u64)> = None;
             
-            // Look for range that starts at or before watermark+1
+            // Look for a range that starts exactly at watermark+1
             for (&first, &last) in &self.committed_ranges {
-                if first <= watermark + 1 && last >= watermark {
-                    // This range extends or overlaps with watermark
-                    watermark = watermark.max(last);
-                    found = true;
+                if first == next_offset {
+                    // Found contiguous range
+                    found_range = Some((first, last));
                     break;
                 }
             }
             
-            if !found {
+            if let Some((first, last)) = found_range {
+                // Advance watermark to end of this range
+                self.area_watermark = last;
+                
+                // Remove this consumed range
+                self.committed_ranges.remove(&first);
+            } else {
+                // No contiguous range found, stop
                 break;
             }
         }
         
-        self.area_watermark = watermark;
-        
-        // Clean up ranges that are now below watermark
-        self.committed_ranges.retain(|_, &mut last| last > watermark);
+        // Clean up any ranges that are now behind the watermark
+        self.committed_ranges.retain(|_, last| {
+            *last > self.area_watermark
+        });
     }
     
     /// Update realm lease from RealmActor grant
     pub fn update_realm_lease(&mut self, grant: LeaseGrant) {
         self.realm_lease_next = grant.realm_start;
-        self.realm_lease_end = grant.realm_end;
+        self.realm_lease_end = grant.realm_end_exclusive;  // Already exclusive
     }
     
     /// Get remaining realm lease capacity
@@ -220,8 +239,8 @@ impl Actor for AreaActor {
     
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            StreamMessage::RequestAreaLease { count, .. } => {
-                let _ = self.handle_request_area_lease(count, ctx);
+            StreamMessage::RequestLease { realm, area, count, reply_to } => {
+                self.handle_request_lease(&realm, &area, count, &reply_to, ctx);
             }
             StreamMessage::BatchCommitted { first_area_offset, last_area_offset, .. } => {
                 self.handle_batch_committed(first_area_offset, last_area_offset, ctx);

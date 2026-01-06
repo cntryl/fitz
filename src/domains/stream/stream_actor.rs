@@ -20,9 +20,6 @@ const MAX_EVENT_SIZE: usize = 1_048_576;
 /// Default lease size for area/realm offsets (1000 offsets per lease)
 const DEFAULT_LEASE_SIZE: u64 = 1000;
 
-/// Request new lease when remaining drops below this threshold
-const LEASE_REQUEST_THRESHOLD: u64 = 100;
-
 /// Lease for area or realm offsets
 /// 
 /// **Semantics**: `end` is EXCLUSIVE (not inclusive)
@@ -51,24 +48,14 @@ impl OffsetLease {
         }
     }
     
-    fn allocate(&mut self, count: u64) -> Vec<u64> {
-        let available = self.remaining();
-        if available < count {
-            panic!("insufficient lease: need {}, have {}", count, available);
-        }
-        let offsets: Vec<u64> = (self.next..self.next + count).collect();
-        self.next += count;
-        offsets
-    }
-    
     fn update_from_area_lease(&mut self, grant: &LeaseGrant) {
         self.next = grant.area_start;
-        self.end = grant.area_end + 1;  // grant.area_end is inclusive, convert to exclusive
+        self.end = grant.area_end_exclusive;  // Already exclusive
     }
     
     fn update_from_realm_lease(&mut self, grant: &LeaseGrant) {
         self.next = grant.realm_start;
-        self.end = grant.realm_end + 1;  // grant.realm_end is inclusive, convert to exclusive
+        self.end = grant.realm_end_exclusive;  // Already exclusive
     }
 }
 
@@ -113,13 +100,23 @@ impl StreamActor {
         resource: String,
         store: Arc<StreamStore>
     ) -> Self {
+        // **CRITICAL: Recover next_resource_offset from metadata counter**
+        // This prevents offset reuse after TTL expiry and process restart
+        let next_resource_offset = match store.get_next_resource_offset(&realm, &area, &resource) {
+            Ok(offset) => offset,
+            Err(e) => {
+                eprintln!("FATAL: Failed to recover resource offset for {}/{}/{}: {}", realm, area, resource, e);
+                0  // Fallback to 0, may cause conflict if stream has data
+            }
+        };
+        
         Self {
             family_id,
             realm,
             area,
             resource,
             store,
-            next_resource_offset: 0,
+            next_resource_offset,
             area_lease: OffsetLease::new(),
             realm_lease: OffsetLease::new(),
             active_session: None,
@@ -195,46 +192,62 @@ impl StreamActor {
         
         let count = event_count as u64;
         
-        // Proactive lease requesting: request more if running low (before exhaustion)
-        // This ensures leases are available for next commit
-        if self.area_lease.remaining() < LEASE_REQUEST_THRESHOLD {
-            let lease_size = DEFAULT_LEASE_SIZE.max(count * 2);
-            let lease_req = StreamMessage::RequestAreaLease { count: lease_size };
+        // Ensure sufficient leases BEFORE allocating
+        // If short, request leases (in real impl, would await response)
+        if self.area_lease.remaining() < count || self.realm_lease.remaining() < count {
+            // Request leases from AreaActor
+            let lease_size = DEFAULT_LEASE_SIZE.max(count);
+            let lease_req = StreamMessage::RequestLease {
+                realm: self.realm.clone(),
+                area: self.area.clone(),
+                count: lease_size,
+                reply_to: format!("stream_actor_{}_{}_{}", self.realm, self.area, self.resource),
+            };
             let area_addr = self.area_actor_address();
             let _ = ctx.send(area_addr, lease_req);
-            // Note: Request is async - lease will arrive via LeaseGranted message
-        }
-        
-        // Check if we have enough leases for THIS commit
-        // Fail only if truly exhausted (not if just running low)
-        if self.area_lease.remaining() < count {
-            return Err(StreamError::SessionFull);
-        }
-        
-        if self.realm_lease.remaining() < count {
+            
+            // TODO: In full impl, would await LeaseGranted before proceeding
+            // For now, return error to indicate async operation needed
             return Err(StreamError::SessionFull);
         }
         
         // Allocate offsets contiguously
-        let resource_offsets: Vec<u64> = (self.next_resource_offset..self.next_resource_offset + count).collect();
-        let area_offsets = self.area_lease.allocate(count);
-        let realm_offsets = self.realm_lease.allocate(count);
+        let first_resource_offset = self.next_resource_offset;
+        let first_area_offset = self.area_lease.next;
+        let first_realm_offset = self.realm_lease.next;
         
-        // Commit to storage with pre-assigned offsets (atomic write)
-        let response = self.store.commit_session(session_id, resource_offsets, area_offsets, realm_offsets)
-            .map_err(|_| StreamError::ConcurrencyConflict)?;
+        // Advance lease cursors
+        self.area_lease.next += count;
+        self.realm_lease.next += count;
         
-        // Update local offset tracking
+        // Commit to storage with pre-assigned first offsets (atomic write)
+        let response = self.store.commit_session(
+            session_id,
+            first_resource_offset,
+            first_area_offset,
+            first_realm_offset,
+        ).map_err(|_| StreamError::ConcurrencyConflict)?;
+        
+        // Update local offset tracking ONLY on success
         self.next_resource_offset += count;
         
         // Clear active session
         self.active_session = None;
         
-        // Publish notification: notice://realm/area/resource/appended
-        let route_str = format!("notice://{}/{}/{}/appended", self.realm, self.area, self.resource);
+        // Send BatchCommitted notification to AreaActor for watermark tracking
+        let notification = StreamMessage::BatchCommitted {
+            first_area_offset: response.first_area_offset,
+            last_area_offset: response.last_area_offset,
+            first_realm_offset: response.first_realm_offset,
+            last_realm_offset: response.last_realm_offset,
+        };
+        let area_addr = self.area_actor_address();
+        let _ = ctx.send(area_addr, notification);
+        
+        // Publish notification: notice://realm/area/resource/committed
+        let route_str = format!("notice://{}/{}/{}/committed", self.realm, self.area, self.resource);
         let route = Route::new(route_str);
         
-        // Payload contains commit metadata as JSON
         let payload_json = serde_json::json!({
             "first_resource_offset": response.first_resource_offset,
             "last_resource_offset": response.last_resource_offset,
@@ -247,21 +260,8 @@ impl StreamActor {
         let payload = Bytes::from(payload_json.to_string());
         
         let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
-        
-        // Send to notification domain via RouteAddress
-        // NoticeRouteActor will fan out to all subscribers
         let notice_addr = RouteAddress::new(self.family_id, route);
         let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
-        
-        // Send BatchCommitted notification to AreaActor for watermark tracking
-        let notification = StreamMessage::BatchCommitted {
-            first_area_offset: response.first_area_offset,
-            last_area_offset: response.last_area_offset,
-            first_realm_offset: response.first_realm_offset,
-            last_realm_offset: response.last_realm_offset,
-        };
-        let area_addr = self.area_actor_address();
-        let _ = ctx.send(area_addr, notification);
         
         Ok(CommitSessionResponse {
             first_resource_offset: response.first_resource_offset,
@@ -320,6 +320,17 @@ impl StreamActor {
         Ok(PeekResponse { record })
     }
     
+    fn handle_get_metadata(&self) -> Result<super::protocol::GetMetadataResponse, StreamError> {
+        // Get stream metadata (limits, TTL, offsets, watermarks)
+        let metadata = self.store.get_metadata(
+            &self.realm,
+            &self.area,
+            &self.resource,
+        ).map_err(|_| StreamError::InvalidReadBound)?;
+        
+        Ok(super::protocol::GetMetadataResponse { metadata })
+    }
+    
     /// Update area lease from grant
     pub fn update_area_lease(&mut self, grant: LeaseGrant) {
         self.area_lease.update_from_area_lease(&grant);
@@ -359,6 +370,9 @@ impl Actor for StreamActor {
             }
             StreamMessage::Peek { .. } => {
                 let _ = self.handle_peek();
+            }
+            StreamMessage::GetMetadata { .. } => {
+                let _ = self.handle_get_metadata();
             }
             StreamMessage::LeaseGranted { grant } => {
                 // Update leases from AreaActor grant

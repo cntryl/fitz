@@ -394,3 +394,239 @@ fn should_stream_reads_with_cursor() {
     assert_eq!(all_records[0].resource_offset, 0);
     assert_eq!(all_records[99].resource_offset, 99);
 }
+
+#[test]
+fn should_allocate_offsets_contiguously_across_leases() {
+    // Arrange
+    let store = make_test_store();
+    let mut actor = StreamActor::new(
+        RouteFamily::new(1),
+        "realm1".to_string(),
+        "area1".to_string(),
+        "resource1".to_string(),
+        store.clone(),
+    );
+    let mut ctx = make_ctx();
+    
+    // First lease: area [0-9], realm [0-9]
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 0,
+        area_end_exclusive: 10,
+        realm_start: 0,
+        realm_end_exclusive: 10,
+    });
+    
+    // Commit 10 events (exhausts first lease)
+    let session1 = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    for i in 0..10 {
+        store.append_to_session(&session1, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("batch1-{}", i)),
+            metadata: None,
+        }).unwrap();
+    }
+    let response1 = store.commit_session(&session1, 0, 0, 0).unwrap();
+    
+    // Act: Allocate second lease and commit more events
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 10,
+        area_end_exclusive: 20,
+        realm_start: 10,
+        realm_end_exclusive: 20,
+    });
+    
+    let session2 = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    for i in 10..15 {
+        store.append_to_session(&session2, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("batch2-{}", i)),
+            metadata: None,
+        }).unwrap();
+    }
+    let response2 = store.commit_session(&session2, 10, 10, 10).unwrap();
+    
+    // Assert: No gap between leases
+    assert_eq!(response1.last_resource_offset, 9);
+    assert_eq!(response2.first_resource_offset, 10);
+    assert_eq!(response1.last_area_offset, 9);
+    assert_eq!(response2.first_area_offset, 10);
+}
+
+#[test]
+fn should_handle_lease_renewal_without_gaps() {
+    // Arrange
+    let store = make_test_store();
+    let mut actor = StreamActor::new(
+        RouteFamily::new(1),
+        "realm1".to_string(),
+        "area1".to_string(),
+        "resource1".to_string(),
+        store.clone(),
+    );
+    let mut ctx = make_ctx();
+    
+    // Initial lease
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 0,
+        area_end_exclusive: 5,
+        realm_start: 0,
+        realm_end_exclusive: 5,
+    });
+    
+    let session1 = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    for i in 0..5 {
+        store.append_to_session(&session1, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("event{}", i)),
+            metadata: None,
+        }).unwrap();
+    }
+    store.commit_session(&session1, 0, 0, 0).unwrap();
+    
+    // Act: Renew lease immediately
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 5,
+        area_end_exclusive: 10,
+        realm_start: 5,
+        realm_end_exclusive: 10,
+    });
+    
+    let session2 = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    for i in 5..10 {
+        store.append_to_session(&session2, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("event{}", i)),
+            metadata: None,
+        }).unwrap();
+    }
+    store.commit_session(&session2, 5, 5, 5).unwrap();
+    
+    // Assert: Contiguous offsets across renewal
+    store.set_watermark("realm1", "area1", 9).unwrap();
+    let (records, _) = store.read_resource("realm1", "area1", "resource1", 0, 20, None).unwrap();
+    assert_eq!(records.len(), 10);
+    
+    for i in 0..10 {
+        assert_eq!(records[i].resource_offset, i as u64);
+    }
+}
+
+#[test]
+fn should_handle_large_streaming_session() {
+    // Arrange
+    let store = make_test_store();
+    let mut actor = StreamActor::new(
+        RouteFamily::new(1),
+        "realm1".to_string(),
+        "area1".to_string(),
+        "resource1".to_string(),
+        store.clone(),
+    );
+    let mut ctx = make_ctx();
+    
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 0,
+        area_end_exclusive: 10000,
+        realm_start: 0,
+        realm_end_exclusive: 10000,
+    });
+    
+    // Act: Stream 1000 events in one session
+    let session_id = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    
+    for i in 0..1000 {
+        store.append_to_session(&session_id, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("event{:04}", i)),
+            metadata: None,
+        }).unwrap();
+    }
+    
+    let response = store.commit_session(&session_id, 0, 0, 0).unwrap();
+    
+    // Assert: All 1000 events committed
+    assert_eq!(response.batch_size, 1000);
+    assert_eq!(response.first_resource_offset, 0);
+    assert_eq!(response.last_resource_offset, 999);
+    
+    // Verify readability
+    store.set_watermark("realm1", "area1", 999).unwrap();
+    let (records, _) = store.read_resource("realm1", "area1", "resource1", 0, 1000, None).unwrap();
+    assert_eq!(records.len(), 1000);
+}
+
+#[test]
+fn should_handle_chunked_append_pattern() {
+    // Arrange
+    let store = make_test_store();
+    let mut actor = StreamActor::new(
+        RouteFamily::new(1),
+        "realm1".to_string(),
+        "area1".to_string(),
+        "resource1".to_string(),
+        store.clone(),
+    );
+    let mut ctx = make_ctx();
+    
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 0,
+        area_end_exclusive: 10000,
+        realm_start: 0,
+        realm_end_exclusive: 10000,
+    });
+    
+    // Act: Append 500 events one at a time (chunked pattern)
+    let session_id = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    
+    for i in 0..500 {
+        store.append_to_session(&session_id, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("chunk{:03}", i)),
+            metadata: None,
+        }).unwrap();
+    }
+    
+    let response = store.commit_session(&session_id, 0, 0, 0).unwrap();
+    
+    // Assert: All chunks committed atomically
+    assert_eq!(response.batch_size, 500);
+    assert_eq!(response.first_resource_offset, 0);
+    assert_eq!(response.last_resource_offset, 499);
+}
+
+#[test]
+fn should_commit_after_long_streaming_ingest() {
+    // Arrange
+    let store = make_test_store();
+    let mut actor = StreamActor::new(
+        RouteFamily::new(1),
+        "realm1".to_string(),
+        "area1".to_string(),
+        "resource1".to_string(),
+        store.clone(),
+    );
+    let mut ctx = make_ctx();
+    
+    actor.update_area_lease(fitz::domains::stream::protocol::LeaseGrant {
+        area_start: 0,
+        area_end_exclusive: 20000,
+        realm_start: 0,
+        realm_end_exclusive: 20000,
+    });
+    
+    // Act: Stream 2000 events with metadata
+    let session_id = store.begin_session("realm1", "area1", "resource1", None).unwrap();
+    
+    for i in 0..2000 {
+        let metadata = if i % 100 == 0 {
+            Some(Bytes::from(format!("{{\"checkpoint\":{}}}", i)))
+        } else {
+            None
+        };
+        
+        store.append_to_session(&session_id, fitz::domains::stream::store::EventPayload {
+            body: Bytes::from(format!("long-event-{:05}", i)),
+            metadata,
+        }).unwrap();
+    }
+    
+    let response = store.commit_session(&session_id, 0, 0, 0).unwrap();
+    
+    // Assert: Long streaming session committed successfully
+    assert_eq!(response.batch_size, 2000);
+    assert_eq!(response.last_resource_offset, 1999);
+}

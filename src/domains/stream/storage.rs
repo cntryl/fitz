@@ -17,6 +17,8 @@ pub enum KeyPrefix {
     Watermark = 0x04,
     /// Staging entry for active sessions: [session_id][event_index]
     Staging = 0x05,
+    /// Offset counter: [RF][realm][area][resource] - stores next offset independent of TTL
+    OffsetCounter = 0x06,
 }
 
 /// Encodes a resource stream key
@@ -98,6 +100,21 @@ pub fn encode_watermark_key(
     key
 }
 
+/// Encodes an offset counter key (metadata, independent of TTL)
+pub fn encode_offset_counter_key(
+    realm: &str,
+    area: &str,
+    resource: &str,
+) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::OffsetCounter as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(resource.as_bytes());
+    key
+}
+
 /// Value stored in resource index (full record)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceValue {
@@ -132,6 +149,12 @@ pub struct RealmValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatermarkValue {
     pub watermark: u64,
+}
+
+/// Offset counter value (metadata, not subject to TTL)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffsetCounterValue {
+    pub next_offset: u64,
 }
 
 impl ResourceValue {
@@ -171,6 +194,16 @@ impl WatermarkValue {
 
     pub fn decode(bytes: &[u8]) -> Self {
         deserialize(bytes).expect("deserialize watermark value")
+    }
+}
+
+impl OffsetCounterValue {
+    pub fn encode(&self) -> Vec<u8> {
+        serialize(self).expect("serialize offset counter value")
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        deserialize(bytes).expect("deserialize offset counter value")
     }
 }
 

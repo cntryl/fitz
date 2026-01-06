@@ -166,12 +166,19 @@ impl StreamStore {
         Ok(())
     }
     
+    /// Commit session with StreamActor-provided first offsets
+    /// 
+    /// **STORAGE ONLY - NO SEQUENCING**
+    /// - Accepts first offsets from StreamActor (already sequenced)
+    /// - Computes subsequent offsets by index: first + i
+    /// - Does NOT validate expected_offset (StreamActor's job)
+    /// - Does NOT scan for max offset (StreamActor is sequencer)
     pub fn commit_session(
         &self,
         session_id: &SessionId,
-        resource_offsets: Vec<u64>,
-        area_offsets: Vec<u64>,
-        realm_offsets: Vec<u64>,
+        first_resource_offset: u64,
+        first_area_offset: u64,
+        first_realm_offset: u64,
     ) -> Result<CommitResponse, String> {
         let session = self.sessions.lock().unwrap()
             .remove(session_id)
@@ -183,10 +190,6 @@ impl StreamStore {
         
         let batch_size = session.event_count;
         
-        if resource_offsets.len() != batch_size || area_offsets.len() != batch_size || realm_offsets.len() != batch_size {
-            return Err("ERR_INVALID_OFFSETS".to_string());
-        }
-        
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -196,6 +199,7 @@ impl StreamStore {
         let mut batch = WriteBatch::new();
         
         // Read events from staging transaction and write to final indexes
+        // Compute offsets by index: first + i
         for i in 0..batch_size {
             let staging_key = encode_staging_key(&session.session_id, i);
             let staging_value = session.txn.get(&staging_key)
@@ -203,9 +207,9 @@ impl StreamStore {
                 .ok_or_else(|| format!("staging key {} not found", i))?;
             
             let event = decode_staging_value(&staging_value)?;
-            let resource_offset = resource_offsets[i];
-            let area_offset = area_offsets[i];
-            let realm_offset = realm_offsets[i];
+            let resource_offset = first_resource_offset + i as u64;
+            let area_offset = first_area_offset + i as u64;
+            let realm_offset = first_realm_offset + i as u64;
             
             let resource_key = encode_resource_key(&session.realm, &session.area, &session.resource, resource_offset);
             let resource_value = ResourceValue {
@@ -278,13 +282,28 @@ impl StreamStore {
         self.db.write_batch(&batch)
             .map_err(|e| format!("midge write_batch error: {:?}", e))?;
         
+        // **CRITICAL**: Persist offset counter metadata (no TTL!)
+        // This ensures next_resource_offset survives TTL expiry and restarts
+        let next_offset = first_resource_offset + batch_size as u64;
+        let counter_key = crate::domains::stream::storage::encode_offset_counter_key(
+            &session.realm, &session.area, &session.resource
+        );
+        let counter_value = crate::domains::stream::storage::OffsetCounterValue {
+            next_offset,
+        };
+        self.db.put(
+            &cf,
+            &counter_key,
+            &counter_value.encode(),
+        ).map_err(|e| format!("failed to persist offset counter: {:?}", e))?;
+        
         Ok(CommitResponse {
-            first_resource_offset: resource_offsets[0],
-            last_resource_offset: resource_offsets[batch_size - 1],
-            first_area_offset: area_offsets[0],
-            last_area_offset: area_offsets[batch_size - 1],
-            first_realm_offset: realm_offsets[0],
-            last_realm_offset: realm_offsets[batch_size - 1],
+            first_resource_offset,
+            last_resource_offset: first_resource_offset + batch_size as u64 - 1,
+            first_area_offset,
+            last_area_offset: first_area_offset + batch_size as u64 - 1,
+            first_realm_offset,
+            last_realm_offset: first_realm_offset + batch_size as u64 - 1,
             batch_size,
             ingest_metadata: session.ingest_metadata,
         })
@@ -304,6 +323,9 @@ impl StreamStore {
     }
     
     /// Peek at the last committed record in a resource stream (tail operation)
+    /// 
+    /// **NO WATERMARK GATING**: Resource reads are strictly ordered by StreamActor.
+    /// Watermark is for area/realm dimensions only.
     pub fn peek_resource(
         &self,
         realm: &str,
@@ -311,46 +333,57 @@ impl StreamStore {
         resource: &str,
     ) -> Result<Option<StreamRecord>, String> {
         let cf = self.db.default_column_family();
-        let watermark = self.get_watermark(realm, area)?;
         
-        // If watermark is 0, stream is empty
-        if watermark == 0 {
-            return Ok(None);
-        }
+        // Build prefix for this resource
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(area.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(resource.as_bytes());
+        prefix_key.push(0);
         
-        // Read the single record at the watermark offset
-        let key = encode_resource_key(realm, area, resource, watermark);
+        // Scan to get all keys (Midge returns Vec), take last
+        let query = cntryl_midge::Query::new()
+            .prefix(Bytes::from(prefix_key));
         
-        match self.db.get(&cf, &key)
-            .map_err(|e| format!("get error: {:?}", e))? {
-            Some(value_bytes) => {
-                let resource_value = ResourceValue::decode(&value_bytes);
-                
-                // TTL filtering
-                if let Some(ttl_secs) = self.ttl.ttl_seconds {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    let age_ms = now.saturating_sub(resource_value.created_at / 1000) * 1000;
-                    if age_ms > (ttl_secs * 1000) {
-                        return Ok(None);
-                    }
+        let results = self.db.scan(&cf, &query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        
+        // Get last element from results
+        if let Some((_, value_bytes)) = results.last() {
+            let resource_value = ResourceValue::decode(&value_bytes);
+            
+            // TTL filtering
+            if let Some(ttl_secs) = self.ttl.ttl_seconds {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let age_ms = now.saturating_sub(resource_value.created_at / 1000) * 1000;
+                if age_ms > (ttl_secs * 1000) {
+                    return Ok(None);
                 }
-                
-                Ok(Some(StreamRecord {
-                    resource_offset: resource_value.resource_offset,
-                    area_offset: resource_value.area_offset,
-                    realm_offset: resource_value.realm_offset,
-                    body: resource_value.body,
-                    metadata: resource_value.metadata,
-                    created_at: resource_value.created_at,
-                }))
             }
-            None => Ok(None),
+            
+            Ok(Some(StreamRecord {
+                resource_offset: resource_value.resource_offset,
+                area_offset: resource_value.area_offset,
+                realm_offset: resource_value.realm_offset,
+                body: resource_value.body,
+                metadata: resource_value.metadata,
+                created_at: resource_value.created_at,
+            }))
+        } else {
+            Ok(None)
         }
     }
     
+    /// Read resource stream records
+    /// 
+    /// **NO WATERMARK GATING**: Resource reads are strictly ordered by StreamActor.
+    /// Each resource offset is durably committed before being visible.
+    /// Watermark is only relevant for area/realm dimensions.
     pub fn read_resource(
         &self,
         realm: &str,
@@ -361,7 +394,6 @@ impl StreamStore {
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         let cf = self.db.default_column_family();
-        let watermark = self.get_watermark(realm, area)?;
         
         // Build prefix for this resource
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
@@ -389,11 +421,6 @@ impl StreamStore {
         
         for (_, value_bytes) in results {
             let resource_value = ResourceValue::decode(&value_bytes);
-            
-            // Watermark enforcement: stop if beyond committed data
-            if resource_value.resource_offset > watermark {
-                break;
-            }
             
             // TTL filtering: skip expired records inline, preserve offsets
             if let Some(ttl_secs) = self.ttl.ttl_seconds {
@@ -429,8 +456,7 @@ impl StreamStore {
             });
         }
         
-        let has_more = records.len() == limit as usize || 
-            (last_offset < watermark && total_bytes >= max_bytes_limit);
+        let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
         
         let cursor = super::protocol::ReadCursor {
             last_resource_offset: last_offset,
@@ -665,4 +691,94 @@ impl StreamStore {
         self.db.put(&cf, &key, &value.encode())
             .map_err(|e| format!("midge put error: {:?}", e))
     }
-}
+    
+    /// Get stream metadata (limits, TTL, offsets, watermarks)
+    /// 
+    /// Used for describe_stream / introspection API
+    pub fn get_metadata(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<super::protocol::StreamMetadata, String> {
+        let last_resource_offset = self.get_last_resource_offset(realm, area, resource)?;
+        let area_watermark = self.get_watermark(realm, area)?;
+        
+        // Realm watermark would need to be queried from RealmActor or separate store
+        // For now, return area_watermark as approximation (TODO: proper realm query)
+        let realm_watermark = area_watermark;
+        
+        Ok(super::protocol::StreamMetadata {
+            max_batch_events: self.limits.max_batch_events,
+            max_batch_bytes: self.limits.max_batch_bytes,
+            ttl_seconds: self.ttl.ttl_seconds,
+            last_resource_offset,
+            area_watermark,
+            realm_watermark,
+        })
+    }
+    
+    /// Get the last committed resource offset for recovery
+    /// 
+    /// **CRITICAL**: StreamActor must call this on initialization to recover
+    /// next_resource_offset and avoid reusing offsets after restart.
+    pub fn get_last_resource_offset(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<u64>, String> {
+        let cf = self.db.default_column_family();
+        
+        // Build prefix for this resource
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(area.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(resource.as_bytes());
+        prefix_key.push(0);
+        
+        // Scan to get all keys (Midge returns Vec), take last
+        let query = cntryl_midge::Query::new()
+            .prefix(Bytes::from(prefix_key));
+        
+        let results = self.db.scan(&cf, &query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        
+        // Get last element from results
+        if let Some((_, value_bytes)) = results.last() {
+            let resource_value = ResourceValue::decode(&value_bytes);
+            Ok(Some(resource_value.resource_offset))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the next resource offset from metadata (TTL-safe)
+    /// 
+    /// **CRITICAL**: Reads from OffsetCounter metadata, NOT from scanning
+    /// TTL-governed data. This ensures offsets never reset after TTL expiry.
+    /// 
+    /// Returns 0 if no counter exists (new resource), otherwise returns
+    /// the next offset to use.
+    pub fn get_next_resource_offset(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<u64, String> {
+        let cf = self.db.default_column_family();
+        let counter_key = crate::domains::stream::storage::encode_offset_counter_key(
+            realm, area, resource
+        );
+        
+        match self.db.get(&cf, &counter_key) {
+            Ok(Some(value_bytes)) => {
+                let counter = crate::domains::stream::storage::OffsetCounterValue::decode(&value_bytes);
+                Ok(counter.next_offset)
+            }
+            Ok(None) => Ok(0), // New resource starts at 0
+            Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
+        }
+    }}

@@ -9,17 +9,17 @@
 //!
 //! # Three-Level Ordering
 //!
-//! 1. **Resource ordering**: Strict sequential offsets within a single resource stream (caller-assigned)
-//! 2. **Area ordering**: Global ordering across all resources in an area (system-assigned)
-//! 3. **Realm ordering**: Global ordering across all areas in a realm (system-assigned)
+//! 1. **Resource ordering**: Strict sequential offsets within a single resource stream (server-assigned by StreamActor)
+//! 2. **Area ordering**: Global ordering across all resources in an area (server-assigned by AreaActor via leases)
+//! 3. **Realm ordering**: Global ordering across all areas in a realm (server-assigned by RealmActor via leases)
 //!
 //! # Semantics
 //!
 //! - **Strictly ordered**: Events are totally ordered at each level
 //! - **Gap-free**: No gaps in offset sequences (enforced by watermarks)
 //! - **Durable**: All events persisted to Midge LSM storage
-//! - **Optimistic concurrency**: Caller assigns resource_offset for conflict detection
-//! - **Watermark-gated reads**: Consumers only see gap-free committed events
+//! - **Optimistic concurrency**: Caller provides expected_offset for conflict detection
+//! - **Watermark-gated reads**: Area/realm reads only see gap-free committed events (resource reads are not gated)
 //!
 //! # Route Format
 //!
@@ -33,9 +33,11 @@
 //!
 //! # Offset Assignment
 //!
-//! - **resource_offset**: Assigned by caller (for optimistic concurrency)
-//! - **area_offset**: Assigned by AreaActor (for area-wide ordering)
-//! - **realm_offset**: Assigned by RealmActor (for realm-wide ordering)
+//! - **resource_offset**: Server-assigned by StreamActor (sequencer for resource stream)
+//! - **area_offset**: Server-assigned by AreaActor via leased ranges (for area-wide ordering)
+//! - **realm_offset**: Server-assigned by RealmActor via leased ranges (for realm-wide ordering)
+//!
+//! **Optimistic concurrency**: Caller provides `expected_offset` at session begin; if mismatch, session fails.
 //!
 //! # Watermarks
 //!
@@ -55,5 +57,8 @@ pub mod session;
 pub use stream_actor::StreamActor;
 pub use area_actor::AreaActor;
 pub use realm_actor::RealmActor;
-pub use protocol::{StreamMessage, StreamRecord, StreamError, AppendResponse, ReadResponse};
+pub use protocol::{
+    StreamMessage, StreamRecord, StreamError, StreamMetadata,
+    AppendResponse, ReadResponse, GetMetadataResponse,
+};
 pub use store::StreamStore;
