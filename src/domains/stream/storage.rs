@@ -137,21 +137,29 @@ pub struct ResourceValue {
     pub realm_offset: Option<u64>,
 }
 
-/// Value stored in area index (pointer to resource record)
+/// Value stored in area index (covering index with full event)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AreaValue {
     pub realm: String,
     pub area: String,
     pub resource: String,
     pub resource_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
 }
 
-/// Value stored in realm index (pointer to area record)
+/// Value stored in realm index (covering index with full event)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealmValue {
     pub realm: String,
     pub area: String,
     pub area_offset: u64,
+    pub resource: String,
+    pub resource_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
 }
 
 /// Watermark value

@@ -236,6 +236,9 @@ impl StreamStore {
                 area: session.area.clone(),
                 resource: session.resource.clone(),
                 resource_offset,
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
             };
             if let Some(ttl_secs) = self.ttl.ttl_seconds {
                 batch.put_with_ttl(
@@ -254,6 +257,11 @@ impl StreamStore {
             
             let realm_key = encode_realm_key(&session.realm, realm_offset);
             let realm_value = RealmValue {
+                resource: session.resource.clone(),
+                resource_offset,
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
                 realm: session.realm.clone(),
                 area: session.area.clone(),
                 area_offset,
@@ -551,7 +559,7 @@ impl StreamStore {
         let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
-        let mut records = Vec::new();
+        let mut records = Vec::with_capacity(limit.min(1000) as usize);
         let mut total_bytes = 0;
         let mut last_area_offset = from_offset;
         let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
@@ -565,45 +573,39 @@ impl StreamStore {
                 break;
             }
             
-            // Fetch actual event from resource index
-            let resource_key = encode_resource_key(
-                &area_value.realm,
-                &area_value.area,
-                &area_value.resource,
-                area_value.resource_offset,
-            );
+            // Area index is now a covering index - read directly!
+            let record_bytes = area_value.body.len() + 
+                area_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
             
-            if let Some(resource_bytes) = self.db.get(cf, &resource_key)
-                .map_err(|e| format!("get error: {:?}", e))? {
-                let resource_value = ResourceValue::decode(&resource_bytes);
-                
-                let record_bytes = resource_value.body.len() + 
-                    resource_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                
-                if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
-                    break;
-                }
-                
-                last_area_offset = area_offset;
-                total_bytes += record_bytes;
-                
-                records.push(StreamRecord {
-                    resource_offset: resource_value.resource_offset,
-                    area_offset: resource_value.area_offset,
-                    realm_offset: resource_value.realm_offset,
-                    body: resource_value.body,
-                    metadata: resource_value.metadata,
-                    created_at: resource_value.created_at,
-                });
+            if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+                break;
             }
+            
+            last_area_offset = area_offset;
+            total_bytes += record_bytes;
+            
+            records.push(StreamRecord {
+                resource_offset: area_value.resource_offset,
+                area_offset: Some(area_offset),
+                realm_offset: None,  // Not available in area index
+                body: area_value.body,
+                metadata: area_value.metadata,
+                created_at: area_value.created_at,
+            });
         }
         
         let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
         
+        let (last_resource_offset, last_realm_offset) = if let Some(last_rec) = records.last() {
+            (last_rec.resource_offset, last_rec.realm_offset)
+        } else {
+            (0, None)
+        };
+        
         let cursor = super::protocol::ReadCursor {
-            last_resource_offset: records.last().map(|r| r.resource_offset).unwrap_or(0),
+            last_resource_offset,
             last_area_offset: Some(last_area_offset),
-            last_realm_offset: records.last().and_then(|r| r.realm_offset),
+            last_realm_offset,
             has_more,
         };
         
@@ -635,7 +637,7 @@ impl StreamStore {
         let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
-        let mut records = Vec::new();
+        let mut records = Vec::with_capacity(limit.min(1000) as usize);
         let mut total_bytes = 0;
         let mut last_realm_offset = from_offset;
         let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
@@ -649,53 +651,38 @@ impl StreamStore {
                 break;
             }
             
-            // Fetch area record to get resource pointer
-            let area_key = encode_area_key(&realm_value.realm, &realm_value.area, realm_value.area_offset);
+            // Realm index is now a covering index - read directly!
+            let record_bytes = realm_value.body.len() + 
+                realm_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
             
-            if let Some(area_bytes) = self.db.get(cf, &area_key)
-                .map_err(|e| format!("get error: {:?}", e))? {
-                let area_value = AreaValue::decode(&area_bytes);
-                
-                // Fetch actual event from resource index
-                let resource_key = encode_resource_key(
-                    &area_value.realm,
-                    &area_value.area,
-                    &area_value.resource,
-                    area_value.resource_offset,
-                );
-                
-                if let Some(resource_bytes) = self.db.get(cf, &resource_key)
-                    .map_err(|e| format!("get error: {:?}", e))? {
-                    let resource_value = ResourceValue::decode(&resource_bytes);
-                    
-
-                    let record_bytes = resource_value.body.len() + 
-                        resource_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                    
-                    if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
-                        break;
-                    }
-                    
-                    last_realm_offset = realm_offset;
-                    total_bytes += record_bytes;
-                    
-                    records.push(StreamRecord {
-                        resource_offset: resource_value.resource_offset,
-                        area_offset: resource_value.area_offset,
-                        realm_offset: resource_value.realm_offset,
-                        body: resource_value.body,
-                        metadata: resource_value.metadata,
-                        created_at: resource_value.created_at,
-                    });
-                }
+            if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+                break;
             }
+            
+            last_realm_offset = realm_offset;
+            total_bytes += record_bytes;
+            
+            records.push(StreamRecord {
+                resource_offset: realm_value.resource_offset,
+                area_offset: Some(realm_value.area_offset),
+                realm_offset: Some(realm_offset),
+                body: realm_value.body,
+                metadata: realm_value.metadata,
+                created_at: realm_value.created_at,
+            });
         }
         
         let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
         
+        let (last_resource_offset, last_area_offset) = if let Some(last_rec) = records.last() {
+            (last_rec.resource_offset, last_rec.area_offset)
+        } else {
+            (0, None)
+        };
+        
         let cursor = super::protocol::ReadCursor {
-            last_resource_offset: records.last().map(|r| r.resource_offset).unwrap_or(0),
-            last_area_offset: records.last().and_then(|r| r.area_offset),
+            last_resource_offset,
+            last_area_offset,
             last_realm_offset: Some(last_realm_offset),
             has_more,
         };
