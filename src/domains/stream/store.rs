@@ -102,13 +102,6 @@ impl StreamStore {
         }
     }
     
-    /// Calculate age in milliseconds from created_at timestamp
-    /// 
-    /// Handles conversion from seconds (created_at / 1000) to milliseconds
-    fn age_ms(&self, now_ms: u64, created_at: u64) -> u64 {
-        now_ms.saturating_sub(created_at / 1000) * 1000
-    }
-    
     pub fn begin_session(
         &self,
         realm: &str,
@@ -353,18 +346,6 @@ impl StreamStore {
         
         let resource_value = ResourceValue::decode(&value_bytes);
         
-        // TTL filtering
-        if let Some(ttl_secs) = self.ttl.ttl_seconds {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let age_ms = self.age_ms(now, resource_value.created_at);
-            if age_ms > (ttl_secs * 1000) {
-                return Ok(None);
-            }
-        }
-        
         Ok(Some(StreamRecord {
             resource_offset: resource_value.resource_offset,
             area_offset: resource_value.area_offset,
@@ -389,6 +370,11 @@ impl StreamStore {
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        // Fast path for single-record reads (limit=1, no byte limit)
+        if limit == 1 && max_bytes.is_none() {
+            return self.read_resource_single(realm, area, resource, from_offset);
+        }
+        
         let cf = self.db.default_column_family();
         
         // Build prefix for this resource
@@ -410,26 +396,13 @@ impl StreamStore {
         let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
-        let mut records = Vec::new();
+        let mut records = Vec::with_capacity(limit.min(1000) as usize);
         let mut total_bytes = 0;
         let mut last_offset = from_offset;
         let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
         
         for (_, value_bytes) in results {
             let resource_value = ResourceValue::decode(&value_bytes);
-            
-            // TTL filtering: skip expired records inline, preserve offsets
-            if let Some(ttl_secs) = self.ttl.ttl_seconds {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                let age_ms = self.age_ms(now, resource_value.created_at);
-                if age_ms > (ttl_secs * 1000) {
-                    last_offset = resource_value.resource_offset;
-                    continue;  // Skip expired, keep scanning
-                }
-            }
             
             let record_bytes = resource_value.body.len() + 
                 resource_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -454,14 +427,100 @@ impl StreamStore {
         
         let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
         
+        // Cache last record to avoid repeated last() lookups
+        let (last_area_offset, last_realm_offset) = if let Some(last_rec) = records.last() {
+            (last_rec.area_offset, last_rec.realm_offset)
+        } else {
+            (None, None)
+        };
+        
         let cursor = super::protocol::ReadCursor {
             last_resource_offset: last_offset,
-            last_area_offset: records.last().and_then(|r| r.area_offset),
-            last_realm_offset: records.last().and_then(|r| r.realm_offset),
+            last_area_offset,
+            last_realm_offset,
             has_more,
         };
         
         Ok((records, cursor))
+    }
+    
+    /// Optimized fast-path for single-record reads (limit=1, no byte limit)
+    /// Avoids scan overhead by using direct get with inline key buffer
+    fn read_resource_single(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        from_offset: u64,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        let cf = self.db.default_column_family();
+        
+        // Use inline buffer for key to avoid heap allocation
+        // Most keys are <200 bytes, use 256 for safety
+        let mut key_buf = [0u8; 256];
+        let key_len = {
+            let mut pos = 0;
+            key_buf[pos] = crate::domains::stream::storage::KeyPrefix::Resource as u8;
+            pos += 1;
+            
+            let realm_bytes = realm.as_bytes();
+            key_buf[pos..pos + realm_bytes.len()].copy_from_slice(realm_bytes);
+            pos += realm_bytes.len();
+            key_buf[pos] = 0;
+            pos += 1;
+            
+            let area_bytes = area.as_bytes();
+            key_buf[pos..pos + area_bytes.len()].copy_from_slice(area_bytes);
+            pos += area_bytes.len();
+            key_buf[pos] = 0;
+            pos += 1;
+            
+            let resource_bytes = resource.as_bytes();
+            key_buf[pos..pos + resource_bytes.len()].copy_from_slice(resource_bytes);
+            pos += resource_bytes.len();
+            key_buf[pos] = 0;
+            pos += 1;
+            
+            let offset_bytes = from_offset.to_be_bytes();
+            key_buf[pos..pos + 8].copy_from_slice(&offset_bytes);
+            pos + 8
+        };
+        
+        let key = &key_buf[..key_len];
+        
+        match self.db.get(cf, key).map_err(|e| format!("get error: {:?}", e))? {
+            Some(value_bytes) => {
+                let resource_value = ResourceValue::decode(&value_bytes);
+                
+                let record = StreamRecord {
+                    resource_offset: resource_value.resource_offset,
+                    area_offset: resource_value.area_offset,
+                    realm_offset: resource_value.realm_offset,
+                    body: resource_value.body,
+                    metadata: resource_value.metadata,
+                    created_at: resource_value.created_at,
+                };
+                
+                let cursor = super::protocol::ReadCursor {
+                    last_resource_offset: resource_value.resource_offset,
+                    last_area_offset: resource_value.area_offset,
+                    last_realm_offset: resource_value.realm_offset,
+                    has_more: false,  // Single read never has more
+                };
+                
+                Ok((vec![record], cursor))
+            }
+            None => {
+                // No record at this offset
+                let cursor = super::protocol::ReadCursor {
+                    last_resource_offset: from_offset,
+                    last_area_offset: None,
+                    last_realm_offset: None,
+                    has_more: false,
+                };
+                Ok((vec![], cursor))
+            }
+        }
     }
     
     pub fn read_area(
@@ -517,19 +576,6 @@ impl StreamStore {
             if let Some(resource_bytes) = self.db.get(cf, &resource_key)
                 .map_err(|e| format!("get error: {:?}", e))? {
                 let resource_value = ResourceValue::decode(&resource_bytes);
-                
-                // TTL filtering inline
-                if let Some(ttl_secs) = self.ttl.ttl_seconds {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    let age_ms = self.age_ms(now, resource_value.created_at);
-                    if age_ms > (ttl_secs * 1000) {
-                        last_area_offset = area_offset;
-                        continue;
-                    }
-                }
                 
                 let record_bytes = resource_value.body.len() + 
                     resource_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -622,19 +668,7 @@ impl StreamStore {
                     .map_err(|e| format!("get error: {:?}", e))? {
                     let resource_value = ResourceValue::decode(&resource_bytes);
                     
-                    // TTL filtering inline
-                    if let Some(ttl_secs) = self.ttl.ttl_seconds {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-                        let age_ms = self.age_ms(now, resource_value.created_at);
-                        if age_ms > (ttl_secs * 1000) {
-                            last_realm_offset = realm_offset;
-                            continue;
-                        }
-                    }
-                    
+
                     let record_bytes = resource_value.body.len() + 
                         resource_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
                     

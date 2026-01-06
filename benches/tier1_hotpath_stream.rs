@@ -269,9 +269,281 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
     group.finish();
 }
 
+/// BENCH 3b: Batched sequential read from resource stream
+/// Measures: batch read throughput (1000 events per call)
+fn bench_resource_read_batched(c: &mut Criterion) {
+    let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-read-batch");
+    
+    let route = Route::new("stream://bench-realm/bench-area/bench-read-batch/append".to_string());
+    let family_id = RouteFamily::new(1);
+    
+    // Pre-populate with committed events using proper session flow
+    let payloads = make_event_payloads(1000, 256);
+    let mut expected_offset = 0u64;
+    
+    // Commit 1000 events in batches of 100
+    for chunk_start in (0..1000).step_by(100) {
+        actor.receive(
+            StreamMessage::BeginSession {
+                family_id,
+                route: route.clone(),
+                expected_offset,
+                ingest_metadata: None,
+            },
+            &mut ctx,
+        );
+        
+        let session_id = format!("bench-session-{}", expected_offset);
+        
+        for i in 0..100 {
+            actor.receive(
+                StreamMessage::AppendToSession {
+                    session_id: session_id.clone(),
+                    body: Bytes::from(payloads[chunk_start + i].clone()),
+                    metadata: None,
+                },
+                &mut ctx,
+            );
+        }
+        
+        actor.receive(
+            StreamMessage::CommitSession {
+                session_id,
+            },
+            &mut ctx,
+        );
+        
+        expected_offset += 100;
+    }
+
+    let mut group = c.benchmark_group("tier1_stream_resource_read_batch");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1000));
+
+    let read_route = Route::new("stream://bench-realm/bench-area/bench-read-batch/read".to_string());
+    let mut read_offset = 0u64;
+    
+    group.bench_function("resource_read_batched_1000x256B", |b| {
+        b.iter(|| {
+            // Read 1000 events at once (batch operation)
+            actor.receive(
+                StreamMessage::Read {
+                    family_id: RouteFamily::new(1),
+                    route: read_route.clone(),
+                    from_offset: black_box(read_offset),
+                    limit: 1000,
+                    max_bytes: None,
+                },
+                &mut ctx,
+            );
+            read_offset = (read_offset + 1000) % 1000;
+        })
+    });
+
+    group.finish();
+}
+
+/// BENCH 4: Sequential read from area stream (multi-resource interleaved)
+/// Measures: read throughput with pointer indirection (area → resource lookup)
+fn bench_area_read_sequential(c: &mut Criterion) {
+    // Create multiple resources in same area to populate area index
+    let db = Arc::new(cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default()).expect("open db"));
+    let store = Arc::new(StreamStore::new(db));
+    let router = Arc::new(Router::new());
+    let family = RouteFamily::new(1);
+    
+    let realm = "bench-realm";
+    let area = "bench-area";
+    let resource_count = 4;
+    let events_per_resource = 250;
+    
+    // Pre-populate multiple resources (area index will interleave)
+    let payloads = make_event_payloads(1000, 256);
+    
+    for res_idx in 0..resource_count {
+        let resource = format!("bench-resource-{}", res_idx);
+        let mut actor = StreamActor::new(family, realm.to_string(), area.to_string(), resource.clone(), store.clone());
+        let addr = RouteAddress::new(family, Route::new(format!("stream://{}/{}/{}/append", realm, area, resource)));
+        let mut ctx = Context::new(addr, router.clone());
+        
+        let route = Route::new(format!("stream://{}/{}/{}/append", realm, area, resource));
+        let mut expected_offset = 0u64;
+        
+        // Commit events in batches
+        for chunk_start in (0..events_per_resource).step_by(50) {
+            actor.receive(
+                StreamMessage::BeginSession {
+                    family_id: family,
+                    route: route.clone(),
+                    expected_offset,
+                    ingest_metadata: None,
+                },
+                &mut ctx,
+            );
+            
+            let session_id = format!("bench-session-{}-{}", res_idx, expected_offset);
+            
+            for i in 0..50 {
+                let idx = (chunk_start + i) % payloads.len();
+                actor.receive(
+                    StreamMessage::AppendToSession {
+                        session_id: session_id.clone(),
+                        body: Bytes::from(payloads[idx].clone()),
+                        metadata: None,
+                    },
+                    &mut ctx,
+                );
+            }
+            
+            actor.receive(
+                StreamMessage::CommitSession {
+                    session_id,
+                },
+                &mut ctx,
+            );
+            
+            expected_offset += 50;
+        }
+    }
+    
+    // Create area actor for reading
+    let area_resource = "__area__";
+    let mut area_actor = StreamActor::new(family, realm.to_string(), area.to_string(), area_resource.to_string(), store.clone());
+    let addr = RouteAddress::new(family, Route::new(format!("stream://{}/{}/{}/read", realm, area, area_resource)));
+    let mut ctx = Context::new(addr, router.clone());
+    
+    let mut group = c.benchmark_group("tier1_stream_area_read");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1000));
+    
+    let read_route = Route::new(format!("stream://{}/{}/read", realm, area));
+    let mut read_offset = 0u64;
+    
+    group.bench_function("area_read_sequential_256B", |b| {
+        b.iter(|| {
+            // Read 1000 events from area index (interleaved from multiple resources)
+            area_actor.receive(
+                StreamMessage::Read {
+                    family_id: family,
+                    route: read_route.clone(),
+                    from_offset: black_box(read_offset),
+                    limit: 1000,
+                    max_bytes: None,
+                },
+                &mut ctx,
+            );
+            read_offset = (read_offset + 1000) % ((resource_count * events_per_resource) as u64);
+        })
+    });
+
+    group.finish();
+}
+
+/// BENCH 5: Sequential read from realm stream (multi-area interleaved)
+/// Measures: read throughput with 2-level pointer indirection (realm → area → resource)
+/// This is the PRIMARY test for pointer chasing overhead!
+fn bench_realm_read_sequential(c: &mut Criterion) {
+    // Create multiple areas with multiple resources to populate realm index
+    let db = Arc::new(cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default()).expect("open db"));
+    let store = Arc::new(StreamStore::new(db));
+    let router = Arc::new(Router::new());
+    let family = RouteFamily::new(1);
+    
+    let realm = "bench-realm";
+    let area_count = 2;
+    let resources_per_area = 2;
+    let events_per_resource = 250;
+    
+    // Pre-populate multiple areas with multiple resources
+    let payloads = make_event_payloads(1000, 256);
+    
+    for area_idx in 0..area_count {
+        let area = format!("bench-area-{}", area_idx);
+        
+        for res_idx in 0..resources_per_area {
+            let resource = format!("bench-resource-{}", res_idx);
+            let mut actor = StreamActor::new(family, realm.to_string(), area.clone(), resource.clone(), store.clone());
+            let addr = RouteAddress::new(family, Route::new(format!("stream://{}/{}/{}/append", realm, area, resource)));
+            let mut ctx = Context::new(addr, router.clone());
+            
+            let route = Route::new(format!("stream://{}/{}/{}/append", realm, area, resource));
+            let mut expected_offset = 0u64;
+            
+            // Commit events in batches
+            for chunk_start in (0..events_per_resource).step_by(50) {
+                actor.receive(
+                    StreamMessage::BeginSession {
+                        family_id: family,
+                        route: route.clone(),
+                        expected_offset,
+                        ingest_metadata: None,
+                    },
+                    &mut ctx,
+                );
+                
+                let session_id = format!("bench-session-{}-{}-{}", area_idx, res_idx, expected_offset);
+                
+                for i in 0..50 {
+                    let idx = (chunk_start + i) % payloads.len();
+                    actor.receive(
+                        StreamMessage::AppendToSession {
+                            session_id: session_id.clone(),
+                            body: Bytes::from(payloads[idx].clone()),
+                            metadata: None,
+                        },
+                        &mut ctx,
+                    );
+                }
+                
+                actor.receive(
+                    StreamMessage::CommitSession {
+                        session_id,
+                    },
+                    &mut ctx,
+                );
+                
+                expected_offset += 50;
+            }
+        }
+    }
+    
+    // Create realm actor for reading
+    let realm_resource = "__realm__";
+    let mut realm_actor = StreamActor::new(family, realm.to_string(), "".to_string(), realm_resource.to_string(), store.clone());
+    let addr = RouteAddress::new(family, Route::new(format!("stream://{}/read", realm)));
+    let mut ctx = Context::new(addr, router.clone());
+    
+    let mut group = c.benchmark_group("tier1_stream_realm_read");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1000));
+    
+    let read_route = Route::new(format!("stream://{}/read", realm));
+    let mut read_offset = 0u64;
+    let total_events = area_count * resources_per_area * events_per_resource;
+    
+    group.bench_function("realm_read_sequential_256B", |b| {
+        b.iter(|| {
+            // Read 1000 events from realm index (requires realm → area → resource lookups)
+            realm_actor.receive(
+                StreamMessage::Read {
+                    family_id: family,
+                    route: read_route.clone(),
+                    from_offset: black_box(read_offset),
+                    limit: 1000,
+                    max_bytes: None,
+                },
+                &mut ctx,
+            );
+            read_offset = (read_offset + 1000) % (total_events as u64);
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = bench_append_commit_single_event, bench_append_commit_batches, bench_resource_read_sequential
+    targets = bench_append_commit_single_event, bench_append_commit_batches, bench_resource_read_sequential, bench_resource_read_batched, bench_area_read_sequential, bench_realm_read_sequential
 }
 criterion_main!(benches);

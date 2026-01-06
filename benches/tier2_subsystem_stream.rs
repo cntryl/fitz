@@ -226,9 +226,12 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
     group.finish();
 }
 
-/// BENCH 3: Multi-resource read merge
-/// Measures: cost of coordinating reads across multiple resources
-fn bench_multi_resource_read_merge(c: &mut Criterion) {
+/// BENCH 3: Multi-resource actor coordination (formerly "merge")
+/// Measures: cost of coordinating K actor reads in round-robin
+/// NOTE: This is NOT testing K-way merge algorithms (no BinaryHeap).
+///       Area/realm indexes are pre-interleaved by writes - no merge needed.
+///       This measures actor message dispatch overhead for multi-resource reads.
+fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
     let k_values = [2usize, 4];
     
     for &k in &k_values {
@@ -277,16 +280,16 @@ fn bench_multi_resource_read_merge(c: &mut Criterion) {
             }
         }
 
-        let mut group = c.benchmark_group("tier2_stream_merge");
+        let mut group = c.benchmark_group("tier2_stream_actor_coordination");
         group.sampling_mode(SamplingMode::Flat);
-        group.throughput(Throughput::Elements(k as u64));
+        group.throughput(Throughput::Elements((k * 1000) as u64));
 
-        let name = format!("merge_{}_way", k);
+        let name = format!("round_robin_{}_actors", k);
         let mut read_offsets = vec![0u64; k];
         
         group.bench_function(&name, |b| {
             b.iter(|| {
-                // Simulate k-way merge: read one event from each resource
+                // Coordinate K actor reads (round-robin actor message dispatch)
                 for res_idx in 0..k {
                     let route = Route::new(format!("stream://bench/bench/resource-{}/read", res_idx));
                     actors[res_idx].receive(
@@ -294,12 +297,12 @@ fn bench_multi_resource_read_merge(c: &mut Criterion) {
                             family_id: RouteFamily::new(1),
                             route,
                             from_offset: black_box(read_offsets[res_idx]),
-                            limit: 1,
+                            limit: 1000,
                             max_bytes: None,
                         },
                         &mut contexts[res_idx],
                     );
-                    read_offsets[res_idx] = (read_offsets[res_idx] + 1) % 100;
+                    read_offsets[res_idx] = (read_offsets[res_idx] + 1000) % 100;
                 }
             })
         });
@@ -311,6 +314,6 @@ fn bench_multi_resource_read_merge(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = bench_multi_resource_round_robin, bench_streaming_ingest_10k, bench_multi_resource_read_merge
+    targets = bench_multi_resource_round_robin, bench_streaming_ingest_10k, bench_multi_resource_actor_coordination
 }
 criterion_main!(benches);
