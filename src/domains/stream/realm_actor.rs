@@ -60,7 +60,7 @@ impl RealmActor {
             area_start: 0,  // Will be filled by AreaActor
             area_end: 0,
             realm_start: start,
-            realm_end: end - 1,  // inclusive
+            realm_end: end - 1,  // inclusive (protocol uses inclusive)
         };
         
         // Send grant back to requesting AreaActor

@@ -20,11 +20,17 @@ const MAX_EVENT_SIZE: usize = 1_048_576;
 /// Default lease size for area/realm offsets (1000 offsets per lease)
 const DEFAULT_LEASE_SIZE: u64 = 1000;
 
+/// Request new lease when remaining drops below this threshold
+const LEASE_REQUEST_THRESHOLD: u64 = 100;
+
 /// Lease for area or realm offsets
+/// 
+/// **Semantics**: `end` is EXCLUSIVE (not inclusive)
+/// Valid range: [next, end)
 #[derive(Debug, Clone)]
 struct OffsetLease {
     next: u64,
-    end: u64,
+    end: u64,  // exclusive
 }
 
 impl OffsetLease {
@@ -46,6 +52,10 @@ impl OffsetLease {
     }
     
     fn allocate(&mut self, count: u64) -> Vec<u64> {
+        let available = self.remaining();
+        if available < count {
+            panic!("insufficient lease: need {}, have {}", count, available);
+        }
         let offsets: Vec<u64> = (self.next..self.next + count).collect();
         self.next += count;
         offsets
@@ -53,12 +63,12 @@ impl OffsetLease {
     
     fn update_from_area_lease(&mut self, grant: &LeaseGrant) {
         self.next = grant.area_start;
-        self.end = grant.area_end;
+        self.end = grant.area_end + 1;  // grant.area_end is inclusive, convert to exclusive
     }
     
     fn update_from_realm_lease(&mut self, grant: &LeaseGrant) {
         self.next = grant.realm_start;
-        self.end = grant.realm_end;
+        self.end = grant.realm_end + 1;  // grant.realm_end is inclusive, convert to exclusive
     }
 }
 
@@ -183,23 +193,25 @@ impl StreamActor {
             return Err(StreamError::ConcurrencyConflict);
         }
         
-        // Check if we have enough leases - request more if needed
         let count = event_count as u64;
-        if self.area_lease.remaining() < count {
-            // Request more area offsets from AreaActor
-            let lease_size = DEFAULT_LEASE_SIZE.max(count);
+        
+        // Proactive lease requesting: request more if running low (before exhaustion)
+        // This ensures leases are available for next commit
+        if self.area_lease.remaining() < LEASE_REQUEST_THRESHOLD {
+            let lease_size = DEFAULT_LEASE_SIZE.max(count * 2);
             let lease_req = StreamMessage::RequestAreaLease { count: lease_size };
             let area_addr = self.area_actor_address();
-            
-            // Send lease request (fire-and-forget for now - should be synchronous in real impl)
             let _ = ctx.send(area_addr, lease_req);
-            
-            // For now, fail fast - in full impl, would wait for LeaseGranted response
+            // Note: Request is async - lease will arrive via LeaseGranted message
+        }
+        
+        // Check if we have enough leases for THIS commit
+        // Fail only if truly exhausted (not if just running low)
+        if self.area_lease.remaining() < count {
             return Err(StreamError::SessionFull);
         }
         
         if self.realm_lease.remaining() < count {
-            // For now, fail fast - realm lease coordination via AreaActor
             return Err(StreamError::SessionFull);
         }
         

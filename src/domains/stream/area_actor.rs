@@ -102,9 +102,9 @@ impl AreaActor {
         
         LeaseGrant {
             area_start,
-            area_end: area_end - 1,  // inclusive
+            area_end: area_end - 1,  // inclusive (protocol uses inclusive)
             realm_start,
-            realm_end: realm_end - 1,  // inclusive
+            realm_end: realm_end - 1,  // inclusive (protocol uses inclusive)
         }
     }
     
