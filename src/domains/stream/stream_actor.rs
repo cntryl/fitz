@@ -17,6 +17,9 @@ use super::store::{StreamStore, EventPayload, SessionId};
 /// Maximum event size (1 MB)
 const MAX_EVENT_SIZE: usize = 1_048_576;
 
+/// Default lease size for area/realm offsets (1000 offsets per lease)
+const DEFAULT_LEASE_SIZE: u64 = 1000;
+
 /// Lease for area or realm offsets
 #[derive(Debug, Clone)]
 struct OffsetLease {
@@ -180,10 +183,23 @@ impl StreamActor {
             return Err(StreamError::ConcurrencyConflict);
         }
         
-        // Check if we have enough leases
+        // Check if we have enough leases - request more if needed
         let count = event_count as u64;
-        if self.area_lease.remaining() < count || self.realm_lease.remaining() < count {
-            // TODO: Request more leases from AreaActor/RealmActor
+        if self.area_lease.remaining() < count {
+            // Request more area offsets from AreaActor
+            let lease_size = DEFAULT_LEASE_SIZE.max(count);
+            let lease_req = StreamMessage::RequestAreaLease { count: lease_size };
+            let area_addr = self.area_actor_address();
+            
+            // Send lease request (fire-and-forget for now - should be synchronous in real impl)
+            let _ = ctx.send(area_addr, lease_req);
+            
+            // For now, fail fast - in full impl, would wait for LeaseGranted response
+            return Err(StreamError::SessionFull);
+        }
+        
+        if self.realm_lease.remaining() < count {
+            // For now, fail fast - realm lease coordination via AreaActor
             return Err(StreamError::SessionFull);
         }
         
@@ -202,8 +218,8 @@ impl StreamActor {
         // Clear active session
         self.active_session = None;
         
-        // Publish notification: stream://realm/area/resource/appended
-        let route_str = format!("stream://{}/{}/{}/appended", self.realm, self.area, self.resource);
+        // Publish notification: notice://realm/area/resource/appended
+        let route_str = format!("notice://{}/{}/{}/appended", self.realm, self.area, self.resource);
         let route = Route::new(route_str);
         
         // Payload contains commit metadata as JSON
@@ -218,23 +234,22 @@ impl StreamActor {
         });
         let payload = Bytes::from(payload_json.to_string());
         
-        let publish_msg = PublishMessage::new(self.family_id, route, payload);
+        let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
         
         // Send to notification domain via RouteAddress
         // NoticeRouteActor will fan out to all subscribers
-        let notice_route = Route::new("notice://system/internal");
-        let notice_addr = RouteAddress::new(self.family_id, notice_route);
+        let notice_addr = RouteAddress::new(self.family_id, route);
         let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
         
-        // TODO: Send BatchCommitted notification to AreaActor
-        // This allows AreaActor to track committed ranges and advance watermark
-        let _notification = StreamMessage::BatchCommitted {
+        // Send BatchCommitted notification to AreaActor for watermark tracking
+        let notification = StreamMessage::BatchCommitted {
             first_area_offset: response.first_area_offset,
             last_area_offset: response.last_area_offset,
             first_realm_offset: response.first_realm_offset,
             last_realm_offset: response.last_realm_offset,
         };
-        // ctx.send_to_area_actor(notification); // TODO
+        let area_addr = self.area_actor_address();
+        let _ = ctx.send(area_addr, notification);
         
         Ok(CommitSessionResponse {
             first_resource_offset: response.first_resource_offset,
@@ -302,6 +317,12 @@ impl StreamActor {
     pub fn update_realm_lease(&mut self, grant: LeaseGrant) {
         self.realm_lease.update_from_realm_lease(&grant);
     }
+    
+    /// Get RouteAddress for AreaActor coordination
+    fn area_actor_address(&self) -> RouteAddress {
+        let route = Route::new(format!("stream://{}/{}/__area__", self.realm, self.area));
+        RouteAddress::new(self.family_id, route)
+    }
 }
 
 impl Actor for StreamActor {
@@ -326,6 +347,11 @@ impl Actor for StreamActor {
             }
             StreamMessage::Peek { .. } => {
                 let _ = self.handle_peek();
+            }
+            StreamMessage::LeaseGranted { grant } => {
+                // Update leases from AreaActor grant
+                self.update_area_lease(grant.clone());
+                self.update_realm_lease(grant);
             }
             _ => {}
         }
