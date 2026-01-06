@@ -50,14 +50,9 @@ impl Default for BatchLimits {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct StreamTTL {
     pub ttl_seconds: Option<u64>,
-}
-
-impl Default for StreamTTL {
-    fn default() -> Self {
-        Self { ttl_seconds: None }
-    }
 }
 
 impl StreamTTL {
@@ -118,7 +113,7 @@ impl StreamStore {
         
         // Create transaction for staging (O(1) memory)
         let cf = self.db.default_column_family();
-        let txn = self.db.begin_transaction(&cf)
+        let txn = self.db.begin_transaction(cf)
             .map_err(|e| format!("failed to begin transaction: {:?}", e))?;
         
         let session = AppendSession {
@@ -292,7 +287,7 @@ impl StreamStore {
             next_offset,
         };
         self.db.put(
-            &cf,
+            cf,
             &counter_key,
             &counter_value.encode(),
         ).map_err(|e| format!("failed to persist offset counter: {:?}", e))?;
@@ -347,12 +342,12 @@ impl StreamStore {
         let query = cntryl_midge::Query::new()
             .prefix(Bytes::from(prefix_key));
         
-        let results = self.db.scan(&cf, &query)
+        let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
         // Get last element from results
         if let Some((_, value_bytes)) = results.last() {
-            let resource_value = ResourceValue::decode(&value_bytes);
+            let resource_value = ResourceValue::decode(value_bytes);
             
             // TTL filtering
             if let Some(ttl_secs) = self.ttl.ttl_seconds {
@@ -411,7 +406,7 @@ impl StreamStore {
             .prefix(Bytes::from(prefix_key))
             .limit(limit as usize);
         
-        let results = self.db.scan(&cf, &query)
+        let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
         let mut records = Vec::new();
@@ -493,7 +488,7 @@ impl StreamStore {
             .prefix(Bytes::from(prefix_key))
             .limit(limit as usize);
         
-        let results = self.db.scan(&cf, &query)
+        let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
         let mut records = Vec::new();
@@ -518,7 +513,7 @@ impl StreamStore {
                 area_value.resource_offset,
             );
             
-            if let Some(resource_bytes) = self.db.get(&cf, &resource_key)
+            if let Some(resource_bytes) = self.db.get(cf, &resource_key)
                 .map_err(|e| format!("get error: {:?}", e))? {
                 let resource_value = ResourceValue::decode(&resource_bytes);
                 
@@ -589,7 +584,7 @@ impl StreamStore {
             .prefix(Bytes::from(prefix_key))
             .limit(limit as usize);
         
-        let results = self.db.scan(&cf, &query)
+        let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
         let mut records = Vec::new();
@@ -607,7 +602,7 @@ impl StreamStore {
             // Fetch area record to get resource pointer
             let area_key = encode_area_key(&realm_value.realm, &realm_value.area, realm_value.area_offset);
             
-            if let Some(area_bytes) = self.db.get(&cf, &area_key)
+            if let Some(area_bytes) = self.db.get(cf, &area_key)
                 .map_err(|e| format!("get error: {:?}", e))? {
                 let area_value = AreaValue::decode(&area_bytes);
                 
@@ -619,7 +614,7 @@ impl StreamStore {
                     area_value.resource_offset,
                 );
                 
-                if let Some(resource_bytes) = self.db.get(&cf, &resource_key)
+                if let Some(resource_bytes) = self.db.get(cf, &resource_key)
                     .map_err(|e| format!("get error: {:?}", e))? {
                     let resource_value = ResourceValue::decode(&resource_bytes);
                     
@@ -674,7 +669,7 @@ impl StreamStore {
         let cf = self.db.default_column_family();
         let key = encode_watermark_key(realm, area);
         
-        match self.db.get(&cf, &key).map_err(|e| format!("midge get error: {:?}", e))? {
+        match self.db.get(cf, &key).map_err(|e| format!("midge get error: {:?}", e))? {
             Some(bytes) => {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
@@ -688,7 +683,7 @@ impl StreamStore {
         let key = encode_watermark_key(realm, area);
         let value = WatermarkValue { watermark };
         
-        self.db.put(&cf, &key, &value.encode())
+        self.db.put(cf, &key, &value.encode())
             .map_err(|e| format!("midge put error: {:?}", e))
     }
     
@@ -743,12 +738,12 @@ impl StreamStore {
         let query = cntryl_midge::Query::new()
             .prefix(Bytes::from(prefix_key));
         
-        let results = self.db.scan(&cf, &query)
+        let results = self.db.scan(cf, &query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         
         // Get last element from results
         if let Some((_, value_bytes)) = results.last() {
-            let resource_value = ResourceValue::decode(&value_bytes);
+            let resource_value = ResourceValue::decode(value_bytes);
             Ok(Some(resource_value.resource_offset))
         } else {
             Ok(None)
@@ -773,7 +768,7 @@ impl StreamStore {
             realm, area, resource
         );
         
-        match self.db.get(&cf, &counter_key) {
+        match self.db.get(cf, &counter_key) {
             Ok(Some(value_bytes)) => {
                 let counter = crate::domains::stream::storage::OffsetCounterValue::decode(&value_bytes);
                 Ok(counter.next_offset)
@@ -781,4 +776,5 @@ impl StreamStore {
             Ok(None) => Ok(0), // New resource starts at 0
             Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
         }
-    }}
+    }
+}

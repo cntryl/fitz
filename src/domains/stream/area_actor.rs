@@ -76,11 +76,7 @@ impl AreaActor {
         ctx: &mut Context<Self>,
     ) {
         // Ensure we have sufficient realm lease capacity
-        let realm_remaining = if self.realm_lease_end > self.realm_lease_next {
-            self.realm_lease_end - self.realm_lease_next
-        } else {
-            0
-        };
+        let realm_remaining = self.realm_lease_end.saturating_sub(self.realm_lease_next);
         
         if realm_remaining < count {
             // Request realm lease from RealmActor
@@ -211,11 +207,7 @@ impl AreaActor {
     /// Get remaining realm lease capacity
     #[allow(dead_code)]
     pub fn realm_lease_remaining(&self) -> u64 {
-        if self.realm_lease_end > self.realm_lease_next {
-            self.realm_lease_end - self.realm_lease_next
-        } else {
-            0
-        }
+        self.realm_lease_end.saturating_sub(self.realm_lease_next)
     }
     
     /// Get current watermark (for testing)

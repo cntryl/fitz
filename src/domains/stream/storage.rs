@@ -215,6 +215,28 @@ pub fn create_test_db() -> std::sync::Arc<cntryl_midge::MidgeEngine> {
     Arc::new(cntryl_midge::MidgeEngine::open(MidgeOptions::default()).expect("create in-memory db"))
 }
 
+/// Staging key/value encoding for Transaction
+pub fn encode_staging_key(session_id: &str, event_index: usize) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::Staging as u8];
+    key.extend_from_slice(session_id.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&(event_index as u64).to_be_bytes());
+    key
+}
+
+pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
+    serialize(&(event.body.to_vec(), event.metadata.as_ref().map(|m| m.to_vec()))).unwrap()
+}
+
+pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
+    let (body, metadata): (Vec<u8>, Option<Vec<u8>>) = deserialize(data)
+        .map_err(|e| format!("decode_staging_value: {:?}", e))?;
+    Ok(EventPayload {
+        body: Bytes::from(body),
+        metadata: metadata.map(Bytes::from),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,26 +290,4 @@ mod tests {
         assert_eq!(decoded.body, Bytes::from("test"));
         assert_eq!(decoded.area_offset, Some(10));
     }
-}
-
-/// Staging key/value encoding for Transaction
-pub fn encode_staging_key(session_id: &str, event_index: usize) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::Staging as u8];
-    key.extend_from_slice(session_id.as_bytes());
-    key.push(0);
-    key.extend_from_slice(&(event_index as u64).to_be_bytes());
-    key
-}
-
-pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
-    serialize(&(event.body.to_vec(), event.metadata.as_ref().map(|m| m.to_vec()))).unwrap()
-}
-
-pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
-    let (body, metadata): (Vec<u8>, Option<Vec<u8>>) = deserialize(data)
-        .map_err(|e| format!("decode_staging_value: {:?}", e))?;
-    Ok(EventPayload {
-        body: Bytes::from(body),
-        metadata: metadata.map(Bytes::from),
-    })
 }

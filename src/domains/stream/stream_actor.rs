@@ -41,11 +41,7 @@ impl OffsetLease {
     }
     
     fn remaining(&self) -> u64 {
-        if self.end > self.next {
-            self.end - self.next
-        } else {
-            0
-        }
+        self.end.saturating_sub(self.next)
     }
     
     fn update_from_area_lease(&mut self, grant: &LeaseGrant) {

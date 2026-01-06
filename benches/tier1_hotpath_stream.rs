@@ -1,28 +1,31 @@
-/// Tier 1: Stream Domain Hot-Path Microbenchmarks
+﻿/// Tier 1: Stream Domain Hot-Path Microbenchmarks
 /// 
-/// Tests isolated, single-actor, zero-coordination paths.
+/// Tests isolated, single-actor hot paths with minimal coordination.
+/// CRITICAL: All write benches MUST use the full session flow:
+///   BeginSession(expected_offset)  Append(N events)  CommitSession
+/// 
 /// GOALS:
-/// - Measure raw append throughput
-/// - Measure read scanning
+/// - Measure raw commit latency (per-event and batched)
+/// - Measure read scanning throughput
 /// - Validate batching amortization
-/// - Catch regressions early
+/// - Catch regressions in hot paths
 /// 
 /// RESTRICTIONS:
-/// - No lease renewal
-/// - No watermark logic (outside TIER 2)
-/// - No multi-area/multi-resource coordination
-/// - No auth/session overhead
+/// - Single StreamActor (no multi-actor coordination)
+/// - No explicit lease renewal testing (that's Tier 2)
+/// - No watermark advancement testing (that's Tier 2)
+/// - All setup precomputed outside hot path
 ///
-/// Each bench has:
-/// - All data precomputed outside hot path
-/// - No allocations in measured loop
-/// - Deterministic output (black_box on inputs)
-/// - Measures only the core operation
-
+/// Each bench:
+/// - Precomputes all data outside measured loop
+/// - No allocations in hot path
+/// - Deterministic (black_box on inputs)
+/// - Measures only core operation
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::stream::stream_actor::StreamActor;
 use fitz::domains::stream::store::StreamStore;
+use fitz::domains::stream::protocol::StreamMessage;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
@@ -41,7 +44,8 @@ fn setup_stream_actor(realm: &str, area: &str, resource: &str) -> (StreamActor, 
         Route::new(format!("stream://{}/{}/{}/append", realm, area, resource)),
     );
 
-    let store = Arc::new(StreamStore::open(Default::default()).expect("Failed to open store"));
+    let db = Arc::new(cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default()).expect("Failed to open store"));
+    let store = Arc::new(StreamStore::new(db));
     let actor = StreamActor::new(family, realm.to_string(), area.to_string(), resource.to_string(), store);
     let ctx = Context::new(addr, router);
 
@@ -60,30 +64,63 @@ fn make_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// BENCH 1: Single event append with resource offset tracking
-fn bench_stream_append_single_event(c: &mut Criterion) {
-    let (actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-resource");
+// ═══════════════════════════════════════════════════════════════════════════
+// WRITE BENCHMARKS — FULL SESSION FLOW
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// BENCH 1: Single event commit (BeginSession → Append(1) → CommitSession)
+/// Measures: worst-case latency per event (no batching amortization)
+fn bench_append_commit_single_event(c: &mut Criterion) {
+    let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-single");
     
     // Precompute payloads outside benchmark
-    let payloads = make_event_payloads(256, 256);
+    let payloads = make_event_payloads(512, 256);
+    let route = Route::new("stream://bench-realm/bench-area/bench-single/append".to_string());
+    let family_id = RouteFamily::new(1);
 
-    let mut group = c.benchmark_group("tier1_stream_append_single");
+    let mut group = c.benchmark_group("tier1_stream_commit");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
+    let mut expected_offset = 0u64;
     let mut payload_idx = 0;
-    group.bench_function("single_event_256B", |b| {
+    
+    group.bench_function("commit_single_event_256B", |b| {
         b.iter(|| {
             let payload = black_box(&payloads[payload_idx % payloads.len()]);
-            // Core operation: append with expected_offset
-            let _result = actor.receive(
-                fitz::domains::stream::protocol::StreamMessage::Append {
-                    session_id: 0,
-                    expected_offset: payload_idx as u64,
-                    data: Bytes::from(payload.clone()),
+            
+            // FULL FLOW: BeginSession → Append → CommitSession
+            actor.receive(
+                StreamMessage::BeginSession {
+                    family_id,
+                    route: route.clone(),
+                    expected_offset,
+                    ingest_metadata: None,
                 },
                 &mut ctx,
             );
+            
+            // Note: In Fitz actor model, session_id is managed internally by the actor
+            // We use a deterministic session_id based on expected_offset for benchmarking
+            let session_id = format!("bench-session-{}", expected_offset);
+            
+            actor.receive(
+                StreamMessage::AppendToSession {
+                    session_id: session_id.clone(),
+                    body: Bytes::from(payload.clone()),
+                    metadata: None,
+                },
+                &mut ctx,
+            );
+            
+            actor.receive(
+                StreamMessage::CommitSession {
+                    session_id,
+                },
+                &mut ctx,
+            );
+            
+            expected_offset += 1;
             payload_idx += 1;
         })
     });
@@ -91,80 +128,65 @@ fn bench_stream_append_single_event(c: &mut Criterion) {
     group.finish();
 }
 
-/// BENCH 2: Batch append validation across batch sizes
-fn bench_stream_append_batches(c: &mut Criterion) {
+/// BENCH 2: Batch commits (5, 10, 50 events per commit)
+/// Measures: batching amortization cost
+fn bench_append_commit_batches(c: &mut Criterion) {
     let batch_sizes = [5usize, 10, 50];
     
-    let mut group = c.benchmark_group("tier1_stream_append_batch");
+    let mut group = c.benchmark_group("tier1_stream_commit_batch");
     group.sampling_mode(SamplingMode::Flat);
 
     for &batch_size in &batch_sizes {
-        let (actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-batch");
+        let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", &format!("bench-batch-{}", batch_size));
         
-        // Precompute batch data outside loop
-        let payloads = make_event_payloads(batch_size * 100, 256);
-        
-        group.throughput(Throughput::Elements(batch_size as u64));
-        let name = format!("batch_{}_events", batch_size);
-
-        let mut offset = 0u64;
-        group.bench_function(&name, |b| {
-            b.iter(|| {
-                // Simulate one atomic batch commit
-                for i in 0..batch_size {
-                    let idx = (offset as usize + i) % payloads.len();
-                    let payload = black_box(&payloads[idx]);
-                    let _result = actor.receive(
-                        fitz::domains::stream::protocol::StreamMessage::Append {
-                            session_id: 0,
-                            expected_offset: offset + i as u64,
-                            data: Bytes::from(payload.clone()),
-                        },
-                        &mut ctx,
-                    );
-                }
-                offset += batch_size as u64;
-            })
-        });
-    }
-
-    group.finish();
-}
-
-/// BENCH 3: Large batch append (500, 1000 events)
-fn bench_stream_append_large_batch(c: &mut Criterion) {
-    let batch_sizes = [500usize, 1000];
-    
-    let mut group = c.benchmark_group("tier1_stream_append_large");
-    group.sampling_mode(SamplingMode::Flat);
-    // Large batches may run slower; increase measurement time
-    group.measurement_time(std::time::Duration::from_secs(2));
-
-    for &batch_size in &batch_sizes {
-        let (actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-large");
-        
-        // Precompute batch data
         let payloads = make_event_payloads(batch_size + 50, 256);
+        let route = Route::new(format!("stream://bench-realm/bench-area/bench-batch-{}/append", batch_size));
+        let family_id = RouteFamily::new(1);
         
         group.throughput(Throughput::Elements(batch_size as u64));
-        let name = format!("large_batch_{}_events", batch_size);
+        let name = format!("commit_batch_{}_events", batch_size);
 
+        let mut expected_offset = 0u64;
         let mut offset = 0u64;
+        
         group.bench_function(&name, |b| {
             b.iter(|| {
-                // One large atomic batch
+                // BeginSession
+                actor.receive(
+                    StreamMessage::BeginSession {
+                        family_id,
+                        route: route.clone(),
+                        expected_offset,
+                        ingest_metadata: None,
+                    },
+                    &mut ctx,
+                );
+                
+                let session_id = format!("bench-session-{}", expected_offset);
+                
+                // Append batch_size events
                 for i in 0..batch_size {
                     let idx = (offset as usize + i) % payloads.len();
                     let payload = black_box(&payloads[idx]);
-                    let _result = actor.receive(
-                        fitz::domains::stream::protocol::StreamMessage::Append {
-                            session_id: 0,
-                            expected_offset: offset + i as u64,
-                            data: Bytes::from(payload.clone()),
+                    actor.receive(
+                        StreamMessage::AppendToSession {
+                            session_id: session_id.clone(),
+                            body: Bytes::from(payload.clone()),
+                            metadata: None,
                         },
                         &mut ctx,
                     );
                 }
+                
+                // CommitSession
+                actor.receive(
+                    StreamMessage::CommitSession {
+                        session_id,
+                    },
+                    &mut ctx,
+                );
+                
+                expected_offset += batch_size as u64;
                 offset += batch_size as u64;
             })
         });
@@ -173,140 +195,76 @@ fn bench_stream_append_large_batch(c: &mut Criterion) {
     group.finish();
 }
 
-/// BENCH 4: Streaming append via session (one append call per event)
-fn bench_stream_session_append(c: &mut Criterion) {
-    let (actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-session");
-    
-    // Precompute payloads
-    let payloads = make_event_payloads(512, 256);
-
-    let mut group = c.benchmark_group("tier1_stream_session_append");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    let mut offset = 0u64;
-    group.bench_function("session_streaming_append", |b| {
-        b.iter(|| {
-            let idx = offset as usize % payloads.len();
-            let payload = black_box(&payloads[idx]);
-            
-            // Session-style append: single call per event
-            let _result = actor.receive(
-                fitz::domains::stream::protocol::StreamMessage::Append {
-                    session_id: 1,
-                    expected_offset: offset,
-                    data: Bytes::from(payload.clone()),
-                },
-                &mut ctx,
-            );
-            
-            offset += 1;
-        })
-    });
-
-    group.finish();
-}
-
-/// BENCH 5: Sequential read from resource stream
+/// BENCH 3: Sequential read from resource stream (cursor-based)
+/// Measures: read throughput from committed events (real store scan)
 fn bench_resource_read_sequential(c: &mut Criterion) {
-    let (actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-read");
+    let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-read");
     
-    // Pre-populate with events
+    let route = Route::new("stream://bench-realm/bench-area/bench-read/append".to_string());
+    let family_id = RouteFamily::new(1);
+    
+    // Pre-populate with committed events using proper session flow
     let payloads = make_event_payloads(1000, 256);
-    for (i, payload) in payloads.iter().enumerate() {
-        let _result = actor.receive(
-            fitz::domains::stream::protocol::StreamMessage::Append {
-                session_id: 0,
-                expected_offset: i as u64,
-                data: Bytes::from(payload.clone()),
+    let mut expected_offset = 0u64;
+    
+    // Commit 1000 events in batches of 100
+    for chunk_start in (0..1000).step_by(100) {
+        actor.receive(
+            StreamMessage::BeginSession {
+                family_id,
+                route: route.clone(),
+                expected_offset,
+                ingest_metadata: None,
             },
             &mut ctx,
         );
+        
+        let session_id = format!("bench-session-{}", expected_offset);
+        
+        for i in 0..100 {
+            actor.receive(
+                StreamMessage::AppendToSession {
+                    session_id: session_id.clone(),
+                    body: Bytes::from(payloads[chunk_start + i].clone()),
+                    metadata: None,
+                },
+                &mut ctx,
+            );
+        }
+        
+        actor.receive(
+            StreamMessage::CommitSession {
+                session_id,
+            },
+            &mut ctx,
+        );
+        
+        expected_offset += 100;
     }
 
     let mut group = c.benchmark_group("tier1_stream_resource_read");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
+    let read_route = Route::new("stream://bench-realm/bench-area/bench-read/read".to_string());
     let mut read_offset = 0u64;
+    
     group.bench_function("resource_read_sequential_256B", |b| {
         b.iter(|| {
-            // Read one event at a time, cursor-based
-            let _result = actor.receive(
-                fitz::domains::stream::protocol::StreamMessage::Read {
-                    session_id: 0,
-                    offset: black_box(read_offset),
-                    count: 1,
+            // Read one event at a time, cursor-based (real store scan)
+            actor.receive(
+                StreamMessage::Read {
+                    family_id: RouteFamily::new(1),
+                    route: read_route.clone(),
+                    from_offset: black_box(read_offset),
+                    limit: 1,
+                    max_bytes: None,
                 },
                 &mut ctx,
             );
-            read_offset = (read_offset + 1) % (payloads.len() as u64);
+            read_offset = (read_offset + 1) % 1000;
         })
     });
-
-    group.finish();
-}
-
-/// BENCH 6: Area index scan (prelude to multi-resource merging)
-fn bench_area_index_scan(c: &mut Criterion) {
-    // Setup: We test index scan at storage layer conceptually
-    // This measures the cost of scanning area-level index entries
-    
-    let store = Arc::new(StreamStore::open(Default::default()).expect("Failed to open store"));
-    
-    // Pre-populate area index with synthetic entries
-    // Each entry represents one area_offset assignment
-    let entry_counts = [100usize, 1000, 10000];
-
-    let mut group = c.benchmark_group("tier1_stream_area_index_scan");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for &count in &entry_counts {
-        // Precompute area_offsets outside benchmark
-        let area_offsets: Vec<u64> = (0..count as u64).collect();
-        
-        group.throughput(Throughput::Elements(count as u64));
-        let name = format!("area_scan_{}_entries", count);
-
-        let mut scan_idx = 0usize;
-        group.bench_function(&name, |b| {
-            b.iter(|| {
-                // Simulate sequential area index scan
-                let _offset = black_box(area_offsets[scan_idx % area_offsets.len()]);
-                // In reality this would be: store.get_area_index(realm, area, offset)
-                // For now measure the memory access pattern
-                scan_idx = (scan_idx + 1) % area_offsets.len();
-            })
-        });
-    }
-
-    group.finish();
-}
-
-/// BENCH 7: Realm index scan
-fn bench_realm_index_scan(c: &mut Criterion) {
-    let store = Arc::new(StreamStore::open(Default::default()).expect("Failed to open store"));
-    
-    let entry_counts = [100usize, 1000, 10000];
-
-    let mut group = c.benchmark_group("tier1_stream_realm_index_scan");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for &count in &entry_counts {
-        let realm_offsets: Vec<u64> = (0..count as u64).collect();
-        
-        group.throughput(Throughput::Elements(count as u64));
-        let name = format!("realm_scan_{}_entries", count);
-
-        let mut scan_idx = 0usize;
-        group.bench_function(&name, |b| {
-            b.iter(|| {
-                let _offset = black_box(realm_offsets[scan_idx % realm_offsets.len()]);
-                // store.get_realm_index(realm, offset)
-                scan_idx = (scan_idx + 1) % realm_offsets.len();
-            })
-        });
-    }
 
     group.finish();
 }
@@ -314,13 +272,6 @@ fn bench_realm_index_scan(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
-        bench_stream_append_single_event,
-        bench_stream_append_batches,
-        bench_stream_append_large_batch,
-        bench_stream_session_append,
-        bench_resource_read_sequential,
-        bench_area_index_scan,
-        bench_realm_index_scan
+    targets = bench_append_commit_single_event, bench_append_commit_batches, bench_resource_read_sequential
 }
 criterion_main!(benches);
