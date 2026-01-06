@@ -13,10 +13,11 @@ use crate::runtime::routing::{Route, RouteFamily};
 pub const MAX_EVENT_SIZE: usize = 1_048_576; // 1 MB
 
 /// Default lease size when requesting offsets from AreaActor
-pub const DEFAULT_LEASE_SIZE: u64 = 1000;
+/// Optimized for bulk workloads: 10K events amortizes coordination overhead
+pub const DEFAULT_LEASE_SIZE: u64 = 10_000;
 
 /// Default realm lease block size when AreaActor requests from RealmActor
-pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 1000;
+pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 10_000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OFFSET LEASE MANAGEMENT

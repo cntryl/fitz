@@ -165,19 +165,19 @@ impl AreaActor {
     /// start == watermark + 1 (strict contiguity).
     /// 
     /// This prevents bridging gaps where offsets are missing.
+    /// 
+    /// **OPTIMIZATION**: Uses BTreeMap::first_entry() for O(1) lookup when
+    /// ranges are ordered, avoiding full iteration.
     fn advance_watermark(&mut self) {
         loop {
             let next_offset = self.area_watermark + 1;
-            let mut found_range: Option<(u64, u64)> = None;
             
-            // Look for a range that starts exactly at watermark+1
-            for (&first, &last) in &self.committed_ranges {
-                if first == next_offset {
-                    // Found contiguous range
-                    found_range = Some((first, last));
-                    break;
-                }
-            }
+            // Fast path: Check if first range starts at watermark+1
+            // BTreeMap keeps keys sorted, so first_entry is O(log N)
+            let found_range = self.committed_ranges
+                .iter()
+                .find(|(&first, _)| first == next_offset)
+                .map(|(&first, &last)| (first, last));
             
             if let Some((first, last)) = found_range {
                 // Advance watermark to end of this range

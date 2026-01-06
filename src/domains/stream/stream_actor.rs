@@ -45,6 +45,10 @@ pub struct StreamActor {
     
     /// Active session (at most one per resource)
     active_session: Option<SessionId>,
+    
+    /// Cached routes (hot path optimization)
+    area_actor_route: Route,
+    commit_notification_route: Route,
 }
 
 impl StreamActor {
@@ -65,6 +69,9 @@ impl StreamActor {
             }
         };
         
+        let area_actor_route = Route::new(format!("stream://{}/{}/__area__", realm, area));
+        let commit_notification_route = Route::new(format!("notice://{}/{}/{}/committed", realm, area, resource));
+        
         Self {
             family_id,
             realm,
@@ -75,6 +82,8 @@ impl StreamActor {
             area_lease: OffsetLease::new(),
             realm_lease: OffsetLease::new(),
             active_session: None,
+            area_actor_route,
+            commit_notification_route,
         }
     }
     
@@ -158,7 +167,7 @@ impl StreamActor {
                 count: lease_size,
                 reply_to: format!("stream_actor_{}_{}_{}", self.realm, self.area, self.resource),
             };
-            let area_addr = self.area_actor_address();
+            let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
             let _ = ctx.send(area_addr, lease_req);
             
             // TODO: In full impl, would await LeaseGranted before proceeding
@@ -196,12 +205,11 @@ impl StreamActor {
             first_realm_offset: response.first_realm_offset,
             last_realm_offset: response.last_realm_offset,
         };
-        let area_addr = self.area_actor_address();
+        let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
         let _ = ctx.send(area_addr, notification);
         
         // Publish notification: notice://realm/area/resource/committed
-        let route_str = format!("notice://{}/{}/{}/committed", self.realm, self.area, self.resource);
-        let route = Route::new(route_str);
+        let route = self.commit_notification_route.clone();
         
         let payload_json = serde_json::json!({
             "first_resource_offset": response.first_resource_offset,
@@ -294,12 +302,6 @@ impl StreamActor {
     /// Update realm lease from grant
     pub fn update_realm_lease(&mut self, grant: LeaseGrant) {
         self.realm_lease.update_from_realm_lease(&grant);
-    }
-    
-    /// Get RouteAddress for AreaActor coordination
-    fn area_actor_address(&self) -> RouteAddress {
-        let route = Route::new(format!("stream://{}/{}/__area__", self.realm, self.area));
-        RouteAddress::new(self.family_id, route)
     }
 }
 
