@@ -102,6 +102,13 @@ impl StreamStore {
         }
     }
     
+    /// Calculate age in milliseconds from created_at timestamp
+    /// 
+    /// Handles conversion from seconds (created_at / 1000) to milliseconds
+    fn age_ms(&self, now_ms: u64, created_at: u64) -> u64 {
+        now_ms.saturating_sub(created_at / 1000) * 1000
+    }
+    
     pub fn begin_session(
         &self,
         realm: &str,
@@ -329,49 +336,43 @@ impl StreamStore {
     ) -> Result<Option<StreamRecord>, String> {
         let cf = self.db.default_column_family();
         
-        // Build prefix for this resource
-        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
-        prefix_key.extend_from_slice(realm.as_bytes());
-        prefix_key.push(0);
-        prefix_key.extend_from_slice(area.as_bytes());
-        prefix_key.push(0);
-        prefix_key.extend_from_slice(resource.as_bytes());
-        prefix_key.push(0);
-        
-        // Scan to get all keys (Midge returns Vec), take last
-        let query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(prefix_key));
-        
-        let results = self.db.scan(cf, &query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
-        
-        // Get last element from results
-        if let Some((_, value_bytes)) = results.last() {
-            let resource_value = ResourceValue::decode(value_bytes);
-            
-            // TTL filtering
-            if let Some(ttl_secs) = self.ttl.ttl_seconds {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                let age_ms = now.saturating_sub(resource_value.created_at / 1000) * 1000;
-                if age_ms > (ttl_secs * 1000) {
-                    return Ok(None);
-                }
-            }
-            
-            Ok(Some(StreamRecord {
-                resource_offset: resource_value.resource_offset,
-                area_offset: resource_value.area_offset,
-                realm_offset: resource_value.realm_offset,
-                body: resource_value.body,
-                metadata: resource_value.metadata,
-                created_at: resource_value.created_at,
-            }))
-        } else {
-            Ok(None)
+        // Use offset counter to find last committed offset (no tail scan)
+        let next_offset = self.get_next_resource_offset(realm, area, resource)?;
+        if next_offset == 0 {
+            return Ok(None);  // Stream empty
         }
+        
+        let last_offset = next_offset - 1;
+        let key = encode_resource_key(realm, area, resource, last_offset);
+        
+        let value_bytes = match self.db.get(cf, &key)
+            .map_err(|e| format!("get error: {:?}", e))? {
+            Some(bytes) => bytes,
+            None => return Ok(None),  // Record expired or deleted
+        };
+        
+        let resource_value = ResourceValue::decode(&value_bytes);
+        
+        // TTL filtering
+        if let Some(ttl_secs) = self.ttl.ttl_seconds {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let age_ms = self.age_ms(now, resource_value.created_at);
+            if age_ms > (ttl_secs * 1000) {
+                return Ok(None);
+            }
+        }
+        
+        Ok(Some(StreamRecord {
+            resource_offset: resource_value.resource_offset,
+            area_offset: resource_value.area_offset,
+            realm_offset: resource_value.realm_offset,
+            body: resource_value.body,
+            metadata: resource_value.metadata,
+            created_at: resource_value.created_at,
+        }))
     }
     
     /// Read resource stream records
@@ -423,7 +424,7 @@ impl StreamStore {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs();
-                let age_ms = now.saturating_sub(resource_value.created_at / 1000) * 1000;
+                let age_ms = self.age_ms(now, resource_value.created_at);
                 if age_ms > (ttl_secs * 1000) {
                     last_offset = resource_value.resource_offset;
                     continue;  // Skip expired, keep scanning
@@ -523,7 +524,7 @@ impl StreamStore {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_secs();
-                    let age_ms = now.saturating_sub(resource_value.created_at / 1000) * 1000;
+                    let age_ms = self.age_ms(now, resource_value.created_at);
                     if age_ms > (ttl_secs * 1000) {
                         last_area_offset = area_offset;
                         continue;
@@ -571,6 +572,7 @@ impl StreamStore {
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         let cf = self.db.default_column_family();
+        let realm_watermark = self.get_realm_watermark(realm)?;
         
         // Realm index is pre-interleaved by writes - scan sequentially!
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Realm as u8];
@@ -596,8 +598,10 @@ impl StreamStore {
             let realm_offset = decode_realm_offset_from_key(&key_bytes)?;
             let realm_value = RealmValue::decode(&realm_value_bytes);
             
-            // No watermark at realm level - watermarks are per-area
-            // Realm reads show globally committed data
+            // Watermark enforcement at realm level
+            if realm_offset > realm_watermark {
+                break;
+            }
             
             // Fetch area record to get resource pointer
             let area_key = encode_area_key(&realm_value.realm, &realm_value.area, realm_value.area_offset);
@@ -624,7 +628,7 @@ impl StreamStore {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs();
-                        let age_ms = now.saturating_sub(resource_value.created_at / 1000) * 1000;
+                        let age_ms = self.age_ms(now, resource_value.created_at);
                         if age_ms > (ttl_secs * 1000) {
                             last_realm_offset = realm_offset;
                             continue;
@@ -687,6 +691,28 @@ impl StreamStore {
             .map_err(|e| format!("midge put error: {:?}", e))
     }
     
+    pub fn get_realm_watermark(&self, realm: &str) -> Result<u64, String> {
+        let cf = self.db.default_column_family();
+        let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
+        
+        match self.db.get(cf, &key).map_err(|e| format!("midge get error: {:?}", e))? {
+            Some(bytes) => {
+                let value = WatermarkValue::decode(&bytes);
+                Ok(value.watermark)
+            }
+            None => Ok(0),  // No realm watermark yet
+        }
+    }
+    
+    pub fn set_realm_watermark(&self, realm: &str, watermark: u64) -> Result<(), String> {
+        let cf = self.db.default_column_family();
+        let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
+        let value = WatermarkValue { watermark };
+        
+        self.db.put(cf, &key, &value.encode())
+            .map_err(|e| format!("midge put error: {:?}", e))
+    }
+    
     /// Get stream metadata (limits, TTL, offsets, watermarks)
     /// 
     /// Used for describe_stream / introspection API
@@ -698,10 +724,7 @@ impl StreamStore {
     ) -> Result<super::protocol::StreamMetadata, String> {
         let last_resource_offset = self.get_last_resource_offset(realm, area, resource)?;
         let area_watermark = self.get_watermark(realm, area)?;
-        
-        // Realm watermark would need to be queried from RealmActor or separate store
-        // For now, return area_watermark as approximation (TODO: proper realm query)
-        let realm_watermark = area_watermark;
+        let realm_watermark = self.get_realm_watermark(realm)?;
         
         Ok(super::protocol::StreamMetadata {
             max_batch_events: self.limits.max_batch_events,

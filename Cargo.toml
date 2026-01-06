@@ -141,3 +141,13 @@ path = "benches/tier1_hotpath_rpc.rs"
 name = "tier2_subsystem_rpc"
 harness = false
 path = "benches/tier2_subsystem_rpc.rs"
+
+[[bench]]
+name = "tier1_hotpath_stream"
+harness = false
+path = "benches/tier1_hotpath_stream.rs"
+
+[[bench]]
+name = "tier2_subsystem_stream"
+harness = false
+path = "benches/tier2_subsystem_stream.rs"

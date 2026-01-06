@@ -9,7 +9,7 @@ use crate::runtime::actor::Context;
 use crate::runtime::routing::{RouteFamily, Route, RouteAddress};
 use crate::domains::notification::protocol::{PublishMessage, NotificationMessage};
 
-use super::protocol::{StreamMessage, LeaseGrant};
+use super::protocol::{StreamMessage, LeaseGrant, DEFAULT_REALM_LEASE_BLOCK};
 use super::store::StreamStore;
 
 /// AreaActor coordinates area-level offsets and watermark
@@ -80,7 +80,6 @@ impl AreaActor {
         
         if realm_remaining < count {
             // Request realm lease from RealmActor
-            const DEFAULT_REALM_LEASE_BLOCK: u64 = 1000;
             let lease_size = DEFAULT_REALM_LEASE_BLOCK.max(count);
             let lease_req = StreamMessage::RequestRealmLease { count: lease_size };
             let realm_addr = self.realm_actor_address();

@@ -19,6 +19,8 @@ pub enum KeyPrefix {
     Staging = 0x05,
     /// Offset counter: [RF][realm][area][resource] - stores next offset independent of TTL
     OffsetCounter = 0x06,
+    /// Realm watermark: [RF][realm] - stores realm-level watermark
+    RealmWatermark = 0x07,
 }
 
 /// Encodes a resource stream key
@@ -112,6 +114,13 @@ pub fn encode_offset_counter_key(
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
+    key
+}
+
+/// Encodes a realm watermark key (metadata, independent of TTL)
+pub fn encode_realm_watermark_key(realm: &str) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::RealmWatermark as u8];
+    key.extend_from_slice(realm.as_bytes());
     key
 }
 

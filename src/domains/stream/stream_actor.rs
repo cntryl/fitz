@@ -10,50 +10,9 @@ use crate::domains::notification::protocol::{PublishMessage, NotificationMessage
 
 use super::protocol::{
     BeginSessionResponse, AppendResponse, CommitSessionResponse, ReadResponse, PeekResponse,
-    StreamError, StreamMessage, LeaseGrant
+    StreamError, StreamMessage, LeaseGrant, OffsetLease, MAX_EVENT_SIZE, DEFAULT_LEASE_SIZE,
 };
 use super::store::{StreamStore, EventPayload, SessionId};
-
-/// Maximum event size (1 MB)
-const MAX_EVENT_SIZE: usize = 1_048_576;
-
-/// Default lease size for area/realm offsets (1000 offsets per lease)
-const DEFAULT_LEASE_SIZE: u64 = 1000;
-
-/// Lease for area or realm offsets
-/// 
-/// **Semantics**: `end` is EXCLUSIVE (not inclusive)
-/// Valid range: [next, end)
-#[derive(Debug, Clone)]
-struct OffsetLease {
-    next: u64,
-    end: u64,  // exclusive
-}
-
-impl OffsetLease {
-    fn new() -> Self {
-        Self { next: 0, end: 0 }
-    }
-    
-    #[allow(dead_code)]
-    fn is_empty(&self) -> bool {
-        self.next >= self.end
-    }
-    
-    fn remaining(&self) -> u64 {
-        self.end.saturating_sub(self.next)
-    }
-    
-    fn update_from_area_lease(&mut self, grant: &LeaseGrant) {
-        self.next = grant.area_start;
-        self.end = grant.area_end_exclusive;  // Already exclusive
-    }
-    
-    fn update_from_realm_lease(&mut self, grant: &LeaseGrant) {
-        self.next = grant.realm_start;
-        self.end = grant.realm_end_exclusive;  // Already exclusive
-    }
-}
 
 /// StreamActor manages a single resource stream
 /// 

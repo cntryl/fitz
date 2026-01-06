@@ -1,6 +1,7 @@
 //! Realm actor: mints realm-level offsets and aggregates watermarks
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::prelude::Actor;
@@ -9,6 +10,7 @@ use crate::runtime::routing::{RouteFamily, Route, RouteAddress};
 use crate::domains::notification::protocol::{PublishMessage, NotificationMessage};
 
 use super::protocol::{StreamMessage, LeaseGrant};
+use super::store::StreamStore;
 
 /// RealmActor coordinates realm-level offsets and aggregates watermarks
 /// 
@@ -21,8 +23,10 @@ pub struct RealmActor {
     family_id: RouteFamily,
     
     /// Realm identity
-    #[allow(dead_code)]
     realm: String,
+    
+    /// Storage layer for watermark persistence
+    store: Arc<StreamStore>,
     
     /// Next realm offset to assign
     next_realm_offset: u64,
@@ -36,10 +40,11 @@ pub struct RealmActor {
 }
 
 impl RealmActor {
-    pub fn new(family_id: RouteFamily, realm: String) -> Self {
+    pub fn new(family_id: RouteFamily, realm: String, store: Arc<StreamStore>) -> Self {
         Self {
             family_id,
             realm,
+            store,
             next_realm_offset: 0,
             area_watermarks: HashMap::new(),
             realm_watermark: 0,
@@ -98,6 +103,9 @@ impl RealmActor {
         
         // Emit realm watermark notification ONLY if watermark advanced
         if new_watermark > old_watermark {
+            // Persist realm watermark to storage
+            let _ = self.store.set_realm_watermark(&self.realm, new_watermark);
+            
             let route_str = format!("notice://{}/*/*/watermark", self.realm);
             let route = Route::new(route_str);
             let payload_json = serde_json::json!({

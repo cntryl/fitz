@@ -5,6 +5,84 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::routing::{Route, RouteFamily};
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Maximum size for a single event (body + metadata combined)
+pub const MAX_EVENT_SIZE: usize = 1_048_576; // 1 MB
+
+/// Default lease size when requesting offsets from AreaActor
+pub const DEFAULT_LEASE_SIZE: u64 = 1000;
+
+/// Default realm lease block size when AreaActor requests from RealmActor
+pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 1000;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OFFSET LEASE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Lease for area or realm offsets with end-exclusive semantics
+/// 
+/// **CRITICAL**: `end` is EXCLUSIVE (not inclusive)
+/// Valid range: [next, end)
+#[derive(Debug, Clone)]
+pub struct OffsetLease {
+    pub next: u64,
+    pub end: u64,  // exclusive
+}
+
+impl OffsetLease {
+    /// Create empty lease (no offsets available)
+    pub fn new() -> Self {
+        Self { next: 0, end: 0 }
+    }
+    
+    /// Check if lease has no remaining offsets
+    pub fn is_empty(&self) -> bool {
+        self.next >= self.end
+    }
+    
+    /// Get number of remaining offsets
+    pub fn remaining(&self) -> u64 {
+        self.end.saturating_sub(self.next)
+    }
+    
+    /// Consume N offsets and return the starting offset
+    /// 
+    /// Returns None if insufficient offsets available
+    pub fn consume(&mut self, count: u64) -> Option<u64> {
+        if self.remaining() < count {
+            return None;
+        }
+        let start = self.next;
+        self.next += count;
+        Some(start)
+    }
+    
+    /// Update lease from area-level grant
+    pub fn update_from_area_lease(&mut self, grant: &LeaseGrant) {
+        self.next = grant.area_start;
+        self.end = grant.area_end_exclusive;
+    }
+    
+    /// Update lease from realm-level grant
+    pub fn update_from_realm_lease(&mut self, grant: &LeaseGrant) {
+        self.next = grant.realm_start;
+        self.end = grant.realm_end_exclusive;
+    }
+}
+
+impl Default for OffsetLease {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CORE DATA TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
 /// A durable event record in a stream
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRecord {
