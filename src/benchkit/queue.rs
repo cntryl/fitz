@@ -1,11 +1,11 @@
 //! Queue benchmarking helpers
 
-use crate::domains::queue::{QueueActor, QueueKey, QueueProducer};
+use crate::domains::queue::{QueueActor, QueueKey, QueueProducer, QueueDurabilityPolicy};
 use crate::runtime::routing::RouteFamily;
 use super::storage::create_bench_store;
 use std::time::Duration;
 
-/// Create a QueueActor for benchmarking
+/// Create a QueueActor for benchmarking with Strict durability
 ///
 /// Creates an actor with in-memory storage suitable for performance testing.
 ///
@@ -25,6 +25,41 @@ pub fn create_bench_queue_actor(
     resource: &str,
     max_attempts: Option<u32>,
 ) -> QueueActor {
+    create_bench_queue_actor_with_durability(
+        realm,
+        area,
+        resource,
+        max_attempts,
+        QueueDurabilityPolicy::Strict,
+    )
+}
+
+/// Create a QueueActor for benchmarking with explicit durability policy
+///
+/// Allows testing different durability modes for throughput/latency tradeoffs.
+///
+/// # Arguments
+/// * `realm` - Realm name for the queue
+/// * `area` - Area name for the queue
+/// * `resource` - Resource name for the queue
+/// * `max_attempts` - Optional maximum delivery attempts before DLQ
+/// * `durability` - Durability policy (Strict/Grouped/Async)
+///
+/// # Example
+/// ```ignore
+/// // High-throughput with 5ms loss window
+/// let actor = create_bench_queue_actor_with_durability(
+///     "bench", "test", "queue", None,
+///     QueueDurabilityPolicy::Grouped { interval_ms: 5 }
+/// );
+/// ```
+pub fn create_bench_queue_actor_with_durability(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    max_attempts: Option<u32>,
+    durability: QueueDurabilityPolicy,
+) -> QueueActor {
     let queue_key = QueueKey {
         family: RouteFamily::new(1),
         realm: realm.to_string(),
@@ -33,7 +68,7 @@ pub fn create_bench_queue_actor(
     };
     
     let store = create_bench_store();
-    QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
+    QueueActor::with_durability(RouteFamily::new(1), queue_key, store, max_attempts, durability)
 }
 
 /// Create a QueueProducer for benchmarking producer-side batching

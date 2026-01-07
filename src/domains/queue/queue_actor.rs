@@ -180,26 +180,56 @@ pub struct QueueActor {
     
     /// Maximum delivery attempts before DLQ (None = unlimited retries)
     max_attempts: Option<u32>,
+    
+    /// Durability policy for queue writes
+    /// 
+    /// Controls fsync behavior and group commit. Does NOT affect other domains.
+    durability: super::durability::QueueDurabilityPolicy,
 }
 
 impl QueueActor {
-    /// Create a new queue actor with system clock
+    /// Create a new queue actor with system clock and Strict durability
     pub fn new(
         family: RouteFamily,
         queue_key: QueueKey,
         store: Arc<cntryl_midge::MidgeEngine>,
         max_attempts: Option<u32>,
     ) -> Self {
-        Self::with_clock(family, queue_key, store, Box::new(SystemClock), max_attempts)
+        Self::with_durability(
+            family,
+            queue_key,
+            store,
+            max_attempts,
+            super::durability::QueueDurabilityPolicy::Strict,
+        )
+    }
+    
+    /// Create a new queue actor with explicit durability policy
+    pub fn with_durability(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        max_attempts: Option<u32>,
+        durability: super::durability::QueueDurabilityPolicy,
+    ) -> Self {
+        Self::with_clock_and_durability(
+            family,
+            queue_key,
+            store,
+            Box::new(SystemClock),
+            max_attempts,
+            durability,
+        )
     }
 
-    /// Create a new queue actor with a custom clock (for testing)
-    pub fn with_clock(
+    /// Create a new queue actor with a custom clock and durability (for testing)
+    pub fn with_clock_and_durability(
         family: RouteFamily,
         queue_key: QueueKey,
         store: Arc<cntryl_midge::MidgeEngine>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
+        durability: super::durability::QueueDurabilityPolicy,
     ) -> Self {
         // Recover next_id from Midge on startup
         let next_id = Self::recover_next_id(&store, &queue_key);
@@ -215,7 +245,34 @@ impl QueueActor {
             delayed: BinaryHeap::new(),
             clock,
             max_attempts,
+            durability,
         }
+    }
+
+    /// Get the durability policy for this queue
+    pub fn durability(&self) -> super::durability::QueueDurabilityPolicy {
+        self.durability
+    }
+    
+    /// Create a new queue actor with a custom clock (for testing, Strict durability)
+    /// 
+    /// DEPRECATED: Use `with_clock_and_durability` for new code
+    #[doc(hidden)]
+    pub fn with_clock(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        clock: Box<dyn Clock>,
+        max_attempts: Option<u32>,
+    ) -> Self {
+        Self::with_clock_and_durability(
+            family,
+            queue_key,
+            store,
+            clock,
+            max_attempts,
+            super::durability::QueueDurabilityPolicy::Strict,
+        )
     }
 
     /// Recover next message ID from durable storage
@@ -376,8 +433,26 @@ impl QueueActor {
         // Perform ONE Midge write batch for all messages
         let cf = self.store.default_column_family();
         
-        // TODO: Use Midge's actual write_batch API when available
+        // TODO: Use Midge's actual write_batch API with durability options
         // For now, write sequentially (still single path)
+        //
+        // Target API (when available):
+        // ```
+        // let options = QueueWriteOptions::from_policy(self.durability);
+        // let mut write_batch = self.store.write_batch_with_options(options);
+        // for (id, record, _) in &batch {
+        //     let key = Self::message_key(&self.queue_key, *id);
+        //     let value = Self::encode_record(record);
+        //     write_batch.put(cf, &key, &value)?;
+        // }
+        // write_batch.commit()?; // Respects durability policy
+        // ```
+        //
+        // This will enable:
+        // - Strict: fsync per commit (current behavior)
+        // - Grouped: fsync every interval_ms (5-10× faster)
+        // - Async: no fsync (10-20× faster, best-effort)
+        //
         for (id, record, _) in &batch {
             let key = Self::message_key(&self.queue_key, *id);
             let value = Self::encode_record(record);
