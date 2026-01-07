@@ -39,8 +39,11 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
+        // Extract base route (strip /enqueue suffix if present)
+        let base_route = Self::extract_base_route(&route);
+        
         // Enqueue requires write access (adding messages is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
+        if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: enqueue".to_string());
         }
 
@@ -66,8 +69,11 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
+        // Extract base route (strip /reserve suffix if present)
+        let base_route = Self::extract_base_route(&route);
+        
         // Reserve requires read access (consuming messages is a read operation)
-        if !self.permissions.allows(&route, Access::Read) {
+        if !self.permissions.allows(&base_route, Access::Read) {
             return Err("unauthorized: reserve".to_string());
         }
 
@@ -94,8 +100,11 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
+        // Extract base route (strip /extend suffix if present)
+        let base_route = Self::extract_base_route(&route);
+        
         // Extend requires write access (modifying lease state is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
+        if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: extend".to_string());
         }
 
@@ -120,8 +129,11 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
+        // Extract base route (strip /complete suffix if present)
+        let base_route = Self::extract_base_route(&route);
+        
         // Complete requires write access (deleting messages is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
+        if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: complete".to_string());
         }
 
@@ -133,6 +145,20 @@ impl SessionActor {
         };
         queue_actor.receive(msg, ctx);
         Ok(())
+    }
+    
+    /// Helper to extract base route by stripping known operation suffixes.
+    /// For queue operations, the base route is the resource path without the operation.
+    /// e.g., "queue://realm/area/jobs/enqueue" -> "queue://realm/area/jobs"
+    fn extract_base_route(route: &Route) -> Route {
+        let path = route.as_str();
+        let base = path
+            .strip_suffix("/enqueue")
+            .or_else(|| path.strip_suffix("/reserve"))
+            .or_else(|| path.strip_suffix("/extend"))
+            .or_else(|| path.strip_suffix("/complete"))
+            .unwrap_or(path);
+        Route::new(base)
     }
 }
 
