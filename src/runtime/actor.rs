@@ -2,6 +2,7 @@
 // LAYER: RUNTIME
 //! Core actor abstractions and lifecycle management
 
+use crate::runtime::context::TimerManager;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{RouteError, Router};
 use crate::runtime::routing::RouteAddress;
@@ -18,6 +19,8 @@ pub struct ActorMetrics {
     pub messages_expired: AtomicU64,
     /// Messages that caused panics
     pub messages_panicked: AtomicU64,
+    /// Messages with type mismatch (wrong message type)
+    pub messages_type_mismatch: AtomicU64,
     /// Total processing time in microseconds
     pub total_processing_time_us: AtomicU64,
 }
@@ -43,6 +46,11 @@ impl ActorMetrics {
         self.messages_panicked.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a type mismatch error
+    pub fn record_type_mismatch(&self) {
+        self.messages_type_mismatch.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Get average processing time in microseconds
     pub fn avg_processing_time_us(&self) -> u64 {
         let processed = self.messages_processed.load(Ordering::Relaxed);
@@ -58,6 +66,7 @@ impl ActorMetrics {
             messages_processed: self.messages_processed.load(Ordering::Relaxed),
             messages_expired: self.messages_expired.load(Ordering::Relaxed),
             messages_panicked: self.messages_panicked.load(Ordering::Relaxed),
+            messages_type_mismatch: self.messages_type_mismatch.load(Ordering::Relaxed),
             avg_processing_time_us: self.avg_processing_time_us(),
         }
     }
@@ -69,6 +78,7 @@ pub struct ActorMetricsSnapshot {
     pub messages_processed: u64,
     pub messages_expired: u64,
     pub messages_panicked: u64,
+    pub messages_type_mismatch: u64,
     pub avg_processing_time_us: u64,
 }
 
@@ -103,12 +113,14 @@ pub trait Actor: Send + 'static {
 /// - Lifecycle control (stopping the actor)
 /// - Current envelope metadata (for causation chains)
 /// - Metrics for observability
+/// - Timer manager for scheduled messages
 pub struct Context<A: Actor + ?Sized> {
     address: RouteAddress,
     state: ActorState,
     router: Arc<Router>,
     current_metadata: Option<crate::runtime::envelope::EnvelopeMetadata>,
     metrics: Arc<ActorMetrics>,
+    timer_manager: TimerManager,
     _phantom: std::marker::PhantomData<*const A>,
 }
 
@@ -119,6 +131,7 @@ impl<A: Actor + ?Sized> Context<A> {
             state: ActorState::Running,
             router,
             current_metadata: None,
+            timer_manager: TimerManager::new(),
             metrics: Arc::new(ActorMetrics::new()),
             _phantom: std::marker::PhantomData,
         }
@@ -132,6 +145,7 @@ impl<A: Actor + ?Sized> Context<A> {
             router,
             current_metadata: None,
             metrics,
+            timer_manager: TimerManager::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -286,13 +300,27 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Stop this actor
+    ///
+    /// INVARIANT: Stopping an actor immediately:
+    /// - Sets state to Stopping
+    /// - Cancels ALL timers (no timer fires after stop)
+    /// - Breaks message processing loop
+    /// 
+    /// Timers are tied to actor lifecycle. On stop/restart, all timers are cleared.
     pub fn stop(&mut self) {
         self.state = ActorState::Stopping;
+        // CRITICAL: Cancel all timers. No timer delivery after stop.
+        self.timer_manager.clear();
     }
 
     /// Check if the actor should continue running
     pub fn is_running(&self) -> bool {
         matches!(self.state, ActorState::Running)
+    }
+
+    /// Get a mutable reference to the timer manager
+    pub fn timer_manager(&mut self) -> &mut TimerManager {
+        &mut self.timer_manager
     }
 }
 
@@ -404,6 +432,7 @@ pub enum ActorError {
     ActorStopped,
     SendFailed(String),
     Panic(String),
+    TypeMismatch { expected: String, envelope_id: u64 },
 }
 
 impl fmt::Display for ActorError {
@@ -413,6 +442,9 @@ impl fmt::Display for ActorError {
             ActorError::ActorStopped => write!(f, "Actor has stopped"),
             ActorError::SendFailed(msg) => write!(f, "Failed to send message: {}", msg),
             ActorError::Panic(msg) => write!(f, "Actor panicked: {}", msg),
+            ActorError::TypeMismatch { expected, envelope_id } => {
+                write!(f, "Type mismatch: expected {}, envelope ID {}", expected, envelope_id)
+            }
         }
     }
 }

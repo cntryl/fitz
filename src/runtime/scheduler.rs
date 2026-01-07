@@ -17,6 +17,10 @@ const MAX_HIGH_PER_TICK: usize = 4;
 /// Maximum normal-priority messages per tick (when high lane is active)
 const MAX_NORMAL_PER_TICK: usize = 12;
 
+/// Maximum time budget per tick in milliseconds
+/// Prevents one actor from monopolizing the worker thread
+const MAX_TICK_DURATION_MS: u64 = 5;
+
 /// Minimum timeout for mailbox polling (adaptive based on load)
 const MIN_POLL_TIMEOUT_MS: u64 = 10;
 
@@ -106,11 +110,18 @@ impl Scheduler {
                     MAX_POLL_TIMEOUT_MS // Standard polling when idle
                 };
 
+                // Track tick start for time budget enforcement
+                let tick_start = Instant::now();
                 let mut processed_high = 0;
                 let mut processed_normal = 0;
 
                 // PHASE 1: High-priority messages (capped at MAX_HIGH_PER_TICK)
                 while processed_high < MAX_HIGH_PER_TICK {
+                    // INVARIANT: Time budget check to prevent thread monopolization
+                    if tick_start.elapsed().as_millis() as u64 >= MAX_TICK_DURATION_MS {
+                        break;
+                    }
+
                     let envelope = match high_receiver.try_recv() {
                         Ok(env) => env,
                         Err(crossbeam_channel::TryRecvError::Empty) => break,
@@ -148,6 +159,11 @@ impl Scheduler {
                 };
 
                 while processed_normal < normal_budget {
+                    // INVARIANT: Time budget check to prevent thread monopolization
+                    if tick_start.elapsed().as_millis() as u64 >= MAX_TICK_DURATION_MS {
+                        break;
+                    }
+
                     let envelope = if processed_high == 0 && processed_normal == 0 {
                         // First message overall: use blocking receive with timeout
                         match receiver.recv_timeout(Duration::from_millis(timeout_ms)) {
@@ -231,11 +247,20 @@ fn process_envelope<A: Actor>(
     let msg = match msg {
         Some(m) => m,
         None => {
-            // Type mismatch - log and skip
+            // Type mismatch - record metric and notify actor
+            ctx.metrics().record_type_mismatch();
+            
+            let error = ActorError::TypeMismatch {
+                expected: std::any::type_name::<A::Message>().to_string(),
+                envelope_id: metadata.id.as_u64(),
+            };
+            
             eprintln!(
-                "Type mismatch: envelope {:?} for actor {:?} contains wrong message type",
-                metadata.id, address
+                "Type mismatch: envelope {:?} for actor {:?} - expected {}, got different type",
+                metadata.id, address, std::any::type_name::<A::Message>()
             );
+            
+            actor.on_error(error, ctx);
             return;
         }
     };
@@ -244,12 +269,24 @@ fn process_envelope<A: Actor>(
     ctx.set_current_metadata(metadata);
 
     // Process message with panic recovery
+    // INVARIANT: Panic => Stop. Supervisor restarts if configured.
     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         actor.receive(msg, ctx);
     })) {
+        // Structured panic error
+        eprintln!(
+            "Actor {:?} panicked during message processing: {:?}\nStopping actor. Supervisor will handle restart.",
+            address, e
+        );
+        
         ctx.metrics().record_panic();
         let error = ActorError::Panic(format!("{:?}", e));
+        
+        // Call error handler but actor is now stopped
         actor.on_error(error, ctx);
+        
+        // CRITICAL: Stop actor immediately. No further message processing.
+        ctx.stop();
     } else {
         // Record successful processing
         let elapsed = start.elapsed().as_micros() as u64;
