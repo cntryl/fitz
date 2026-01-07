@@ -89,12 +89,11 @@ fn should_recover_messages_after_restart() {
     match reserve_response {
         QueueResponse::Reserved { messages } => {
             assert_eq!(messages.len(), 1);
-                assert_eq!(messages[0].id, msg_id);
-                assert_eq!(messages[0].body, Bytes::from("durable message"));
-                // Attempts should be incremented (though we manually re-enqueued for MVP)
-            }
-            _ => panic!("Expected Reserved response"),
+            assert_eq!(messages[0].id, msg_id);
+            assert_eq!(messages[0].body, Bytes::from("durable message"));
+            // Attempts should be incremented (though we manually re-enqueued for MVP)
         }
+        _ => panic!("Expected Reserved response"),
     }
 }
 
