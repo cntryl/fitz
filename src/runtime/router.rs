@@ -63,21 +63,54 @@ pub trait MailboxSink: Send + Sync {
     /// - Mailbox is at capacity (backpressure)
     /// - Mailbox receiver has been dropped (actor stopped)
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError>;
+
+    /// Attempt to deliver an envelope to the high-priority lane
+    ///
+    /// **Runtime-internal use only**. This method is used by the runtime
+    /// for control-plane operations (timers, supervision, leases) that must
+    /// not be starved by data-plane message saturation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeliveryError::HighLaneFull` if the high-priority lane is full.
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError>;
 }
 
 /// Errors that can occur during envelope delivery
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryError {
     /// Mailbox is at capacity (backpressure)
-    MailboxFull,
+    /// Includes capacity and current length for adaptive backoff
+    MailboxFull { capacity: usize, current_len: usize },
+    /// High-priority lane is at capacity
+    /// This should be rare and indicates the control plane is saturated
+    HighLaneFull { capacity: usize, current_len: usize },
     /// Mailbox receiver has been dropped (actor stopped)
     ActorStopped,
+}
+
+impl DeliveryError {
+    /// Get occupancy ratio (0.0 to 1.0) for backpressure decisions
+    pub fn occupancy(&self) -> f64 {
+        match self {
+            DeliveryError::MailboxFull { capacity, current_len }
+            | DeliveryError::HighLaneFull { capacity, current_len } => {
+                *current_len as f64 / *capacity as f64
+            }
+            DeliveryError::ActorStopped => 1.0,
+        }
+    }
 }
 
 impl std::fmt::Display for DeliveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DeliveryError::MailboxFull => write!(f, "Mailbox is full"),
+            DeliveryError::MailboxFull { capacity, current_len } => {
+                write!(f, "Mailbox is full ({}/{} messages)", current_len, capacity)
+            }
+            DeliveryError::HighLaneFull { capacity, current_len } => {
+                write!(f, "High-priority lane is full ({}/{} messages)", current_len, capacity)
+            }
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
         }
     }
@@ -248,6 +281,36 @@ impl Router {
             .map_err(|e| RouteError::DeliveryFailed(dest, e))
     }
 
+    /// Route an envelope to the high-priority lane (runtime-internal use only)
+    ///
+    /// **CRITICAL**: This method is for runtime-internal use only and should
+    /// never be exposed to user code. It's used by the runtime for control-plane
+    /// operations (timers, supervision, leases) that must not be starved by
+    /// data-plane saturation.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - `RouteNotFound` if the destination is not registered
+    /// - `DeliveryFailed(HighLaneFull)` if the high-priority lane is full
+    ///
+    /// # Invariants
+    ///
+    /// - High-priority lane has the SAME capacity as normal lane (no extra buffer)
+    /// - Caller must handle HighLaneFull as a critical error (control plane saturated)
+    /// - Scheduler guarantees high-priority messages process first (capped at 4/tick)
+    pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
+        let dest = envelope.destination().clone();
+
+        let sink = self
+            .registry
+            .get(&dest)
+            .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
+
+        sink.deliver_high_priority(envelope)
+            .map_err(|e| RouteError::DeliveryFailed(dest, e))
+    }
+
     /// Check if a route is registered
     pub fn contains(&self, address: &RouteAddress) -> bool {
         self.registry.get(address).is_some()
@@ -310,10 +373,18 @@ mod tests {
     impl MailboxSink for MockSink {
         fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
             if self.should_fail {
-                return Err(DeliveryError::MailboxFull);
+                return Err(DeliveryError::MailboxFull {
+                    capacity: 10,
+                    current_len: 10,
+                });
             }
             self.delivered.lock().push(envelope);
             Ok(())
+        }
+
+        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            // For tests, just use normal delivery
+            self.deliver(envelope)
         }
     }
 
@@ -392,13 +463,13 @@ mod tests {
         let result = router.route(envelope);
 
         // Assert
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(RouteError::DeliveryFailed(
-                address,
-                DeliveryError::MailboxFull
+                _,
+                DeliveryError::MailboxFull { .. }
             ))
-        );
+        ));
     }
 
     #[test]

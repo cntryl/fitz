@@ -55,6 +55,16 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+/// Envelope metadata without the payload (for zero-copy causation tracking)
+#[derive(Debug, Clone)]
+pub struct EnvelopeMetadata {
+    pub id: MessageId,
+    pub source: Option<RouteAddress>,
+    pub destination: RouteAddress,
+    pub causation: Option<MessageId>,
+    pub deadline: Option<Instant>,
+}
+
 /// Unique message identifier for tracing and correlation
 ///
 /// # Current Implementation
@@ -232,6 +242,30 @@ impl Envelope {
     /// Check if this message has expired past its deadline
     pub fn is_expired(&self) -> bool {
         self.deadline.map(|d| Instant::now() > d).unwrap_or(false)
+    }
+
+    /// Extract metadata without consuming the envelope
+    pub fn metadata(&self) -> EnvelopeMetadata {
+        EnvelopeMetadata {
+            id: self.id,
+            source: self.source.clone(),
+            destination: self.destination.clone(),
+            causation: self.causation,
+            deadline: self.deadline,
+        }
+    }
+
+    /// Extract metadata and payload together (zero-copy for metadata)
+    pub fn into_parts<M: Any>(self) -> (EnvelopeMetadata, Option<M>) {
+        let metadata = EnvelopeMetadata {
+            id: self.id,
+            source: self.source,
+            destination: self.destination,
+            causation: self.causation,
+            deadline: self.deadline,
+        };
+        let payload = self.payload.downcast::<M>().ok().map(|b| *b);
+        (metadata, payload)
     }
 
     /// Extract the payload, downcasting to the expected type

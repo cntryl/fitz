@@ -6,7 +6,71 @@ use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{RouteError, Router};
 use crate::runtime::routing::RouteAddress;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Metrics for actor message processing
+#[derive(Debug, Default)]
+pub struct ActorMetrics {
+    /// Total messages processed successfully
+    pub messages_processed: AtomicU64,
+    /// Messages dropped due to expired deadline
+    pub messages_expired: AtomicU64,
+    /// Messages that caused panics
+    pub messages_panicked: AtomicU64,
+    /// Total processing time in microseconds
+    pub total_processing_time_us: AtomicU64,
+}
+
+impl ActorMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a successfully processed message
+    pub fn record_processed(&self, processing_time_us: u64) {
+        self.messages_processed.fetch_add(1, Ordering::Relaxed);
+        self.total_processing_time_us.fetch_add(processing_time_us, Ordering::Relaxed);
+    }
+
+    /// Record an expired message
+    pub fn record_expired(&self) {
+        self.messages_expired.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a panic
+    pub fn record_panic(&self) {
+        self.messages_panicked.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get average processing time in microseconds
+    pub fn avg_processing_time_us(&self) -> u64 {
+        let processed = self.messages_processed.load(Ordering::Relaxed);
+        if processed == 0 {
+            return 0;
+        }
+        self.total_processing_time_us.load(Ordering::Relaxed) / processed
+    }
+
+    /// Get snapshot of metrics
+    pub fn snapshot(&self) -> ActorMetricsSnapshot {
+        ActorMetricsSnapshot {
+            messages_processed: self.messages_processed.load(Ordering::Relaxed),
+            messages_expired: self.messages_expired.load(Ordering::Relaxed),
+            messages_panicked: self.messages_panicked.load(Ordering::Relaxed),
+            avg_processing_time_us: self.avg_processing_time_us(),
+        }
+    }
+}
+
+/// Snapshot of actor metrics at a point in time
+#[derive(Debug, Clone, Copy)]
+pub struct ActorMetricsSnapshot {
+    pub messages_processed: u64,
+    pub messages_expired: u64,
+    pub messages_panicked: u64,
+    pub avg_processing_time_us: u64,
+}
 
 /// The core Actor trait that all actors must implement.
 ///
@@ -38,11 +102,13 @@ pub trait Actor: Send + 'static {
 /// - Message sending capabilities (with automatic causation tracking)
 /// - Lifecycle control (stopping the actor)
 /// - Current envelope metadata (for causation chains)
+/// - Metrics for observability
 pub struct Context<A: Actor + ?Sized> {
     address: RouteAddress,
     state: ActorState,
     router: Arc<Router>,
-    current_envelope: Option<Envelope>,
+    current_metadata: Option<crate::runtime::envelope::EnvelopeMetadata>,
+    metrics: Arc<ActorMetrics>,
     _phantom: std::marker::PhantomData<*const A>,
 }
 
@@ -52,14 +118,32 @@ impl<A: Actor + ?Sized> Context<A> {
             address,
             state: ActorState::Running,
             router,
-            current_envelope: None,
+            current_metadata: None,
+            metrics: Arc::new(ActorMetrics::new()),
             _phantom: std::marker::PhantomData,
         }
     }
 
-    /// Set the current envelope being processed (internal use by scheduler)
-    pub(crate) fn set_current_envelope(&mut self, envelope: Envelope) {
-        self.current_envelope = Some(envelope);
+    /// Create context with shared metrics
+    pub fn with_metrics(address: RouteAddress, router: Arc<Router>, metrics: Arc<ActorMetrics>) -> Self {
+        Self {
+            address,
+            state: ActorState::Running,
+            router,
+            current_metadata: None,
+            metrics,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Get a reference to the actor metrics
+    pub fn metrics(&self) -> &Arc<ActorMetrics> {
+        &self.metrics
+    }
+
+    /// Set the current envelope metadata being processed (internal use by scheduler)
+    pub(crate) fn set_current_metadata(&mut self, metadata: crate::runtime::envelope::EnvelopeMetadata) {
+        self.current_metadata = Some(metadata);
     }
 
     /// Get the actor's route address
@@ -74,6 +158,15 @@ impl<A: Actor + ?Sized> Context<A> {
     /// - Automatically tracks causation from the current message
     /// - Inherits deadline from the current message if present
     ///
+    /// # Semantics
+    ///
+    /// **CRITICAL**: This is a **synchronous best-effort** send with **no retries**.
+    /// If the destination mailbox is full, the send fails immediately with `MailboxFull`.
+    /// Callers must implement exponential backoff or use message buffering.
+    ///
+    /// **WARNING**: Sending to self during `receive()` can deadlock if the mailbox is full.
+    /// Consider using deferred sends or checking mailbox capacity first.
+    ///
     /// # Example
     ///
     /// ```ignore
@@ -83,7 +176,13 @@ impl<A: Actor + ?Sized> Context<A> {
     ///     fn receive(&mut self, msg: MyMessage, ctx: &mut Context<Self>) {
     ///         // Send a message to another actor
     ///         let other_address = self.other_actor_ref.address();
-    ///         ctx.send(other_address.clone(), ResponseMessage::Done).ok();
+    ///         match ctx.send(other_address.clone(), ResponseMessage::Done) {
+    ///             Ok(_) => {},
+    ///             Err(SendError::MailboxFull { occupancy, .. }) if occupancy > 0.9 => {
+    ///                 // Implement backoff
+    ///             }
+    ///             Err(e) => eprintln!("Send failed: {}", e),
+    ///         }
     ///     }
     /// }
     /// ```
@@ -91,21 +190,39 @@ impl<A: Actor + ?Sized> Context<A> {
     where
         M: Send + Sync + 'static,
     {
-        let mut envelope = Envelope::from_route(self.address.clone(), dest, msg);
+        let mut envelope = Envelope::from_route(self.address.clone(), dest.clone(), msg);
 
-        // Set causation from current envelope
-        if let Some(current) = &self.current_envelope {
-            envelope = envelope.with_causation(current.id());
+        // Set causation from current envelope metadata
+        if let Some(metadata) = &self.current_metadata {
+            envelope = envelope.with_causation(metadata.id);
 
             // Inherit deadline if present
-            if let Some(deadline) = current.deadline() {
+            if let Some(deadline) = metadata.deadline {
                 envelope = envelope.with_deadline(deadline);
             }
         }
 
         self.router.route(envelope).map_err(|e| match e {
-            RouteError::RouteNotFound(_) => SendError::ActorNotFound,
-            RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+            RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
+            RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
+                crate::runtime::router::DeliveryError::MailboxFull { capacity, current_len } => {
+                    SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    }
+                }
+                crate::runtime::router::DeliveryError::HighLaneFull { capacity, current_len } => {
+                    // High-priority lane should never be used by user code
+                    // Treat as normal mailbox full for error reporting
+                    SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    }
+                }
+                crate::runtime::router::DeliveryError::ActorStopped => {
+                    SendError::ActorStopped { target }
+                }
+            },
         })
     }
 
@@ -125,20 +242,46 @@ impl<A: Actor + ?Sized> Context<A> {
     where
         M: Send + Sync + 'static,
     {
-        let current = self
-            .current_envelope
+        let metadata = self
+            .current_metadata
             .as_ref()
-            .ok_or(SendError::ActorNotFound)?;
+            .ok_or(SendError::RouteNotFound { target: self.address.clone() })?;
 
-        if current.source().is_none() {
-            return Err(SendError::ActorNotFound);
+        let source = metadata.source.as_ref()
+            .ok_or(SendError::RouteNotFound { target: self.address.clone() })?;
+
+        let mut reply_envelope = Envelope::from_route(
+            self.address.clone(),
+            source.clone(),
+            msg,
+        )
+        .with_causation(metadata.id);
+
+        if let Some(deadline) = metadata.deadline {
+            reply_envelope = reply_envelope.with_deadline(deadline);
         }
 
-        let reply_envelope = current.reply_to(msg);
-
         self.router.route(reply_envelope).map_err(|e| match e {
-            RouteError::RouteNotFound(_) => SendError::ActorNotFound,
-            RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+            RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
+            RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
+                crate::runtime::router::DeliveryError::MailboxFull { capacity, current_len } => {
+                    SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    }
+                }
+                crate::runtime::router::DeliveryError::HighLaneFull { capacity, current_len } => {
+                    // High-priority lane should never be used by user code
+                    // Treat as normal mailbox full for error reporting
+                    SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    }
+                }
+                crate::runtime::router::DeliveryError::ActorStopped => {
+                    SendError::ActorStopped { target }
+                }
+            },
         })
     }
 
@@ -197,14 +340,37 @@ impl<M: Send + 'static> ActorRef<M> {
     ///
     /// The message is wrapped in an Envelope and routed to the destination actor.
     /// The source is not set (external message).
+    ///
+    /// # Semantics
+    ///
+    /// This is a **synchronous best-effort** send with **no retries**.
+    /// Returns detailed error information for adaptive backpressure.
     pub fn send(&self, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
     {
         let envelope = Envelope::new(self.address.clone(), msg);
         self.router.route(envelope).map_err(|e| match e {
-            RouteError::RouteNotFound(_) => SendError::ActorNotFound,
-            RouteError::DeliveryFailed(_, _) => SendError::MailboxFull,
+            RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
+            RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
+                crate::runtime::router::DeliveryError::MailboxFull { capacity, current_len } => {
+                    SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    }
+                }
+                crate::runtime::router::DeliveryError::HighLaneFull { capacity, current_len } => {
+                    // High-priority lane should never be used by user code
+                    // Treat as normal mailbox full for error reporting
+                    SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    }
+                }
+                crate::runtime::router::DeliveryError::ActorStopped => {
+                    SendError::ActorStopped { target }
+                }
+            },
         })
     }
 
@@ -255,17 +421,37 @@ impl std::error::Error for ActorError {}
 
 #[derive(Debug, Clone)]
 pub enum SendError {
-    MailboxFull,
-    ActorStopped,
-    ActorNotFound,
+    /// Mailbox is full (backpressure) - includes occupancy for adaptive backoff
+    MailboxFull { target: RouteAddress, occupancy: f64 },
+    /// Actor has stopped
+    ActorStopped { target: RouteAddress },
+    /// Route not registered
+    RouteNotFound { target: RouteAddress },
+}
+
+impl SendError {
+    /// Get the target address for error context
+    pub fn target(&self) -> &RouteAddress {
+        match self {
+            SendError::MailboxFull { target, .. } => target,
+            SendError::ActorStopped { target } => target,
+            SendError::RouteNotFound { target } => target,
+        }
+    }
 }
 
 impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SendError::MailboxFull => write!(f, "Mailbox is full"),
-            SendError::ActorStopped => write!(f, "Actor has stopped"),
-            SendError::ActorNotFound => write!(f, "Actor not found"),
+            SendError::MailboxFull { target, occupancy } => {
+                write!(f, "Mailbox is full for {} (occupancy: {:.1}%)", target, occupancy * 100.0)
+            }
+            SendError::ActorStopped { target } => {
+                write!(f, "Actor {} has stopped", target)
+            }
+            SendError::RouteNotFound { target } => {
+                write!(f, "Route {} not found", target)
+            }
         }
     }
 }
@@ -392,7 +578,7 @@ mod tests {
         let result = actor_ref.send(2);
 
         // Assert
-        assert!(matches!(result, Err(SendError::MailboxFull)));
+        assert!(matches!(result, Err(SendError::MailboxFull { .. })));
     }
 
     #[test]
@@ -446,7 +632,7 @@ mod tests {
         let parent_envelope =
             Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ());
         let parent_id = parent_envelope.id();
-        ctx.set_current_envelope(parent_envelope);
+        ctx.set_current_metadata(parent_envelope.metadata());
 
         // Act
         ctx.send(receiver_addr, 42_i32).unwrap();
@@ -471,7 +657,7 @@ mod tests {
         let request_envelope =
             Envelope::from_route(sender_addr.clone(), receiver_addr.clone(), 10_i32);
         let request_id = request_envelope.id();
-        ctx.set_current_envelope(request_envelope);
+        ctx.set_current_metadata(request_envelope.metadata());
 
         // Act - reply to the sender
         let result = ctx.reply("response");
@@ -501,7 +687,7 @@ mod tests {
         let parent_envelope =
             Envelope::from_route(test_address(1, "/test/parent"), sender_addr, ())
                 .with_deadline(deadline);
-        ctx.set_current_envelope(parent_envelope);
+        ctx.set_current_metadata(parent_envelope.metadata());
 
         // Act
         ctx.send(receiver_addr, 42_i32).unwrap();

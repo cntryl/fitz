@@ -35,6 +35,11 @@ impl MailboxSink for TestSink {
         self.delivered.lock().push(envelope);
         Ok(())
     }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
+        // For tests, just deliver to same queue
+        self.deliver(envelope)
+    }
 }
 
 /// Helper builders used by E2E tests

@@ -28,6 +28,7 @@ use crate::runtime::matcher::{
     extract_route_segments, match_pattern_segments, parse_pattern_segments, PatternSegment,
 };
 use crate::runtime::routing::{Route, RouteFamily};
+use parking_lot::RwLock;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,16 +67,19 @@ impl TrieNode {
 /// - Insert: O(depth) time, O(1) allocation (no hash collisions in worst case)
 /// - Remove: O(depth + nodes_to_clean) time
 /// - Match: O(depth + matches) time, minimal allocation (only result vec growth)
+///
+/// Uses RwLock for high read concurrency - matching takes read lock,
+/// insert/remove take write lock.
 pub struct SubscriptionIndex {
-    /// Trie root per RouteFamily
-    roots: HashMap<RouteFamily, Box<TrieNode>>,
+    /// Trie root per RouteFamily (protected by RwLock for concurrent reads)
+    roots: RwLock<HashMap<RouteFamily, Box<TrieNode>>>,
 }
 
 impl SubscriptionIndex {
     /// Create a new empty subscription index
     pub fn new() -> Self {
         Self {
-            roots: HashMap::new(),
+            roots: RwLock::new(HashMap::new()),
         }
     }
 
@@ -86,14 +90,14 @@ impl SubscriptionIndex {
     /// - `pattern`: The route pattern (may contain `*` and `**` wildcards)
     /// - `subscription_id`: Unique identifier for this subscription
     pub fn insert(
-        &mut self,
+        &self,
         family_id: RouteFamily,
         pattern: &Route,
         subscription_id: SubscriptionId,
     ) {
         let segments = parse_pattern_segments(pattern.as_str());
-        let root = self
-            .roots
+        let mut roots = self.roots.write();
+        let root = roots
             .entry(family_id)
             .or_insert_with(|| Box::new(TrieNode::new()));
 
@@ -107,13 +111,14 @@ impl SubscriptionIndex {
     /// - `pattern`: The original route pattern
     /// - `subscription_id`: Subscription to remove
     pub fn remove(
-        &mut self,
+        &self,
         family_id: RouteFamily,
         pattern: &Route,
         subscription_id: SubscriptionId,
     ) {
         let segments = parse_pattern_segments(pattern.as_str());
-        if let Some(root) = self.roots.get_mut(&family_id) {
+        let mut roots = self.roots.write();
+        if let Some(root) = roots.get_mut(&family_id) {
             remove_from_trie(root, &segments, 0, subscription_id);
         }
     }
@@ -128,7 +133,8 @@ impl SubscriptionIndex {
     /// Vector of matching subscription IDs (may contain duplicates if pattern/subscriber pair added multiple times)
     pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> Vec<SubscriptionId> {
         let route_segments = extract_route_segments(route.as_str());
-        let root = match self.roots.get(&family_id) {
+        let roots = self.roots.read();
+        let root = match roots.get(&family_id) {
             Some(r) => r,
             None => return Vec::new(),
         };
@@ -148,7 +154,8 @@ impl SubscriptionIndex {
         capacity: usize,
     ) -> Vec<SubscriptionId> {
         let route_segments = extract_route_segments(route.as_str());
-        let root = match self.roots.get(&family_id) {
+        let roots = self.roots.read();
+        let root = match roots.get(&family_id) {
             Some(r) => r,
             None => return Vec::new(),
         };
@@ -160,7 +167,8 @@ impl SubscriptionIndex {
 
     /// Count subscriptions in a specific RouteFamily (for diagnostics/metrics)
     pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
-        self.roots
+        let roots = self.roots.read();
+        roots
             .get(&family_id)
             .map(|root| count_node(root))
             .unwrap_or(0)
@@ -170,7 +178,8 @@ impl SubscriptionIndex {
     ///
     /// Includes trie nodes, but not String allocations or Arc payloads.
     pub fn approx_memory_usage(&self, family_id: RouteFamily) -> usize {
-        self.roots
+        let roots = self.roots.read();
+        roots
             .get(&family_id)
             .map(|root| approx_node_memory(root))
             .unwrap_or(0)

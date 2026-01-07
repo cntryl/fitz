@@ -116,15 +116,14 @@ impl TimerManager {
             }
         }
 
-        // Remove one-time timers that have fired
-        fired.retain(|id| {
+        // Remove one-time timers that have fired (separate pass to avoid borrow issues)
+        for id in &fired {
             if let Some(timer) = self.timers.get(id) {
                 if timer.interval().is_none() {
                     self.timers.remove(id);
                 }
             }
-            true
-        });
+        }
 
         fired
     }

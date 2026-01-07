@@ -1,16 +1,27 @@
 // LAYER: RUNTIME
 //! Actor scheduling and execution coordination
 
-use super::actor::{Actor, ActorError, ActorRef, Context};
+use super::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
 use super::mailbox::Mailbox;
-use crate::runtime::envelope::Envelope;
 use crate::runtime::router::Router;
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Maximum high-priority messages per tick
+const MAX_HIGH_PER_TICK: usize = 4;
+
+/// Maximum normal-priority messages per tick (when high lane is active)
+const MAX_NORMAL_PER_TICK: usize = 12;
+
+/// Minimum timeout for mailbox polling (adaptive based on load)
+const MIN_POLL_TIMEOUT_MS: u64 = 10;
+
+/// Maximum timeout for mailbox polling (when mailbox is empty)
+const MAX_POLL_TIMEOUT_MS: u64 = 100;
 
 /// Actor system scheduler that manages actor lifecycles and message processing
 pub struct Scheduler {
@@ -50,6 +61,11 @@ impl Scheduler {
     /// - Register the actor's mailbox with the router at the given address
     /// - Start a dedicated thread for message processing
     /// - Return an ActorRef for sending messages to the actor
+    ///
+    /// # Message Processing
+    ///
+    /// The actor processes messages in batches (up to 16 per iteration) to reduce
+    /// scheduling overhead. Poll timeout is adaptive based on mailbox occupancy.
     pub fn spawn<A>(
         &self,
         mut actor: A,
@@ -62,98 +78,111 @@ impl Scheduler {
     {
         let mailbox = Mailbox::new(mailbox_capacity);
         let actor_ref = ActorRef::new(address.clone(), self.router.clone());
+        let metrics = Arc::new(ActorMetrics::new());
 
         // Register mailbox with router
         self.router
             .register(address.clone(), Arc::new(mailbox.clone()));
 
         let receiver = mailbox.receiver().clone();
+        let high_receiver = mailbox.high_priority_receiver().clone();
         let router_clone = self.router.clone();
+        let metrics_clone = metrics.clone();
 
         // Spawn actor execution thread
         thread::spawn(move || {
-            let mut ctx = Context::new(address.clone(), router_clone);
+            let mut ctx = Context::with_metrics(address.clone(), router_clone, metrics_clone);
 
             // Call started hook
             actor.started(&mut ctx);
 
-            // Process messages
+            // Process messages with two-phase priority lanes
             while ctx.is_running() {
-                match receiver.recv_timeout(Duration::from_millis(100)) {
-                    Ok(envelope) => {
-                        // Check deadline before processing
-                        if envelope.is_expired() {
-                            eprintln!(
-                                "Dropped expired message {:?} for actor {:?}",
-                                envelope.id(),
-                                address
-                            );
-                            continue;
+                // Adaptive timeout based on mailbox occupancy
+                let occupancy = mailbox.len() as f64 / mailbox.capacity() as f64;
+                let timeout_ms = if occupancy > 0.5 {
+                    MIN_POLL_TIMEOUT_MS // Fast drain when mailbox is filling up
+                } else {
+                    MAX_POLL_TIMEOUT_MS // Standard polling when idle
+                };
+
+                let mut processed_high = 0;
+                let mut processed_normal = 0;
+
+                // PHASE 1: High-priority messages (capped at MAX_HIGH_PER_TICK)
+                while processed_high < MAX_HIGH_PER_TICK {
+                    let envelope = match high_receiver.try_recv() {
+                        Ok(env) => env,
+                        Err(crossbeam_channel::TryRecvError::Empty) => break,
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                            ctx.stop();
+                            break;
                         }
+                    };
 
-                        // Extract typed message from envelope
-                        // We need to clone the envelope for context, then extract payload
-                        let envelope_id = envelope.id();
-                        let envelope_source = envelope.source().cloned();
-                        let envelope_causation = envelope.causation();
-                        let envelope_deadline = envelope.deadline();
+                    let start = Instant::now();
 
-                        let msg = match envelope.into_payload::<A::Message>() {
-                            Some(m) => m,
-                            None => {
-                                // Type mismatch - log and skip
-                                eprintln!(
-                                    "Type mismatch: envelope {:?} for actor {:?} contains wrong message type",
-                                    envelope_id,
-                                    address
-                                );
-                                continue;
-                            }
-                        };
-
-                        // Reconstruct envelope for context (without payload)
-                        // Create a dummy envelope with the same metadata
-                        let ctx_envelope = if let Some(src) = envelope_source {
-                            let mut env = Envelope::from_route(src, address.clone(), ());
-                            if let Some(causation) = envelope_causation {
-                                env = env.with_causation(causation);
-                            }
-                            if let Some(deadline) = envelope_deadline {
-                                env = env.with_deadline(deadline);
-                            }
-                            env
-                        } else {
-                            let mut env = Envelope::new(address.clone(), ());
-                            if let Some(causation) = envelope_causation {
-                                env = env.with_causation(causation);
-                            }
-                            if let Some(deadline) = envelope_deadline {
-                                env = env.with_deadline(deadline);
-                            }
-                            env
-                        };
-
-                        // Set current envelope for causation tracking
-                        ctx.set_current_envelope(ctx_envelope);
-
-                        // Process message with panic recovery
-                        if let Err(e) =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                actor.receive(msg, &mut ctx);
-                            }))
-                        {
-                            let error = ActorError::Panic(format!("{:?}", e));
-                            actor.on_error(error, &mut ctx);
-                        }
-                    }
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        // Check if we should stop
+                    // Check deadline before processing
+                    if envelope.is_expired() {
+                        ctx.metrics().record_expired();
+                        eprintln!(
+                            "Dropped expired high-priority message {:?} for actor {:?}",
+                            envelope.id(),
+                            address
+                        );
+                        processed_high += 1;
                         continue;
                     }
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                        // Mailbox closed, stop actor
-                        break;
+
+                    // Process high-priority message
+                    process_envelope(envelope, &mut actor, &mut ctx, &address, start);
+                    processed_high += 1;
+                }
+
+                // PHASE 2: Normal-priority messages (remaining budget)
+                // If high lane was idle, use full budget (16), otherwise use 12
+                let normal_budget = if processed_high == 0 {
+                    MAX_HIGH_PER_TICK + MAX_NORMAL_PER_TICK // 16 total when high is idle
+                } else {
+                    MAX_NORMAL_PER_TICK // 12 when high used its quota
+                };
+
+                while processed_normal < normal_budget {
+                    let envelope = if processed_high == 0 && processed_normal == 0 {
+                        // First message overall: use blocking receive with timeout
+                        match receiver.recv_timeout(Duration::from_millis(timeout_ms)) {
+                            Ok(env) => env,
+                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
+                            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                                ctx.stop();
+                                break;
+                            }
+                        }
+                    } else {
+                        // Subsequent messages: try non-blocking receive
+                        match receiver.try_recv() {
+                            Ok(env) => env,
+                            Err(_) => break, // No more messages, yield
+                        }
+                    };
+
+                    let start = Instant::now();
+
+                    // Check deadline before processing
+                    if envelope.is_expired() {
+                        ctx.metrics().record_expired();
+                        eprintln!(
+                            "Dropped expired message {:?} for actor {:?}",
+                            envelope.id(),
+                            address
+                        );
+                        processed_normal += 1;
+                        continue;
                     }
+
+                    // Process normal-priority message
+                    process_envelope(envelope, &mut actor, &mut ctx, &address, start);
+                    processed_normal += 1;
                 }
             }
 
@@ -183,6 +212,48 @@ impl Scheduler {
 impl Default for Scheduler {
     fn default() -> Self {
         Self::new(num_cpus::get())
+    }
+}
+
+/// Helper function to process a single envelope
+fn process_envelope<A: Actor>(
+    envelope: crate::runtime::envelope::Envelope,
+    actor: &mut A,
+    ctx: &mut Context<A>,
+    address: &RouteAddress,
+    start: Instant,
+) where
+    A::Message: Any + Send + Sync + 'static,
+{
+    // Extract typed message and metadata from envelope
+    let (metadata, msg) = envelope.into_parts::<A::Message>();
+
+    let msg = match msg {
+        Some(m) => m,
+        None => {
+            // Type mismatch - log and skip
+            eprintln!(
+                "Type mismatch: envelope {:?} for actor {:?} contains wrong message type",
+                metadata.id, address
+            );
+            return;
+        }
+    };
+
+    // Set current metadata for causation tracking (no allocation)
+    ctx.set_current_metadata(metadata);
+
+    // Process message with panic recovery
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        actor.receive(msg, ctx);
+    })) {
+        ctx.metrics().record_panic();
+        let error = ActorError::Panic(format!("{:?}", e));
+        actor.on_error(error, ctx);
+    } else {
+        // Record successful processing
+        let elapsed = start.elapsed().as_micros() as u64;
+        ctx.metrics().record_processed(elapsed);
     }
 }
 
