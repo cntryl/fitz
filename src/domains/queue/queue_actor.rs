@@ -61,6 +61,15 @@ struct QueueRecord {
     visible_at_ms: u64,
 }
 
+/// Pending enqueue in the batch buffer
+#[derive(Debug, Clone)]
+struct PendingEnqueue {
+    /// Message body
+    body: Bytes,
+    /// Optional delay in seconds (None = immediate visibility)
+    delay_seconds: Option<u64>,
+}
+
 /// In-flight message lease (ephemeral, actor-owned)
 #[derive(Debug, Clone)]
 pub struct Inflight {

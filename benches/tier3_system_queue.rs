@@ -6,7 +6,6 @@ use fitz::runtime::routing::RouteFamily;
 use fitz::benchkit::create_bench_queue_actor;
 use bytes::Bytes;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[path = "config.rs"]
 mod config;
@@ -25,13 +24,13 @@ mod config;
 fn bench_sustained_load_throughput(c: &mut Criterion) {
     //! SUSTAINED LOAD THROUGHPUT - Measure throughput under continuous load
     //!
-    //! Scenario: Single queue, continuous enqueue + reserve for sustained period
+    //! Scenario: Single queue, continuous enqueue + reserve batch
     //! Pattern: Sustained production load (no burst, steady state)
     //!
     //! Measures:
     //! - Steady-state throughput (msg/sec)
     //! - No GC pauses (Rust advantage)
-    //! - Durable write throughput (Midge)
+    //! - In-memory write throughput (Midge)
     //! - Memory stability under load
 
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
@@ -40,25 +39,18 @@ fn bench_sustained_load_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("system_queue_sustained");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_secs(5)); // Longer measurement for sustained load
+    group.throughput(Throughput::Elements(100)); // 100 operations per iteration
 
-    group.bench_function("sustained_1sec_enqueue_reserve", |b| {
+    group.bench_function("sustained_100ops_enqueue_reserve", |b| {
         b.iter(|| {
-            let start = std::time::Instant::now();
-            let mut count = 0;
-
-            // Run for 1 second
-            while start.elapsed() < Duration::from_secs(1) {
-                // Enqueue
+            // Batch of 50 enqueues + 50 reserves (100 ops total)
+            for _ in 0..50 {
                 let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-
-                // Reserve
-                let _ = actor.handle_reserve(black_box(30), black_box(Some(1)));
-
-                count += 2;
             }
 
-            black_box(count)
+            for _ in 0..50 {
+                let _ = actor.handle_reserve(black_box(30), black_box(Some(1)));
+            }
         })
     });
 
@@ -113,10 +105,10 @@ fn bench_cold_start_recovery(c: &mut Criterion) {
     //! COLD START RECOVERY - Measure recovery time after restart
     //!
     //! Scenario: Pre-fill queue, drop actor, respawn, measure recovery
-    //! Pattern: Crash recovery simulation (durable storage critical)
+    //! Pattern: Crash recovery simulation (in-memory state reconstruction)
     //!
     //! Measures:
-    //! - Midge load time (durable recovery)
+    //! - Midge load time (in-memory recovery)
     //! - Memory reconstruction cost
     //! - Time to first reserve after restart
     //! - Recovery throughput
@@ -124,12 +116,12 @@ fn bench_cold_start_recovery(c: &mut Criterion) {
     let mut group = c.benchmark_group("system_queue_cold_start");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1000)); // 1000 messages recovered
+    group.throughput(Throughput::Elements(100)); // 100 messages recovered
 
-    group.bench_function("recover_1000_messages", |b| {
+    group.bench_function("recover_100_messages", |b| {
         b.iter_batched(
             || {
-                // Setup: Create queue, fill with 1000 messages, then drop
+                // Setup: Create queue, fill with 100 messages, then drop
                 let queue_key = QueueKey {
                     family: RouteFamily::new(1),
                     realm: "bench".to_string(),
@@ -137,21 +129,24 @@ fn bench_cold_start_recovery(c: &mut Criterion) {
                     resource: "queue".to_string(),
                 };
                 
-                let temp_dir = tempfile::tempdir().unwrap();
-                let store = Arc::new(cntryl_midge::MidgeEngine::open(temp_dir.path().to_path_buf()).unwrap());
+                // Use in-memory storage for benchmark speed
+                let store = Arc::new(
+                    cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+                        .expect("Failed to open in-memory store")
+                );
                 let mut actor = QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
 
                 let payload = Bytes::from_static(b"recovery message");
 
-                for _ in 0..1000 {
+                for _ in 0..100 {
                     let _ = actor.handle_enqueue(payload.clone(), None);
                 }
 
                 drop(actor); // Simulate crash
 
-                (temp_dir, store, queue_key)
+                (store, queue_key)
             },
-            |(_temp_dir, store, queue_key)| {
+            |(store, queue_key)| {
                 // Measure: Respawn actor (loads from Midge)
                 let actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
 
