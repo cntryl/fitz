@@ -335,7 +335,7 @@ impl Actor for TypeMismatchActor {
 }
 
 #[test]
-fn should_record_type_mismatch_metric_and_call_on_error() {
+fn should_record_type_mismatch_metric_when_error_occurs() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "type_mismatch_test");
