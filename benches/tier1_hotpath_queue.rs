@@ -1,10 +1,9 @@
-use criterion::{
+﻿use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
-use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
-use fitz::runtime::routing::RouteFamily;
+use fitz::domains::queue::QueueResponse;
+use fitz::benchkit::create_bench_queue_actor;
 use bytes::Bytes;
-use std::sync::Arc;
 
 #[path = "config.rs"]
 mod config;
@@ -13,30 +12,16 @@ mod config;
 // TIER 1: HOT PATH MICROBENCHMARKS
 //
 // Target: Measure PURE actor operations WITHOUT scheduler/mailbox overhead
-// Goal: <5µs p50 for enqueue, <10µs p50 for reserve, <5µs p50 for complete
+// Goal: <5Âµs p50 for enqueue, <10Âµs p50 for reserve, <5Âµs p50 for complete
 // Throughput: 100k-300k msg/sec per queue
 //
 // These benchmarks call actor methods directly to measure the hot path.
 // ============================================================================
 
-/// Helper to create a QueueActor with temporary storage
-fn create_queue_actor() -> QueueActor {
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: "bench".to_string(),
-        area: "test".to_string(),
-        resource: "queue".to_string(),
-    };
-    
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(cntryl_midge::MidgeEngine::open(temp_dir.path().to_path_buf()).unwrap());
-    QueueActor::new(RouteFamily::new(1), queue_key, store, None)
-}
-
 fn bench_enqueue_only(c: &mut Criterion) {
     //! ENQUEUE ONLY - Measure pure enqueue throughput
     //!
-    //! Target: <5µs p50 latency, 200k+ msg/sec throughput
+    //! Target: <5Âµs p50 latency, 200k+ msg/sec throughput
     //!
     //! Measures:
     //! - Serialization cost [attempts:4][visible_at_ms:8][body_len:4][body]
@@ -44,7 +29,7 @@ fn bench_enqueue_only(c: &mut Criterion) {
     //! - VecDeque push cost
     //! - NO reservation or completion
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message payload");
 
     let mut group = c.benchmark_group("hotpath_queue_enqueue");
@@ -66,14 +51,14 @@ fn bench_enqueue_only(c: &mut Criterion) {
 fn bench_reserve_only_empty(c: &mut Criterion) {
     //! RESERVE ONLY (EMPTY QUEUE) - Measure reserve on empty queue
     //!
-    //! Target: <1µs p50 latency (fast path: empty check)
+    //! Target: <1Âµs p50 latency (fast path: empty check)
     //!
     //! Measures:
     //! - Empty queue check cost
     //! - NO serialization, NO Midge reads
     //! - Fastest possible reserve path
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
 
     let mut group = c.benchmark_group("hotpath_queue_reserve");
     group.sampling_mode(SamplingMode::Flat);
@@ -94,7 +79,7 @@ fn bench_reserve_only_empty(c: &mut Criterion) {
 fn bench_reserve_only_full(c: &mut Criterion) {
     //! RESERVE ONLY (FULL QUEUE) - Measure reserve on pre-filled queue
     //!
-    //! Target: <10µs p50 latency (includes VecDeque pop, HashMap insert)
+    //! Target: <10Âµs p50 latency (includes VecDeque pop, HashMap insert)
     //!
     //! Measures:
     //! - VecDeque pop_front cost
@@ -102,7 +87,7 @@ fn bench_reserve_only_full(c: &mut Criterion) {
     //! - Token generation cost
     //! - NO Midge reads (already in memory)
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message payload");
 
     // Pre-fill queue with 1000 messages
@@ -129,14 +114,14 @@ fn bench_reserve_only_full(c: &mut Criterion) {
 fn bench_complete_only(c: &mut Criterion) {
     //! COMPLETE ONLY - Measure completion throughput
     //!
-    //! Target: <5µs p50 latency
+    //! Target: <5Âµs p50 latency
     //!
     //! Measures:
     //! - HashMap remove cost (inflight tracking)
     //! - Token validation cost
     //! - Midge delete cost (durable removal)
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message payload");
 
     // Pre-fill queue and reserve messages to generate tokens
@@ -173,7 +158,7 @@ fn bench_complete_only(c: &mut Criterion) {
 fn bench_delayed_enqueue_fire(c: &mut Criterion) {
     //! DELAYED ENQUEUE + FIRE - Measure delayed message processing
     //!
-    //! Target: <10µs p50 latency (includes BinaryHeap pop + VecDeque push)
+    //! Target: <10Âµs p50 latency (includes BinaryHeap pop + VecDeque push)
     //!
     //! Measures:
     //! - BinaryHeap pop cost (delayed queue)
@@ -181,7 +166,7 @@ fn bench_delayed_enqueue_fire(c: &mut Criterion) {
     //! - Timestamp comparison overhead
     //! - NO Midge reads (already in memory)
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"delayed message");
 
     // Enqueue 1000 delayed messages (all ready to fire)
@@ -206,7 +191,7 @@ fn bench_delayed_enqueue_fire(c: &mut Criterion) {
 fn bench_lease_expiry_requeue(c: &mut Criterion) {
     //! LEASE EXPIRY + REQUEUE - Measure lease expiration handling
     //!
-    //! Target: <10µs p50 latency
+    //! Target: <10Âµs p50 latency
     //!
     //! Measures:
     //! - BinaryHeap pop cost (timers)
@@ -214,7 +199,7 @@ fn bench_lease_expiry_requeue(c: &mut Criterion) {
     //! - VecDeque push cost (requeue to ready)
     //! - Midge update cost (increment attempts)
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
     // Pre-fill and reserve to create expiring leases
@@ -250,7 +235,7 @@ fn bench_batch_reserve_scaling(c: &mut Criterion) {
     //! - VecDeque bulk pop efficiency
     //! - HashMap bulk insert efficiency
 
-    let mut actor = create_queue_actor();
+    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
     let mut group = c.benchmark_group("hotpath_queue_batch_reserve");

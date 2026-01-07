@@ -1,8 +1,9 @@
-use criterion::{
+﻿use criterion::{
     black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
 };
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::runtime::routing::RouteFamily;
+use fitz::benchkit::create_bench_queue_actor;
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,20 +22,6 @@ mod config;
 // "actors" (simulated via sequential calls) and sustained pressure.
 // ============================================================================
 
-/// Helper to create a QueueActor with temporary storage
-fn create_queue_actor(max_attempts: Option<u32>) -> QueueActor {
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: "bench".to_string(),
-        area: "system".to_string(),
-        resource: "queue".to_string(),
-    };
-    
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(cntryl_midge::MidgeEngine::open(temp_dir.path().to_path_buf()).unwrap());
-    QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
-}
-
 fn bench_sustained_load_throughput(c: &mut Criterion) {
     //! SUSTAINED LOAD THROUGHPUT - Measure throughput under continuous load
     //!
@@ -47,7 +34,7 @@ fn bench_sustained_load_throughput(c: &mut Criterion) {
     //! - Durable write throughput (Midge)
     //! - Memory stability under load
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"sustained load message");
 
     let mut group = c.benchmark_group("system_queue_sustained");
@@ -90,7 +77,7 @@ fn bench_mixed_workload_realistic(c: &mut Criterion) {
     //! - DLQ policy overhead
     //! - BinaryHeap + VecDeque + HashMap coordination
 
-    let mut actor = create_queue_actor(Some(3)); // max_attempts=3
+    let mut actor = create_bench_queue_actor("bench", "system", "queue", Some(3)); // max_attempts=3
     let payload = Bytes::from_static(b"mixed workload message");
 
     let mut group = c.benchmark_group("system_queue_mixed_workload");
@@ -188,7 +175,7 @@ fn bench_high_contention_scenario(c: &mut Criterion) {
     //! - VecDeque performance under rapid push/pop
     //! - HashMap churn under rapid insert/remove
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"contention message");
 
     let mut group = c.benchmark_group("system_queue_high_contention");

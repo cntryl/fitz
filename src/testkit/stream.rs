@@ -1,6 +1,9 @@
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+use crate::domains::stream::stream_actor::StreamActor;
+use crate::domains::stream::area_actor::AreaActor;
+use crate::runtime::actor::Context;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{MailboxSink, Router};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -61,6 +64,78 @@ pub fn create_test_db() -> Arc<cntryl_midge::MidgeEngine> {
 /// Create a StreamStore with in-memory database for tests
 pub fn create_test_store() -> crate::domains::stream::StreamStore {
     crate::domains::stream::StreamStore::new(create_test_db())
+}
+
+/// Create a StreamActor for testing with in-memory storage
+///
+/// # Arguments
+/// * `realm` - Realm name
+/// * `area` - Area name
+/// * `resource` - Resource name
+///
+/// # Returns
+/// Tuple of (StreamActor, Context) ready for testing
+///
+/// # Example
+/// ```ignore
+/// let (actor, ctx) = create_test_stream_actor("test", "area", "stream");
+/// ```
+pub fn create_test_stream_actor(
+    realm: &str,
+    area: &str,
+    resource: &str,
+) -> (StreamActor, Context<StreamActor>) {
+    let router = Arc::new(Router::new());
+    let family = RouteFamily::new(1);
+    let addr = RouteAddress::new(
+        family,
+        Route::new(format!("stream://{}/{}/{}/append", realm, area, resource)),
+    );
+
+    let store = Arc::new(create_test_store());
+    let actor = StreamActor::new(
+        family,
+        realm.to_string(),
+        area.to_string(),
+        resource.to_string(),
+        store,
+    );
+    let ctx = Context::new(addr, router);
+
+    (actor, ctx)
+}
+
+/// Create an AreaActor for testing with in-memory storage
+///
+/// # Arguments
+/// * `realm` - Realm name
+/// * `area` - Area name
+///
+/// # Returns
+/// Tuple of (AreaActor, Context) ready for testing
+///
+/// # Example
+/// ```ignore
+/// let (actor, ctx) = create_test_area_actor("test", "area");
+/// ```
+pub fn create_test_area_actor(realm: &str, area: &str) -> (AreaActor, Context<AreaActor>) {
+    let router = Arc::new(Router::new());
+    let family = RouteFamily::new(1);
+    let addr = RouteAddress::new(
+        family,
+        Route::new(format!("stream://{}/{}/__area__", realm, area)),
+    );
+
+    let store = Arc::new(create_test_store());
+    let actor = AreaActor::new(
+        family,
+        realm.to_string(),
+        area.to_string(),
+        store,
+    );
+    let ctx = Context::new(addr, router);
+
+    (actor, ctx)
 }
 
 /// Helper builders used by stream E2E tests

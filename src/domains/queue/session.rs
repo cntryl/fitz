@@ -172,7 +172,6 @@ mod tests {
     use crate::auth::Permission;
     use crate::domains::queue::protocol::QueueKey;
     use std::sync::Arc;
-    use tempfile;
 
     fn make_ctx() -> Context<QueueActor> {
         let router = Router::new();
@@ -181,9 +180,8 @@ mod tests {
     }
 
     fn make_queue_actor() -> QueueActor {
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {

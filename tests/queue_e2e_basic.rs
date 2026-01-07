@@ -16,9 +16,8 @@ use fitz::runtime::routing::RouteFamily;
 #[test]
 fn should_persist_messages_to_storage() {
     // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
+        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     
@@ -57,9 +56,8 @@ fn should_persist_messages_to_storage() {
 #[test]
 fn should_recover_messages_after_restart() {
     // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
+        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     
@@ -102,9 +100,8 @@ fn should_recover_messages_after_restart() {
 #[ignore = "Slow performance test"]
 fn should_handle_high_volume_enqueue() {
     // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
+        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -147,9 +144,8 @@ fn should_handle_high_volume_enqueue() {
 #[ignore = "Slow performance test"]
 fn should_handle_concurrent_workers() {
     // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
+        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -194,62 +190,12 @@ fn should_handle_concurrent_workers() {
 }
 
 /// Test that expired messages are redelivered with incremented attempts
+/// NOTE: This test is disabled because MockClock is only available in cfg(test) module
+/// and not accessible from integration tests. The functionality is tested in unit tests.
 #[test]
-#[ignore] // Requires MockClock which is only available in cfg(test)
+#[ignore = "Requires MockClock from cfg(test) module"]
 fn should_increment_attempts_on_redelivery() {
-    // This test requires MockClock from the cfg(test) module
-    // which is not accessible from integration tests
-    // Keep as documentation of expected behavior
-    
-    /* Original test code preserved for reference:
-    let clock = MockClock::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
-            .expect("Failed to open Midge"),
-    );
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "queue".to_string(),
-        resource: "retry".to_string(),
-    };
-    let mut actor = QueueActor::with_clock(
-        RouteFamily::new(1),
-        queue_key,
-        store,
-        Box::new(clock.clone()),
-        None,
-    );
-    
-    let body = Bytes::from("flaky task");
-    actor.handle_enqueue(body.clone(), None);
-
-    // Act - Reserve, expire, reserve again
-    let first_reserve = actor.handle_reserve(30, Some(1));
-    let first_msg = match first_reserve {
-        QueueResponse::Reserved { messages } => messages[0].clone(),
-        _ => panic!("Expected Reserved response"),
-    };
-    
-    assert_eq!(first_msg.attempts, 1);
-    
-    // Advance time past expiration
-    clock.advance(Duration::from_secs(31));
-    actor.process_expired_timers();
-    
-    // Reserve again
-    let second_reserve = actor.handle_reserve(30, Some(1));
-    let second_msg = match second_reserve {
-        QueueResponse::Reserved { messages } => messages[0].clone(),
-        _ => panic!("Expected Reserved response"),
-    };
-
-    // Assert
-    assert_eq!(second_msg.id, first_msg.id);
-    assert_eq!(second_msg.attempts, 2); // Incremented
-    assert_eq!(second_msg.body, body);
-    */
+    // Tested in unit tests with MockClock
 }
 
 /// Test reserve latency (performance)
@@ -257,9 +203,8 @@ fn should_increment_attempts_on_redelivery() {
 #[ignore = "Slow performance test"]
 fn should_have_low_reserve_latency() {
     // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
+        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -299,9 +244,8 @@ fn should_have_low_reserve_latency() {
 #[ignore = "Slow performance test"]
 fn should_have_low_complete_latency() {
     // Arrange
-    let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(temp_dir.path().join("queue.db"))
+        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {

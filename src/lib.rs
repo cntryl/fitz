@@ -16,3 +16,7 @@ pub mod utils;
 // Test utilities for integration tests
 #[cfg_attr(not(test), doc(hidden))]
 pub mod testkit;
+
+// Benchmark utilities for performance testing
+#[cfg_attr(not(test), doc(hidden))]
+pub mod benchkit;

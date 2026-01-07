@@ -36,7 +36,7 @@ use std::sync::Arc;
 mod config;
 
 /// Create a StreamActor and its context for benchmarking
-fn setup_stream_actor(realm: &str, area: &str, resource: &str) -> (StreamActor, Context<StreamActor>) {
+fn create_bench_stream_actor(realm: &str, area: &str, resource: &str) -> (StreamActor, Context<StreamActor>) {
     let router = Arc::new(Router::new());
     let family = RouteFamily::new(1);
     let addr = RouteAddress::new(
@@ -53,7 +53,7 @@ fn setup_stream_actor(realm: &str, area: &str, resource: &str) -> (StreamActor, 
 }
 
 /// Precompute deterministic event payloads
-fn make_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
+fn create_bench_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
     (0..count)
         .map(|i| {
             let mut payload = vec![0u8; size];
@@ -71,10 +71,10 @@ fn make_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
 /// BENCH 1: Single event commit (BeginSession → Append(1) → CommitSession)
 /// Measures: worst-case latency per event (no batching amortization)
 fn bench_append_commit_single_event(c: &mut Criterion) {
-    let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-single");
+    let (mut actor, mut ctx) = create_bench_stream_actor("bench-realm", "bench-area", "bench-single");
     
     // Precompute payloads outside benchmark
-    let payloads = make_event_payloads(512, 256);
+    let payloads = create_bench_event_payloads(512, 256);
     let route = Route::new("stream://bench-realm/bench-area/bench-single/append".to_string());
     let family_id = RouteFamily::new(1);
 
@@ -137,9 +137,9 @@ fn bench_append_commit_batches(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for &batch_size in &batch_sizes {
-        let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", &format!("bench-batch-{}", batch_size));
+        let (mut actor, mut ctx) = create_bench_stream_actor("bench-realm", "bench-area", &format!("bench-batch-{}", batch_size));
         
-        let payloads = make_event_payloads(batch_size + 50, 256);
+        let payloads = create_bench_event_payloads(batch_size + 50, 256);
         let route = Route::new(format!("stream://bench-realm/bench-area/bench-batch-{}/append", batch_size));
         let family_id = RouteFamily::new(1);
         
@@ -198,13 +198,13 @@ fn bench_append_commit_batches(c: &mut Criterion) {
 /// BENCH 3: Sequential read from resource stream (cursor-based)
 /// Measures: read throughput from committed events (real store scan)
 fn bench_resource_read_sequential(c: &mut Criterion) {
-    let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-read");
+    let (mut actor, mut ctx) = create_bench_stream_actor("bench-realm", "bench-area", "bench-read");
     
     let route = Route::new("stream://bench-realm/bench-area/bench-read/append".to_string());
     let family_id = RouteFamily::new(1);
     
     // Pre-populate with committed events using proper session flow
-    let payloads = make_event_payloads(1000, 256);
+    let payloads = create_bench_event_payloads(1000, 256);
     let mut expected_offset = 0u64;
     
     // Commit 1000 events in batches of 100
@@ -272,13 +272,13 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
 /// BENCH 3b: Batched sequential read from resource stream
 /// Measures: batch read throughput (1000 events per call)
 fn bench_resource_read_batched(c: &mut Criterion) {
-    let (mut actor, mut ctx) = setup_stream_actor("bench-realm", "bench-area", "bench-read-batch");
+    let (mut actor, mut ctx) = create_bench_stream_actor("bench-realm", "bench-area", "bench-read-batch");
     
     let route = Route::new("stream://bench-realm/bench-area/bench-read-batch/append".to_string());
     let family_id = RouteFamily::new(1);
     
     // Pre-populate with committed events using proper session flow
-    let payloads = make_event_payloads(1000, 256);
+    let payloads = create_bench_event_payloads(1000, 256);
     let mut expected_offset = 0u64;
     
     // Commit 1000 events in batches of 100
@@ -358,7 +358,7 @@ fn bench_area_read_sequential(c: &mut Criterion) {
     let events_per_resource = 250;
     
     // Pre-populate multiple resources (area index will interleave)
-    let payloads = make_event_payloads(1000, 256);
+    let payloads = create_bench_event_payloads(1000, 256);
     
     for res_idx in 0..resource_count {
         let resource = format!("bench-resource-{}", res_idx);
@@ -455,7 +455,7 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
     let events_per_resource = 250;
     
     // Pre-populate multiple areas with multiple resources
-    let payloads = make_event_payloads(1000, 256);
+    let payloads = create_bench_event_payloads(1000, 256);
     
     for area_idx in 0..area_count {
         let area = format!("bench-area-{}", area_idx);

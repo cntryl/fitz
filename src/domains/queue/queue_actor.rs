@@ -716,9 +716,8 @@ pub mod tests {
     #[test]
     fn should_enqueue_and_reserve_message() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -761,9 +760,8 @@ pub mod tests {
     #[test]
     fn should_return_empty_when_reserving_empty_queue() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -789,9 +787,8 @@ pub mod tests {
     #[test]
     fn should_complete_message_with_valid_token() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -822,9 +819,8 @@ pub mod tests {
     #[test]
     fn should_reject_complete_with_invalid_token() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -856,9 +852,8 @@ pub mod tests {
     fn should_extend_lease_with_valid_token() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -893,9 +888,8 @@ pub mod tests {
     #[test]
     fn should_reject_extend_with_invalid_token() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -926,9 +920,8 @@ pub mod tests {
     fn should_redelivery_message_when_lease_expires() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -977,9 +970,8 @@ pub mod tests {
     #[test]
     fn should_reserve_multiple_messages_in_batch() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1014,9 +1006,8 @@ pub mod tests {
     fn should_ignore_stale_timer_after_extend() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1053,9 +1044,8 @@ pub mod tests {
     fn should_reject_operations_on_expired_lease() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1098,9 +1088,8 @@ pub mod tests {
     #[test]
     fn should_return_not_found_for_nonexistent_message() {
         // Arrange
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1125,9 +1114,8 @@ pub mod tests {
     fn should_delay_message_visibility() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1184,9 +1172,8 @@ pub mod tests {
     fn should_move_to_dlq_after_max_attempts() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1250,9 +1237,8 @@ pub mod tests {
     fn should_allow_unlimited_retries_when_max_attempts_is_none() {
         // Arrange
         let clock = MockClock::new();
-        let temp_dir = tempfile::tempdir().unwrap();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {

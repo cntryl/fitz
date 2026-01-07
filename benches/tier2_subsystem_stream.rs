@@ -33,7 +33,7 @@ use std::sync::Arc;
 mod config;
 
 /// Precompute deterministic event payloads
-fn make_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
+fn create_bench_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
     (0..count)
         .map(|i| {
             let mut payload = vec![0u8; size];
@@ -92,7 +92,7 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
     for &resource_count in &resource_counts {
         let (mut actors, mut contexts, _store) = setup_multi_stream_actors("bench", "bench", resource_count);
         
-        let payloads = make_event_payloads(1000, 256);
+        let payloads = create_bench_event_payloads(1000, 256);
         let batch_size = 10;
 
         let mut group = c.benchmark_group("tier2_stream_multi_resource");
@@ -164,7 +164,7 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
 fn bench_streaming_ingest_10k(c: &mut Criterion) {
     let (mut actors, mut contexts, _store) = setup_multi_stream_actors("bench", "bench", 2);
     
-    let payloads = make_event_payloads(10000, 256);
+    let payloads = create_bench_event_payloads(10000, 256);
     let chunk_size = 100; // Events per commit
 
     let mut group = c.benchmark_group("tier2_stream_ingest");
@@ -237,7 +237,7 @@ fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
     for &k in &k_values {
         let (mut actors, mut contexts, _store) = setup_multi_stream_actors("bench", "bench", k);
         
-        let payloads = make_event_payloads(1000, 256);
+        let payloads = create_bench_event_payloads(1000, 256);
         
         // Pre-populate each resource with 100 committed events
         for (res_idx, actor) in actors.iter_mut().enumerate() {

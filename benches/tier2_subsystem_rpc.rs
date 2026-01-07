@@ -1,27 +1,16 @@
-use bytes::Bytes;
+﻿use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
 use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
 use uuid::Uuid;
 use fitz::prelude::Actor;
+use fitz::benchkit::create_bench_rpc_context;
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
-use fitz::runtime::actor::Context;
-use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::sync::Arc;
 
 #[path = "config.rs"]
 mod config;
-
-fn make_ctx() -> Context<RpcRouteActor> {
-    let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("rpc://realm/service/operation"),
-    );
-    Context::new(addr, router)
-}
 
 /// Encode an RPC request into TLV format
 fn encode_rpc_request(correlation_id: &str, route: &str, body: &[u8]) -> Vec<u8> {
@@ -80,7 +69,7 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
 
             // Setup actor with workers
             let mut actor = RpcRouteActor::new(RouteFamily::new(1));
-            let mut ctx = make_ctx();
+            let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
             
             for i in 0..worker_count {
                 let worker_addr = RouteAddress::new(
@@ -159,7 +148,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
     for &size in &sizes {
         // Setup actor with worker and dispatched request
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
-        let mut ctx = make_ctx();
+        let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
         
         let worker_addr = RouteAddress::new(
             RouteFamily::new(1),
@@ -257,7 +246,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
         for &chunk_count in &chunk_counts {
             // Setup actor with worker
             let mut actor = RpcRouteActor::new(RouteFamily::new(1));
-            let mut ctx = make_ctx();
+            let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
             
             let worker_addr = RouteAddress::new(
                 RouteFamily::new(1),
@@ -372,7 +361,7 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
 
         // Setup actor with custom capacity (no workers = all requests queue)
         let mut actor = RpcRouteActor::with_capacity(RouteFamily::new(1), 1000);
-        let mut ctx = make_ctx();
+        let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
 
         let mut mux = Mux::new(request_count);
         let decoder = TlvDecoder::new();

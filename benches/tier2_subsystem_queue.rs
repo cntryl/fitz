@@ -1,10 +1,9 @@
-use criterion::{
+﻿use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
-use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
-use fitz::runtime::routing::RouteFamily;
+use fitz::domains::queue::QueueResponse;
+use fitz::benchkit::create_bench_queue_actor;
 use bytes::Bytes;
-use std::sync::Arc;
 
 #[path = "config.rs"]
 mod config;
@@ -19,20 +18,6 @@ mod config;
 // These benchmarks measure actor performance under sustained load.
 // ============================================================================
 
-/// Helper to create a QueueActor with temporary storage
-fn create_queue_actor(max_attempts: Option<u32>) -> QueueActor {
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: "bench".to_string(),
-        area: "stress".to_string(),
-        resource: "queue".to_string(),
-    };
-    
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(cntryl_midge::MidgeEngine::open(temp_dir.path().to_path_buf()).unwrap());
-    QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
-}
-
 fn bench_enqueue_reserve_complete_loop(c: &mut Criterion) {
     //! ENQUEUE + RESERVE + COMPLETE LOOP - Measure full queue cycle under stress
     //!
@@ -40,11 +25,11 @@ fn bench_enqueue_reserve_complete_loop(c: &mut Criterion) {
     //! Stress: Maximum message throughput through all operations
     //!
     //! Measures:
-    //! - Full cycle throughput (enqueue → reserve → complete)
+    //! - Full cycle throughput (enqueue â†’ reserve â†’ complete)
     //! - Actor performance under sustained load
     //! - Memory stability under churn
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
     let mut group = c.benchmark_group("subsystem_queue_churn");
@@ -89,7 +74,7 @@ fn bench_batch_reserve_stress(c: &mut Criterion) {
     //! - VecDeque bulk pop efficiency
     //! - HashMap bulk insert efficiency
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
     // Pre-fill queue with 10000 messages
@@ -131,7 +116,7 @@ fn bench_lease_churn_stress(c: &mut Criterion) {
     //! - Requeue performance under churn
     //! - Timer heap performance under load
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
     // Pre-fill queue
@@ -169,9 +154,9 @@ fn bench_delayed_message_stress(c: &mut Criterion) {
     //! Measures:
     //! - Delayed enqueue throughput
     //! - BinaryHeap performance under load
-    //! - Delayed → ready transition cost
+    //! - Delayed â†’ ready transition cost
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"delayed message");
 
     let mut group = c.benchmark_group("subsystem_queue_delayed");
@@ -198,7 +183,7 @@ fn bench_delayed_message_stress(c: &mut Criterion) {
 fn bench_dlq_threshold_stress(c: &mut Criterion) {
     //! DLQ THRESHOLD STRESS - Measure DLQ policy under load
     //!
-    //! Pattern: Reserve → expire repeatedly until DLQ threshold hit
+    //! Pattern: Reserve â†’ expire repeatedly until DLQ threshold hit
     //! Stress: Maximum redelivery attempt throughput
     //!
     //! Measures:
@@ -206,7 +191,7 @@ fn bench_dlq_threshold_stress(c: &mut Criterion) {
     //! - DLQ threshold detection cost
     //! - Midge delete cost on DLQ
 
-    let mut actor = create_queue_actor(Some(3)); // max_attempts=3
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", Some(3)); // max_attempts=3
     let payload = Bytes::from_static(b"test message");
 
     // Pre-fill queue
@@ -244,7 +229,7 @@ fn bench_high_volume_enqueue(c: &mut Criterion) {
     //! - VecDeque scaling under load
     //! - Memory growth characteristics
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"high volume message");
 
     let mut group = c.benchmark_group("subsystem_queue_high_volume");
@@ -281,7 +266,7 @@ fn bench_reserve_without_complete_abuse(c: &mut Criterion) {
     //! - Lease expiry doesn't degrade throughput
     //! - Timer heap remains efficient under churn
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"abandoned message");
 
     // Pre-fill queue
@@ -319,7 +304,7 @@ fn bench_invalid_token_abuse(c: &mut Criterion) {
     //! - No corruption from invalid completions
     //! - Inflight tracking remains accurate
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
     // Pre-fill and reserve to get valid message IDs
@@ -361,7 +346,7 @@ fn bench_extreme_batch_size_abuse(c: &mut Criterion) {
     //! - Performance degrades gracefully
     //! - Memory bounded even with pathological requests
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"batch message");
 
     // Pre-fill with 10000 messages
@@ -400,7 +385,7 @@ fn bench_zero_delay_abuse(c: &mut Criterion) {
     //! - Delayed queue handles degenerate cases
     //! - No infinite loops or hangs
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
     let payload = Bytes::from_static(b"zero delay message");
 
     let mut group = c.benchmark_group("abuse_zero_delay");
@@ -430,7 +415,7 @@ fn bench_empty_queue_polling_abuse(c: &mut Criterion) {
     //! - No CPU spin or allocation on empty
     //! - Stable performance under futile polling
 
-    let mut actor = create_queue_actor(None);
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
 
     let mut group = c.benchmark_group("abuse_empty_polling");
     group.sample_size(10);
@@ -458,7 +443,7 @@ fn bench_dlq_thrashing_abuse(c: &mut Criterion) {
     //! - No memory leaks from deleted messages
     //! - Stable under high failure rate
 
-    let mut actor = create_queue_actor(Some(2)); // max_attempts=2 (fast DLQ)
+    let mut actor = create_bench_queue_actor("bench", "stress", "queue", Some(2)); // max_attempts=2 (fast DLQ)
     let payload = Bytes::from_static(b"poison message");
 
     // Pre-fill queue
@@ -473,14 +458,14 @@ fn bench_dlq_thrashing_abuse(c: &mut Criterion) {
 
     group.bench_function("dlq_delete_cycle", |b| {
         b.iter(|| {
-            // Reserve with short lease (will expire twice → DLQ)
+            // Reserve with short lease (will expire twice â†’ DLQ)
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
             std::thread::sleep(std::time::Duration::from_millis(10));
             actor.process_expired_timers(); // First expiry (attempts=1)
             
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
             std::thread::sleep(std::time::Duration::from_millis(10));
-            actor.process_expired_timers(); // Second expiry → DLQ delete
+            actor.process_expired_timers(); // Second expiry â†’ DLQ delete
         })
     });
 
