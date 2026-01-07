@@ -1,1 +1,0 @@
-//! Midge storage engine adapter
