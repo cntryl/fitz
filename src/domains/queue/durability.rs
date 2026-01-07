@@ -186,6 +186,45 @@ impl QueueDurabilityPolicy {
             Self::Async => (1_000_000, 2_000_000),
         }
     }
+    
+    /// Convert policy to Midge write options
+    ///
+    /// Returns a tuple of (sync: bool, disable_wal: bool) that can be passed
+    /// to Midge's per-write API to override global durability settings.
+    ///
+    /// # Midge WriteOptions Mapping
+    ///
+    /// - **Strict**: `(sync=true, disable_wal=false)` → fsync on every write
+    /// - **Grouped**: `(sync=false, disable_wal=false)` → WAL without immediate fsync
+    /// - **Async**: `(sync=false, disable_wal=true)` → memory-only (no WAL)
+    ///
+    /// # Usage at Write Time
+    ///
+    /// ```ignore
+    /// let (sync, disable_wal) = self.durability.to_midge_options();
+    /// let mut opts = cntryl_midge::WriteOptions::default();
+    /// opts.set_sync(sync);
+    /// opts.set_disable_wal(disable_wal);
+    /// self.store.put_opt(cf, &key, &value, &opts)?;
+    /// ```
+    ///
+    /// # Domain Isolation
+    ///
+    /// Each queue actor translates its durability policy at write time,
+    /// allowing different queues to have different durability on the same
+    /// Midge instance without affecting KV, streams, or leases.
+    pub fn to_midge_options(&self) -> (bool, bool) {
+        match self {
+            // Strict: sync=true, wal=enabled
+            Self::Strict => (true, false),
+            // Grouped: sync=false (async), wal=enabled
+            // Note: Midge doesn't have interval-based fsync yet,
+            // so Grouped behaves like Async for now (TODO: add Midge group commit)
+            Self::Grouped { .. } => (false, false),
+            // Async: sync=false, wal=disabled (memory-only)
+            Self::Async => (false, true),
+        }
+    }
 }
 
 /// Midge write options for queue operations
@@ -278,5 +317,44 @@ mod tests {
         assert_eq!(grouped_1ms.throughput_range(), (400_000, 600_000));
         assert_eq!(grouped_5ms.throughput_range(), (600_000, 800_000));
         assert_eq!(async_policy.throughput_range(), (1_000_000, 2_000_000));
+    }
+    
+    #[test]
+    fn should_convert_strict_to_midge_options() {
+        // Arrange
+        let policy = QueueDurabilityPolicy::Strict;
+        
+        // Act
+        let (sync, disable_wal) = policy.to_midge_options();
+        
+        // Assert
+        assert_eq!(sync, true);         // fsync on every write
+        assert_eq!(disable_wal, false); // WAL enabled
+    }
+    
+    #[test]
+    fn should_convert_grouped_to_midge_options() {
+        // Arrange
+        let policy = QueueDurabilityPolicy::Grouped { interval_ms: 5 };
+        
+        // Act
+        let (sync, disable_wal) = policy.to_midge_options();
+        
+        // Assert
+        assert_eq!(sync, false);        // async writes
+        assert_eq!(disable_wal, false); // WAL enabled (group commit)
+    }
+    
+    #[test]
+    fn should_convert_async_to_midge_options() {
+        // Arrange
+        let policy = QueueDurabilityPolicy::Async;
+        
+        // Act
+        let (sync, disable_wal) = policy.to_midge_options();
+        
+        // Assert
+        assert_eq!(sync, false);       // async writes
+        assert_eq!(disable_wal, true); // WAL disabled (memory-only)
     }
 }
