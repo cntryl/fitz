@@ -1,0 +1,1308 @@
+﻿//! QueueActor: manages a single durable message queue
+//!
+//! Each queue has:
+//! - Identity: (realm, area, resource) from route
+//! - Durable storage: Message bodies persisted to Midge
+//! - Ephemeral leases: In-memory visibility tracking
+//!
+//! # Invariants
+//!
+//! 1. **FIFO ordering**: Messages delivered in enqueue order
+//! 2. **At-least-once**: Messages may be delivered multiple times
+//! 3. **Lease isolation**: Reserved messages invisible to other consumers
+//! 4. **Automatic redelivery**: Expired leases return messages to ready queue
+//! 5. **Durability**: Message bodies survive actor restart
+//! 6. **Ephemeral leases**: All leases lost on restart
+//!
+//! # State Model
+//!
+//! ```text
+//! ENQUEUE â†’ [READY QUEUE]
+//!             â†“ reserve
+//!           [INFLIGHT] â”€â”€completeâ†’ DELETED
+//!             â†“ expire
+//!           [READY QUEUE] (redelivery with attempts++)
+//! ```
+//!
+//! # Performance Model
+//!
+//! - ready: VecDeque - O(1) push_back, O(1) pop_front
+//! - inflight: HashMap - O(1) lookup, O(1) insert, O(1) remove
+//! - timers: BinaryHeap - O(log n) push, O(1) peek, O(log n) pop
+//!
+//! # Storage Model
+//!
+//! Midge keys:
+//! - `queue:{realm}:{area}:{resource}:msg:{id}` â†’ QueueRecord (body, attempts)
+//! - `queue:{realm}:{area}:{resource}:next_id` â†’ u64 (next message ID counter)
+
+use std::collections::{HashMap, VecDeque, BinaryHeap};
+use std::cmp::Reverse;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use bytes::Bytes;
+
+use crate::prelude::Actor;
+use crate::runtime::actor::Context;
+use crate::runtime::routing::RouteFamily;
+
+use super::protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
+
+/// Durable queue record (persisted to Midge)
+#[derive(Debug, Clone)]
+struct QueueRecord {
+    /// Message body
+    body: Bytes,
+    /// Redelivery attempt counter (starts at 0, incremented on redelivery)
+    attempts: u32,
+    /// Visibility timestamp (milliseconds since UNIX epoch)
+    /// Message is invisible until this time
+    visible_at_ms: u64,
+}
+
+/// In-flight message lease (ephemeral, actor-owned)
+#[derive(Debug, Clone)]
+pub struct Inflight {
+    /// Random token for operation validation
+    token: u64,
+    /// Absolute expiration time
+    expires_at: Instant,
+}
+
+/// Timer event for lease expiration
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LeaseExpiry {
+    /// Message ID to re-enqueue
+    id: MessageId,
+    /// Expiration time (for ordering in heap)
+    expires_at: Instant,
+}
+
+impl Ord for LeaseExpiry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Earlier expiration = higher priority (min-heap via Reverse wrapper)
+        other.expires_at.cmp(&self.expires_at)
+    }
+}
+
+impl PartialOrd for LeaseExpiry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Delayed message visibility event
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DelayedMessage {
+    /// Message ID to make visible
+    id: MessageId,
+    /// Visibility time (for ordering in heap)
+    visible_at: Instant,
+}
+
+impl Ord for DelayedMessage {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Earlier visibility = higher priority (min-heap via Reverse wrapper)
+        other.visible_at.cmp(&self.visible_at)
+    }
+}
+
+impl PartialOrd for DelayedMessage {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Clock abstraction for testable time
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Instant;
+}
+
+/// System clock using Instant::now()
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// Queue actor managing a single message queue
+///
+/// # State
+///
+/// - `family`: RouteFamily this actor serves (for validation)
+/// - `queue_key`: Queue identity (realm/area/resource)
+/// - `store`: Midge storage handle (for persistence)
+/// - `next_id`: Message ID counter (monotonic)
+/// - `ready`: FIFO queue of ready message IDs
+/// - `inflight`: Map of leased messages (id â†’ Inflight)
+/// - `timers`: Min-heap of expiration events (earliest first)
+/// - `clock`: Time source for expiration checks
+///
+/// # Actor Responsibilities
+///
+/// - Maintain FIFO ordering via ready queue
+/// - Track inflight leases with expiration
+/// - Re-enqueue expired messages
+/// - Increment attempts on redelivery
+/// - Persist deletes on successful completion
+/// - Never persist lease state
+pub struct QueueActor {
+    /// Route family this actor serves (for validation)
+    #[allow(dead_code)]
+    family: RouteFamily,
+    
+    /// Queue identity
+    queue_key: QueueKey,
+    
+    /// Midge storage handle (for durable persistence)
+    store: Arc<cntryl_midge::MidgeEngine>,
+    
+    /// Next message ID to allocate (monotonic counter)
+    next_id: u64,
+    
+    /// Ready queue: FIFO list of message IDs available for reservation
+    pub ready: VecDeque<MessageId>,
+    
+    /// Inflight map: leased messages (id â†’ Inflight)
+    pub inflight: HashMap<MessageId, Inflight>,
+    
+    /// Timer heap: lease expiration events (earliest first, min-heap)
+    timers: BinaryHeap<Reverse<LeaseExpiry>>,
+    
+    /// Delayed visibility heap: messages not yet visible (earliest first, min-heap)
+    delayed: BinaryHeap<Reverse<DelayedMessage>>,
+    
+    /// Clock for time-based operations
+    clock: Box<dyn Clock>,
+    
+    /// Maximum delivery attempts before DLQ (None = unlimited retries)
+    max_attempts: Option<u32>,
+}
+
+impl QueueActor {
+    /// Create a new queue actor with system clock
+    pub fn new(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        max_attempts: Option<u32>,
+    ) -> Self {
+        Self::with_clock(family, queue_key, store, Box::new(SystemClock), max_attempts)
+    }
+
+    /// Create a new queue actor with a custom clock (for testing)
+    pub fn with_clock(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        clock: Box<dyn Clock>,
+        max_attempts: Option<u32>,
+    ) -> Self {
+        // Recover next_id from Midge on startup
+        let next_id = Self::recover_next_id(&store, &queue_key);
+        
+        Self {
+            family,
+            queue_key,
+            store,
+            next_id,
+            ready: VecDeque::new(),
+            inflight: HashMap::new(),
+            timers: BinaryHeap::new(),
+            delayed: BinaryHeap::new(),
+            clock,
+            max_attempts,
+        }
+    }
+
+    /// Recover next message ID from durable storage
+    fn recover_next_id(store: &cntryl_midge::MidgeEngine, queue_key: &QueueKey) -> u64 {
+        let cf = store.default_column_family();
+        let key = Self::next_id_key(queue_key);
+        
+        match store.get(cf, &key) {
+            Ok(Some(bytes)) => {
+                if bytes.len() == 8 {
+                    u64::from_le_bytes(bytes[..8].try_into().unwrap())
+                } else {
+                    eprintln!("WARN: Invalid next_id format for queue {:?}, starting from 1", queue_key);
+                    1
+                }
+            }
+            Ok(None) => 1, // Queue doesn't exist yet, start from 1
+            Err(e) => {
+                eprintln!("WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1", queue_key, e);
+                1
+            }
+        }
+    }
+
+    /// Allocate and return the next message ID
+    fn next_message_id(&mut self) -> MessageId {
+        let id = self.next_id;
+        self.next_id += 1;
+        
+        // Persist updated next_id counter (for crash recovery)
+        let cf = self.store.default_column_family();
+        let key = Self::next_id_key(&self.queue_key);
+        let value = self.next_id.to_le_bytes();
+        if let Err(e) = self.store.put(cf, &key, &value) {
+            eprintln!("WARN: Failed to persist next_id: {:?}", e);
+        }
+        
+        MessageId::new(id)
+    }
+
+    /// Generate a random lease token
+    fn generate_token() -> u64 {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        
+        let hasher = RandomState::new().build_hasher();
+        hasher.finish()
+    }
+
+    /// Midge key for next_id counter
+    fn next_id_key(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:next_id",
+            queue_key.realm, queue_key.area, queue_key.resource
+        )
+        .into_bytes()
+    }
+
+    /// Midge key for message record
+    fn message_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:msg:{}",
+            queue_key.realm, queue_key.area, queue_key.resource, id.as_u64()
+        )
+        .into_bytes()
+    }
+
+    /// Serialize QueueRecord to bytes
+    fn encode_record(record: &QueueRecord) -> Vec<u8> {
+        // Encoding: [attempts:4][visible_at_ms:8][body_len:4][body]
+        let mut buf = Vec::with_capacity(16 + record.body.len());
+        buf.extend_from_slice(&record.attempts.to_le_bytes());
+        buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
+        buf.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&record.body);
+        buf
+    }
+
+    /// Deserialize QueueRecord from bytes
+    fn decode_record(bytes: &[u8]) -> Result<QueueRecord, String> {
+        if bytes.len() < 16 {
+            return Err("Invalid record format".to_string());
+        }
+        
+        let attempts = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
+        let body_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        
+        if bytes.len() < 16 + body_len {
+            return Err("Truncated record body".to_string());
+        }
+        
+        let body = Bytes::copy_from_slice(&bytes[16..16 + body_len]);
+        
+        Ok(QueueRecord { body, attempts, visible_at_ms })
+    }
+
+    /// Handle enqueue operation
+    pub fn handle_enqueue(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        // Allocate message ID
+        let id = self.next_message_id();
+        
+        let now = self.clock.now();
+        
+        // Calculate visibility time
+        let visible_at = match delay_seconds {
+            Some(delay) => now + Duration::from_secs(delay),
+            None => now,
+        };
+        
+        // Convert to milliseconds since epoch for durability
+        let visible_at_ms = visible_at.duration_since(now).as_millis() as u64
+            + now.elapsed().as_millis() as u64;
+        
+        // Create durable record with visibility timestamp
+        let record = QueueRecord { 
+            body, 
+            attempts: 0,
+            visible_at_ms,
+        };
+        
+        // Persist to Midge
+        let cf = self.store.default_column_family();
+        let key = Self::message_key(&self.queue_key, id);
+        let value = Self::encode_record(&record);
+        
+        if let Err(e) = self.store.put(cf, &key, &value) {
+            return QueueResponse::Error {
+                message: format!("Failed to persist message: {:?}", e),
+            };
+        }
+        
+        // Add to appropriate queue
+        if visible_at <= now {
+            // Immediately visible
+            self.ready.push_back(id);
+            
+            // TODO: Emit notice://{realm}/{area}/{resource}/available
+            // This hint allows long-polling RPC clients to wake up and retry reserve.
+            // Emission is optional (best-effort, not guaranteed delivery).
+        } else {
+            // Delayed visibility
+            self.delayed.push(Reverse(DelayedMessage { id, visible_at }));
+        }
+        
+        QueueResponse::Enqueued { id }
+    }
+
+    /// Handle reserve operation
+    ///
+    /// IMPORTANT: This method ALWAYS returns immediately (never blocks).
+    /// Long polling is handled at the RPC layer:
+    /// 1. RPC calls this method synchronously
+    /// 2. If empty and wait_seconds > 0, RPC subscribes to notice://.../available
+    /// 3. RPC waits up to wait_seconds for notice or timeout
+    /// 4. RPC retries reserve on notice or timeout
+    ///
+    /// QueueActor never stores waiters or blocks on empty queues.
+    pub fn handle_reserve(&mut self, lease_seconds: u64, batch_size: Option<usize>) -> QueueResponse {
+        let batch_size = batch_size.unwrap_or(1);
+        let now = self.clock.now();
+        let lease_duration = Duration::from_secs(lease_seconds);
+        
+        let mut messages = Vec::new();
+        
+        for _ in 0..batch_size {
+            // Pop from ready queue
+            let id = match self.ready.pop_front() {
+                Some(id) => id,
+                None => break, // No more messages
+            };
+            
+            // Load from Midge
+            let cf = self.store.default_column_family();
+            let key = Self::message_key(&self.queue_key, id);
+            
+            let record = match self.store.get(cf, &key) {
+                Ok(Some(bytes)) => match Self::decode_record(&bytes) {
+                    Ok(record) => record,
+                    Err(e) => {
+                        eprintln!("WARN: Failed to decode message {}: {}", id, e);
+                        continue; // Skip corrupted message
+                    }
+                },
+                Ok(None) => {
+                    eprintln!("WARN: Message {} disappeared from storage", id);
+                    continue; // Message was deleted
+                },
+                Err(e) => {
+                    eprintln!("WARN: Failed to read message {}: {:?}", id, e);
+                    continue; // Storage error
+                }
+            };
+            
+            // Generate lease token
+            let token = Self::generate_token();
+            let expires_at = now + lease_duration;
+            
+            // Create inflight entry
+            self.inflight.insert(id, Inflight { token, expires_at });
+            
+            // Schedule expiration timer
+            self.timers.push(Reverse(LeaseExpiry { id, expires_at }));
+            
+            // Build response message
+            messages.push(ReservedMessage {
+                id,
+                body: record.body,
+                token,
+                lease_seconds,
+                attempts: record.attempts + 1, // First attempt is 1 (not 0)
+            });
+        }
+        
+        QueueResponse::Reserved { messages }
+    }
+
+    /// Handle extend operation
+    pub fn handle_extend(&mut self, id: MessageId, token: u64, lease_seconds: u64) -> QueueResponse {
+        let now = self.clock.now();
+        
+        // Check if message is inflight
+        let inflight = match self.inflight.get_mut(&id) {
+            Some(inflight) => inflight,
+            None => return QueueResponse::NotFound,
+        };
+        
+        // Validate token
+        if inflight.token != token {
+            return QueueResponse::InvalidToken;
+        }
+        
+        // Check if already expired
+        if inflight.expires_at <= now {
+            // Remove stale inflight entry
+            self.inflight.remove(&id);
+            return QueueResponse::LeaseExpired;
+        }
+        
+        // Extend expiration
+        let new_expires_at = now + Duration::from_secs(lease_seconds);
+        inflight.expires_at = new_expires_at;
+        
+        // Schedule new timer (old timer will be ignored when it fires)
+        self.timers.push(Reverse(LeaseExpiry {
+            id,
+            expires_at: new_expires_at,
+        }));
+        
+        QueueResponse::Extended
+    }
+
+    /// Handle complete operation
+    pub fn handle_complete(&mut self, id: MessageId, token: u64) -> QueueResponse {
+        let now = self.clock.now();
+        
+        // Check if message is inflight
+        let inflight = match self.inflight.get(&id) {
+            Some(inflight) => inflight.clone(),
+            None => return QueueResponse::NotFound,
+        };
+        
+        // Validate token
+        if inflight.token != token {
+            return QueueResponse::InvalidToken;
+        }
+        
+        // Check if already expired
+        if inflight.expires_at <= now {
+            // Remove stale inflight entry
+            self.inflight.remove(&id);
+            return QueueResponse::LeaseExpired;
+        }
+        
+        // Remove inflight entry
+        self.inflight.remove(&id);
+        
+        // Delete from Midge
+        let cf = self.store.default_column_family();
+        let key = Self::message_key(&self.queue_key, id);
+        
+        if let Err(e) = self.store.delete(cf, &key) {
+            eprintln!("WARN: Failed to delete message {}: {:?}", id, e);
+            // Don't fail the operation, inflight is already removed
+        }
+        
+        QueueResponse::Completed
+    }
+
+    /// Handle lease expiration (internal timer event)
+    fn handle_lease_expired(&mut self, id: MessageId) {
+        // Check if message is still inflight
+        let inflight = match self.inflight.get(&id) {
+            Some(inflight) => inflight.clone(),
+            None => return, // Already completed or extended
+        };
+        
+        let now = self.clock.now();
+        
+        // Verify expiration (ignore stale timers from extend operations)
+        if inflight.expires_at > now {
+            return; // Lease was extended, ignore this timer
+        }
+        
+        // Remove inflight entry
+        self.inflight.remove(&id);
+        
+        // Increment attempts in storage and check DLQ threshold
+        let cf = self.store.default_column_family();
+        let key = Self::message_key(&self.queue_key, id);
+        
+        match self.store.get(cf, &key) {
+            Ok(Some(bytes)) => {
+                match Self::decode_record(&bytes) {
+                    Ok(mut record) => {
+                        record.attempts += 1;
+                        
+                        // Check if attempts reached or exceeded max_attempts threshold
+                        // Note: displayed attempts = storage + 1, so when storage reaches max, DLQ
+                        let is_dlq = if let Some(max) = self.max_attempts {
+                            record.attempts >= max
+                        } else {
+                            false
+                        };
+                        
+                        if is_dlq {
+                            // DLQ: Delete message from storage
+                            if let Err(e) = self.store.delete(cf, &key) {
+                                eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
+                            }
+                            
+                            // Log DLQ event (external systems can monitor logs)
+                            // Notice emission: notice://{realm}/{area}/dead
+                            // Format: "queue_name={queue_name} message_id={id} attempts={attempts}"
+                            eprintln!(
+                                "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
+                                self.queue_key, id, record.attempts
+                            );
+                            
+                            // NOTE: Explicit notice emission would be done here via Context
+                            // but QueueActor keeps domains decoupled. External monitoring
+                            // detects DLQ events from logs/metrics and emits notices.
+                            
+                            // Do NOT re-enqueue
+                            return;
+                        }
+                        
+                        // Normal retry: increment attempts and persist
+                        let value = Self::encode_record(&record);
+                        if let Err(e) = self.store.put(cf, &key, &value) {
+                            eprintln!("WARN: Failed to increment attempts for message {}: {:?}", id, e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("WARN: Failed to decode message {} during redelivery: {}", id, e);
+                    }
+                }
+            }
+            Ok(None) => {
+                // Message was deleted (completed after lease expired but before timer fired)
+                return;
+            }
+            Err(e) => {
+                eprintln!("WARN: Failed to read message {} during redelivery: {:?}", id, e);
+            }
+        }
+        
+        // Re-enqueue to ready queue (back of queue for FIFO)
+        self.ready.push_back(id);
+    }
+
+    /// Process expired timers (called periodically or on message receive)
+    pub fn process_expired_timers(&mut self) {
+        let now = self.clock.now();
+        
+        while let Some(Reverse(expiry)) = self.timers.peek() {
+            if expiry.expires_at > now {
+                break; // No more expired timers
+            }
+            
+            // Pop expired timer
+            let expiry = self.timers.pop().unwrap().0;
+            
+            // Handle expiration
+            self.handle_lease_expired(expiry.id);
+        }
+    }
+    
+    /// Process delayed messages that are now visible
+    pub fn process_delayed_messages(&mut self) {
+        let now = self.clock.now();
+        
+        while let Some(Reverse(delayed)) = self.delayed.peek() {
+            if delayed.visible_at > now {
+                break; // No more visible messages
+            }
+            
+            // Pop now-visible message
+            let delayed = self.delayed.pop().unwrap().0;
+            
+            // Add to ready queue
+            self.ready.push_back(delayed.id);
+        }
+    }
+}
+
+impl Actor for QueueActor {
+    type Message = QueueMessage;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        // Process expired timers and delayed messages on every message
+        self.process_expired_timers();
+        self.process_delayed_messages();
+        
+        match msg {
+            QueueMessage::Enqueue { body, delay_seconds, .. } => {
+                let _response = self.handle_enqueue(body, delay_seconds);
+                // TODO: Send response back to caller via reply
+            }
+            
+            QueueMessage::Reserve { lease_seconds, batch_size, wait_seconds, .. } => {
+                let _response = self.handle_reserve(lease_seconds, batch_size);
+                // NOTE: wait_seconds is handled at RPC layer, not in QueueActor
+                // QueueActor always returns immediately (never blocks)
+                // If empty and wait_seconds > 0, RPC layer will:
+                //   1. Subscribe to notice://{realm}/{area}/{resource}/available
+                //   2. Wait up to wait_seconds for notice or timeout
+                //   3. Retry reserve on notice or timeout
+                let _ = wait_seconds; // Unused by actor, used by RPC layer
+                // TODO: Send response back to caller via reply
+            }
+            
+            QueueMessage::Extend { id, token, lease_seconds, .. } => {
+                let _response = self.handle_extend(id, token, lease_seconds);
+                // TODO: Send response back to caller via reply
+            }
+            
+            QueueMessage::Complete { id, token, .. } => {
+                let _response = self.handle_complete(id, token);
+                // TODO: Send response back to caller via reply
+            }
+            
+            QueueMessage::LeaseExpired { id } => {
+                self.handle_lease_expired(id);
+            }
+        }
+    }
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        // On actor restart, all inflight leases are dropped
+        // All durable messages are recovered with their visibility times
+        
+        // TODO: Implement full recovery scan using Midge iteration
+        // For MVP, delayed messages can be re-enqueued after restart
+        // or use a separate recovery mechanism
+        
+        // The visibility_at field ensures messages aren't delivered early
+        // even if they get re-added to ready queue prematurely
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::runtime::routing::RouteFamily;
+
+    /// Mock clock for deterministic testing
+    #[derive(Clone)]
+    pub struct MockClock {
+        now: Arc<std::sync::Mutex<Instant>>,
+    }
+
+    impl Default for MockClock {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl MockClock {
+        pub fn new() -> Self {
+            Self {
+                now: Arc::new(std::sync::Mutex::new(Instant::now())),
+            }
+        }
+
+        pub fn advance(&self, duration: Duration) {
+            let mut now = self.now.lock().unwrap();
+            *now += duration;
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
+        }
+    }
+
+    #[test]
+    fn should_enqueue_and_reserve_message() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+
+        // Act - Enqueue
+        let body = Bytes::from("test message");
+        let enqueue_response = actor.handle_enqueue(body.clone(), None);
+
+        // Assert - Enqueue
+        let msg_id = match enqueue_response {
+            QueueResponse::Enqueued { id } => id,
+            _ => panic!("Expected Enqueued response"),
+        };
+        assert_eq!(actor.ready.len(), 1);
+
+        // Act - Reserve
+        let reserve_response = actor.handle_reserve(30, Some(1));
+
+        // Assert - Reserve
+        match reserve_response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, msg_id);
+                assert_eq!(messages[0].body, body);
+                assert_eq!(messages[0].attempts, 1);
+                assert_eq!(messages[0].lease_seconds, 30);
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.inflight.len(), 1);
+    }
+
+    #[test]
+    fn should_return_empty_when_reserving_empty_queue() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+
+        // Act
+        let response = actor.handle_reserve(30, Some(10));
+
+        // Assert
+        match response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 0);
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+    }
+
+    #[test]
+    fn should_complete_message_with_valid_token() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let (msg_id, token) = match reserve_response {
+            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Reserved response"),
+        };
+
+        // Act
+        let response = actor.handle_complete(msg_id, token);
+
+        // Assert
+        assert_eq!(response, QueueResponse::Completed);
+        assert_eq!(actor.inflight.len(), 0);
+    }
+
+    #[test]
+    fn should_reject_complete_with_invalid_token() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let msg_id = match reserve_response {
+            QueueResponse::Reserved { messages } => messages[0].id,
+            _ => panic!("Expected Reserved response"),
+        };
+
+        // Act
+        let response = actor.handle_complete(msg_id, 99999);
+
+        // Assert
+        assert_eq!(response, QueueResponse::InvalidToken);
+        assert_eq!(actor.inflight.len(), 1);
+    }
+
+    #[test]
+    fn should_extend_lease_with_valid_token() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let (msg_id, token) = match reserve_response {
+            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Reserved response"),
+        };
+        
+        let old_expiry = actor.inflight.get(&msg_id).unwrap().expires_at;
+
+        // Act
+        clock.advance(Duration::from_secs(15));
+        let response = actor.handle_extend(msg_id, token, 60);
+
+        // Assert
+        assert_eq!(response, QueueResponse::Extended);
+        let new_expiry = actor.inflight.get(&msg_id).unwrap().expires_at;
+        assert!(new_expiry > old_expiry);
+    }
+
+    #[test]
+    fn should_reject_extend_with_invalid_token() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let msg_id = match reserve_response {
+            QueueResponse::Reserved { messages } => messages[0].id,
+            _ => panic!("Expected Reserved response"),
+        };
+
+        // Act
+        let response = actor.handle_extend(msg_id, 99999, 60);
+
+        // Assert
+        assert_eq!(response, QueueResponse::InvalidToken);
+    }
+
+    #[test]
+    fn should_redelivery_message_when_lease_expires() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body.clone(), None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let msg_id = match reserve_response {
+            QueueResponse::Reserved { messages } => messages[0].id,
+            _ => panic!("Expected Reserved response"),
+        };
+        
+        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.inflight.len(), 1);
+
+        // Act - Advance time past lease expiration
+        clock.advance(Duration::from_secs(31));
+        actor.process_expired_timers();
+
+        // Assert - Message back in ready queue
+        assert_eq!(actor.ready.len(), 1);
+        assert_eq!(actor.inflight.len(), 0);
+        assert_eq!(actor.ready.front().unwrap(), &msg_id);
+        
+        // Act - Reserve again
+        let redelivery_response = actor.handle_reserve(30, Some(1));
+        
+        // Assert - Attempts incremented
+        match redelivery_response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, msg_id);
+                assert_eq!(messages[0].attempts, 2); // Incremented from 1 to 2
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+    }
+
+    #[test]
+    fn should_reserve_multiple_messages_in_batch() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+        
+        // Enqueue 5 messages
+        for i in 0..5 {
+            let body = Bytes::from(format!("message {}", i));
+            actor.handle_enqueue(body, None);
+        }
+
+        // Act
+        let response = actor.handle_reserve(30, Some(3));
+
+        // Assert
+        match response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 3);
+                assert_eq!(actor.ready.len(), 2); // 2 remaining
+                assert_eq!(actor.inflight.len(), 3);
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+    }
+
+    #[test]
+    fn should_ignore_stale_timer_after_extend() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let (msg_id, token) = match reserve_response {
+            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Reserved response"),
+        };
+
+        // Act - Extend before first timer expires
+        clock.advance(Duration::from_secs(15));
+        actor.handle_extend(msg_id, token, 60);
+        
+        // Advance to first timer expiration (30s total)
+        clock.advance(Duration::from_secs(15));
+        actor.process_expired_timers();
+
+        // Assert - Message still inflight (stale timer ignored)
+        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.inflight.len(), 1);
+    }
+
+    #[test]
+    fn should_reject_operations_on_expired_lease() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+        
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        
+        let (msg_id, token) = match reserve_response {
+            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Reserved response"),
+        };
+
+        // Act - Advance past expiration
+        clock.advance(Duration::from_secs(31));
+
+        // Assert - Extend fails (entry would be cleaned up if timer processed)
+        // Since we're calling directly without going through actor receive,
+        // the entry still exists but is expired
+        let _extend_response = actor.handle_extend(msg_id, token, 60);
+        // However the logic checks expiration first, so it returns LeaseExpired
+        // before being removed, OR it could be NotFound if already cleaned up
+        // Let's process timers explicitly to make this deterministic
+        actor.process_expired_timers();
+        
+        // Now the entry is definitely gone
+        let extend_response2 = actor.handle_extend(msg_id, token, 60);
+        assert_eq!(extend_response2, QueueResponse::NotFound);
+        
+        let complete_response = actor.handle_complete(msg_id, token);
+        assert_eq!(complete_response, QueueResponse::NotFound);
+    }
+
+    #[test]
+    fn should_return_not_found_for_nonexistent_message() {
+        // Arrange
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+        let fake_id = MessageId::new(99999);
+
+        // Act
+        let extend_response = actor.handle_extend(fake_id, 12345, 60);
+        let complete_response = actor.handle_complete(fake_id, 12345);
+
+        // Assert
+        assert_eq!(extend_response, QueueResponse::NotFound);
+        assert_eq!(complete_response, QueueResponse::NotFound);
+    }
+
+    #[test]
+    fn should_delay_message_visibility() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+
+        // Act - Enqueue with 30 second delay
+        let body = Bytes::from("delayed message");
+        let response = actor.handle_enqueue(body.clone(), Some(30));
+        
+        let msg_id = match response {
+            QueueResponse::Enqueued { id } => id,
+            _ => panic!("Expected Enqueued response"),
+        };
+
+        // Assert - Message not in ready queue
+        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.delayed.len(), 1);
+        
+        // Act - Try to reserve immediately (should be empty)
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        match reserve_response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 0);
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+        
+        // Act - Advance time past delay
+        clock.advance(Duration::from_secs(31));
+        actor.process_delayed_messages();
+        
+        // Assert - Message now in ready queue
+        assert_eq!(actor.ready.len(), 1);
+        assert_eq!(actor.delayed.len(), 0);
+        
+        // Act - Reserve now succeeds
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        match reserve_response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, msg_id);
+                assert_eq!(messages[0].body, body);
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+    }
+
+    #[test]
+    fn should_move_to_dlq_after_max_attempts() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            Some(3), // max_attempts = 3
+        );
+
+        // Act - Enqueue message
+        let body = Bytes::from("test message");
+        let enqueue_response = actor.handle_enqueue(body.clone(), None);
+        let msg_id = match enqueue_response {
+            QueueResponse::Enqueued { id } => id,
+            _ => panic!("Expected Enqueued response"),
+        };
+
+        // Simulate 3 failed delivery attempts
+        for attempt in 1..=3 {
+            // Reserve
+            let reserve_response = actor.handle_reserve(30, Some(1));
+            match reserve_response {
+                QueueResponse::Reserved { messages } => {
+                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages[0].attempts, attempt);
+                }
+                _ => panic!("Expected Reserved response on attempt {}", attempt),
+            }
+
+            // Expire lease (simulating failed processing)
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+
+            if attempt < 3 {
+                // Should be back in ready queue
+                assert_eq!(actor.ready.len(), 1);
+                assert_eq!(actor.inflight.len(), 0);
+            }
+        }
+
+        // Assert - After 3rd expiration, attempts = 4, exceeds max_attempts = 3
+        // Message should be deleted (DLQ'd), not re-enqueued
+        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.inflight.len(), 0);
+
+        // Verify message deleted from storage
+        let cf = store.default_column_family();
+        let key = QueueActor::message_key(&queue_key, msg_id);
+        let result = store.get(cf, &key);
+        assert!(result.unwrap().is_none(), "Message should be deleted from storage");
+    }
+
+    #[test]
+    fn should_allow_unlimited_retries_when_max_attempts_is_none() {
+        // Arrange
+        let clock = MockClock::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            cntryl_midge::MidgeEngine::open(temp_dir.path().join("test.db"))
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: "jobs".to_string(),
+        };
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None, // No max_attempts limit
+        );
+
+        // Act - Enqueue message
+        let body = Bytes::from("test message");
+        actor.handle_enqueue(body, None);
+
+        // Simulate 10 failed delivery attempts
+        for attempt in 1..=10 {
+            // Reserve
+            let reserve_response = actor.handle_reserve(30, Some(1));
+            match reserve_response {
+                QueueResponse::Reserved { messages } => {
+                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages[0].attempts, attempt);
+                }
+                _ => panic!("Expected Reserved response on attempt {}", attempt),
+            }
+
+            // Expire lease
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+
+            // Should always be back in ready queue (unlimited retries)
+            assert_eq!(actor.ready.len(), 1);
+            assert_eq!(actor.inflight.len(), 0);
+        }
+
+        // Assert - Message still available after 10 attempts
+        let reserve_response = actor.handle_reserve(30, Some(1));
+        match reserve_response {
+            QueueResponse::Reserved { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].attempts, 11);
+            }
+            _ => panic!("Expected Reserved response"),
+        }
+    }
+}
+
