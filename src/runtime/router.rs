@@ -299,6 +299,7 @@ impl Router {
     /// - High-priority lane has the SAME capacity as normal lane (no extra buffer)
     /// - Caller must handle HighLaneFull as a critical error (control plane saturated)
     /// - Scheduler guarantees high-priority messages process first (capped at 4/tick)
+    #[allow(dead_code)]
     pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
 

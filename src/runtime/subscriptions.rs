@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn should_match_exact_pattern() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         let pattern = route("notify://realm/orders/create");
 
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn should_not_match_different_route() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/create"), sub_id(1));
 
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn should_match_single_star_wildcard() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/*"), sub_id(1));
 
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn should_not_cross_star_boundary() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/*"), sub_id(1));
 
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn should_match_double_star_zero_segments() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/**"), sub_id(1));
 
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn should_match_double_star_multiple_segments() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/**"), sub_id(1));
 
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn should_match_double_star_with_suffix() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/**/created"), sub_id(1));
 
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn should_not_cross_realm_with_double_star() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://acme/**"), sub_id(1));
 
@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn should_isolate_by_route_family() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f1 = family(1);
         let f2 = family(2);
         index.insert(f1, &route("notify://realm/orders/*"), sub_id(1));
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn should_isolate_families_independently() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f1 = family(1);
         let f2 = family(2);
         index.insert(f1, &route("notify://realm/orders/*"), sub_id(1));
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn should_handle_multiple_subscribers_to_same_pattern() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         let pattern = route("notify://realm/orders/*");
         index.insert(f, &pattern, sub_id(1));
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn should_remove_subscription() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         let pattern = route("notify://realm/orders/*");
         index.insert(f, &pattern, sub_id(1));
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn should_handle_mixed_patterns() {
         // Arrange
-        let mut index = SubscriptionIndex::new();
+        let index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/create"), sub_id(1));
         index.insert(f, &route("notify://realm/orders/*"), sub_id(2));

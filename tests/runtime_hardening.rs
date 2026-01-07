@@ -18,6 +18,7 @@ fn test_address(family: u64, route: &str) -> RouteAddress {
 // INVARIANT 1: Self-send under full mailbox returns MailboxFull
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum SelfSendMsg {
     FillMailbox,
@@ -298,6 +299,7 @@ fn should_cancel_timers_automatically_on_stop() {
 // INVARIANT 5: Type mismatch records metric and calls on_error
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum TypeMismatchMsg {
     ValidMessage,

@@ -28,6 +28,7 @@ impl OrderTrackingActor {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum TestMessage {
     High(String),

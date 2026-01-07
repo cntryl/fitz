@@ -6,7 +6,7 @@ use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 mod config;
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
-    let mut index = SubscriptionIndex::new();
+    let index = SubscriptionIndex::new();
     let family = RouteFamily::new(1);
 
     for i in 0..pattern_count {
@@ -25,7 +25,7 @@ fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
 
 /// Build index with fanout shape: many subscriptions, few matches
 fn make_index_fanout_sparse(sub_count: usize) -> (SubscriptionIndex, Route, RouteFamily) {
-    let mut index = SubscriptionIndex::new();
+    let index = SubscriptionIndex::new();
     let family = RouteFamily::new(1);
 
     // Insert many non-overlapping patterns
@@ -41,7 +41,7 @@ fn make_index_fanout_sparse(sub_count: usize) -> (SubscriptionIndex, Route, Rout
 
 /// Build index with fanout shape: many subscriptions, many matches
 fn make_index_fanout_dense(sub_count: usize) -> (SubscriptionIndex, Route, RouteFamily) {
-    let mut index = SubscriptionIndex::new();
+    let index = SubscriptionIndex::new();
     let family = RouteFamily::new(1);
 
     // Insert patterns that all match the same route via **
@@ -59,7 +59,7 @@ fn make_index_with_depth(
     depth: usize,
     sub_count: usize,
 ) -> (SubscriptionIndex, Route, RouteFamily) {
-    let mut index = SubscriptionIndex::new();
+    let index = SubscriptionIndex::new();
     let family = RouteFamily::new(1);
 
     // Create patterns with controlled depth
@@ -92,7 +92,7 @@ fn bench_insert_single_pattern(c: &mut Criterion) {
     group.bench_function("exact_pattern", |b| {
         b.iter_batched(
             SubscriptionIndex::new,
-            |mut index| {
+            |index| {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
@@ -109,7 +109,7 @@ fn bench_insert_with_single_star(c: &mut Criterion) {
     group.bench_function("single_star_pattern", |b| {
         b.iter_batched(
             SubscriptionIndex::new,
-            |mut index| {
+            |index| {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
@@ -126,7 +126,7 @@ fn bench_insert_with_double_star(c: &mut Criterion) {
     group.bench_function("double_star_pattern", |b| {
         b.iter_batched(
             SubscriptionIndex::new,
-            |mut index| {
+            |index| {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
@@ -238,11 +238,11 @@ fn bench_remove_subscription(c: &mut Criterion) {
     group.bench_function("remove_from_index", |b| {
         b.iter_batched(
             || {
-                let mut index = SubscriptionIndex::new();
+                let index = SubscriptionIndex::new();
                 index.insert(family, &pattern, SubscriptionId(1));
                 index
             },
-            |mut index| {
+            |index| {
                 index.remove(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
@@ -263,7 +263,7 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
     group.bench_function("insert_100_match_2", |b| {
         b.iter_batched(
             SubscriptionIndex::new,
-            |mut index| {
+            |index| {
                 // Insert various patterns
                 for i in 0..100 {
                     let pattern = match i % 4 {
