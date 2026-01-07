@@ -6,6 +6,7 @@
 //! - **Automatic redelivery**: Expired leases return messages to ready queue
 //! - **At-least-once delivery**: Messages may be delivered multiple times
 //! - **FIFO ordering**: Messages delivered in enqueue order
+//! - **Producer batching**: Client-side batching for multi-million msg/sec throughput
 //!
 //! # Key Features
 //!
@@ -113,6 +114,8 @@
 pub mod protocol;
 pub mod queue_actor;
 pub mod session;
+pub mod producer;
 
 pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 pub use queue_actor::{Clock, QueueActor, SystemClock};
+pub use producer::QueueProducer;
