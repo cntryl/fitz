@@ -55,6 +55,7 @@ impl SessionActor {
     }
 
     /// Attempt to reserve messages. Returns Err if authorization fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn reserve(
         &self,
         family: RouteFamily,
@@ -82,6 +83,7 @@ impl SessionActor {
     }
 
     /// Attempt to extend a message lease. Returns Err if authorization fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn extend(
         &self,
         family: RouteFamily,
