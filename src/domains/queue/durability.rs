@@ -190,27 +190,39 @@ impl QueueDurabilityPolicy {
     /// Convert policy to Midge write options
     ///
     /// Returns a tuple of (sync: bool, disable_wal: bool) that can be passed
-    /// to Midge's per-write API to override global durability settings.
+    /// to Midge's transaction commit API to override global durability settings.
     ///
     /// # Midge WriteOptions Mapping
     ///
-    /// - **Strict**: `(sync=true, disable_wal=false)` → fsync on every write
+    /// - **Strict**: `(sync=true, disable_wal=false)` → fsync on every commit
     /// - **Grouped**: `(sync=false, disable_wal=false)` → WAL without immediate fsync
     /// - **Async**: `(sync=false, disable_wal=true)` → memory-only (no WAL)
     ///
-    /// # Usage at Write Time
+    /// # Usage with Midge Transaction API
     ///
     /// ```ignore
+    /// // Begin transaction
+    /// let cf = self.store.default_column_family();
+    /// let mut txn = self.store.begin_transaction(cf)?;
+    ///
+    /// // Add writes to transaction
+    /// for (id, record) in batch {
+    ///     let key = Self::message_key(&self.queue_key, id);
+    ///     let value = Self::encode_record(&record);
+    ///     txn.put(&key, &value)?;
+    /// }
+    ///
+    /// // Commit with durability policy
     /// let (sync, disable_wal) = self.durability.to_midge_options();
     /// let mut opts = cntryl_midge::WriteOptions::default();
     /// opts.set_sync(sync);
     /// opts.set_disable_wal(disable_wal);
-    /// self.store.put_opt(cf, &key, &value, &opts)?;
+    /// self.store.commit_transaction_boxed(txn, &opts)?;
     /// ```
     ///
     /// # Domain Isolation
     ///
-    /// Each queue actor translates its durability policy at write time,
+    /// Each queue actor translates its durability policy at commit time,
     /// allowing different queues to have different durability on the same
     /// Midge instance without affecting KV, streams, or leases.
     pub fn to_midge_options(&self) -> (bool, bool) {

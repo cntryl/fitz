@@ -57,34 +57,44 @@ fn main() {
     println!("   - Leases: Always Strict (unaffected by queue policies)\n");
     
     // Per-write override pattern (pseudocode until Midge API available)
-    println!("4. Per-write override pattern:\n");
+    println!("4. Transaction-based durability pattern:\n");
     println!("   ```rust");
     println!("   // Payments queue (Strict policy)");
+    println!("   let cf = store.default_column_family();");
+    println!("   let mut txn = store.begin_transaction(cf)?;");
+    println!("   txn.put(&key, &value)?;");
+    println!();
     println!("   let (sync, disable_wal) = payments_policy.to_midge_options();");
     println!("   let mut opts = WriteOptions::default();");
     println!("   opts.set_sync(sync);           // true");
     println!("   opts.set_disable_wal(disable_wal); // false");
-    println!("   store.put_opt(cf, &key, &value, &opts)?; // Durable write");
+    println!("   store.commit_transaction_boxed(txn, &opts)?; // Durable commit");
     println!();
     println!("   // Analytics queue (Async policy)");
+    println!("   let mut txn = store.begin_transaction(cf)?;");
+    println!("   txn.put(&key, &value)?;");
+    println!();
     println!("   let (sync, disable_wal) = analytics_policy.to_midge_options();");
     println!("   let mut opts = WriteOptions::default();");
     println!("   opts.set_sync(sync);           // false");
     println!("   opts.set_disable_wal(disable_wal); // true");
-    println!("   store.put_opt(cf, &key, &value, &opts)?; // Fast write");
+    println!("   store.commit_transaction_boxed(txn, &opts)?; // Fast commit");
     println!();
     println!("   // KV domain (always Strict, different key prefix)");
+    println!("   let mut txn = store.begin_transaction(cf)?;");
+    println!("   txn.put(&kv_key, &value)?;");
+    println!();
     println!("   let mut opts = WriteOptions::default();");
     println!("   opts.set_sync(true);           // Always true");
     println!("   opts.set_disable_wal(false);   // Always false");
-    println!("   store.put_opt(cf, &kv_key, &value, &opts)?; // Unaffected!");
+    println!("   store.commit_transaction_boxed(txn, &opts)?; // Unaffected!");
     println!("   ```\n");
     
     println!("5. Isolation guarantees:");
     println!("   ✓ Single shared Midge instance (efficient)");
-    println!("   ✓ Per-write durability control (flexible)");
+    println!("   ✓ Per-transaction durability control (flexible)");
     println!("   ✓ No global config changes (safe)");
-    println!("   ✓ Domain isolation via key prefixes + write options");
+    println!("   ✓ Domain isolation via key prefixes + commit options");
     println!("   ✓ Queue 'Async' policy won't affect KV/streams\n");
     
     println!("=== Example Complete ===");

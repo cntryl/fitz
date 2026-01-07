@@ -303,12 +303,17 @@ impl QueueActor {
         self.next_id += 1;
         
         // Persist updated next_id counter (for crash recovery)
-        // Note: Currently uses raw put() - TODO when Midge adds WriteOptions API:
+        // TODO: Use transaction API with durability options:
+        // let cf = self.store.default_column_family();
+        // let mut txn = self.store.begin_transaction(cf).unwrap();
+        // let key = Self::next_id_key(&self.queue_key);
+        // let value = self.next_id.to_le_bytes();
+        // txn.put(&key, &value).unwrap();
         // let (sync, disable_wal) = self.durability.to_midge_options();
         // let mut opts = WriteOptions::default();
         // opts.set_sync(sync);
         // opts.set_disable_wal(disable_wal);
-        // self.store.put_opt(cf, &key, &value, &opts)?;
+        // self.store.commit_transaction_boxed(txn, &opts).unwrap();
         let cf = self.store.default_column_family();
         let key = Self::next_id_key(&self.queue_key);
         let value = self.next_id.to_le_bytes();
@@ -436,24 +441,39 @@ impl QueueActor {
             batch.push((id, record, visible_at));
         }
         
-        // Perform ONE Midge write batch for all messages
+        // Perform ONE Midge transaction for all messages
         let cf = self.store.default_column_family();
         
-        // TODO: Use Midge's write_batch API with per-write durability options
-        // For now, write sequentially. When Midge adds WriteOptions:
+        // TODO: Use Midge's transaction API with commit_transaction_boxed:
         //
+        // let mut txn = match self.store.begin_transaction(cf) {
+        //     Ok(t) => t,
+        //     Err(e) => return QueueResponse::Error {
+        //         message: format!("Failed to begin transaction: {:?}", e),
+        //     },
+        // };
+        //
+        // // Add all messages to transaction
+        // for (id, record, _) in &batch {
+        //     let key = Self::message_key(&self.queue_key, *id);
+        //     let value = Self::encode_record(record);
+        //     if let Err(e) = txn.put(&key, &value) {
+        //         return QueueResponse::Error {
+        //             message: format!("Failed to add to transaction: {:?}", e),
+        //         };
+        //     }
+        // }
+        //
+        // // Commit with durability policy options
         // let (sync, disable_wal) = self.durability.to_midge_options();
         // let mut opts = WriteOptions::default();
         // opts.set_sync(sync);
         // opts.set_disable_wal(disable_wal);
-        //
-        // let mut write_batch = WriteBatch::default();
-        // for (id, record, _) in &batch {
-        //     let key = Self::message_key(&self.queue_key, *id);
-        //     let value = Self::encode_record(record);
-        //     write_batch.put(cf, &key, &value);
+        // if let Err(e) = self.store.commit_transaction_boxed(txn, &opts) {
+        //     return QueueResponse::Error {
+        //         message: format!("Failed to commit transaction: {:?}", e),
+        //     };
         // }
-        // self.store.write_opt(write_batch, &opts)?; // Per-write durability!
         //
         // This enables:
         // - Strict: sync=true → fsync per commit (100-150K msg/sec)
@@ -628,13 +648,17 @@ impl QueueActor {
         // Remove inflight entry
         self.inflight.remove(&id);
         
-        // Delete from Midge with durability options
-        // TODO: When Midge adds delete_opt() with WriteOptions:
+        // Delete from Midge with durability options (via transaction API)
+        // TODO: Use transaction API for deletes:
+        // let cf = self.store.default_column_family();
+        // let mut txn = self.store.begin_transaction(cf).unwrap();
+        // let key = Self::message_key(&self.queue_key, id);
+        // txn.delete(&key).unwrap();
         // let (sync, disable_wal) = self.durability.to_midge_options();
         // let mut opts = WriteOptions::default();
         // opts.set_sync(sync);
         // opts.set_disable_wal(disable_wal);
-        // self.store.delete_opt(cf, &key, &opts)?;
+        // self.store.commit_transaction_boxed(txn, &opts).ok();
         let cf = self.store.default_column_family();
         let key = Self::message_key(&self.queue_key, id);
         
@@ -684,7 +708,7 @@ impl QueueActor {
                         
                         if is_dlq {
                             // DLQ: Delete message from storage
-                            // TODO: Use delete_opt() with durability options when available
+                            // TODO: Use transaction API with durability options
                             if let Err(e) = self.store.delete(cf, &key) {
                                 eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
                             }
@@ -706,7 +730,7 @@ impl QueueActor {
                         }
                         
                         // Normal retry: increment attempts and persist
-                        // TODO: Use put_opt() with durability options when available
+                        // TODO: Use transaction API with durability options
                         let value = Self::encode_record(&record);
                         if let Err(e) = self.store.put(cf, &key, &value) {
                             eprintln!("WARN: Failed to increment attempts for message {}: {:?}", id, e);
