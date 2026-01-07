@@ -13,6 +13,7 @@ use super::protocol::{
     StreamError, StreamMessage, LeaseGrant, OffsetLease, MAX_EVENT_SIZE, DEFAULT_LEASE_SIZE,
 };
 use super::store::{StreamStore, EventPayload, SessionId};
+use std::collections::VecDeque;
 
 /// StreamActor manages a single resource stream
 /// 
@@ -45,6 +46,9 @@ pub struct StreamActor {
     
     /// Active session (at most one per resource)
     active_session: Option<SessionId>,
+    
+    /// Pending commits awaiting lease grants
+    pending_commits: VecDeque<SessionId>,
     
     /// Cached routes (hot path optimization)
     area_actor_route: Route,
@@ -82,6 +86,7 @@ impl StreamActor {
             area_lease: OffsetLease::new(),
             realm_lease: OffsetLease::new(),
             active_session: None,
+            pending_commits: VecDeque::new(),
             area_actor_route,
             commit_notification_route,
         }
@@ -157,7 +162,6 @@ impl StreamActor {
         let count = event_count as u64;
         
         // Ensure sufficient leases BEFORE allocating
-        // If short, request leases (in real impl, would await response)
         if self.area_lease.remaining() < count || self.realm_lease.remaining() < count {
             // Request leases from AreaActor
             let lease_size = DEFAULT_LEASE_SIZE.max(count);
@@ -165,14 +169,14 @@ impl StreamActor {
                 realm: self.realm.clone(),
                 area: self.area.clone(),
                 count: lease_size,
-                reply_to: format!("stream_actor_{}_{}_{}", self.realm, self.area, self.resource),
+                reply_to: format!("stream_actor_{}_{}_{}",  self.realm, self.area, self.resource),
             };
             let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
             let _ = ctx.send(area_addr, lease_req);
             
-            // TODO: In full impl, would await LeaseGranted before proceeding
-            // For now, return error to indicate async operation needed
-            return Err(StreamError::SessionFull);
+            // Queue this commit to be processed when lease arrives
+            self.pending_commits.push_back(session_id.clone());
+            return Err(StreamError::LeaseRequested);
         }
         
         // Allocate offsets contiguously
@@ -303,6 +307,19 @@ impl StreamActor {
     pub fn update_realm_lease(&mut self, grant: LeaseGrant) {
         self.realm_lease.update_from_realm_lease(&grant);
     }
+    
+    /// Process pending commits after lease grant arrives
+    fn process_pending_commits(&mut self, ctx: &mut Context<Self>) {
+        // Process all pending commits that now have sufficient leases
+        while let Some(session_id) = self.pending_commits.pop_front() {
+            // Try to commit (will re-queue if still insufficient)
+            if self.handle_commit_session(&session_id, ctx).is_err() {
+                // If still insufficient, push back and stop
+                self.pending_commits.push_front(session_id);
+                break;
+            }
+        }
+    }
 }
 
 impl Actor for StreamActor {
@@ -335,6 +352,9 @@ impl Actor for StreamActor {
                 // Update leases from AreaActor grant
                 self.update_area_lease(grant.clone());
                 self.update_realm_lease(grant);
+                
+                // Process any pending commits now that we have leases
+                self.process_pending_commits(ctx);
             }
             _ => {}
         }

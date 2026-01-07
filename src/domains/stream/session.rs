@@ -99,15 +99,18 @@ impl SessionActor {
         actor: &mut StreamActor,
         ctx: &mut Context<StreamActor>,
     ) -> Result<(), String> {
-        if let StreamMessage::Read { ref route, .. } = msg {
-            if !self.permissions.allows(route, Access::Read) {
-                return Err("unauthorized: read".to_string());
-            }
-            
-            actor.receive(msg, ctx);
-            Ok(())
-        } else {
-            Err("invalid message type".to_string())
+        let route = match &msg {
+            StreamMessage::Read { route, .. } => route,
+            StreamMessage::Peek { route, .. } => route,
+            StreamMessage::GetMetadata { route, .. } => route,
+            _ => return Err("invalid message type".to_string()),
+        };
+        
+        if !self.permissions.allows(route, Access::Read) {
+            return Err("unauthorized: read".to_string());
         }
+        
+        actor.receive(msg, ctx);
+        Ok(())
     }
 }

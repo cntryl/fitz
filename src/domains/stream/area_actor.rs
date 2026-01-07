@@ -1,6 +1,7 @@
 //! Area actor: mints area-level offsets and tracks watermarks
 
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use bytes::Bytes;
 
@@ -43,6 +44,9 @@ pub struct AreaActor {
     /// Realm offset lease (pre-allocated from RealmActor)
     realm_lease_next: u64,
     realm_lease_end: u64,
+    
+    /// Pending lease requests awaiting realm lease grant
+    pending_lease_requests: VecDeque<(String, String, u64, String)>,
 }
 
 impl AreaActor {
@@ -57,6 +61,7 @@ impl AreaActor {
             committed_ranges: BTreeMap::new(),
             realm_lease_next: 0,
             realm_lease_end: 0,
+            pending_lease_requests: VecDeque::new(),
         }
     }
     
@@ -85,8 +90,14 @@ impl AreaActor {
             let realm_addr = self.realm_actor_address();
             let _ = ctx.send(realm_addr, lease_req);
             
-            // TODO: In full async impl, would await RealmLeaseGranted
-            // For now, mint with available capacity (may be partial)
+            // Queue this request to be processed when realm lease arrives
+            self.pending_lease_requests.push_back((
+                realm.to_string(),
+                area.to_string(),
+                count,
+                reply_to.to_string(),
+            ));
+            return;
         }
         
         // Mint paired area+realm ranges with END-EXCLUSIVE semantics
@@ -214,6 +225,23 @@ impl AreaActor {
         self.area_watermark
     }
     
+    /// Process pending lease requests after realm lease grant arrives
+    fn process_pending_lease_requests(&mut self, ctx: &mut Context<Self>) {
+        // Process all pending requests that now have sufficient realm lease
+        while let Some((realm, area, count, reply_to)) = self.pending_lease_requests.pop_front() {
+            let realm_remaining = self.realm_lease_end.saturating_sub(self.realm_lease_next);
+            
+            // If still insufficient, re-queue and stop
+            if realm_remaining < count {
+                self.pending_lease_requests.push_front((realm, area, count, reply_to));
+                break;
+            }
+            
+            // Process this request (will succeed now)
+            self.handle_request_lease(&realm, &area, count, &reply_to, ctx);
+        }
+    }
+    
     /// Get committed ranges (for testing)
     #[cfg(test)]
     #[allow(dead_code)]
@@ -239,28 +267,144 @@ impl Actor for AreaActor {
             StreamMessage::LeaseGranted { grant } => {
                 // Update realm lease from RealmActor
                 self.update_realm_lease(grant);
+                
+                // Process any pending lease requests now that we have realm lease
+                self.process_pending_lease_requests(ctx);
             }
             _ => {}
         }
     }
 }
 
-// TODO: Uncomment tests when test infrastructure is ready
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::routing::Route;
-    use std::str::FromStr;
     
-    fn create_test_actor() -> AreaActor {
-        AreaActor::new(
-            RouteFamily::from_str("stream").unwrap(),
-            "realm1".to_string(),
-            "area1".to_string(),
-        )
+    fn make_test_actor() -> (AreaActor, Context<AreaActor>) {
+        let router = Arc::new(crate::runtime::router::Router::new());
+        let family = RouteFamily::new(1);
+        let addr = RouteAddress::new(
+            family,
+            Route::new("stream://realm1/area1/__area__"),
+        );
+        let db = Arc::new(
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open store"),
+        );
+        let store = Arc::new(StreamStore::new(db));
+        let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
+        let ctx = Context::new(addr, router);
+        (actor, ctx)
     }
     
-    // ... tests here ...
+    #[test]
+    fn should_mint_area_offsets_from_zero() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Grant realm lease first
+        actor.update_realm_lease(LeaseGrant {
+            area_start: 0,
+            area_end_exclusive: 0,
+            realm_start: 0,
+            realm_end_exclusive: 1000,
+        });
+        
+        // Act
+        actor.handle_request_lease("realm1", "area1", 10, "stream1", &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.next_area_offset, 10); // Moved to next block
+    }
+    
+    #[test]
+    fn should_mint_sequential_area_offset_blocks() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Grant realm lease first
+        actor.update_realm_lease(LeaseGrant {
+            area_start: 0,
+            area_end_exclusive: 0,
+            realm_start: 0,
+            realm_end_exclusive: 1000,
+        });
+        
+        // Act
+        actor.handle_request_lease("realm1", "area1", 5, "stream1", &mut ctx);
+        actor.handle_request_lease("realm1", "area1", 3, "stream2", &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.next_area_offset, 8); // 5 + 3
+    }
+    
+    #[test]
+    fn should_advance_watermark_on_contiguous_commit() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act - Commit range [1,3] (watermark starts at 0, advances to 3)
+        actor.handle_batch_committed(1, 3, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 3);
+    }
+    
+    #[test]
+    fn should_not_advance_watermark_with_gap() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act - Commit [1,3] then [6,8] (gap at 4-5)
+        actor.handle_batch_committed(1, 3, &mut ctx);
+        actor.handle_batch_committed(6, 8, &mut ctx); // Gap at 4-5
+        
+        // Assert
+        assert_eq!(actor.watermark(), 3); // Stuck at 3 due to gap
+    }
+    
+    #[test]
+    fn should_advance_watermark_when_gap_filled() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act - Create gap then fill it
+        actor.handle_batch_committed(1, 3, &mut ctx);
+        actor.handle_batch_committed(6, 8, &mut ctx);
+        actor.handle_batch_committed(4, 5, &mut ctx); // Fill gap
+        
+        // Assert
+        assert_eq!(actor.watermark(), 8); // Now advanced to 8
+    }
+    
+    #[test]
+    fn should_clean_up_consumed_ranges() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act - Commit contiguous ranges
+        actor.handle_batch_committed(1, 3, &mut ctx);
+        actor.handle_batch_committed(4, 6, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 6);
+        assert_eq!(actor.committed_ranges().len(), 0); // All consumed
+    }
+    
+    #[test]
+    fn should_buffer_out_of_order_ranges() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act - Commit in reverse order
+        actor.handle_batch_committed(11, 13, &mut ctx);
+        actor.handle_batch_committed(6, 8, &mut ctx);
+        actor.handle_batch_committed(1, 3, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 3);
+        assert!(!actor.committed_ranges().is_empty()); // Buffered future ranges
+    }
 }
-*/
+

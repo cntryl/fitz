@@ -353,6 +353,9 @@ pub enum StreamError {
     
     /// Batch too large (2008)
     BatchTooLarge,
+    
+    /// Lease requested - commit queued pending lease grant (2009)
+    LeaseRequested,
 }
 
 impl StreamError {
@@ -365,6 +368,7 @@ impl StreamError {
             StreamError::EventTooLarge => 2006,
             StreamError::SessionFull => 2007,
             StreamError::BatchTooLarge => 2008,
+            StreamError::LeaseRequested => 2009,
         }
     }
 }

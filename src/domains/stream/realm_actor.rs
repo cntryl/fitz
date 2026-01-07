@@ -151,14 +151,138 @@ impl Actor for RealmActor {
     }
 }
 
-// TODO: Uncomment tests when test infrastructure is ready
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::routing::Route;
-    use std::str::FromStr;
     
-    // ... tests here ...
+    fn make_test_actor() -> (RealmActor, Context<RealmActor>) {
+        let router = Arc::new(crate::runtime::router::Router::new());
+        let family = RouteFamily::new(1);
+        let addr = RouteAddress::new(
+            family,
+            Route::new("stream://realm1/__realm__"),
+        );
+        let db = Arc::new(
+            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open store"),
+        );
+        let store = Arc::new(StreamStore::new(db));
+        let actor = RealmActor::new(family, "realm1".to_string(), store);
+        let ctx = Context::new(addr, router);
+        (actor, ctx)
+    }
+    
+    #[test]
+    fn should_mint_realm_offsets_from_zero() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        let grant = actor.handle_request_realm_lease(100, &mut ctx);
+        
+        // Assert
+        assert_eq!(grant.realm_start, 0);
+        assert_eq!(grant.realm_end_exclusive, 100);
+        assert_eq!(actor.next_realm_offset, 100);
+    }
+    
+    #[test]
+    fn should_mint_sequential_realm_offset_blocks() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        let grant1 = actor.handle_request_realm_lease(50, &mut ctx);
+        let grant2 = actor.handle_request_realm_lease(30, &mut ctx);
+        
+        // Assert
+        assert_eq!(grant1.realm_start, 0);
+        assert_eq!(grant1.realm_end_exclusive, 50);
+        assert_eq!(grant2.realm_start, 50);
+        assert_eq!(grant2.realm_end_exclusive, 80);
+        assert_eq!(actor.next_realm_offset, 80);
+    }
+    
+    #[test]
+    fn should_calculate_realm_watermark_as_minimum() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
+        actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
+        actor.handle_area_watermark_advanced("area3".to_string(), 75, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 50); // Minimum of all areas
+    }
+    
+    #[test]
+    fn should_update_realm_watermark_when_minimum_advances() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
+        actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 50);
+        
+        // Advance area2 (the minimum)
+        actor.handle_area_watermark_advanced("area2".to_string(), 75, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 75); // Now advances to 75
+    }
+    
+    #[test]
+    fn should_not_advance_realm_watermark_if_not_minimum() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        actor.handle_area_watermark_advanced("area1".to_string(), 50, &mut ctx);
+        actor.handle_area_watermark_advanced("area2".to_string(), 100, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 50);
+        
+        // Advance area2 (not the minimum)
+        actor.handle_area_watermark_advanced("area2".to_string(), 150, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 50); // Still 50, unchanged
+    }
+    
+    #[test]
+    fn should_track_multiple_area_watermarks() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        actor.handle_area_watermark_advanced("area1".to_string(), 10, &mut ctx);
+        actor.handle_area_watermark_advanced("area2".to_string(), 20, &mut ctx);
+        actor.handle_area_watermark_advanced("area3".to_string(), 15, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.area_watermarks().len(), 3);
+        assert_eq!(*actor.area_watermarks().get("area1").unwrap(), 10);
+        assert_eq!(*actor.area_watermarks().get("area2").unwrap(), 20);
+        assert_eq!(*actor.area_watermarks().get("area3").unwrap(), 15);
+    }
+    
+    #[test]
+    fn should_handle_single_area() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        
+        // Act
+        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
+        
+        // Assert
+        assert_eq!(actor.watermark(), 100); // Single area, watermark equals area watermark
+    }
 }
-*/
+

@@ -260,30 +260,45 @@ mod tests {
 
     #[test]
     fn should_encode_resource_key_with_proper_ordering() {
+        // Arrange
         let key1 = encode_resource_key("realm", "area", "res1", 0);
         let key2 = encode_resource_key("realm", "area", "res1", 1);
         let key3 = encode_resource_key("realm", "area", "res1", 10);
         
+        // Act
+        // (keys are already encoded)
+        
+        // Assert
         assert!(key1 < key2);
         assert!(key2 < key3);
     }
 
     #[test]
     fn should_encode_area_key_with_proper_ordering() {
+        // Arrange
         let key1 = encode_area_key("realm", "area", 0);
         let key2 = encode_area_key("realm", "area", 1);
         let key3 = encode_area_key("realm", "area", 100);
         
+        // Act
+        // (keys are already encoded)
+        
+        // Assert
         assert!(key1 < key2);
         assert!(key2 < key3);
     }
 
     #[test]
     fn should_isolate_keys_by_prefix() {
+        // Arrange
         let resource_key = encode_resource_key("realm", "area", "res", 0);
         let area_key = encode_area_key("realm", "area", 0);
         let realm_key = encode_realm_key("realm", 0);
         
+        // Act
+        // (keys are already encoded)
+        
+        // Assert
         assert_eq!(resource_key[0], KeyPrefix::Resource as u8);
         assert_eq!(area_key[0], KeyPrefix::Area as u8);
         assert_eq!(realm_key[0], KeyPrefix::Realm as u8);
@@ -291,6 +306,7 @@ mod tests {
 
     #[test]
     fn should_roundtrip_resource_value() {
+        // Arrange
         let value = ResourceValue {
             resource_offset: 42,
             body: Bytes::from("test"),
@@ -300,8 +316,11 @@ mod tests {
             realm_offset: Some(5),
         };
         
+        // Act
         let encoded = value.encode();
         let decoded = ResourceValue::decode(&encoded);
+        
+        // Assert
         
         assert_eq!(decoded.resource_offset, 42);
         assert_eq!(decoded.body, Bytes::from("test"));
