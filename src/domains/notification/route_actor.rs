@@ -170,12 +170,6 @@ impl NoticeRouteActor {
     }
 }
 
-impl Default for NoticeRouteActor {
-    fn default() -> Self {
-        Self::new(RouteFamily::new(0))
-    }
-}
-
 impl Actor for NoticeRouteActor {
     type Message = NotificationMessage;
 

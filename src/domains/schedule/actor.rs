@@ -98,10 +98,15 @@ pub struct ScheduleActor {
     schedules: HashMap<u64, ScheduleDef>,
     next_id: u64,
     clock: Box<dyn Clock>,
+    write_options: cntryl_midge::WriteOptions,
 }
 
 impl ScheduleActor {
-    pub fn new(family: RouteFamily, db: Arc<cntryl_midge::Engine>) -> Self {
+    pub fn new(
+        family: RouteFamily,
+        db: Arc<cntryl_midge::Engine>,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Self {
         let store = ScheduleStore::new(db);
         let mut actor = Self {
             family,
@@ -109,6 +114,7 @@ impl ScheduleActor {
             schedules: HashMap::new(),
             next_id: 1,
             clock: Box::new(SystemClock),
+            write_options,
         };
         // Load persisted schedules
         if let Ok(entries) = actor.store.list(family.id()) {
@@ -157,7 +163,14 @@ impl ScheduleActor {
 
         // persist
         self.store
-            .insert(self.family.id(), id, route.as_str().as_bytes(), payload.clone(), def.last_fire_at)?;
+            .insert(
+                self.family.id(),
+                id,
+                route.as_str().as_bytes(),
+                payload.clone(),
+                def.last_fire_at,
+                self.write_options.clone(),
+            )?;
 
         self.schedules.insert(id, def);
         info!("created schedule {} for family {}", id, self.family.id());
@@ -166,33 +179,34 @@ impl ScheduleActor {
 
     pub fn delete_schedule(&mut self, id: u64) -> Result<(), String> {
         self.schedules.remove(&id);
-        self.store.delete(self.family.id(), id)
+        self.store.delete(self.family.id(), id, self.write_options.clone())
     }
 
-    fn extract_realm(route: &Route) -> Option<String> {
+    fn extract_realm_and_area(route: &Route) -> Option<(String, String)> {
         let s = route.as_str();
         if let Some(pos) = s.find("://") {
             let rest = &s[pos + 3..];
-            if let Some(end) = rest.find('/') {
-                return Some(rest[..end].to_string());
-            } else {
-                return Some(rest.to_string());
-            }
+            let mut parts = rest.split('/');
+            let realm = parts.next()?.to_string();
+            let area = parts.next()?.to_string();
+            return Some((realm, area));
         }
         None
     }
 
     fn fire_schedule(&mut self, def: &mut ScheduleDef, ctx: &mut Context<Self>) {
-        // Build notice route: notice://{realm}/{resource}/{operation}
-        // realm is taken from schedule route: route has scheme://realm/...
-        let realm = Self::extract_realm(&def.route).unwrap_or_else(|| "".to_string());
+        // Build notice route: notice://{realm}/{area}/{resource}/{operation}
+        let Some((realm, area)) = Self::extract_realm_and_area(&def.route) else {
+            warn!("failed to extract realm/area from schedule route: {}", def.route.as_str());
+            return;
+        };
         // Extract payload resource and operation
         match SchedulePayload::decode(&def.payload) {
             Ok(sp) => {
                 let notice_path = if sp.operation.is_empty() {
-                    format!("notice://{}/{}", realm, sp.resource)
+                    format!("notice://{}/{}/{}", realm, area, sp.resource)
                 } else {
-                    format!("notice://{}/{}/{}", realm, sp.resource, sp.operation)
+                    format!("notice://{}/{}/{}/{}", realm, area, sp.resource, sp.operation)
                 };
                 let route = Route::new(notice_path.clone());
                 let publish = PublishMessage::new(self.family, route.clone(), def.payload.clone());
@@ -236,17 +250,27 @@ impl ScheduleActor {
             // Update last_fire_at and persist
             if let Some(def) = self.schedules.get_mut(&id) {
                 def.last_fire_at = now_secs;
-                let _ = self.store.insert(self.family.id(), def.id, def.route.as_str().as_bytes(), def.payload.clone(), def.last_fire_at);
+                let _ = self.store.insert(
+                    self.family.id(),
+                    def.id,
+                    def.route.as_str().as_bytes(),
+                    def.payload.clone(),
+                    def.last_fire_at,
+                    self.write_options.clone(),
+                );
             }
 
             // Emit notice using cloned route & payload
-            let realm = Self::extract_realm(&route).unwrap_or_else(|| "".to_string());
+            let Some((realm, area)) = Self::extract_realm_and_area(&route) else {
+                warn!("failed to extract realm/area from schedule route: {}", route.as_str());
+                continue;
+            };
             match SchedulePayload::decode(&payload) {
                 Ok(sp) => {
                     let notice_path = if sp.operation.is_empty() {
-                        format!("notice://{}/{}", realm, sp.resource)
+                        format!("notice://{}/{}/{}", realm, area, sp.resource)
                     } else {
-                        format!("notice://{}/{}/{}", realm, sp.resource, sp.operation)
+                        format!("notice://{}/{}/{}/{}", realm, area, sp.resource, sp.operation)
                     };
                     let r = Route::new(notice_path.clone());
                     let publish = PublishMessage::new(self.family, r.clone(), payload.clone());

@@ -27,14 +27,17 @@ pub fn create_bench_queue_actor(
     max_attempts: Option<u32>,
 ) -> QueueActor {
     let queue_key = QueueKey {
-        family: RouteFamily::new(1),
+        // TODO: Use CF=1 once Midge supports explicit CF creation in in-memory mode
+        // For now, use CF=0 (default) as a workaround for Midge test limitation
+        family: RouteFamily::new(0),
         realm: realm.to_string(),
         area: area.to_string(),
         resource: resource.to_string(),
     };
 
     let store = create_bench_store();
-    QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
+    // TODO: Use CF=1 once Midge supports explicit CF creation in in-memory mode
+    QueueActor::new(RouteFamily::new(0), queue_key, store, max_attempts)
 }
 
 /// Create a QueueProducer for benchmarking producer-side batching

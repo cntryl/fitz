@@ -37,7 +37,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::CommitSession { session_id: "session1".to_string(), mode: crate::domains::stream::StreamWriteMode::Sync },
+        StreamMessage::CommitSession { session_id: "session1".to_string(), mode: StreamWriteMode::Sync },
         &mut ctx,
     );
     // Act - Try to begin session with wrong expected_offset
@@ -106,7 +106,7 @@ fn should_allow_new_session_after_commit() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::CommitSession { session_id: "session1".to_string(), mode: crate::domains::stream::StreamWriteMode::Sync },
+        StreamMessage::CommitSession { session_id: "session1".to_string(), mode: StreamWriteMode::Sync },
         &mut ctx,
     );
     // Second session (should succeed)

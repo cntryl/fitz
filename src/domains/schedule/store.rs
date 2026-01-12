@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use std::sync::Arc;
 
+use cntryl_midge::WriteOptions;
+
 pub struct ScheduleStore {
     db: Arc<cntryl_midge::Engine>,
 }
@@ -18,7 +20,15 @@ impl ScheduleStore {
     /// Persist schedule route + payload + last_fire_at (i64, seconds since epoch) as value.
     /// Value format:
     /// [8 bytes LE last_fire_at][4 bytes BE route_len][route bytes][payload bytes]
-    pub fn insert(&self, family: u64, id: u64, route: &[u8], payload: Bytes, last_fire_at: i64) -> Result<(), String> {
+    pub fn insert(
+        &self,
+        family: u64,
+        id: u64,
+        route: &[u8],
+        payload: Bytes,
+        last_fire_at: i64,
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
         // Use RouteFamily id as Midge column family id to ensure isolation
         let mut txn = self
             .db
@@ -34,23 +44,21 @@ impl ScheduleStore {
 
         txn.put(Self::encode_key(family, id), val, None)
             .map_err(|e| format!("put failed: {:?}", e))?;
-        let opts = cntryl_midge::WriteOptions::sync();
         self.db
-            .commit(txn, opts)
+            .commit(txn, write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
         Ok(())
     }
 
-    pub fn delete(&self, family: u64, id: u64) -> Result<(), String> {
+    pub fn delete(&self, family: u64, id: u64, write_options: WriteOptions) -> Result<(), String> {
         let mut txn = self
             .db
             .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
         txn.delete(Self::encode_key(family, id))
             .map_err(|e| format!("delete failed: {:?}", e))?;
-        let opts = cntryl_midge::WriteOptions::sync();
         self.db
-            .commit(txn, opts)
+            .commit(txn, write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
         Ok(())
     }

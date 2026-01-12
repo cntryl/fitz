@@ -6,7 +6,7 @@
 //! - Session permissions checked before forwarding to actors
 //! - Authorization failures return proper errors
 
-use fitz::domains::stream::protocol::StreamMessage;
+use fitz::domains::stream::protocol::{StreamMessage, StreamWriteMode};
 use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::stream_actor::StreamActor;
@@ -176,7 +176,7 @@ fn should_reject_commit_without_write_permission() {
 
     // Try to commit with read-only session (different session, no write permission for commit)
     let session_read = make_session_with_read_only();
-    let commit_msg = StreamMessage::CommitSession { session_id: "session_id".to_string(), mode: crate::domains::stream::StreamWriteMode::Sync };
+    let commit_msg = StreamMessage::CommitSession { session_id: "session_id".to_string(), mode: StreamWriteMode::Sync };
 
     // Act
     let result = session_read.commit_session(commit_msg, &mut actor, &mut ctx);

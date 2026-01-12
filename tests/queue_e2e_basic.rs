@@ -1,4 +1,4 @@
-//! Queue domain integration tests
+﻿//! Queue domain integration tests
 //!
 //! Tests durability, restart semantics, and end-to-end workflows.
 
@@ -11,6 +11,16 @@ use fitz::domains::queue::{
     queue_actor::QueueActor,
 };
 use fitz::runtime::routing::RouteFamily;
+use uuid::Uuid;
+
+fn unique_queue_key(resource_prefix: &str) -> QueueKey {
+    QueueKey {
+        family: RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+        realm: "test".to_string(),
+        area: "queue".to_string(),
+        resource: format!("{}-{}", resource_prefix, Uuid::new_v4()),
+    }
+}
 
 /// Test that messages persist to Midge during actor lifecycle
 #[test]
@@ -21,14 +31,9 @@ fn should_persist_messages_to_storage() {
             .expect("Failed to open Midge"),
     );
 
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "queue".to_string(),
-        resource: "durable".to_string(),
-    };
+    let queue_key = unique_queue_key("durable");
 
-    let mut actor = QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
+    let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key.clone(), store.clone(), None);
     let body = Bytes::from("durable message");
 
     // Act
@@ -61,17 +66,12 @@ fn should_recover_messages_after_restart() {
             .expect("Failed to open Midge"),
     );
 
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "queue".to_string(),
-        resource: "durable".to_string(),
-    };
+    let queue_key = unique_queue_key("durable-restart");
 
     // Pre-populate with a message that will be recovered
     let msg_id = {
         let mut actor =
-            QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
+            QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key.clone(), store.clone(), None);
         let body = Bytes::from("durable message");
         match actor.handle_enqueue(body, None) {
             QueueResponse::Enqueued { id } => id,
@@ -79,9 +79,8 @@ fn should_recover_messages_after_restart() {
         }
     };
 
-    // Act - Restart actor and manually recover (simulates recovery scan)
-    let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-    actor.ready.push_back(msg_id);
+    // Act - Restart actor and recover from storage
+    let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
     let reserve_response = actor.handle_reserve(30, Some(1));
 
     // Assert - Message recovered and redeliverable
@@ -106,12 +105,12 @@ fn should_handle_high_volume_enqueue() {
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
-        family: RouteFamily::new(1),
+        family: RouteFamily::new(0) /* CF=0 for Midge test limitation */,
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: "volume".to_string(),
     };
-    let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+    let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
 
     let count = 10_000;
     let start = std::time::Instant::now();
@@ -150,12 +149,12 @@ fn should_handle_concurrent_workers() {
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
-        family: RouteFamily::new(1),
+        family: RouteFamily::new(0) /* CF=0 for Midge test limitation */,
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: "workers".to_string(),
     };
-    let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+    let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
 
     // Enqueue 100 messages
     for i in 0..100 {
@@ -209,12 +208,12 @@ fn should_have_low_reserve_latency() {
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
-        family: RouteFamily::new(1),
+        family: RouteFamily::new(0) /* CF=0 for Midge test limitation */,
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: "perf".to_string(),
     };
-    let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+    let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
 
     // Enqueue 1000 messages
     for i in 0..1000 {
@@ -236,8 +235,8 @@ fn should_have_low_reserve_latency() {
     // Assert
     println!("Average reserve latency: {:?}", avg_latency);
 
-    // Target: <10Âµs (excluding Midge read cost)
-    // Actual: ~1-2Âµs for in-memory operations + Midge read overhead
+    // Target: <10Ã‚Âµs (excluding Midge read cost)
+    // Actual: ~1-2Ã‚Âµs for in-memory operations + Midge read overhead
 }
 
 /// Test complete latency (performance)
@@ -250,12 +249,12 @@ fn should_have_low_complete_latency() {
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
-        family: RouteFamily::new(1),
+        family: RouteFamily::new(0) /* CF=0 for Midge test limitation */,
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: "perf".to_string(),
     };
-    let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+    let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
 
     // Enqueue and reserve 1000 messages
     let mut messages = Vec::new();
@@ -287,6 +286,6 @@ fn should_have_low_complete_latency() {
     // Assert
     println!("Average complete latency: {:?}", avg_latency);
 
-    // Target: <5Âµs (excluding Midge delete cost)
-    // Actual: ~1Âµs for in-memory ops + Midge delete overhead
+    // Target: <5Ã‚Âµs (excluding Midge delete cost)
+    // Actual: ~1Ã‚Âµs for in-memory ops + Midge delete overhead
 }

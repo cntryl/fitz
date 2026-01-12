@@ -172,7 +172,9 @@ impl KvActor {
             };
         }
 
-        match active.tx.get(&key) {
+        let scoped_key = Self::encode_scoped_key(&resource, &key);
+
+        match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
                 found: true,
                 value: Some(Bytes::from(value)),
@@ -204,7 +206,9 @@ impl KvActor {
             };
         }
 
-        match active.tx.put(key.to_vec(), value.to_vec(), None) {
+        let scoped_key = Self::encode_scoped_key(&resource, &key);
+
+        match active.tx.put(scoped_key, value.to_vec(), None) {
             Ok(()) => KvResponse::PutOk,
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
@@ -230,7 +234,9 @@ impl KvActor {
         }
 
         // Check if key exists first
-        match active.tx.get(&key) {
+        let scoped_key = Self::encode_scoped_key(&resource, &key);
+
+        match active.tx.get(&scoped_key) {
             Ok(Some(_)) => {
                 // Key exists, insert should fail
                 KvResponse::Error {
@@ -239,7 +245,7 @@ impl KvActor {
             }
             Ok(None) => {
                 // Key doesn't exist, proceed with insert
-                match active.tx.put(key.to_vec(), value.to_vec(), None) {
+                match active.tx.put(scoped_key, value.to_vec(), None) {
                     Ok(()) => KvResponse::InsertOk,
                     Err(e) => KvResponse::Error {
                         error: Self::map_midge_error(e),
@@ -269,7 +275,9 @@ impl KvActor {
             };
         }
 
-        match active.tx.delete(key.to_vec()) {
+        let scoped_key = Self::encode_scoped_key(&resource, &key);
+
+        match active.tx.delete(scoped_key) {
             Ok(()) => KvResponse::DeleteOk,
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
@@ -301,7 +309,10 @@ impl KvActor {
             };
         }
 
-        match active.tx.delete_range(start.to_vec(), end.to_vec()) {
+        let scoped_start = Self::encode_scoped_key(&resource, &start);
+        let scoped_end = Self::encode_scoped_key(&resource, &end);
+
+        match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => KvResponse::DeleteRangeOk,
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
@@ -326,21 +337,28 @@ impl KvActor {
             };
         }
 
+        let prefix = Self::resource_prefix(&resource);
+        let start_key = query
+            .start
+            .as_ref()
+            .map(|k| Self::encode_scoped_key(&resource, k))
+            .unwrap_or_else(|| prefix.clone());
+        let end_key = query
+            .end
+            .as_ref()
+            .map(|k| Self::encode_scoped_key(&resource, k))
+            .unwrap_or_else(|| Self::prefix_range_end(&prefix));
+
         // Build Midge Query
-        let mut midge_query = cntryl_midge::Query::new();
-        
-        if let Some(start) = query.start.as_ref() {
-            midge_query = midge_query.start_key(start.clone());
-        }
-        
-        if let Some(end) = query.end.as_ref() {
-            midge_query = midge_query.end_key(end.clone());
-        }
-        
+        let mut midge_query = cntryl_midge::Query::new()
+            .prefix(Bytes::from(prefix.clone()))
+            .start_key(Bytes::from(start_key))
+            .end_key(Bytes::from(end_key));
+
         if let Some(limit) = query.limit {
             midge_query = midge_query.limit(limit);
         }
-        
+
         if query.reverse {
             midge_query = midge_query.reverse();
         }
@@ -350,8 +368,12 @@ impl KvActor {
                 let mut items = Vec::new();
                 
                 while let Some((key, value)) = iterator.next() {
+                    let user_key = match Self::strip_scoped_prefix(&resource, &key) {
+                        Some(k) => k,
+                        None => continue,
+                    };
                     items.push(KvPair {
-                        key: Bytes::from(key),
+                        key: Bytes::from(user_key),
                         value: Bytes::from(value),
                     });
                 }
@@ -383,15 +405,65 @@ impl KvActor {
         crate::runtime::cf_validation::validate_route_family(route_family);
         
         // Map RouteFamily → ColumnFamily (1:1 by value)
-        // Resource is the logical table name but doesn't affect CF selection
-        // CF isolation is at the RouteFamily level
+        // Resource is enforced via key prefixing within the column family.
         ColumnFamilyId(route_family.id() as u32)
+    }
+
+    fn resource_prefix(resource: &str) -> Vec<u8> {
+        let mut prefix = Vec::with_capacity(resource.len() + 1);
+        prefix.extend_from_slice(resource.as_bytes());
+        prefix.push(0);
+        prefix
+    }
+
+    fn encode_scoped_key(resource: &str, user_key: &[u8]) -> Vec<u8> {
+        let mut out = Self::resource_prefix(resource);
+        out.extend_from_slice(user_key);
+        out
+    }
+
+    fn strip_scoped_prefix(resource: &str, scoped_key: &[u8]) -> Option<Vec<u8>> {
+        let prefix = Self::resource_prefix(resource);
+        scoped_key
+            .strip_prefix(prefix.as_slice())
+            .map(|rest| rest.to_vec())
+    }
+
+    fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
+        // Compute exclusive end bound for a prefix scan.
+        // Safe here because our prefix always ends with 0 (so increment succeeds).
+        let mut end = prefix.to_vec();
+        for idx in (0..end.len()).rev() {
+            if end[idx] != 0xFF {
+                end[idx] = end[idx].wrapping_add(1);
+                end.truncate(idx + 1);
+                return end;
+            }
+        }
+        // Fallback: no end bound (should not happen for our prefixes)
+        vec![0xFF]
     }
 
     /// Map Midge error to KV domain error
     fn map_midge_error(err: cntryl_midge::MidgeError) -> KvError {
-        // Midge errors are opaque, map to backend error with message
-        KvError::BackendError(err.to_string())
+        // Midge errors are currently opaque from this crate's perspective.
+        // Preserve retryability distinctions using message heuristics.
+        let msg = err.to_string();
+        let msg_lc = msg.to_lowercase();
+
+        if msg_lc.contains("conflict") || msg_lc.contains("abort") || msg_lc.contains("retry") {
+            return KvError::Conflict(msg);
+        }
+
+        if msg_lc.contains("unavailable")
+            || msg_lc.contains("io")
+            || msg_lc.contains("closed")
+            || msg_lc.contains("corrupt")
+        {
+            return KvError::BackendUnavailable(msg);
+        }
+
+        KvError::BackendError(msg)
     }
 }
 

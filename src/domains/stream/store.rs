@@ -468,11 +468,6 @@ impl StreamStore {
         resource: &str,
         from_offset: u64,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
-        let txn = self
-            .db
-            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-
         // Use inline buffer for key to avoid heap allocation
         // Most keys are <200 bytes, use 256 for safety
         let mut key_buf = [0u8; 256];
