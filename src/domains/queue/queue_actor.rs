@@ -11,8 +11,14 @@
 //! 2. **At-least-once**: Messages may be delivered multiple times
 //! 3. **Lease isolation**: Reserved messages invisible to other consumers
 //! 4. **Automatic redelivery**: Expired leases return messages to ready queue
-//! 5. **Durability**: Message bodies survive actor restart
+//! 5. **Buffered writes**: Messages use buffered persistence (acceptable loss on crash)
 //! 6. **Ephemeral leases**: All leases lost on restart
+//!
+//! # Intent vs Events
+//!
+//! Queues represent **intent** (work to be done), not events of record.
+//! Lost intent is acceptable - producers can regenerate work items.
+//! All writes use `WriteOptions::buffered()` for maximum throughput.
 //!
 //! # State Model
 //!
@@ -180,11 +186,6 @@ pub struct QueueActor {
 
     /// Maximum delivery attempts before DLQ (None = unlimited retries)
     max_attempts: Option<u32>,
-
-    /// Durability policy for queue writes
-    ///
-    /// Controls fsync behavior and group commit. Does NOT affect other domains.
-    durability: super::durability::QueueDurabilityPolicy,
 }
 
 impl QueueActor {
@@ -195,28 +196,11 @@ impl QueueActor {
         store: Arc<cntryl_midge::MidgeEngine>,
         max_attempts: Option<u32>,
     ) -> Self {
-        Self::with_clock_and_locked_durability(
-            family,
-            queue_key,
-            store,
-            Box::new(SystemClock),
-            max_attempts,
-        )
+        Self::with_clock(family, queue_key, store, Box::new(SystemClock), max_attempts)
     }
 
     /// Create a new queue actor with a custom clock (for testing). Persistence is locked to buffered-only.
     pub fn with_clock(
-        family: RouteFamily,
-        queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
-        clock: Box<dyn Clock>,
-        max_attempts: Option<u32>,
-    ) -> Self {
-        Self::with_clock_and_locked_durability(family, queue_key, store, clock, max_attempts)
-    }
-
-    /// Internal constructor used by public constructors. DOES NOT allow selectable durability.
-    fn with_clock_and_locked_durability(
         family: RouteFamily,
         queue_key: QueueKey,
         store: Arc<cntryl_midge::MidgeEngine>,
@@ -237,8 +221,6 @@ impl QueueActor {
             delayed: BinaryHeap::new(),
             clock,
             max_attempts,
-            // LOCKED: queue writes are ALWAYS buffered (throughput-first)
-            durability: super::durability::QueueDurabilityPolicy::Async,
         }
     }
 
@@ -309,14 +291,8 @@ impl QueueActor {
                 if let Err(e) = txn.put(key, value.to_vec(), None) {
                     eprintln!("WARN: Failed to enqueue next_id in txn: {:?}", e);
                 } else {
-                    let (sync, _disable_wal) = self.durability.to_midge_options();
-                    // Note: disable_wal not supported in transactions, only sync vs buffered
-                    let opts = if sync {
-                        cntryl_midge::WriteOptions::sync()
-                    } else {
-                        cntryl_midge::WriteOptions::buffered()
-                    };
-                    if let Err(e) = self.store.commit(txn, opts) {
+                    // Queues always use buffered writes - intent is acceptable to lose
+                    if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
                         eprintln!("WARN: Failed to commit next_id txn: {:?}", e);
                     }
                 }
@@ -479,15 +455,8 @@ impl QueueActor {
             }
         }
 
-        // Commit with durability policy options
-        let (sync, _disable_wal) = self.durability.to_midge_options();
-        // Note: disable_wal not supported in transactions, only sync vs buffered
-        let opts = if sync {
-            cntryl_midge::WriteOptions::sync()
-        } else {
-            cntryl_midge::WriteOptions::buffered()
-        };
-        if let Err(e) = self.store.commit(txn, opts) {
+        // Commit with buffered writes - queues represent intent, not events
+        if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
@@ -691,14 +660,8 @@ impl QueueActor {
                 if let Err(e) = txn.delete(key) {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
                 } else {
-                    let (sync, _disable_wal) = self.durability.to_midge_options();
-                    // Note: disable_wal not supported in transactions, only sync vs buffered
-                    let opts = if sync {
-                        cntryl_midge::WriteOptions::sync()
-                    } else {
-                        cntryl_midge::WriteOptions::buffered()
-                    };
-                    if let Err(e) = self.store.commit(txn, opts) {
+                    // Queues always use buffered writes
+                    if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
                         eprintln!(
                             "WARN: Failed to commit delete txn for message {}: {:?}",
                             id, e
@@ -760,15 +723,7 @@ impl QueueActor {
                                             id, e
                                         );
                                     } else {
-                                        let (sync, _disable_wal) =
-                                            self.durability.to_midge_options();
-                                        // Note: disable_wal not supported in transactions
-                                        let opts = if sync {
-                                            cntryl_midge::WriteOptions::sync()
-                                        } else {
-                                            cntryl_midge::WriteOptions::buffered()
-                                        };
-                                        if let Err(e) = self.store.commit(txn, opts) {
+                                        if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
                                             eprintln!(
                                                 "WARN: Failed to commit DLQ delete txn {}: {:?}",
                                                 id, e
@@ -794,14 +749,7 @@ impl QueueActor {
                                         id, e
                                     );
                                 } else {
-                                    let (sync, _disable_wal) = self.durability.to_midge_options();
-                                    // Note: disable_wal not supported in transactions
-                                    let opts = if sync {
-                                        cntryl_midge::WriteOptions::sync()
-                                    } else {
-                                        cntryl_midge::WriteOptions::buffered()
-                                    };
-                                    if let Err(e) = self.store.commit(txn, opts) {
+                                    if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
                                         eprintln!(
                                             "WARN: Failed to commit retry txn for message {}: {:?}",
                                             id, e

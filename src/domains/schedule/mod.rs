@@ -7,6 +7,3 @@
 pub mod protocol;
 pub mod actor;
 pub mod store;
-
-#[cfg(test)]
-mod tests;

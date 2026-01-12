@@ -1,18 +1,26 @@
-//! Queue domain: durable message queues with at-least-once delivery
+//! Queue domain: message queues with at-least-once delivery and buffered persistence
 //!
 //! Provides FIFO message queues with:
-//! - **Durable storage**: Messages persist across restarts
+//! - **Buffered storage**: Messages persist with buffered writes (intent, not events)
 //! - **Lease-based visibility**: Reserved messages invisible to other consumers
 //! - **Automatic redelivery**: Expired leases return messages to ready queue
 //! - **At-least-once delivery**: Messages may be delivered multiple times
 //! - **FIFO ordering**: Messages delivered in enqueue order
 //! - **Producer batching**: Client-side batching for multi-million msg/sec throughput
 //!
+//! # Intent vs Events
+//!
+//! Queues represent **intent** (work to be done), not events of record.
+//! - Messages are requests for future work, not historical facts
+//! - Lost intent is acceptable - producers can regenerate work items
+//! - All writes use `WriteOptions::buffered()` for maximum throughput
+//! - Work is idempotent or can be safely retried
+//!
 //! # Key Features
 //!
 //! - **Single-node**: No distributed coordination (MVP)
 //! - **Ephemeral leases**: Lease state lost on restart
-//! - **Microsecond latency**: In-memory scheduling with durable persistence
+//! - **Microsecond latency**: In-memory scheduling with buffered persistence
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
 //! - **Dead Letter Queue (DLQ)**: Optional max_attempts threshold for failed messages
 //!
@@ -111,13 +119,11 @@
 //! });
 //! ```
 
-pub mod durability;
 pub mod producer;
 pub mod protocol;
 pub mod queue_actor;
 pub mod session;
 
-// Do NOT export queue durability policies - queues have locked persistence semantics (buffered only).
 pub use producer::QueueProducer;
 pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 pub use queue_actor::{Clock, QueueActor, SystemClock};

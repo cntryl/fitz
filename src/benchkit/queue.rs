@@ -2,13 +2,13 @@
 
 use super::storage::create_bench_store;
 use crate::domains::queue::{QueueActor, QueueKey, QueueProducer};
-use crate::domains::queue::durability::QueueDurabilityPolicy;
 use crate::runtime::routing::RouteFamily;
 use std::time::Duration;
 
-/// Create a QueueActor for benchmarking with Strict durability
+/// Create a QueueActor for benchmarking with buffered writes
 ///
 /// Creates an actor with in-memory storage suitable for performance testing.
+/// All queues use buffered writes (intent, not events).
 ///
 /// # Arguments
 /// * `realm` - Realm name for the queue
@@ -34,39 +34,7 @@ pub fn create_bench_queue_actor(
     };
 
     let store = create_bench_store();
-    // QUEUE PERSISTENCE LOCKED: buffered-only
     QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
-}
-
-
-/// Create a QueueActor for benchmarking with explicit durability policy
-///
-/// Allows testing different durability modes for throughput/latency tradeoffs.
-///
-/// # Arguments
-/// * `realm` - Realm name for the queue
-/// * `area` - Area name for the queue
-/// * `resource` - Resource name for the queue
-/// * `max_attempts` - Optional maximum delivery attempts before DLQ
-/// * `durability` - Durability policy (Strict/Grouped/Async)
-///
-/// # Example
-/// ```ignore
-/// // High-throughput with 5ms loss window
-/// let actor = create_bench_queue_actor_with_durability(
-///     "bench", "test", "queue", None,
-///     QueueDurabilityPolicy::Grouped { interval_ms: 5 }
-/// );
-/// ```
-pub fn create_bench_queue_actor_with_durability(
-    realm: &str,
-    area: &str,
-    resource: &str,
-    max_attempts: Option<u32>,
-    _durability: QueueDurabilityPolicy,
-) -> QueueActor {
-    // Legacy API removed; callers must not choose durability. Keep a compat shim.
-    create_bench_queue_actor(realm, area, resource, max_attempts)
 }
 
 /// Create a QueueProducer for benchmarking producer-side batching

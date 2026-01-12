@@ -57,3 +57,75 @@ impl SchedulePayload {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::tlv::{TlvEncoder, MessageType};
+
+    #[test]
+    fn should_roundtrip_schedule_tlv() {
+        // Arrange
+        let payload = SchedulePayload {
+            cron: "* * * * *".to_string(),
+            resource: "res1".to_string(),
+            operation: "op".to_string(),
+        };
+
+        // Act
+        let enc = payload.encode();
+        let dec = SchedulePayload::decode(&enc).unwrap();
+
+        // Assert
+        assert_eq!(dec, payload);
+    }
+
+    #[test]
+    fn should_encode_all_fields_correctly() {
+        // Arrange
+        let payload = SchedulePayload {
+            cron: "0 */6 * * *".to_string(),
+            resource: "notifications".to_string(),
+            operation: "send".to_string(),
+        };
+
+        // Act
+        let enc = payload.encode();
+        let dec = SchedulePayload::decode(&enc).unwrap();
+
+        // Assert
+        assert_eq!(dec.cron, "0 */6 * * *");
+        assert_eq!(dec.resource, "notifications");
+        assert_eq!(dec.operation, "send");
+    }
+
+    #[test]
+    fn should_reject_missing_fields() {
+        // Arrange - Only cron field (type 1)
+        let mut enc = TlvEncoder::new();
+        enc.encode(MessageType(1), b"* * * * *");
+        let data = enc.finish();
+
+        // Act
+        let res = SchedulePayload::decode(&data);
+
+        // Assert
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn should_handle_complex_cron_expressions() {
+        // Arrange - Every weekday at noon
+        let payload = SchedulePayload {
+            cron: "0 12 * * 1-5".to_string(),
+            resource: "reports".to_string(),
+            operation: "generate".to_string(),
+        };
+
+        // Act
+        let enc = payload.encode();
+        let dec = SchedulePayload::decode(&enc).unwrap();
+
+        // Assert
+        assert_eq!(dec.cron, "0 12 * * 1-5");
+    }
+}

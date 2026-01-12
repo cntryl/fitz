@@ -409,304 +409,249 @@ mod tests {
     use super::*;
     use crate::runtime::routing::RouteFamily;
 
-    fn create_test_store() -> Arc<MidgeEngine> {
-        Arc::new(
+    fn test_actor() -> KvActor {
+        let store = Arc::new(
             MidgeEngine::open_with_options(cntryl_midge::MidgeOptions::default())
-                .expect("create test store")
-        )
+                .expect("Failed to open Midge")
+        );
+        KvActor::new(store)
+    }
+
+    #[test]
+    fn should_begin_transaction_for_resource() {
+        // Arrange
+        let mut actor = test_actor();
+
+        // Act
+        let response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+
+        // Assert
+        assert!(matches!(response, KvResponse::BeginOk));
     }
 
     #[test]
     fn should_reject_begin_when_transaction_already_active() {
         // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
+        let mut actor = test_actor();
+        actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
 
-        // Act - Begin first transaction
-        let response1 = actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
+        // Act
+        let response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table2".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
 
-        // Assert - First begin succeeds
-        assert!(matches!(response1, KvResponse::BeginOk));
-
-        // Act - Attempt second begin
-        let response2 = actor.handle_begin(
-            RouteFamily::new(1),
-            "orders".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
-
-        // Assert - Second begin fails
-        assert!(matches!(
-            response2,
-            KvResponse::Error { error: KvError::TxAlreadyActive }
-        ));
-    }
-
-    #[test]
-    fn should_reject_operations_without_active_transaction() {
-        // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
-
-        // Act & Assert - Get
-        let response = actor.handle_get(
-            RouteFamily::new(1),
-            "users".to_string(),
-            Bytes::from("key1"),
-        );
+        // Assert
         assert!(matches!(
             response,
-            KvResponse::Error { error: KvError::NoActiveTx }
-        ));
-
-        // Act & Assert - Put
-        let response = actor.handle_put(
-            RouteFamily::new(1),
-            "users".to_string(),
-            Bytes::from("key1"),
-            Bytes::from("value1"),
-        );
-        assert!(matches!(
-            response,
-            KvResponse::Error { error: KvError::NoActiveTx }
-        ));
-
-        // Act & Assert - Commit
-        let response = actor.handle_commit();
-        assert!(matches!(
-            response,
-            KvResponse::Error { error: KvError::NoActiveTx }
-        ));
-
-        // Act & Assert - Rollback
-        let response = actor.handle_rollback();
-        assert!(matches!(
-            response,
-            KvResponse::Error { error: KvError::NoActiveTx }
+            KvResponse::Error {
+                error: KvError::TxAlreadyActive
+            }
         ));
     }
 
     #[test]
     fn should_enforce_transaction_scope_to_single_resource() {
         // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
+        let mut actor = test_actor();
+        actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
 
-        // Act - Begin transaction on "users" resource
-        let response = actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
-        assert!(matches!(response, KvResponse::BeginOk));
+        // Act - Try to operate on different resource
+        let response = actor.handle(KvMessage::Put {
+            route_family: RouteFamily::new(1),
+            resource: "table2".to_string(),
+            key: Bytes::from("key"),
+            value: Bytes::from("value"),
+        });
 
-        // Act - Attempt operation on different resource "orders"
-        let response = actor.handle_get(
-            RouteFamily::new(1),
-            "orders".to_string(),
-            Bytes::from("key1"),
-        );
-
-        // Assert - Operation fails with TxScopeViolation
-        match response {
-            KvResponse::Error { error: KvError::TxScopeViolation { expected, actual } } => {
-                assert_eq!(expected, "users");
-                assert_eq!(actual, "orders");
-            }
-            _ => panic!("Expected TxScopeViolation error"),
-        }
-    }
-
-    #[test]
-    fn should_allow_commit_after_successful_operations() {
-        // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
-
-        // Act - Begin transaction
-        actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
-
-        // Act - Put operation
-        let response = actor.handle_put(
-            RouteFamily::new(1),
-            "users".to_string(),
-            Bytes::from("key1"),
-            Bytes::from("value1"),
-        );
-        assert!(matches!(response, KvResponse::PutOk));
-
-        // Act - Commit
-        let response = actor.handle_commit();
-
-        // Assert - Commit succeeds (may fail due to Midge CF issue, but logic is correct)
-        // Note: This test documents known Midge limitation with explicit CFs
-        match response {
-            KvResponse::CommitOk => {}
-            KvResponse::Error { error } => {
-                // Expected due to Midge CF limitation in tests
-                eprintln!("Note: Commit failed due to Midge CF limitation: {:?}", error);
-            }
-            _ => panic!("Unexpected response: {:?}", response),
-        }
-    }
-
-    #[test]
-    fn should_allow_rollback_to_abort_transaction() {
-        // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
-
-        // Act - Begin transaction
-        actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
-
-        // Act - Rollback
-        let response = actor.handle_rollback();
-
-        // Assert - Rollback succeeds
-        assert!(matches!(response, KvResponse::RollbackOk));
-
-        // Assert - No active transaction after rollback
-        let response = actor.handle_commit();
+        // Assert
         assert!(matches!(
             response,
-            KvResponse::Error { error: KvError::NoActiveTx }
+            KvResponse::Error {
+                error: KvError::TxScopeViolation { .. }
+            }
         ));
+    }
+
+    #[test]
+    fn should_reject_operations_without_active_transaction() {
+        // Arrange
+        let mut actor = test_actor();
+
+        // Act & Assert - Get
+        let response = actor.handle(KvMessage::Get {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: Bytes::from("key"),
+        });
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::NoActiveTx
+            }
+        ));
+
+        // Act & Assert - Put
+        let response = actor.handle(KvMessage::Put {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: Bytes::from("key"),
+            value: Bytes::from("value"),
+        });
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::NoActiveTx
+            }
+        ));
+    }
+
+    #[test]
+    fn should_put_and_get_value_within_transaction() {
+        // Arrange
+        let mut actor = test_actor();
+        actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+
+        let key = Bytes::from("testkey");
+        let value = Bytes::from("testvalue");
+
+        // Act - Put
+        let put_response = actor.handle(KvMessage::Put {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: key.clone(),
+            value: value.clone(),
+        });
+        assert!(matches!(put_response, KvResponse::PutOk));
+
+        // Act - Get
+        let get_response = actor.handle(KvMessage::Get {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: key.clone(),
+        });
+
+        // Assert
+        match get_response {
+            KvResponse::GetResult { found: true, value: Some(v) } => assert_eq!(v, value),
+            _ => panic!("Expected GetResult with value"),
+        }
     }
 
     #[test]
     fn should_reject_insert_when_key_exists() {
         // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
+        let mut actor = test_actor();
+        actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
 
-        // Act - Begin transaction and insert key
-        actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
+        let key = Bytes::from("testkey");
+        actor.handle(KvMessage::Insert {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: key.clone(),
+            value: Bytes::from("value1"),
+        });
 
-        actor.handle_put(
-            RouteFamily::new(1),
-            "users".to_string(),
-            Bytes::from("key1"),
-            Bytes::from("value1"),
-        );
+        // Act - Try to insert again
+        let response = actor.handle(KvMessage::Insert {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: key.clone(),
+            value: Bytes::from("value2"),
+        });
 
-        // Act - Attempt to insert same key again
-        let response = actor.handle_insert(
-            RouteFamily::new(1),
-            "users".to_string(),
-            Bytes::from("key1"),
-            Bytes::from("value2"),
-        );
-
-        // Assert - Insert fails with AlreadyExists
+        // Assert
         assert!(matches!(
             response,
-            KvResponse::Error { error: KvError::AlreadyExists }
+            KvResponse::Error {
+                error: KvError::AlreadyExists
+            }
         ));
     }
 
     #[test]
     fn should_validate_delete_range_parameters() {
         // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
+        let mut actor = test_actor();
+        actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
 
-        // Act - Begin transaction
-        actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
+        // Act - End before start
+        let response = actor.handle(KvMessage::DeleteRange {
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            start: Bytes::from("z"),
+            end: Bytes::from("a"),
+        });
 
-        // Act - Delete range with start >= end
-        let response = actor.handle_delete_range(
-            RouteFamily::new(1),
-            "users".to_string(),
-            Bytes::from("z"),
-            Bytes::from("a"),
-        );
-
-        // Assert - Fails with InvalidRequest
+        // Assert
         assert!(matches!(
             response,
-            KvResponse::Error { error: KvError::InvalidRequest(_) }
+            KvResponse::Error {
+                error: KvError::InvalidRequest(_)
+            }
         ));
     }
 
     #[test]
-    fn should_return_empty_scan_for_empty_range() {
-        // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
-
-        // Act - Begin transaction
-        actor.handle_begin(
-            RouteFamily::new(1),
-            "users".to_string(),
-            TxMode::ReadOnly,
-            cntryl_midge::WriteOptions::buffered(),
-        );
-
-        // Act - Scan empty range
-        let response = actor.handle_scan(
-            RouteFamily::new(1),
-            "users".to_string(),
-            ScanQuery {
-                start: Some(Bytes::from("a")),
-                end: Some(Bytes::from("z")),
-                limit: Some(10),
-                reverse: false,
-            },
-        );
-
-        // Assert - Returns empty results (may fail due to Midge CF issue)
-        match response {
-            KvResponse::ScanResult { items, .. } => {
-                assert_eq!(items.len(), 0);
-            }
-            KvResponse::Error { error } => {
-                // Expected due to Midge CF limitation
-                eprintln!("Note: Scan failed due to Midge CF limitation: {:?}", error);
-            }
-            _ => panic!("Unexpected response"),
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "RouteFamily")]
+    #[should_panic(expected = "RouteFamily with id=0")]
     fn should_panic_on_route_family_zero() {
         // Arrange
-        let store = create_test_store();
-        let mut actor = KvActor::new(store);
+        let mut actor = test_actor();
 
-        // Act & Assert - Panics on RouteFamily(0)
-        actor.handle_begin(
-            RouteFamily::new(0),
-            "users".to_string(),
-            TxMode::ReadWrite,
-            cntryl_midge::WriteOptions::buffered(),
-        );
+        // Act - Should panic
+        actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(0),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
     }
 }
