@@ -249,15 +249,15 @@ fn should_track_committed_ranges_for_gap_detection() {
 }
 #[test]
 fn should_debounce_area_watermark_notifications() {
-    use fitz::runtime::scheduler::Scheduler;
     use crossbeam_channel::bounded;
-    use std::thread;
-    use fitz::runtime::routing::RouteFamily;
-    use fitz::runtime::routing::RouteAddress;
-    use fitz::runtime::routing::Route;
     use fitz::domains::notification::protocol::NotificationMessage;
     use fitz::domains::notification::protocol::PublishMessage;
     use fitz::prelude::Actor as PreActor;
+    use fitz::runtime::routing::Route;
+    use fitz::runtime::routing::RouteAddress;
+    use fitz::runtime::routing::RouteFamily;
+    use fitz::runtime::scheduler::Scheduler;
+    use std::thread;
 
     // Arrange
     let scheduler = Scheduler::new(1);
@@ -312,27 +312,41 @@ fn should_debounce_area_watermark_notifications() {
 
     // Act - send batch committed to advance watermark
     let area_ref = fitz::runtime::actor::ActorRef::new(area_addr, scheduler.router());
-    let _ = area_ref.send(fitz::domains::stream::protocol::StreamMessage::BatchCommitted {
-        first_area_offset: 1,
-        last_area_offset: 3,
-        first_realm_offset: 1,
-        last_realm_offset: 3,
-    });
+    let _ = area_ref.send(
+        fitz::domains::stream::protocol::StreamMessage::BatchCommitted {
+            first_area_offset: 1,
+            last_area_offset: 3,
+            first_realm_offset: 1,
+            last_realm_offset: 3,
+        },
+    );
 
     // Assert - no immediate notification (debounced)
-    assert!(rx.recv_timeout(std::time::Duration::from_millis(10)).is_err());
+    assert!(rx
+        .recv_timeout(std::time::Duration::from_millis(10))
+        .is_err());
 
     // After debounce period, notification should arrive
-    let payload = rx.recv_timeout(std::time::Duration::from_millis(200)).unwrap();
+    let payload = rx
+        .recv_timeout(std::time::Duration::from_millis(200))
+        .unwrap();
     let payload_str = String::from_utf8(payload.to_vec()).unwrap();
     assert!(payload_str.contains("watermark"));
 
     // Cleanup
-    let _ = area_ref.send(fitz::domains::stream::protocol::StreamMessage::LeaseGranted {
-        grant: fitz::domains::stream::protocol::LeaseGrant { area_start: 0, area_end_exclusive: 0, realm_start: 0, realm_end_exclusive: 0 },
-    });
+    let _ = area_ref.send(
+        fitz::domains::stream::protocol::StreamMessage::LeaseGranted {
+            grant: fitz::domains::stream::protocol::LeaseGrant {
+                area_start: 0,
+                area_end_exclusive: 0,
+                realm_start: 0,
+                realm_end_exclusive: 0,
+            },
+        },
+    );
     thread::sleep(std::time::Duration::from_millis(20));
-}#[test]
+}
+#[test]
 fn should_request_lease_when_insufficient_capacity() {
     // Arrange
     let (mut actor, mut ctx) = create_test_stream_actor("realm1", "area1", "orders");

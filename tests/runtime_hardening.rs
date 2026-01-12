@@ -5,9 +5,9 @@
 //! runtime hardening phase. They must NEVER be removed or weakened.
 
 use fitz::runtime::actor::{Actor, ActorError, ActorRef, Context, SendError};
+use fitz::runtime::context::TimerId;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
-use fitz::runtime::context::TimerId;
 use std::thread;
 use std::time::Duration;
 
