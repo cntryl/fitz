@@ -1,9 +1,9 @@
-﻿use criterion::{
+use bytes::Bytes;
+use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
-use fitz::domains::queue::QueueResponse;
 use fitz::benchkit::create_bench_queue_actor;
-use bytes::Bytes;
+use fitz::domains::queue::QueueResponse;
 
 #[path = "config.rs"]
 mod config;
@@ -51,7 +51,7 @@ fn bench_enqueue_reserve_complete_loop(c: &mut Criterion) {
             let (id, token) = match reserve_resp {
                 QueueResponse::Reserved { messages } if !messages.is_empty() => {
                     (messages[0].id, messages[0].token)
-                },
+                }
                 _ => return, // Skip if empty
             };
 
@@ -93,10 +93,7 @@ fn bench_batch_reserve_stress(c: &mut Criterion) {
             &batch_size,
             |b, &size| {
                 b.iter(|| {
-                    let _ = actor.handle_reserve(
-                        black_box(30),
-                        black_box(Some(size as usize)),
-                    );
+                    let _ = actor.handle_reserve(black_box(30), black_box(Some(size as usize)));
                 })
             },
         );
@@ -133,10 +130,10 @@ fn bench_lease_churn_stress(c: &mut Criterion) {
         b.iter(|| {
             // Reserve with very short lease (will expire quickly)
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
-            
+
             // Simulate time passage (in real usage, timer would fire)
             std::thread::sleep(std::time::Duration::from_millis(10));
-            
+
             // Process expired timers
             actor.process_expired_timers();
         })
@@ -169,9 +166,9 @@ fn bench_delayed_message_stress(c: &mut Criterion) {
             // Enqueue with short delay
             let _ = actor.handle_enqueue(
                 black_box(payload.clone()),
-                black_box(Some(1)),  // 1-second delay
+                black_box(Some(1)), // 1-second delay
             );
-            
+
             // Process delayed messages (simulate firing)
             actor.process_delayed_messages();
         })
@@ -208,7 +205,7 @@ fn bench_dlq_threshold_stress(c: &mut Criterion) {
         b.iter(|| {
             // Reserve with short lease (will expire and increment attempts)
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
-            
+
             // Simulate expiry
             std::thread::sleep(std::time::Duration::from_millis(10));
             actor.process_expired_timers();
@@ -283,7 +280,7 @@ fn bench_reserve_without_complete_abuse(c: &mut Criterion) {
         b.iter(|| {
             // Reserve but NEVER complete (abuse pattern)
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
-            
+
             // Simulate time passing (lease expires)
             std::thread::sleep(std::time::Duration::from_millis(10));
             actor.process_expired_timers();
@@ -462,7 +459,7 @@ fn bench_dlq_thrashing_abuse(c: &mut Criterion) {
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
             std::thread::sleep(std::time::Duration::from_millis(10));
             actor.process_expired_timers(); // First expiry (attempts=1)
-            
+
             let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
             std::thread::sleep(std::time::Duration::from_millis(10));
             actor.process_expired_timers(); // Second expiry â†’ DLQ delete

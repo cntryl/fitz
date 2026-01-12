@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::domains::stream::stream_actor::StreamActor;
 use crate::domains::stream::area_actor::AreaActor;
+use crate::domains::stream::stream_actor::StreamActor;
 use crate::runtime::actor::Context;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{MailboxSink, Router};
@@ -49,16 +49,22 @@ impl MailboxSink for TestSink {
         Ok(())
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
+    fn deliver_high_priority(
+        &self,
+        envelope: Envelope,
+    ) -> Result<(), crate::runtime::router::DeliveryError> {
         // For tests, just deliver to same queue
         self.deliver(envelope)
     }
 }
 
 /// Create an in-memory Midge database for stream tests
-pub fn create_test_db() -> Arc<cntryl_midge::MidgeEngine> {
+pub fn create_test_db() -> Arc<cntryl_midge::Engine> {
     use cntryl_midge::MidgeOptions;
-    Arc::new(cntryl_midge::MidgeEngine::open(MidgeOptions::default()).expect("create in-memory db"))
+    Arc::new(
+        cntryl_midge::Engine::open_with_options(MidgeOptions::default())
+            .expect("create in-memory db"),
+    )
 }
 
 /// Create a StreamStore with in-memory database for tests
@@ -127,12 +133,7 @@ pub fn create_test_area_actor(realm: &str, area: &str) -> (AreaActor, Context<Ar
     );
 
     let store = Arc::new(create_test_store());
-    let actor = AreaActor::new(
-        family,
-        realm.to_string(),
-        area.to_string(),
-        store,
-    );
+    let actor = AreaActor::new(family, realm.to_string(), area.to_string(), store);
     let ctx = Context::new(addr, router);
 
     (actor, ctx)

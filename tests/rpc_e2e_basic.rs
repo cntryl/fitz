@@ -1,10 +1,10 @@
-﻿use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest, RpcResponse};
-use uuid::Uuid;
 use bytes::Bytes;
+use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcResponse, RpcRouteActor};
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
-use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
+use uuid::Uuid;
 
 // This file tests basic RPC golden paths: simple request/response cycles
 // and fundamental worker interactions.
@@ -28,7 +28,7 @@ fn should_complete_basic_request_response_cycle() {
         RouteFamily::new(1),
         Route::new("worker://acme/auth/worker1"),
     );
-    
+
     actor.receive(
         RpcMessage::Subscribe {
             worker_addr: worker_addr.clone(),
@@ -41,7 +41,9 @@ fn should_complete_basic_request_response_cycle() {
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
         reply_route: Route::new("inbox://session/abc123"),
-        body: Bytes::from(b"{ \"username\": \"alice\", \"email\": \"alice@example.com\" }".to_vec()),
+        body: Bytes::from(
+            b"{ \"username\": \"alice\", \"email\": \"alice@example.com\" }".to_vec(),
+        ),
     };
 
     // Act
@@ -70,7 +72,7 @@ fn should_handle_streaming_report_generation() {
         RouteFamily::new(1),
         Route::new("worker://acme/reports/worker1"),
     );
-    
+
     actor.receive(
         RpcMessage::Subscribe {
             worker_addr: worker_addr.clone(),
@@ -251,8 +253,3 @@ fn should_queue_requests_when_worker_unregisters() {
     assert_eq!(actor.worker_count(), 0);
     assert_eq!(actor.pending_count(), 1);
 }
-
-
-
-
-

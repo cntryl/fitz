@@ -93,10 +93,14 @@ impl DeliveryError {
     /// Get occupancy ratio (0.0 to 1.0) for backpressure decisions
     pub fn occupancy(&self) -> f64 {
         match self {
-            DeliveryError::MailboxFull { capacity, current_len }
-            | DeliveryError::HighLaneFull { capacity, current_len } => {
-                *current_len as f64 / *capacity as f64
+            DeliveryError::MailboxFull {
+                capacity,
+                current_len,
             }
+            | DeliveryError::HighLaneFull {
+                capacity,
+                current_len,
+            } => *current_len as f64 / *capacity as f64,
             DeliveryError::ActorStopped => 1.0,
         }
     }
@@ -105,11 +109,21 @@ impl DeliveryError {
 impl std::fmt::Display for DeliveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DeliveryError::MailboxFull { capacity, current_len } => {
+            DeliveryError::MailboxFull {
+                capacity,
+                current_len,
+            } => {
                 write!(f, "Mailbox is full ({}/{} messages)", current_len, capacity)
             }
-            DeliveryError::HighLaneFull { capacity, current_len } => {
-                write!(f, "High-priority lane is full ({}/{} messages)", current_len, capacity)
+            DeliveryError::HighLaneFull {
+                capacity,
+                current_len,
+            } => {
+                write!(
+                    f,
+                    "High-priority lane is full ({}/{} messages)",
+                    current_len, capacity
+                )
             }
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
         }

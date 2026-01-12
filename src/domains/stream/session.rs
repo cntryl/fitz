@@ -37,14 +37,14 @@ impl SessionActor {
             if !self.permissions.allows(route, Access::Write) {
                 return Err("unauthorized: begin session".to_string());
             }
-            
+
             actor.receive(msg, ctx);
             Ok(())
         } else {
             Err("invalid message type".to_string())
         }
     }
-    
+
     /// Append to session (requires write permission)
     pub fn append_to_session(
         &self,
@@ -60,7 +60,7 @@ impl SessionActor {
             Err("invalid message type".to_string())
         }
     }
-    
+
     /// Commit session (requires write permission)
     pub fn commit_session(
         &self,
@@ -76,7 +76,7 @@ impl SessionActor {
             Err("invalid message type".to_string())
         }
     }
-    
+
     /// Abort session
     pub fn abort_session(
         &self,
@@ -105,11 +105,11 @@ impl SessionActor {
             StreamMessage::GetMetadata { route, .. } => route,
             _ => return Err("invalid message type".to_string()),
         };
-        
+
         if !self.permissions.allows(route, Access::Read) {
             return Err("unauthorized: read".to_string());
         }
-        
+
         actor.receive(msg, ctx);
         Ok(())
     }

@@ -24,18 +24,18 @@
 //!
 //! ```ignore
 //! let mut producer = QueueProducer::new(actor_ref, 100, Duration::from_millis(5));
-//! 
+//!
 //! // Messages are buffered
 //! producer.enqueue(Bytes::from("msg1"), None)?;
 //! producer.enqueue(Bytes::from("msg2"), None)?;
-//! 
+//!
 //! // Explicit flush
 //! let ids = producer.flush()?;
 //! ```
 
+use crate::domains::queue::{QueueActor, QueueResponse};
 use bytes::Bytes;
 use std::time::{Duration, Instant};
-use crate::domains::queue::{QueueActor, QueueResponse};
 
 /// Producer-side batching for queue enqueue operations
 ///
@@ -50,13 +50,13 @@ use crate::domains::queue::{QueueActor, QueueResponse};
 pub struct QueueProducer {
     /// Maximum batch size before automatic flush
     max_batch_size: usize,
-    
+
     /// Maximum time to buffer before flush
     flush_interval: Duration,
-    
+
     /// In-memory message buffer
     buffer: Vec<PendingMessage>,
-    
+
     /// Time of last flush (for timer-based flushing)
     last_flush: Instant,
 }
@@ -87,7 +87,7 @@ impl QueueProducer {
             last_flush: Instant::now(),
         }
     }
-    
+
     /// Enqueue a message (buffers until flush)
     ///
     /// Messages are NOT sent to the queue immediately. They are buffered
@@ -104,8 +104,11 @@ impl QueueProducer {
     /// Messages are enqueued in FIFO order within each batch.
     /// Order between batches depends on when flushes occur.
     pub fn enqueue(&mut self, body: Bytes, delay_seconds: Option<u64>) -> bool {
-        self.buffer.push(PendingMessage { body, delay_seconds });
-        
+        self.buffer.push(PendingMessage {
+            body,
+            delay_seconds,
+        });
+
         // Check if we should auto-flush
         if self.buffer.len() >= self.max_batch_size {
             true // Caller should flush
@@ -113,12 +116,12 @@ impl QueueProducer {
             false
         }
     }
-    
+
     /// Check if flush timer has expired
     pub fn should_flush_timer(&self) -> bool {
         self.last_flush.elapsed() >= self.flush_interval
     }
-    
+
     /// Flush buffered messages to the queue
     ///
     /// Drains the buffer and submits ONE enqueue_batch request to the actor.
@@ -135,38 +138,32 @@ impl QueueProducer {
         if self.buffer.is_empty() {
             return Ok(0);
         }
-        
+
         // Group messages by delay_seconds (optimization: allows batch-level delay)
         // For MVP, we assume all messages in buffer have same delay
         let delay = self.buffer.first().and_then(|m| m.delay_seconds);
-        
+
         // Extract message bodies
         let messages: Vec<Bytes> = self.buffer.drain(..).map(|m| m.body).collect();
         let count = messages.len();
-        
+
         // Submit ONE batch request to actor
         match actor.handle_enqueue_batch(messages, delay) {
             QueueResponse::EnqueuedBatch { .. } => {
                 self.last_flush = Instant::now();
                 Ok(count)
             }
-            QueueResponse::Error { message } => {
-                Err(message)
-            }
-            QueueResponse::BadRequest { reason } => {
-                Err(reason)
-            }
-            other => {
-                Err(format!("Unexpected response: {:?}", other))
-            }
+            QueueResponse::Error { message } => Err(message),
+            QueueResponse::BadRequest { reason } => Err(reason),
+            other => Err(format!("Unexpected response: {:?}", other)),
         }
     }
-    
+
     /// Get current buffer size
     pub fn buffered_count(&self) -> usize {
         self.buffer.len()
     }
-    
+
     /// Get maximum batch size
     pub fn max_batch_size(&self) -> usize {
         self.max_batch_size
@@ -176,74 +173,74 @@ impl QueueProducer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn should_create_producer_with_batch_config() {
         // Arrange & Act
         let producer = QueueProducer::new(100, Duration::from_millis(5));
-        
+
         // Assert
         assert_eq!(producer.max_batch_size(), 100);
         assert_eq!(producer.buffered_count(), 0);
     }
-    
+
     #[test]
     fn should_buffer_messages_until_max_batch() {
         // Arrange
         let mut producer = QueueProducer::new(3, Duration::from_millis(100));
-        
+
         // Act - Enqueue below threshold
         let flush1 = producer.enqueue(Bytes::from("msg1"), None);
         let flush2 = producer.enqueue(Bytes::from("msg2"), None);
-        
+
         // Assert - No auto-flush yet
         assert!(!flush1);
         assert!(!flush2);
         assert_eq!(producer.buffered_count(), 2);
-        
+
         // Act - Enqueue to reach threshold
         let flush3 = producer.enqueue(Bytes::from("msg3"), None);
-        
+
         // Assert - Should signal flush
         assert!(flush3);
         assert_eq!(producer.buffered_count(), 3);
     }
-    
+
     #[test]
     fn should_detect_timer_expiration() {
         // Arrange
         let producer = QueueProducer::new(100, Duration::from_millis(1));
-        
+
         // Act - Wait for timer
         std::thread::sleep(Duration::from_millis(2));
-        
+
         // Assert
         assert!(producer.should_flush_timer());
     }
-    
+
     #[test]
     fn should_flush_batch_to_actor() {
         // Arrange
         use crate::benchkit::create_bench_queue_actor;
         let mut actor = create_bench_queue_actor("test", "queue", "jobs", None);
         let mut producer = QueueProducer::new(100, Duration::from_millis(5));
-        
+
         // Act - Enqueue messages
         producer.enqueue(Bytes::from("msg1"), None);
         producer.enqueue(Bytes::from("msg2"), None);
         producer.enqueue(Bytes::from("msg3"), None);
-        
+
         // Assert - Before flush
         assert_eq!(producer.buffered_count(), 3);
-        
+
         // Act - Flush
         let result = producer.flush(&mut actor);
-        
+
         // Assert - After flush
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 3);
         assert_eq!(producer.buffered_count(), 0);
-        
+
         // Verify messages are in queue
         let reserve_response = actor.handle_reserve(30, Some(3));
         match reserve_response {

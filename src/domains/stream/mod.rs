@@ -45,20 +45,20 @@
 //! - **Realm watermark**: min(all area watermarks)
 //! - Reads are blocked beyond watermarks to ensure gap-free ordering
 
+pub mod area_actor;
 pub mod protocol;
+pub mod realm_actor;
+pub mod session;
 pub mod storage;
 pub mod store;
 pub mod stream_actor;
-pub mod area_actor;
-pub mod realm_actor;
-pub mod session;
 
 // Re-exports
-pub use stream_actor::StreamActor;
 pub use area_actor::AreaActor;
-pub use realm_actor::RealmActor;
 pub use protocol::{
-    StreamMessage, StreamRecord, StreamError, StreamMetadata,
-    AppendResponse, ReadResponse, GetMetadataResponse,
+    AppendResponse, GetMetadataResponse, ReadResponse, StreamError, StreamMessage, StreamMetadata,
+    StreamRecord,
 };
+pub use realm_actor::RealmActor;
 pub use store::StreamStore;
+pub use stream_actor::StreamActor;

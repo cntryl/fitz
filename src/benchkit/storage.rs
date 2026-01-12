@@ -16,9 +16,9 @@ use std::sync::Arc;
 /// let store = create_bench_store();
 /// let actor = QueueActor::new(family, key, store, None);
 /// ```
-pub fn create_bench_store() -> Arc<cntryl_midge::MidgeEngine> {
+pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
     Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
-            .expect("Failed to create in-memory store")
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+            .expect("Failed to create in-memory store"),
     )
 }

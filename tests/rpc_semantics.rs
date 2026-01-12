@@ -1,10 +1,10 @@
-﻿use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest, RpcResponse};
-use uuid::Uuid;
 use bytes::Bytes;
+use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcResponse, RpcRouteActor};
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
-use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
+use uuid::Uuid;
 
 // This file asserts RPC semantics: verifies request/response correlation, worker assignment,
 // backpressure, and failure handling.
@@ -29,7 +29,7 @@ fn should_route_request_to_available_worker() {
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
     );
-    
+
     let subscribe_msg = RpcMessage::Subscribe {
         worker_addr: worker_addr.clone(),
     };
@@ -85,7 +85,7 @@ fn should_correlate_response_with_request() {
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
     );
-    
+
     let subscribe_msg = RpcMessage::Subscribe {
         worker_addr: worker_addr.clone(),
     };
@@ -191,7 +191,7 @@ fn should_handle_worker_unsubscribe() {
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
     );
-    
+
     let subscribe_msg = RpcMessage::Subscribe {
         worker_addr: worker_addr.clone(),
     };
@@ -249,7 +249,12 @@ fn should_handle_streaming_response_with_multiple_chunks() {
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
     );
-    actor.receive(RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
+    actor.receive(
+        RpcMessage::Subscribe {
+            worker_addr: worker_addr.clone(),
+        },
+        &mut ctx,
+    );
 
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
@@ -317,7 +322,12 @@ fn should_cleanup_state_after_request_completion() {
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
     );
-    actor.receive(RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
+    actor.receive(
+        RpcMessage::Subscribe {
+            worker_addr: worker_addr.clone(),
+        },
+        &mut ctx,
+    );
 
     let correlation_id = Uuid::new_v4();
     let request = RpcRequest {
@@ -351,8 +361,3 @@ fn should_cleanup_state_after_request_completion() {
     // Assert
     assert_eq!(actor.pending_count(), 0);
 }
-
-
-
-
-

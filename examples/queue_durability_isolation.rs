@@ -20,42 +20,51 @@ use std::sync::Arc;
 
 fn main() {
     println!("=== Queue Durability Isolation ===\n");
-    
+
     // Single shared Midge instance for ALL domains
     println!("1. Creating shared Midge instance...");
-    let shared_store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
-            .expect("Failed to create Midge instance")
+    let _shared_store = Arc::new(
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+            .expect("Failed to create Midge instance"),
     );
     println!("   ✓ Midge instance created (shared by all domains)\n");
-    
+
     // Different queue actors with different durability policies
     println!("2. Creating queue actors with different durability policies...");
-    
+
     // Financial transactions: Strict (never lose data)
     let payments_durability = fitz::domains::queue::QueueDurabilityPolicy::Strict;
     println!("   - Payments queue: {:?}", payments_durability);
-    println!("     Midge options: {:?}", payments_durability.to_midge_options());
+    println!(
+        "     Midge options: {:?}",
+        payments_durability.to_midge_options()
+    );
     println!("     (sync=true, disable_wal=false) → fsync on every write\n");
-    
+
     // Background jobs: Grouped (tolerate 5ms loss window)
     let jobs_durability = fitz::domains::queue::QueueDurabilityPolicy::Grouped { interval_ms: 5 };
     println!("   - Jobs queue: {:?}", jobs_durability);
-    println!("     Midge options: {:?}", jobs_durability.to_midge_options());
+    println!(
+        "     Midge options: {:?}",
+        jobs_durability.to_midge_options()
+    );
     println!("     (sync=false, disable_wal=false) → async WAL, group commit\n");
-    
+
     // Analytics events: Async (best-effort)
     let analytics_durability = fitz::domains::queue::QueueDurabilityPolicy::Async;
     println!("   - Analytics queue: {:?}", analytics_durability);
-    println!("     Midge options: {:?}", analytics_durability.to_midge_options());
+    println!(
+        "     Midge options: {:?}",
+        analytics_durability.to_midge_options()
+    );
     println!("     (sync=false, disable_wal=true) → memory-only, no WAL\n");
-    
+
     // Domain isolation: KV and Streams maintain Strict durability
     println!("3. Other domains maintain their own durability...");
     println!("   - KV store: Always Strict (unaffected by queue policies)");
     println!("   - Streams: Always Strict (unaffected by queue policies)");
     println!("   - Leases: Always Strict (unaffected by queue policies)\n");
-    
+
     // Per-write override pattern (pseudocode until Midge API available)
     println!("4. Transaction-based durability pattern:\n");
     println!("   ```rust");
@@ -89,13 +98,13 @@ fn main() {
     println!("   opts.set_disable_wal(false);   // Always false");
     println!("   store.commit_transaction_boxed(txn, &opts)?; // Unaffected!");
     println!("   ```\n");
-    
+
     println!("5. Isolation guarantees:");
     println!("   ✓ Single shared Midge instance (efficient)");
     println!("   ✓ Per-transaction durability control (flexible)");
     println!("   ✓ No global config changes (safe)");
     println!("   ✓ Domain isolation via key prefixes + commit options");
     println!("   ✓ Queue 'Async' policy won't affect KV/streams\n");
-    
+
     println!("=== Example Complete ===");
 }

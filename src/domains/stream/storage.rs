@@ -1,6 +1,6 @@
+use bincode::{deserialize, serialize};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use bincode::{serialize, deserialize};
 
 use super::store::EventPayload;
 
@@ -32,7 +32,7 @@ pub fn encode_resource_key(
 ) -> Vec<u8> {
     let mut key = vec![KeyPrefix::Resource as u8];
     key.extend_from_slice(realm.as_bytes());
-    key.push(0);  // separator
+    key.push(0); // separator
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -42,11 +42,7 @@ pub fn encode_resource_key(
 }
 
 /// Encodes an area index key
-pub fn encode_area_key(
-    realm: &str,
-    area: &str,
-    area_offset: u64,
-) -> Vec<u8> {
+pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
     let mut key = vec![KeyPrefix::Area as u8];
     key.extend_from_slice(realm.as_bytes());
     key.push(0);
@@ -57,10 +53,7 @@ pub fn encode_area_key(
 }
 
 /// Encodes a realm index key
-pub fn encode_realm_key(
-    realm: &str,
-    realm_offset: u64,
-) -> Vec<u8> {
+pub fn encode_realm_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     let mut key = vec![KeyPrefix::Realm as u8];
     key.extend_from_slice(realm.as_bytes());
     key.push(0);
@@ -91,10 +84,7 @@ pub fn decode_realm_offset_from_key(key: &[u8]) -> Result<u64, String> {
 }
 
 /// Encodes a watermark key
-pub fn encode_watermark_key(
-    realm: &str,
-    area: &str,
-) -> Vec<u8> {
+pub fn encode_watermark_key(realm: &str, area: &str) -> Vec<u8> {
     let mut key = vec![KeyPrefix::Watermark as u8];
     key.extend_from_slice(realm.as_bytes());
     key.push(0);
@@ -103,11 +93,7 @@ pub fn encode_watermark_key(
 }
 
 /// Encodes an offset counter key (metadata, independent of TTL)
-pub fn encode_offset_counter_key(
-    realm: &str,
-    area: &str,
-    resource: &str,
-) -> Vec<u8> {
+pub fn encode_offset_counter_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
     let mut key = vec![KeyPrefix::OffsetCounter as u8];
     key.extend_from_slice(realm.as_bytes());
     key.push(0);
@@ -226,10 +212,13 @@ impl OffsetCounterValue {
 
 /// Create an in-memory Midge database for tests
 #[cfg(test)]
-pub fn create_test_db() -> std::sync::Arc<cntryl_midge::MidgeEngine> {
-    use std::sync::Arc;
+pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
     use cntryl_midge::MidgeOptions;
-    Arc::new(cntryl_midge::MidgeEngine::open(MidgeOptions::default()).expect("create in-memory db"))
+    use std::sync::Arc;
+    Arc::new(
+        cntryl_midge::Engine::open_with_options(MidgeOptions::default())
+            .expect("create in-memory db"),
+    )
 }
 
 /// Staging key/value encoding for Transaction
@@ -242,12 +231,16 @@ pub fn encode_staging_key(session_id: &str, event_index: usize) -> Vec<u8> {
 }
 
 pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
-    serialize(&(event.body.to_vec(), event.metadata.as_ref().map(|m| m.to_vec()))).unwrap()
+    serialize(&(
+        event.body.to_vec(),
+        event.metadata.as_ref().map(|m| m.to_vec()),
+    ))
+    .unwrap()
 }
 
 pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
-    let (body, metadata): (Vec<u8>, Option<Vec<u8>>) = deserialize(data)
-        .map_err(|e| format!("decode_staging_value: {:?}", e))?;
+    let (body, metadata): (Vec<u8>, Option<Vec<u8>>) =
+        deserialize(data).map_err(|e| format!("decode_staging_value: {:?}", e))?;
     Ok(EventPayload {
         body: Bytes::from(body),
         metadata: metadata.map(Bytes::from),
@@ -264,10 +257,10 @@ mod tests {
         let key1 = encode_resource_key("realm", "area", "res1", 0);
         let key2 = encode_resource_key("realm", "area", "res1", 1);
         let key3 = encode_resource_key("realm", "area", "res1", 10);
-        
+
         // Act
         // (keys are already encoded)
-        
+
         // Assert
         assert!(key1 < key2);
         assert!(key2 < key3);
@@ -279,10 +272,10 @@ mod tests {
         let key1 = encode_area_key("realm", "area", 0);
         let key2 = encode_area_key("realm", "area", 1);
         let key3 = encode_area_key("realm", "area", 100);
-        
+
         // Act
         // (keys are already encoded)
-        
+
         // Assert
         assert!(key1 < key2);
         assert!(key2 < key3);
@@ -294,10 +287,10 @@ mod tests {
         let resource_key = encode_resource_key("realm", "area", "res", 0);
         let area_key = encode_area_key("realm", "area", 0);
         let realm_key = encode_realm_key("realm", 0);
-        
+
         // Act
         // (keys are already encoded)
-        
+
         // Assert
         assert_eq!(resource_key[0], KeyPrefix::Resource as u8);
         assert_eq!(area_key[0], KeyPrefix::Area as u8);
@@ -315,13 +308,13 @@ mod tests {
             area_offset: Some(10),
             realm_offset: Some(5),
         };
-        
+
         // Act
         let encoded = value.encode();
         let decoded = ResourceValue::decode(&encoded);
-        
+
         // Assert
-        
+
         assert_eq!(decoded.resource_offset, 42);
         assert_eq!(decoded.body, Bytes::from("test"));
         assert_eq!(decoded.area_offset, Some(10));

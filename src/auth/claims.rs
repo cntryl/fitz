@@ -1,5 +1,5 @@
-use serde::Deserialize;
 use base64::Engine;
+use serde::Deserialize;
 
 use crate::auth::Permission;
 
@@ -117,7 +117,8 @@ impl RawClaims {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let p = Permission::parse(trimmed).map_err(|e| format!("malformed permission: {} ({})", trimmed, e))?;
+                let p = Permission::parse(trimmed)
+                    .map_err(|e| format!("malformed permission: {} ({})", trimmed, e))?;
                 out.push(p);
             }
             Ok(out)
@@ -169,14 +170,16 @@ impl RawClaims {
 
                 // Determine if this is an exact Fitz permission (must contain a scheme)
                 if trimmed.contains("://") {
-                    let p = Permission::parse(trimmed).map_err(|e| format!("malformed permission: {} ({})", trimmed, e))?;
+                    let p = Permission::parse(trimmed)
+                        .map_err(|e| format!("malformed permission: {} ({})", trimmed, e))?;
                     out.push(p);
                     continue;
                 }
 
                 // Try coarse scope mapping for strings like 'notice.read'
                 if let Some(mapped) = crate::auth::map_coarse_scope(trimmed) {
-                    let p = Permission::parse(mapped).map_err(|e| format!("malformed mapped permission: {} ({})", mapped, e))?;
+                    let p = Permission::parse(mapped)
+                        .map_err(|e| format!("malformed mapped permission: {} ({})", mapped, e))?;
                     out.push(p);
                     continue;
                 }
@@ -213,7 +216,8 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
         .map_err(|e| format!("base64 decode error: {}", e))?;
 
     let s = String::from_utf8(decoded).map_err(|e| format!("utf8 error: {}", e))?;
-    let claims: RawClaims = serde_json::from_str(&s).map_err(|e| format!("json parse error: {}", e))?;
+    let claims: RawClaims =
+        serde_json::from_str(&s).map_err(|e| format!("json parse error: {}", e))?;
     Ok(claims)
 }
 
@@ -276,8 +280,9 @@ impl RawClaims {
 /// Extract permissions from a `serde_json::Value` representing JWT claims.
 /// This is a permissive extractor that returns an empty Vec if no permissions
 /// sources are present instead of failing validation.
-pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Vec<Permission>, String> {
-
+pub fn normalized_permissions_from_value(
+    value: &serde_json::Value,
+) -> Result<Vec<Permission>, String> {
     // 1) fitz.permissions
     if let Some(fitz) = value.get("fitz") {
         if let Some(perms_v) = fitz.get("permissions") {
@@ -285,7 +290,8 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
                 let mut out = Vec::new();
                 for v in perms_v.as_array().unwrap().iter() {
                     if let Some(s) = v.as_str() {
-                        let p = Permission::parse(s).map_err(|e| format!("malformed permission: {} ({})", s, e))?;
+                        let p = Permission::parse(s)
+                            .map_err(|e| format!("malformed permission: {} ({})", s, e))?;
                         out.push(p);
                     }
                 }
@@ -300,7 +306,8 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
             let mut out = Vec::new();
             for v in roles_v.as_array().unwrap().iter() {
                 if let Some(s) = v.as_str() {
-                    let p = Permission::parse(s).map_err(|e| format!("malformed permission: {} ({})", s, e))?;
+                    let p = Permission::parse(s)
+                        .map_err(|e| format!("malformed permission: {} ({})", s, e))?;
                     out.push(p);
                 }
             }
@@ -316,8 +323,13 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
             for v in scp_v.as_array().unwrap().iter() {
                 if let Some(s) = v.as_str() {
                     // map coarse scope -> permission
-                    let mapped = crate::auth::map_coarse_scope(s).ok_or_else(|| format!("malformed scope mapping: {}", s))?;
-                    out.push(Permission::parse(mapped).map_err(|e| format!("malformed permission from scope: {} ({})", s, e))?);
+                    let mapped = crate::auth::map_coarse_scope(s)
+                        .ok_or_else(|| format!("malformed scope mapping: {}", s))?;
+                    out.push(
+                        Permission::parse(mapped).map_err(|e| {
+                            format!("malformed permission from scope: {} ({})", s, e)
+                        })?,
+                    );
                 }
             }
             return Ok(out);
@@ -326,8 +338,12 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
             let parts: Vec<&str> = s.split_whitespace().collect();
             let mut out = Vec::new();
             for p in parts.into_iter() {
-                let mapped = crate::auth::map_coarse_scope(p).ok_or_else(|| format!("malformed scope mapping: {}", p))?;
-                out.push(Permission::parse(mapped).map_err(|e| format!("malformed permission from scope: {} ({})", p, e))?);
+                let mapped = crate::auth::map_coarse_scope(p)
+                    .ok_or_else(|| format!("malformed scope mapping: {}", p))?;
+                out.push(
+                    Permission::parse(mapped)
+                        .map_err(|e| format!("malformed permission from scope: {} ({})", p, e))?,
+                );
             }
             return Ok(out);
         }
@@ -339,8 +355,12 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
             let parts: Vec<&str> = s.split_whitespace().collect();
             let mut out = Vec::new();
             for p in parts.into_iter() {
-                let mapped = crate::auth::map_coarse_scope(p).ok_or_else(|| format!("malformed scope mapping: {}", p))?;
-                out.push(Permission::parse(mapped).map_err(|e| format!("malformed permission from scope: {} ({})", p, e))?);
+                let mapped = crate::auth::map_coarse_scope(p)
+                    .ok_or_else(|| format!("malformed scope mapping: {}", p))?;
+                out.push(
+                    Permission::parse(mapped)
+                        .map_err(|e| format!("malformed permission from scope: {} ({})", p, e))?,
+                );
             }
             return Ok(out);
         }
@@ -348,7 +368,6 @@ pub fn normalized_permissions_from_value(value: &serde_json::Value) -> Result<Ve
 
     Ok(Vec::new())
 }
-
 
 #[cfg(test)]
 mod claims_tests {
@@ -395,14 +414,22 @@ mod claims_tests {
 
         // Act
         let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
-        let normalized = raw.normalize(&["https://idp.example/"], "fitz-broker", 0).expect("normalize");
+        let normalized = raw
+            .normalize(&["https://idp.example/"], "fitz-broker", 0)
+            .expect("normalize");
 
         // Assert
         assert_eq!(normalized.tenant, "acme-prod");
         assert_eq!(normalized.roles.len(), 1);
         assert_eq!(normalized.permissions.len(), 1);
-        assert_eq!(normalized.permissions[0].raw, "notice://prod/orders/**#read");
-        assert!(matches!(normalized.permissions[0].access, crate::auth::Access::Read));
+        assert_eq!(
+            normalized.permissions[0].raw,
+            "notice://prod/orders/**#read"
+        );
+        assert!(matches!(
+            normalized.permissions[0].access,
+            crate::auth::Access::Read
+        ));
     }
 
     #[test]
@@ -450,10 +477,9 @@ mod claims_tests {
     }
 }
 
-
 #[cfg(test)]
 mod permission_parsing_tests {
-    use crate::auth::{Permission, Access};
+    use crate::auth::{Access, Permission};
 
     #[test]
     fn should_parse_permission_with_access_fragment() {
@@ -493,4 +519,3 @@ mod permission_parsing_tests {
         assert!(result.is_err());
     }
 }
-

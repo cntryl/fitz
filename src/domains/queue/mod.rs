@@ -111,13 +111,13 @@
 //! });
 //! ```
 
+pub mod durability;
+pub mod producer;
 pub mod protocol;
 pub mod queue_actor;
 pub mod session;
-pub mod producer;
-pub mod durability;
 
+pub use durability::{QueueDurabilityPolicy, QueueWriteOptions};
+pub use producer::QueueProducer;
 pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 pub use queue_actor::{Clock, QueueActor, SystemClock};
-pub use producer::QueueProducer;
-pub use durability::{QueueDurabilityPolicy, QueueWriteOptions};

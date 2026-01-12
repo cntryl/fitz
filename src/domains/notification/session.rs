@@ -1,11 +1,11 @@
+use crate::auth::Access;
 use crate::domains::notification::protocol::{PublishMessage, SubscribeMessage};
 use crate::domains::notification::route_actor::NoticeRouteActor;
-use crate::runtime::actor::{Context, Actor};
-use crate::session::permissions::SessionPermissions;
+use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
-use crate::auth::Access;
-use crate::session::session::SessionId;
 use crate::runtime::routing::RouteFamily;
+use crate::session::permissions::SessionPermissions;
+use crate::session::session::SessionId;
 
 /// Lightweight SessionActor helpers for the notification domain.
 ///
@@ -42,7 +42,10 @@ impl SessionActor {
         }
 
         let msg = SubscribeMessage::new(family, pattern, self.session_id, ctx.address().clone());
-        notice_actor.receive(crate::domains::notification::protocol::NotificationMessage::Subscribe(msg), ctx);
+        notice_actor.receive(
+            crate::domains::notification::protocol::NotificationMessage::Subscribe(msg),
+            ctx,
+        );
         Ok(())
     }
 
@@ -60,7 +63,10 @@ impl SessionActor {
         }
 
         let msg = PublishMessage::new(family, route, payload);
-        notice_actor.receive(crate::domains::notification::protocol::NotificationMessage::Publish(msg), ctx);
+        notice_actor.receive(
+            crate::domains::notification::protocol::NotificationMessage::Publish(msg),
+            ctx,
+        );
         Ok(())
     }
 }
@@ -68,18 +74,19 @@ impl SessionActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Permission;
+    use crate::domains::notification::route_actor::NoticeRouteActor;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
-    use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use crate::session::permissions::SessionPermissions;
-    use crate::auth::Permission;
     use bytes::Bytes;
     use std::sync::Arc;
-    use crate::domains::notification::route_actor::NoticeRouteActor;
 
     fn make_ctx() -> Context<NoticeRouteActor> {
         let router = Router::new();
-        let subscriber = RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
+        let subscriber =
+            RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
         Context::new(subscriber, Arc::new(router))
     }
 
@@ -108,7 +115,8 @@ mod tests {
     fn should_reject_unauthorized_publish() {
         // Arrange
         let router = Router::new();
-        let subscriber = RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
+        let subscriber =
+            RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
         let mut ctx = Context::new(subscriber.clone(), Arc::new(router.clone()));
 

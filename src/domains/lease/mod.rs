@@ -52,14 +52,14 @@
 //! });
 //! ```
 
-pub mod lease_actor;
 pub mod guard;
+pub mod lease_actor;
 pub mod protocol;
 
 // Test helper - lightweight SessionActor stub for testing lease authorization
 #[cfg_attr(not(test), doc(hidden))]
 pub mod session;
 
-pub use lease_actor::{Clock, LeaseActor, SystemClock};
 pub use guard::{LeaseError, LeaseGuard, LeaseHandle};
+pub use lease_actor::{Clock, LeaseActor, SystemClock};
 pub use protocol::{LeaseMessage, LeaseResponse};

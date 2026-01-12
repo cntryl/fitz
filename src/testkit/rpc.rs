@@ -1,14 +1,14 @@
 //! RPC test helpers
 
-use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
-use crate::domains::rpc::reply_inbox::ReplyInboxActor;
 use crate::domains::rpc::protocol::{RpcRequest, RpcResponse};
+use crate::domains::rpc::reply_inbox::ReplyInboxActor;
+use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
 use crate::runtime::actor::Context;
 use crate::runtime::router::Router;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
-use uuid::Uuid;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Create an RPC route actor context for testing
 ///
@@ -21,10 +21,7 @@ use std::sync::Arc;
 /// ```
 pub fn create_test_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
     let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new(route_str),
-    );
+    let addr = RouteAddress::new(RouteFamily::new(1), Route::new(route_str));
     Context::new(addr, router)
 }
 
@@ -46,10 +43,7 @@ pub fn create_test_inbox() -> ReplyInboxActor {
 /// ```
 pub fn create_test_inbox_context() -> Context<ReplyInboxActor> {
     let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("inbox://session/1"),
-    );
+    let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1"));
     Context::new(addr, router)
 }
 

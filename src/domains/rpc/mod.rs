@@ -47,9 +47,9 @@
 //!
 //! ```ignore
 //! // Worker registers for a route
-//! send(actor, RpcMessage::Subscribe { 
+//! send(actor, RpcMessage::Subscribe {
 //!     worker: worker_addr,
-//!     max_concurrent: 1 
+//!     max_concurrent: 1
 //! });
 //!
 //! // Client sends request
@@ -58,7 +58,7 @@
 //!         correlation_id: "req-001",
 //!         route: "rpc://acme/auth/user/create",
 //!         reply_route: client_addr,
-//!         body: b"..." 
+//!         body: b"..."
 //!     }
 //! });
 //!
@@ -73,10 +73,10 @@
 //! });
 //! ```
 
-pub mod rpc_route_actor;
-pub mod protocol;
 pub mod errors;
+pub mod protocol;
 pub mod reply_inbox;
+pub mod rpc_route_actor;
 
 // Test helper - lightweight SessionActor stub for testing RPC authorization
 // Available in tests (both unit tests and integration tests)
@@ -84,7 +84,7 @@ pub mod reply_inbox;
 pub mod session;
 
 // Re-export primary types
-pub use rpc_route_actor::RpcRouteActor;
-pub use protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
 pub use errors::{RpcError, RpcErrorCode};
-pub use reply_inbox::{ReplyInboxActor, InboxMessage};
+pub use protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
+pub use reply_inbox::{InboxMessage, ReplyInboxActor};
+pub use rpc_route_actor::RpcRouteActor;

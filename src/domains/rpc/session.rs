@@ -1,4 +1,4 @@
-﻿//! Lightweight SessionActor helpers for the RPC domain
+//! Lightweight SessionActor helpers for the RPC domain
 //!
 //! Responsibilities:
 //! - Enforce session-level authorization for RPC call/subscribe operations
@@ -7,12 +7,12 @@
 //! This is intentionally small: a full actor system is out-of-scope for this change,
 //! but tests rely on the SessionActor's semantic enforcement.
 
-use crate::domains::rpc::{RpcMessage, RpcRequest};
-use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
-use crate::runtime::actor::{Context, Actor};
-use crate::session::permissions::SessionPermissions;
-use crate::runtime::routing::{Route, RouteAddress};
 use crate::auth::Access;
+use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
+use crate::domains::rpc::{RpcMessage, RpcRequest};
+use crate::runtime::actor::{Actor, Context};
+use crate::runtime::routing::{Route, RouteAddress};
+use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
 /// Lightweight SessionActor for testing RPC authorization
@@ -72,15 +72,15 @@ impl SessionActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Permission;
+    use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
-    use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use crate::session::permissions::SessionPermissions;
-    use crate::auth::Permission;
-    use std::sync::Arc;
     use bytes::Bytes;
+    use std::sync::Arc;
     use uuid::Uuid;
-    use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
 
     fn make_ctx() -> Context<RpcRouteActor> {
         let router = Router::new();
@@ -122,11 +122,14 @@ mod tests {
         let mut ctx = make_ctx();
 
         // Worker registered
-        let worker_addr = RouteAddress::new(
-            RouteFamily::new(1),
-            Route::new("worker://realm/worker1"),
+        let worker_addr =
+            RouteAddress::new(RouteFamily::new(1), Route::new("worker://realm/worker1"));
+        actor.receive(
+            RpcMessage::Subscribe {
+                worker_addr: worker_addr.clone(),
+            },
+            &mut ctx,
         );
-        actor.receive(RpcMessage::Subscribe { worker_addr: worker_addr.clone() }, &mut ctx);
 
         // Session with write permission
         let perms = vec![Permission::parse("rpc://realm/area/**#write").unwrap()];
@@ -160,10 +163,8 @@ mod tests {
         let session_perms = SessionPermissions::from_permissions(perms);
         let session = SessionActor::new(SessionId(1), session_perms);
 
-        let worker_addr = RouteAddress::new(
-            RouteFamily::new(1),
-            Route::new("worker://realm/worker1"),
-        );
+        let worker_addr =
+            RouteAddress::new(RouteFamily::new(1), Route::new("worker://realm/worker1"));
         let route = Route::new("rpc://realm/area/resource/operation");
 
         // Act
@@ -185,10 +186,8 @@ mod tests {
         let session_perms = SessionPermissions::from_permissions(perms);
         let session = SessionActor::new(SessionId(1), session_perms);
 
-        let worker_addr = RouteAddress::new(
-            RouteFamily::new(1),
-            Route::new("worker://realm/worker1"),
-        );
+        let worker_addr =
+            RouteAddress::new(RouteFamily::new(1), Route::new("worker://realm/worker1"));
         let route = Route::new("rpc://realm/area/resource/operation");
 
         // Act
@@ -199,5 +198,3 @@ mod tests {
         assert_eq!(actor.worker_count(), 1);
     }
 }
-
-

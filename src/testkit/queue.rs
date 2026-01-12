@@ -27,7 +27,7 @@ pub fn create_test_queue_actor(
         area: area.to_string(),
         resource: resource.to_string(),
     };
-    
+
     let store = super::stream::create_test_db();
     QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
 }

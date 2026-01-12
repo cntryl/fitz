@@ -1,11 +1,11 @@
-use crate::domains::lease::protocol::LeaseMessage;
-use crate::domains::lease::lease_actor::LeaseActor;
-use crate::runtime::actor::{Context, Actor};
-use crate::session::permissions::SessionPermissions;
-use crate::runtime::routing::Route;
 use crate::auth::Access;
-use crate::session::session::SessionId;
+use crate::domains::lease::lease_actor::LeaseActor;
+use crate::domains::lease::protocol::LeaseMessage;
+use crate::runtime::actor::{Actor, Context};
+use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;
+use crate::session::permissions::SessionPermissions;
+use crate::session::session::SessionId;
 
 /// Lightweight SessionActor helpers for the lease domain.
 ///
@@ -131,13 +131,13 @@ impl SessionActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Permission;
+    use crate::domains::lease::lease_actor::LeaseActor;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
-    use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use crate::session::permissions::SessionPermissions;
-    use crate::auth::Permission;
     use std::sync::Arc;
-    use crate::domains::lease::lease_actor::LeaseActor;
 
     fn make_ctx() -> Context<LeaseActor> {
         let router = Router::new();

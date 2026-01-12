@@ -19,9 +19,6 @@ use std::sync::Arc;
 /// ```
 pub fn create_bench_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
     let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new(route_str),
-    );
+    let addr = RouteAddress::new(RouteFamily::new(1), Route::new(route_str));
     Context::new(addr, router)
 }

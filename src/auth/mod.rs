@@ -15,23 +15,18 @@
 //! **Auth answers:** "Who are you and what do you claim?"
 //! **Domains answer:** "Are you allowed to do this?"
 
-mod token;
-mod jwks;
 mod claims;
 mod errors;
+mod jwks;
+mod token;
 
-pub use token::{verify_jwt_with_rsa_pem, verify_jwt_with_hmac_secret};
-pub use jwks::{
-    cache_jwks_from_json,
-    cache_jwks_from_json_with_ttl,
-    fetch_and_cache_jwks,
-    get_decoding_key_from_cache,
-    ensure_jwks_cached,
-    derive_jwks_url_from_issuer,
-    is_jwks_stale,
-};
-pub use claims::{parse_jwt_noverify, RawClaims, Claims};
+pub use claims::{parse_jwt_noverify, Claims, RawClaims};
 pub use errors::AuthError;
+pub use jwks::{
+    cache_jwks_from_json, cache_jwks_from_json_with_ttl, derive_jwks_url_from_issuer,
+    ensure_jwks_cached, fetch_and_cache_jwks, get_decoding_key_from_cache, is_jwks_stale,
+};
+pub use token::{verify_jwt_with_hmac_secret, verify_jwt_with_rsa_pem};
 
 use std::str::FromStr;
 
@@ -107,26 +102,36 @@ pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
 
 /// Backwards-compatible helper that returns a `SessionPermissions` snapshot.
 /// These remain convenience wrappers for the transport/session-layer integration.
-pub fn permissions_from_compact_jwt(compact: &str) -> Result<crate::session::permissions::SessionPermissions, String> {
+pub fn permissions_from_compact_jwt(
+    compact: &str,
+) -> Result<crate::session::permissions::SessionPermissions, String> {
     let claims = claims::parse_jwt_noverify(compact)?;
     let perms = claims.normalized_permissions()?;
     Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
 }
 
-pub fn permissions_from_signed_jwt(compact: &str, public_pem: &[u8]) -> Result<crate::session::permissions::SessionPermissions, String> {
+pub fn permissions_from_signed_jwt(
+    compact: &str,
+    public_pem: &[u8],
+) -> Result<crate::session::permissions::SessionPermissions, String> {
     let claims_value = token::verify_jwt_with_rsa_pem(compact, public_pem)?;
-    let claims: RawClaims = serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
+    let claims: RawClaims =
+        serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
     let perms = claims.normalized_permissions()?;
     Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
 }
 
-pub async fn permissions_from_jwt_using_jwks(compact: &str, jwks_url: &str) -> Result<crate::session::permissions::SessionPermissions, String> {
+pub async fn permissions_from_jwt_using_jwks(
+    compact: &str,
+    jwks_url: &str,
+) -> Result<crate::session::permissions::SessionPermissions, String> {
     // Ensure jwks present or fetched
     crate::auth::jwks::ensure_jwks_cached(jwks_url)
         .await
         .map_err(|e| format!("failed to ensure jwks: {}", e))?;
     // Parse header to get kid and alg
-    let header = jsonwebtoken::decode_header(compact).map_err(|e| format!("invalid jwt header: {}", e))?;
+    let header =
+        jsonwebtoken::decode_header(compact).map_err(|e| format!("invalid jwt header: {}", e))?;
     let kid = header.kid.as_deref().unwrap_or("");
 
     // Try to get decoding key from cache; if missing, fetch and cache, then retry
@@ -154,5 +159,3 @@ pub async fn permissions_from_jwt_using_jwks(compact: &str, jwks_url: &str) -> R
     let perms = claims::normalized_permissions_from_value(&token_data.claims)?;
     Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
 }
-
-

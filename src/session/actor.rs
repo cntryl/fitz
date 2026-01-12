@@ -1,7 +1,7 @@
 use crate::auth::{Access, Claims};
 use crate::runtime::routing::Route;
-use crate::session::session::SessionId;
 use crate::session::permissions::SessionPermissions;
+use crate::session::session::SessionId;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -87,7 +87,9 @@ impl SessionActor {
 
     /// Batch authorization check (useful for multi-operation requests)
     pub fn authorize_all(&self, checks: &[(Route, Access)]) -> bool {
-        checks.iter().all(|(route, access)| self.authorize(route, *access))
+        checks
+            .iter()
+            .all(|(route, access)| self.authorize(route, *access))
     }
 
     /// Check if this session is authenticated
@@ -106,8 +108,9 @@ mod tests {
     fn should_session_actor_authorize_checks_permissions() {
         // Arrange
         let p = Permission::parse("notice://prod/orders/**#write").unwrap();
-        let perms = crate::session::permissions::SessionPermissions::from_permissions(vec![p.clone()]);
-        
+        let perms =
+            crate::session::permissions::SessionPermissions::from_permissions(vec![p.clone()]);
+
         // Create minimal claims for testing
         let claims = crate::auth::Claims {
             sub: "user:42".to_string(),
@@ -116,7 +119,7 @@ mod tests {
             permissions: vec![p],
             exp: 9999999999,
         };
-        
+
         let mut actor = SessionActor::new(crate::session::session::SessionId(1), perms.clone());
         actor.authenticate(claims, perms);
 

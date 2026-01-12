@@ -1,9 +1,9 @@
-﻿use criterion::{
+use bytes::Bytes;
+use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
+use fitz::benchkit::{create_bench_producer, create_bench_queue_actor};
 use fitz::domains::queue::QueueResponse;
-use fitz::benchkit::{create_bench_queue_actor, create_bench_producer};
-use bytes::Bytes;
 
 #[path = "config.rs"]
 mod config;
@@ -39,7 +39,7 @@ fn bench_producer_batched_enqueue(c: &mut Criterion) {
 
     for batch_size in [10, 100, 1000] {
         let mut producer = create_bench_producer(batch_size, 5);
-        
+
         group.throughput(Throughput::Elements(batch_size as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(batch_size),
@@ -50,7 +50,7 @@ fn bench_producer_batched_enqueue(c: &mut Criterion) {
                     for _ in 0..size {
                         producer.enqueue(black_box(payload.clone()), black_box(None));
                     }
-                    
+
                     // Flush batch to actor
                     let _result = producer.flush(black_box(&mut actor));
                 })
@@ -110,8 +110,8 @@ fn bench_reserve_only_empty(c: &mut Criterion) {
     group.bench_function("reserve_empty_queue", |b| {
         b.iter(|| {
             let _result = actor.handle_reserve(
-                black_box(30),         // lease_seconds
-                black_box(Some(1)),    // batch_size
+                black_box(30),      // lease_seconds
+                black_box(Some(1)), // batch_size
             );
         })
     });
@@ -145,8 +145,8 @@ fn bench_reserve_only_full(c: &mut Criterion) {
     group.bench_function("reserve_full_queue", |b| {
         b.iter(|| {
             let _result = actor.handle_reserve(
-                black_box(30),         // lease_seconds
-                black_box(Some(1)),    // batch_size
+                black_box(30),      // lease_seconds
+                black_box(Some(1)), // batch_size
             );
         })
     });
@@ -337,10 +337,8 @@ fn bench_batch_reserve_scaling(c: &mut Criterion) {
             &batch_size,
             |b, &size| {
                 b.iter(|| {
-                    let _result = actor.handle_reserve(
-                        black_box(30),
-                        black_box(Some(size as usize)),
-                    );
+                    let _result =
+                        actor.handle_reserve(black_box(30), black_box(Some(size as usize)));
                 })
             },
         );

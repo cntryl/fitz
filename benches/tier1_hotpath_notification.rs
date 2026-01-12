@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
@@ -5,7 +6,6 @@ use fitz::domains::notification::bench::Matcher;
 use fitz::domains::notification::protocol::NotifyMessage;
 use fitz::protocol::tlv::MessageType;
 use fitz::runtime::routing::Route;
-use bytes::Bytes;
 use std::sync::Arc;
 
 #[path = "config.rs"]
@@ -56,14 +56,11 @@ fn bench_fanout_scaling(c: &mut Criterion) {
                 b.iter(|| {
                     let route_ref = &route;
                     let payload_ref = &payload;
-                    
+
                     // Simulate per-subscriber clone (OLD behavior)
                     let mut messages = Vec::with_capacity(count as usize);
                     for _ in 0..count {
-                        let notify = NotifyMessage::new(
-                            route_ref.clone(),
-                            payload_ref.clone(),
-                        );
+                        let notify = NotifyMessage::new(route_ref.clone(), payload_ref.clone());
                         messages.push(black_box(notify));
                     }
                     messages.len()
@@ -79,11 +76,11 @@ fn bench_fanout_scaling(c: &mut Criterion) {
                 b.iter(|| {
                     let route_ref = &route;
                     let payload_ref = &payload;
-                    
+
                     // Create Arc once, share for all subscribers (NEW behavior)
                     let route_arc = Arc::new(route_ref.clone());
                     let payload_arc = Arc::new(payload_ref.clone());
-                    
+
                     let mut messages = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         let notify = NotifyMessage::new_shared(

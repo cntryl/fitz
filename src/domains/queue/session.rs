@@ -1,11 +1,11 @@
-﻿use crate::domains::queue::protocol::QueueMessage;
-use crate::domains::queue::queue_actor::QueueActor;
-use crate::runtime::actor::{Context, Actor};
-use crate::session::permissions::SessionPermissions;
-use crate::runtime::routing::Route;
 use crate::auth::Access;
-use crate::session::session::SessionId;
+use crate::domains::queue::protocol::QueueMessage;
+use crate::domains::queue::queue_actor::QueueActor;
+use crate::runtime::actor::{Actor, Context};
+use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;
+use crate::session::permissions::SessionPermissions;
+use crate::session::session::SessionId;
 use bytes::Bytes;
 
 /// Lightweight SessionActor helpers for the queue domain.
@@ -41,7 +41,7 @@ impl SessionActor {
     ) -> Result<(), String> {
         // Extract base route (strip /enqueue suffix if present)
         let base_route = Self::extract_base_route(&route);
-        
+
         // Enqueue requires write access (adding messages is a write operation)
         if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: enqueue".to_string());
@@ -71,7 +71,7 @@ impl SessionActor {
     ) -> Result<(), String> {
         // Extract base route (strip /reserve suffix if present)
         let base_route = Self::extract_base_route(&route);
-        
+
         // Reserve requires read access (consuming messages is a read operation)
         if !self.permissions.allows(&base_route, Access::Read) {
             return Err("unauthorized: reserve".to_string());
@@ -102,7 +102,7 @@ impl SessionActor {
     ) -> Result<(), String> {
         // Extract base route (strip /extend suffix if present)
         let base_route = Self::extract_base_route(&route);
-        
+
         // Extend requires write access (modifying lease state is a write operation)
         if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: extend".to_string());
@@ -131,7 +131,7 @@ impl SessionActor {
     ) -> Result<(), String> {
         // Extract base route (strip /complete suffix if present)
         let base_route = Self::extract_base_route(&route);
-        
+
         // Complete requires write access (deleting messages is a write operation)
         if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: complete".to_string());
@@ -146,7 +146,7 @@ impl SessionActor {
         queue_actor.receive(msg, ctx);
         Ok(())
     }
-    
+
     /// Helper to extract base route by stripping known operation suffixes.
     /// For queue operations, the base route is the resource path without the operation.
     /// e.g., "queue://realm/area/jobs/enqueue" -> "queue://realm/area/jobs"
@@ -165,12 +165,12 @@ impl SessionActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::actor::Context;
-    use crate::runtime::router::Router;
-    use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
-    use crate::session::permissions::SessionPermissions;
     use crate::auth::Permission;
     use crate::domains::queue::protocol::QueueKey;
+    use crate::runtime::actor::Context;
+    use crate::runtime::router::Router;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::session::permissions::SessionPermissions;
     use std::sync::Arc;
 
     fn make_ctx() -> Context<QueueActor> {
@@ -181,7 +181,7 @@ mod tests {
 
     fn make_queue_actor() -> QueueActor {
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -196,10 +196,7 @@ mod tests {
     #[test]
     fn should_reject_unauthenticated_enqueue() {
         // Arrange
-        let session = SessionActor::new(
-            SessionId(1),
-            SessionPermissions::from_permissions(vec![]),
-        );
+        let session = SessionActor::new(SessionId(1), SessionPermissions::from_permissions(vec![]));
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
 
@@ -223,9 +220,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#write").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#write",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -249,9 +247,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/other#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/other#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -277,9 +276,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -304,9 +304,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -332,9 +333,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -359,9 +361,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#write").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#write",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();

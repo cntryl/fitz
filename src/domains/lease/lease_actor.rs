@@ -91,7 +91,7 @@ impl LeaseState {
 pub struct LeaseActor {
     /// Route family this actor serves (for validation)
     family: crate::runtime::routing::RouteFamily,
-    
+
     /// Map of LeaseKey to current lease state
     leases: HashMap<LeaseKey, LeaseState>,
 
@@ -294,7 +294,7 @@ impl Actor for LeaseActor {
                     Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
                     None => LeaseResponse::NotFound,
                 }
-            },
+            }
             LeaseMessage::Renew {
                 family_id,
                 route,
@@ -310,7 +310,7 @@ impl Actor for LeaseActor {
                     Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
                     None => LeaseResponse::NotFound,
                 }
-            },
+            }
             LeaseMessage::Release {
                 family_id,
                 route,
@@ -325,11 +325,13 @@ impl Actor for LeaseActor {
                     Some(key) => self.handle_release(key, owner_id, fencing_token),
                     None => LeaseResponse::NotFound,
                 }
-            },
-            LeaseMessage::Query { family_id, route } => {                // Validate family_id matches actor's family
+            }
+            LeaseMessage::Query { family_id, route } => {
+                // Validate family_id matches actor's family
                 if family_id != self.family {
                     return; // Silently drop misrouted messages
-                }                match LeaseKey::from_route(family_id, &route) {
+                }
+                match LeaseKey::from_route(family_id, &route) {
                     Some(key) => self.handle_query(key),
                     None => LeaseResponse::NotFound,
                 }
@@ -468,9 +470,12 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
-        let mut actor = LeaseActor::with_clock(RouteFamily::new(1), Box::new(MockClock {
-            now: clock_ref.now.clone(),
-        }));
+        let mut actor = LeaseActor::with_clock(
+            RouteFamily::new(1),
+            Box::new(MockClock {
+                now: clock_ref.now.clone(),
+            }),
+        );
 
         actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 5);
 
@@ -493,9 +498,12 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
-        let mut actor = LeaseActor::with_clock(RouteFamily::new(1), Box::new(MockClock {
-            now: clock_ref.now.clone(),
-        }));
+        let mut actor = LeaseActor::with_clock(
+            RouteFamily::new(1),
+            Box::new(MockClock {
+                now: clock_ref.now.clone(),
+            }),
+        );
 
         // Act - acquire first lease
         let response1 =
@@ -572,9 +580,12 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
-        let mut actor = LeaseActor::with_clock(RouteFamily::new(1), Box::new(MockClock {
-            now: clock_ref.now.clone(),
-        }));
+        let mut actor = LeaseActor::with_clock(
+            RouteFamily::new(1),
+            Box::new(MockClock {
+                now: clock_ref.now.clone(),
+            }),
+        );
 
         let response =
             actor.handle_acquire(test_key("acme", "locks", "test1"), "owner1".to_string(), 5);

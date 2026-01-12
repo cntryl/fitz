@@ -1,7 +1,7 @@
-use once_cell::sync::Lazy;
-use dashmap::DashMap;
-use serde::Deserialize;
 use base64::Engine;
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,7 +25,7 @@ struct Jwk {
     pub e: Option<String>,
     pub k: Option<String>,
     pub _x5c: Option<Vec<String>>,
-} 
+}
 
 #[derive(Debug, Deserialize)]
 struct Jwks {
@@ -35,7 +35,7 @@ struct Jwks {
 /// Lightweight cache representation for a JWK
 #[derive(Debug, Clone)]
 enum CachedJwk {
-    Oct(Vec<u8>),            // symmetric secret bytes (k)
+    Oct(Vec<u8>),                 // symmetric secret bytes (k)
     Rsa { n: String, e: String }, // RSA components (base64url strings)
 }
 
@@ -63,8 +63,13 @@ pub fn cache_jwks_from_json(jwks_url: &str, jwks_json: &str) -> Result<(), Strin
 }
 
 /// Parse JWKS JSON and cache with explicit TTL (seconds)
-pub fn cache_jwks_from_json_with_ttl(jwks_url: &str, jwks_json: &str, ttl_seconds: u64) -> Result<(), String> {
-    let jwks: Jwks = serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {}", e))?;
+pub fn cache_jwks_from_json_with_ttl(
+    jwks_url: &str,
+    jwks_json: &str,
+    ttl_seconds: u64,
+) -> Result<(), String> {
+    let jwks: Jwks =
+        serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {}", e))?;
 
     let mut map: HashMap<String, CachedJwk> = HashMap::new();
     for k in jwks.keys.into_iter() {
@@ -165,7 +170,6 @@ pub fn derive_jwks_url_from_issuer(iss: &str) -> Result<String, String> {
     Ok(format!("{}/.well-known/jwks.json", base))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,4 +239,3 @@ mod tests {
         assert_eq!(url, "https://idp.example/.well-known/jwks.json");
     }
 }
-

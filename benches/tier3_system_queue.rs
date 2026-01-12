@@ -1,10 +1,8 @@
-﻿use criterion::{
-    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
-};
+use bytes::Bytes;
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use fitz::benchkit::create_bench_queue_actor;
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::runtime::routing::RouteFamily;
-use fitz::benchkit::create_bench_queue_actor;
-use bytes::Bytes;
 use std::sync::Arc;
 
 #[path = "config.rs"]
@@ -128,13 +126,14 @@ fn bench_cold_start_recovery(c: &mut Criterion) {
                     area: "recovery".to_string(),
                     resource: "queue".to_string(),
                 };
-                
+
                 // Use in-memory storage for benchmark speed
                 let store = Arc::new(
-                    cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
-                        .expect("Failed to open in-memory store")
+                    cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                        .expect("Failed to open in-memory store"),
                 );
-                let mut actor = QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
+                let mut actor =
+                    QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
 
                 let payload = Bytes::from_static(b"recovery message");
 
@@ -182,14 +181,15 @@ fn bench_high_contention_scenario(c: &mut Criterion) {
         b.iter(|| {
             // Enqueue
             let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-            
+
             // Immediate reserve (queue goes empty)
             let reserve_resp = actor.handle_reserve(black_box(30), black_box(Some(1)));
-            
+
             // Complete if we got a message
             if let QueueResponse::Reserved { messages } = reserve_resp {
                 if !messages.is_empty() {
-                    let _ = actor.handle_complete(black_box(messages[0].id), black_box(messages[0].token));
+                    let _ = actor
+                        .handle_complete(black_box(messages[0].id), black_box(messages[0].token));
                 }
             }
         })

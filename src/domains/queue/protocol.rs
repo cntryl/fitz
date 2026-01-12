@@ -37,8 +37,8 @@
 //! - Notices are hints (at-most-once), not guarantees
 //! - QueueActor never stores waiters or blocking state
 
-use bytes::Bytes;
 use crate::runtime::routing::{Route, RouteFamily};
+use bytes::Bytes;
 
 /// Parsed queue identity
 ///
@@ -62,15 +62,18 @@ impl QueueKey {
     /// Returns None if the route doesn't match the expected format.
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
         let path = route.as_str();
-        
+
         // Strip scheme if present (e.g., "queue://..." → "...")
         let path_without_scheme = if let Some(pos) = path.find("://") {
             &path[pos + 3..]
         } else {
             path
         };
-        
-        let parts: Vec<&str> = path_without_scheme.trim_start_matches('/').split('/').collect();
+
+        let parts: Vec<&str> = path_without_scheme
+            .trim_start_matches('/')
+            .split('/')
+            .collect();
 
         if parts.len() >= 4 {
             Some(QueueKey {
@@ -115,16 +118,16 @@ impl std::fmt::Display for MessageId {
 pub struct ReservedMessage {
     /// Message identifier
     pub id: MessageId,
-    
+
     /// Message body
     pub body: Bytes,
-    
+
     /// Lease token (required for extend/complete)
     pub token: u64,
-    
+
     /// Lease duration in seconds
     pub lease_seconds: u64,
-    
+
     /// Number of delivery attempts (starts at 1)
     pub attempts: u32,
 }
@@ -138,7 +141,7 @@ pub enum QueueMessage {
     /// Enqueue a message
     ///
     /// Route format: `queue://{realm}/{area}/{resource}/enqueue`
-    /// 
+    ///
     /// Writes the message body to durable storage and adds it to the ready queue.
     /// If delay_seconds is provided, message won't be visible until delay elapses.
     /// Returns the MessageId for tracking.
@@ -152,17 +155,17 @@ pub enum QueueMessage {
     /// Enqueue a batch of messages (first-class batch API)
     ///
     /// Route format: `queue://{realm}/{area}/{resource}/enqueue_batch`
-    /// 
+    ///
     /// Writes all messages in ONE Midge write batch for amortized cost.
     /// Preserves FIFO ordering within the batch.
     /// Returns MessageIds in the same order as input.
-    /// 
+    ///
     /// # Semantics
     /// - Exactly ONE Midge write batch per enqueue_batch call
     /// - All messages succeed or all fail (no partial visibility)
     /// - delay_seconds applies to all messages if scalar, or per-message if Vec
     /// - At most ONE availability notice per batch
-    /// 
+    ///
     /// # Performance
     /// - Optimized for high-throughput ingestion (1M+ msg/sec)
     /// - Amortizes durable write cost across batch
@@ -177,14 +180,14 @@ pub enum QueueMessage {
     /// Reserve messages for processing
     ///
     /// Route format: `queue://{realm}/{area}/{resource}/reserve`
-    /// 
+    ///
     /// Pops up to `batch_size` messages from the ready queue, creates leases,
     /// and returns them with bodies loaded from storage.
-    /// 
+    ///
     /// If `batch_size` is None, defaults to 1.
-    /// 
+    ///
     /// # Long Polling (RPC-Level Only)
-    /// 
+    ///
     /// If `wait_seconds` is provided and reserve returns empty:
     /// - RPC layer subscribes to `notice://{realm}/{area}/{resource}/available`
     /// - Waits up to `wait_seconds` for a notice or timeout
@@ -202,7 +205,7 @@ pub enum QueueMessage {
     /// Extend message lease
     ///
     /// Route format: `queue://{realm}/{area}/{resource}/extend`
-    /// 
+    ///
     /// Extends the expiration time for a reserved message.
     /// Requires valid token. Fails if token mismatches or lease expired.
     Extend {
@@ -216,7 +219,7 @@ pub enum QueueMessage {
     /// Complete message processing
     ///
     /// Route format: `queue://{realm}/{area}/{resource}/complete`
-    /// 
+    ///
     /// Marks message as successfully processed.
     /// Removes inflight entry and deletes durable record.
     /// Requires valid token. Fails if token mismatches or lease expired.
@@ -232,28 +235,20 @@ pub enum QueueMessage {
     /// Not exposed via external routes.
     /// Sent by the actor's timer system when a lease expires.
     /// Causes message to be re-enqueued to the ready queue.
-    LeaseExpired {
-        id: MessageId,
-    },
+    LeaseExpired { id: MessageId },
 }
 
 /// Queue operation responses
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueResponse {
     /// Message successfully enqueued
-    Enqueued {
-        id: MessageId,
-    },
+    Enqueued { id: MessageId },
 
     /// Batch of messages successfully enqueued
-    EnqueuedBatch {
-        ids: Vec<MessageId>,
-    },
+    EnqueuedBatch { ids: Vec<MessageId> },
 
     /// Messages successfully reserved
-    Reserved {
-        messages: Vec<ReservedMessage>,
-    },
+    Reserved { messages: Vec<ReservedMessage> },
 
     /// Lease successfully extended
     Extended,
@@ -271,15 +266,11 @@ pub enum QueueResponse {
     NotFound,
 
     /// Bad request (malformed parameters)
-    BadRequest {
-        reason: String,
-    },
+    BadRequest { reason: String },
 
     /// Queue does not exist
     QueueNotFound,
 
     /// Internal error
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }

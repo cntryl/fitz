@@ -89,12 +89,7 @@ impl SubscriptionIndex {
     /// - `family_id`: RouteFamily for isolation
     /// - `pattern`: The route pattern (may contain `*` and `**` wildcards)
     /// - `subscription_id`: Unique identifier for this subscription
-    pub fn insert(
-        &self,
-        family_id: RouteFamily,
-        pattern: &Route,
-        subscription_id: SubscriptionId,
-    ) {
+    pub fn insert(&self, family_id: RouteFamily, pattern: &Route, subscription_id: SubscriptionId) {
         let segments = parse_pattern_segments(pattern.as_str());
         let mut roots = self.roots.write();
         let root = roots
@@ -110,12 +105,7 @@ impl SubscriptionIndex {
     /// - `family_id`: RouteFamily
     /// - `pattern`: The original route pattern
     /// - `subscription_id`: Subscription to remove
-    pub fn remove(
-        &self,
-        family_id: RouteFamily,
-        pattern: &Route,
-        subscription_id: SubscriptionId,
-    ) {
+    pub fn remove(&self, family_id: RouteFamily, pattern: &Route, subscription_id: SubscriptionId) {
         let segments = parse_pattern_segments(pattern.as_str());
         let mut roots = self.roots.write();
         if let Some(root) = roots.get_mut(&family_id) {

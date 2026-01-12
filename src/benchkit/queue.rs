@@ -1,8 +1,8 @@
 //! Queue benchmarking helpers
 
-use crate::domains::queue::{QueueActor, QueueKey, QueueProducer, QueueDurabilityPolicy};
-use crate::runtime::routing::RouteFamily;
 use super::storage::create_bench_store;
+use crate::domains::queue::{QueueActor, QueueDurabilityPolicy, QueueKey, QueueProducer};
+use crate::runtime::routing::RouteFamily;
 use std::time::Duration;
 
 /// Create a QueueActor for benchmarking with Strict durability
@@ -66,9 +66,15 @@ pub fn create_bench_queue_actor_with_durability(
         area: area.to_string(),
         resource: resource.to_string(),
     };
-    
+
     let store = create_bench_store();
-    QueueActor::with_durability(RouteFamily::new(1), queue_key, store, max_attempts, durability)
+    QueueActor::with_durability(
+        RouteFamily::new(1),
+        queue_key,
+        store,
+        max_attempts,
+        durability,
+    )
 }
 
 /// Create a QueueProducer for benchmarking producer-side batching

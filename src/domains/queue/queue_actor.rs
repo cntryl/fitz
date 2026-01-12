@@ -1,4 +1,4 @@
-﻿//! QueueActor: manages a single durable message queue
+//! QueueActor: manages a single durable message queue
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
@@ -36,8 +36,8 @@
 //! - `queue:{realm}:{area}:{resource}:msg:{id}` â†’ QueueRecord (body, attempts)
 //! - `queue:{realm}:{area}:{resource}:next_id` â†’ u64 (next message ID counter)
 
-use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -153,36 +153,36 @@ pub struct QueueActor {
     /// Route family this actor serves (for validation)
     #[allow(dead_code)]
     family: RouteFamily,
-    
+
     /// Queue identity
     queue_key: QueueKey,
-    
+
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,
-    
+
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
-    
+
     /// Ready queue: FIFO list of message IDs available for reservation
     pub ready: VecDeque<MessageId>,
-    
+
     /// Inflight map: leased messages (id â†’ Inflight)
     pub inflight: HashMap<MessageId, Inflight>,
-    
+
     /// Timer heap: lease expiration events (earliest first, min-heap)
     timers: BinaryHeap<Reverse<LeaseExpiry>>,
-    
+
     /// Delayed visibility heap: messages not yet visible (earliest first, min-heap)
     delayed: BinaryHeap<Reverse<DelayedMessage>>,
-    
+
     /// Clock for time-based operations
     clock: Box<dyn Clock>,
-    
+
     /// Maximum delivery attempts before DLQ (None = unlimited retries)
     max_attempts: Option<u32>,
-    
+
     /// Durability policy for queue writes
-    /// 
+    ///
     /// Controls fsync behavior and group commit. Does NOT affect other domains.
     durability: super::durability::QueueDurabilityPolicy,
 }
@@ -203,7 +203,7 @@ impl QueueActor {
             super::durability::QueueDurabilityPolicy::Strict,
         )
     }
-    
+
     /// Create a new queue actor with explicit durability policy
     pub fn with_durability(
         family: RouteFamily,
@@ -233,7 +233,7 @@ impl QueueActor {
     ) -> Self {
         // Recover next_id from Midge on startup
         let next_id = Self::recover_next_id(&store, &queue_key);
-        
+
         Self {
             family,
             queue_key,
@@ -253,9 +253,9 @@ impl QueueActor {
     pub fn durability(&self) -> super::durability::QueueDurabilityPolicy {
         self.durability
     }
-    
+
     /// Create a new queue actor with a custom clock (for testing, Strict durability)
-    /// 
+    ///
     /// DEPRECATED: Use `with_clock_and_durability` for new code
     #[doc(hidden)]
     pub fn with_clock(
@@ -276,22 +276,37 @@ impl QueueActor {
     }
 
     /// Recover next message ID from durable storage
-    fn recover_next_id(store: &cntryl_midge::MidgeEngine, queue_key: &QueueKey) -> u64 {
+    fn recover_next_id(store: &cntryl_midge::Engine, queue_key: &QueueKey) -> u64 {
         let key = Self::next_id_key(queue_key);
         let cf = store.default_column_family();
-        
-        match store.get(cf, &key) {
-            Ok(Some(bytes)) => {
-                if bytes.len() == 8 {
-                    u64::from_le_bytes(bytes[..8].try_into().unwrap())
-                } else {
-                    eprintln!("WARN: Invalid next_id format for queue {:?}, starting from 1", queue_key);
+
+        match store.begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly) {
+            Ok(txn) => match txn.get(&key) {
+                Ok(Some(bytes)) => {
+                    if bytes.len() == 8 {
+                        u64::from_le_bytes(bytes[..8].try_into().unwrap())
+                    } else {
+                        eprintln!(
+                            "WARN: Invalid next_id format for queue {:?}, starting from 1",
+                            queue_key
+                        );
+                        1
+                    }
+                }
+                Ok(None) => 1,
+                Err(e) => {
+                    eprintln!(
+                        "WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1",
+                        queue_key, e
+                    );
                     1
                 }
-            }
-            Ok(None) => 1, // Queue doesn't exist yet, start from 1
+            },
             Err(e) => {
-                eprintln!("WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1", queue_key, e);
+                eprintln!(
+                    "WARN: Failed to begin tx for next_id recovery: {:?}, starting from 1",
+                    e
+                );
                 1
             }
         }
@@ -301,7 +316,7 @@ impl QueueActor {
     fn next_message_id(&mut self) -> MessageId {
         let id = self.next_id;
         self.next_id += 1;
-        
+
         // Persist updated next_id counter (for crash recovery)
         // TODO: Use transaction API with durability options:
         // let cf = self.store.default_column_family();
@@ -317,10 +332,31 @@ impl QueueActor {
         let cf = self.store.default_column_family();
         let key = Self::next_id_key(&self.queue_key);
         let value = self.next_id.to_le_bytes();
-        if let Err(e) = self.store.put(cf, &key, &value) {
-            eprintln!("WARN: Failed to persist next_id: {:?}", e);
+
+        match self
+            .store
+            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(mut txn) => {
+                if let Err(e) = txn.put(key, value.to_vec(), None) {
+                    eprintln!("WARN: Failed to enqueue next_id in txn: {:?}", e);
+                } else {
+                    let (sync, disable_wal) = self.durability.to_midge_options();
+                    let opts = if disable_wal {
+                        cntryl_midge::WriteOptions::no_wal()
+                    } else if sync {
+                        cntryl_midge::WriteOptions::sync()
+                    } else {
+                        cntryl_midge::WriteOptions::buffered()
+                    };
+                    if let Err(e) = self.store.commit(txn, opts) {
+                        eprintln!("WARN: Failed to commit next_id txn: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => eprintln!("WARN: Failed to begin tx for next_id: {:?}", e),
         }
-        
+
         MessageId::new(id)
     }
 
@@ -328,7 +364,7 @@ impl QueueActor {
     fn generate_token() -> u64 {
         use std::collections::hash_map::RandomState;
         use std::hash::{BuildHasher, Hasher};
-        
+
         let hasher = RandomState::new().build_hasher();
         hasher.finish()
     }
@@ -346,7 +382,10 @@ impl QueueActor {
     fn message_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
         format!(
             "queue:{}:{}:{}:msg:{}",
-            queue_key.realm, queue_key.area, queue_key.resource, id.as_u64()
+            queue_key.realm,
+            queue_key.area,
+            queue_key.resource,
+            id.as_u64()
         )
         .into_bytes()
     }
@@ -367,31 +406,33 @@ impl QueueActor {
         if bytes.len() < 16 {
             return Err("Invalid record format".to_string());
         }
-        
+
         let attempts = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
         let body_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-        
+
         if bytes.len() < 16 + body_len {
             return Err("Truncated record body".to_string());
         }
-        
+
         let body = Bytes::copy_from_slice(&bytes[16..16 + body_len]);
-        
-        Ok(QueueRecord { body, attempts, visible_at_ms })
+
+        Ok(QueueRecord {
+            body,
+            attempts,
+            visible_at_ms,
+        })
     }
 
     /// Handle enqueue operation
     pub fn handle_enqueue(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
         // Delegate to batch enqueue with single message
         match self.handle_enqueue_batch(vec![body], delay_seconds) {
-            QueueResponse::EnqueuedBatch { ids } => QueueResponse::Enqueued {
-                id: ids[0],
-            },
+            QueueResponse::EnqueuedBatch { ids } => QueueResponse::Enqueued { id: ids[0] },
             other => other,
         }
     }
-    
+
     /// Handle batch enqueue operation (first-class batch API)
     ///
     /// This is the TRUE batch path that leverages Midge write-batch semantics.
@@ -407,97 +448,89 @@ impl QueueActor {
     /// - Optimized for high-throughput ingestion (1M+ msg/sec)
     /// - Amortizes durable write cost across batch
     /// - Minimal per-message overhead
-    pub fn handle_enqueue_batch(&mut self, messages: Vec<Bytes>, delay_seconds: Option<u64>) -> QueueResponse {
+    pub fn handle_enqueue_batch(
+        &mut self,
+        messages: Vec<Bytes>,
+        delay_seconds: Option<u64>,
+    ) -> QueueResponse {
         if messages.is_empty() {
             return QueueResponse::BadRequest {
                 reason: "Empty batch".to_string(),
             };
         }
-        
+
         let now = self.clock.now();
-        
+
         // Allocate message IDs and build records in input order (FIFO)
         let mut batch: Vec<(MessageId, QueueRecord, Instant)> = Vec::with_capacity(messages.len());
-        
+
         for body in messages {
             let id = self.next_message_id();
-            
+
             // Calculate visibility time
             let visible_at = match delay_seconds {
                 Some(delay) => now + Duration::from_secs(delay),
                 None => now,
             };
-            
+
             // Convert to milliseconds since epoch for durability
             let visible_at_ms = visible_at.duration_since(now).as_millis() as u64
                 + now.elapsed().as_millis() as u64;
-            
+
             let record = QueueRecord {
                 body,
                 attempts: 0,
                 visible_at_ms,
             };
-            
+
             batch.push((id, record, visible_at));
         }
-        
+
         // Perform ONE Midge transaction for all messages
         let cf = self.store.default_column_family();
-        
-        // TODO: Use Midge's transaction API with commit_transaction_boxed:
-        //
-        // let mut txn = match self.store.begin_transaction(cf) {
-        //     Ok(t) => t,
-        //     Err(e) => return QueueResponse::Error {
-        //         message: format!("Failed to begin transaction: {:?}", e),
-        //     },
-        // };
-        //
-        // // Add all messages to transaction
-        // for (id, record, _) in &batch {
-        //     let key = Self::message_key(&self.queue_key, *id);
-        //     let value = Self::encode_record(record);
-        //     if let Err(e) = txn.put(&key, &value) {
-        //         return QueueResponse::Error {
-        //             message: format!("Failed to add to transaction: {:?}", e),
-        //         };
-        //     }
-        // }
-        //
-        // // Commit with durability policy options
-        // let (sync, disable_wal) = self.durability.to_midge_options();
-        // let mut opts = WriteOptions::default();
-        // opts.set_sync(sync);
-        // opts.set_disable_wal(disable_wal);
-        // if let Err(e) = self.store.commit_transaction_boxed(txn, &opts) {
-        //     return QueueResponse::Error {
-        //         message: format!("Failed to commit transaction: {:?}", e),
-        //     };
-        // }
-        //
-        // This enables:
-        // - Strict: sync=true → fsync per commit (100-150K msg/sec)
-        // - Grouped: sync=false, wal=enabled → group commit (500K+ msg/sec)
-        // - Async: sync=false, wal=disabled → memory-only (1-2M+ msg/sec)
-        //
-        // Different queue actors can have different durability on the same
-        // Midge instance without affecting KV/stream/lease domains.
-        //
+
+        let mut txn = match self
+            .store
+            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(t) => t,
+            Err(e) => {
+                return QueueResponse::Error {
+                    message: format!("Failed to begin transaction: {:?}", e),
+                }
+            }
+        };
+
+        // Add all messages to transaction
         for (id, record, _) in &batch {
             let key = Self::message_key(&self.queue_key, *id);
             let value = Self::encode_record(record);
-            
-            if let Err(e) = self.store.put(cf, &key, &value) {
+            if let Err(e) = txn.put(key, value, None) {
                 return QueueResponse::Error {
-                    message: format!("Failed to persist batch: {:?}", e),
+                    message: format!("Failed to add to transaction: {:?}", e),
                 };
             }
         }
-        
+
+        // Commit with durability policy options
+        let (sync, disable_wal) = self.durability.to_midge_options();
+        let opts = if disable_wal {
+            cntryl_midge::WriteOptions::no_wal()
+        } else if sync {
+            cntryl_midge::WriteOptions::sync()
+        } else {
+            cntryl_midge::WriteOptions::buffered()
+        };
+        if let Err(e) = self.store.commit(txn, opts) {
+            return QueueResponse::Error {
+                message: format!("Failed to commit transaction: {:?}", e),
+            };
+        }
+
         // After durable success, update in-memory queues
         let mut ready_count = 0;
         let message_ids: Vec<MessageId> = batch.iter().map(|(id, _, _)| *id).collect();
-        
+
         for (id, _, visible_at) in batch {
             if visible_at <= now {
                 // Immediately visible
@@ -505,17 +538,18 @@ impl QueueActor {
                 ready_count += 1;
             } else {
                 // Delayed visibility
-                self.delayed.push(Reverse(DelayedMessage { id, visible_at }));
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
             }
         }
-        
+
         // Emit at most ONE availability notice per batch
         if ready_count > 0 {
             // TODO: Emit notice://{realm}/{area}/{resource}/available
             // This hint allows long-polling RPC clients to wake up and retry reserve.
             // Emission is optional (best-effort, not guaranteed delivery).
         }
-        
+
         QueueResponse::EnqueuedBatch { ids: message_ids }
     }
 
@@ -529,25 +563,41 @@ impl QueueActor {
     /// 4. RPC retries reserve on notice or timeout
     ///
     /// QueueActor never stores waiters or blocks on empty queues.
-    pub fn handle_reserve(&mut self, lease_seconds: u64, batch_size: Option<usize>) -> QueueResponse {
+    pub fn handle_reserve(
+        &mut self,
+        lease_seconds: u64,
+        batch_size: Option<usize>,
+    ) -> QueueResponse {
         let batch_size = batch_size.unwrap_or(1);
         let now = self.clock.now();
         let lease_duration = Duration::from_secs(lease_seconds);
-        
+
         let mut messages = Vec::new();
-        
+
         for _ in 0..batch_size {
             // Pop from ready queue
             let id = match self.ready.pop_front() {
                 Some(id) => id,
                 None => break, // No more messages
             };
-            
+
             // Load from Midge
             let cf = self.store.default_column_family();
             let key = Self::message_key(&self.queue_key, id);
-            
-            let record = match self.store.get(cf, &key) {
+
+            // Use a read-only transaction for consistent reads
+            let txn = match self
+                .store
+                .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("WARN: Failed to begin tx: {:?}", e);
+                    continue;
+                }
+            };
+
+            let record = match txn.get(&key) {
                 Ok(Some(bytes)) => match Self::decode_record(&bytes) {
                     Ok(record) => record,
                     Err(e) => {
@@ -558,23 +608,23 @@ impl QueueActor {
                 Ok(None) => {
                     eprintln!("WARN: Message {} disappeared from storage", id);
                     continue; // Message was deleted
-                },
+                }
                 Err(e) => {
                     eprintln!("WARN: Failed to read message {}: {:?}", id, e);
                     continue; // Storage error
                 }
             };
-            
+
             // Generate lease token
             let token = Self::generate_token();
             let expires_at = now + lease_duration;
-            
+
             // Create inflight entry
             self.inflight.insert(id, Inflight { token, expires_at });
-            
+
             // Schedule expiration timer
             self.timers.push(Reverse(LeaseExpiry { id, expires_at }));
-            
+
             // Build response message
             messages.push(ReservedMessage {
                 id,
@@ -584,70 +634,75 @@ impl QueueActor {
                 attempts: record.attempts + 1, // First attempt is 1 (not 0)
             });
         }
-        
+
         QueueResponse::Reserved { messages }
     }
 
     /// Handle extend operation
-    pub fn handle_extend(&mut self, id: MessageId, token: u64, lease_seconds: u64) -> QueueResponse {
+    pub fn handle_extend(
+        &mut self,
+        id: MessageId,
+        token: u64,
+        lease_seconds: u64,
+    ) -> QueueResponse {
         let now = self.clock.now();
-        
+
         // Check if message is inflight
         let inflight = match self.inflight.get_mut(&id) {
             Some(inflight) => inflight,
             None => return QueueResponse::NotFound,
         };
-        
+
         // Validate token
         if inflight.token != token {
             return QueueResponse::InvalidToken;
         }
-        
+
         // Check if already expired
         if inflight.expires_at <= now {
             // Remove stale inflight entry
             self.inflight.remove(&id);
             return QueueResponse::LeaseExpired;
         }
-        
+
         // Extend expiration
         let new_expires_at = now + Duration::from_secs(lease_seconds);
         inflight.expires_at = new_expires_at;
-        
+
         // Schedule new timer (old timer will be ignored when it fires)
         self.timers.push(Reverse(LeaseExpiry {
             id,
             expires_at: new_expires_at,
         }));
-        
+
         QueueResponse::Extended
     }
 
     /// Handle complete operation
     pub fn handle_complete(&mut self, id: MessageId, token: u64) -> QueueResponse {
         let now = self.clock.now();
-        
+
         // Check if message is inflight
         let inflight = match self.inflight.get(&id) {
             Some(inflight) => inflight.clone(),
             None => return QueueResponse::NotFound,
         };
-        
+
         // Validate token
         if inflight.token != token {
             return QueueResponse::InvalidToken;
         }
-        
+
         // Check if already expired
         if inflight.expires_at <= now {
             // Remove stale inflight entry
             self.inflight.remove(&id);
             return QueueResponse::LeaseExpired;
         }
-        
+
         // Remove inflight entry
         self.inflight.remove(&id);
-        
+
         // Delete from Midge with durability options (via transaction API)
         // TODO: Use transaction API for deletes:
         // let cf = self.store.default_column_family();
@@ -661,12 +716,34 @@ impl QueueActor {
         // self.store.commit_transaction_boxed(txn, &opts).ok();
         let cf = self.store.default_column_family();
         let key = Self::message_key(&self.queue_key, id);
-        
-        if let Err(e) = self.store.delete(cf, &key) {
-            eprintln!("WARN: Failed to delete message {}: {:?}", id, e);
-            // Don't fail the operation, inflight is already removed
+
+        match self
+            .store
+            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(mut txn) => {
+                if let Err(e) = txn.delete(key) {
+                    eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
+                } else {
+                    let (sync, disable_wal) = self.durability.to_midge_options();
+                    let opts = if disable_wal {
+                        cntryl_midge::WriteOptions::no_wal()
+                    } else if sync {
+                        cntryl_midge::WriteOptions::sync()
+                    } else {
+                        cntryl_midge::WriteOptions::buffered()
+                    };
+                    if let Err(e) = self.store.commit(txn, opts) {
+                        eprintln!(
+                            "WARN: Failed to commit delete txn for message {}: {:?}",
+                            id, e
+                        );
+                    }
+                }
+            }
+            Err(e) => eprintln!("WARN: Failed to begin tx to delete message {}: {:?}", id, e),
         }
-        
+
         QueueResponse::Completed
     }
 
@@ -677,79 +754,126 @@ impl QueueActor {
             Some(inflight) => inflight.clone(),
             None => return, // Already completed or extended
         };
-        
+
         let now = self.clock.now();
-        
+
         // Verify expiration (ignore stale timers from extend operations)
         if inflight.expires_at > now {
             return; // Lease was extended, ignore this timer
         }
-        
+
         // Remove inflight entry
         self.inflight.remove(&id);
-        
+
         // Increment attempts in storage and check DLQ threshold
         let cf = self.store.default_column_family();
         let key = Self::message_key(&self.queue_key, id);
-        
-        match self.store.get(cf, &key) {
-            Ok(Some(bytes)) => {
-                match Self::decode_record(&bytes) {
-                    Ok(mut record) => {
-                        record.attempts += 1;
-                        
-                        // Check if attempts reached or exceeded max_attempts threshold
-                        // Note: displayed attempts = storage + 1, so when storage reaches max, DLQ
-                        let is_dlq = if let Some(max) = self.max_attempts {
-                            record.attempts >= max
-                        } else {
-                            false
-                        };
-                        
-                        if is_dlq {
-                            // DLQ: Delete message from storage
-                            // TODO: Use transaction API with durability options
-                            if let Err(e) = self.store.delete(cf, &key) {
-                                eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
+
+        match self
+            .store
+            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(mut txn) => {
+                match txn.get(&key) {
+                    Ok(Some(bytes)) => {
+                        match Self::decode_record(&bytes) {
+                            Ok(mut record) => {
+                                record.attempts += 1;
+
+                                // Check if attempts reached or exceeded max_attempts threshold
+                                let is_dlq = if let Some(max) = self.max_attempts {
+                                    record.attempts >= max
+                                } else {
+                                    false
+                                };
+
+                                if is_dlq {
+                                    // DLQ: Delete message from storage (in txn)
+                                    if let Err(e) = txn.delete(key.clone()) {
+                                        eprintln!(
+                                            "WARN: Failed to delete DLQ message {}: {:?}",
+                                            id, e
+                                        );
+                                    } else {
+                                        let (sync, disable_wal) =
+                                            self.durability.to_midge_options();
+                                        let opts = if disable_wal {
+                                            cntryl_midge::WriteOptions::no_wal()
+                                        } else if sync {
+                                            cntryl_midge::WriteOptions::sync()
+                                        } else {
+                                            cntryl_midge::WriteOptions::buffered()
+                                        };
+                                        if let Err(e) = self.store.commit(txn, opts) {
+                                            eprintln!(
+                                                "WARN: Failed to commit DLQ delete txn {}: {:?}",
+                                                id, e
+                                            );
+                                        }
+                                    }
+
+                                    // Log DLQ event
+                                    eprintln!(
+                                        "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
+                                        self.queue_key, id, record.attempts
+                                    );
+
+                                    // Do NOT re-enqueue
+                                    return;
+                                }
+
+                                // Normal retry: increment attempts and persist
+                                let value = Self::encode_record(&record);
+                                if let Err(e) = txn.put(key.clone(), value, None) {
+                                    eprintln!(
+                                        "WARN: Failed to increment attempts for message {}: {:?}",
+                                        id, e
+                                    );
+                                } else {
+                                    let (sync, disable_wal) = self.durability.to_midge_options();
+                                    let opts = if disable_wal {
+                                        cntryl_midge::WriteOptions::no_wal()
+                                    } else if sync {
+                                        cntryl_midge::WriteOptions::sync()
+                                    } else {
+                                        cntryl_midge::WriteOptions::buffered()
+                                    };
+                                    if let Err(e) = self.store.commit(txn, opts) {
+                                        eprintln!(
+                                            "WARN: Failed to commit retry txn for message {}: {:?}",
+                                            id, e
+                                        );
+                                    }
+                                }
                             }
-                            
-                            // Log DLQ event (external systems can monitor logs)
-                            // Notice emission: notice://{realm}/{area}/dead
-                            // Format: "queue_name={queue_name} message_id={id} attempts={attempts}"
-                            eprintln!(
-                                "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
-                                self.queue_key, id, record.attempts
-                            );
-                            
-                            // NOTE: Explicit notice emission would be done here via Context
-                            // but QueueActor keeps domains decoupled. External monitoring
-                            // detects DLQ events from logs/metrics and emits notices.
-                            
-                            // Do NOT re-enqueue
-                            return;
-                        }
-                        
-                        // Normal retry: increment attempts and persist
-                        // TODO: Use transaction API with durability options
-                        let value = Self::encode_record(&record);
-                        if let Err(e) = self.store.put(cf, &key, &value) {
-                            eprintln!("WARN: Failed to increment attempts for message {}: {:?}", id, e);
+                            Err(e) => {
+                                eprintln!(
+                                    "WARN: Failed to decode message {} during redelivery: {}",
+                                    id, e
+                                );
+                            }
                         }
                     }
+                    Ok(None) => {
+                        // Message was deleted (completed after lease expired but before timer fired)
+                        return;
+                    }
                     Err(e) => {
-                        eprintln!("WARN: Failed to decode message {} during redelivery: {}", id, e);
+                        eprintln!(
+                            "WARN: Failed to read message {} during redelivery: {:?}",
+                            id, e
+                        );
                     }
                 }
             }
-            Ok(None) => {
-                // Message was deleted (completed after lease expired but before timer fired)
-                return;
-            }
             Err(e) => {
-                eprintln!("WARN: Failed to read message {} during redelivery: {:?}", id, e);
+                eprintln!(
+                    "WARN: Failed to begin txn for redelivery for message {}: {:?}",
+                    id, e
+                );
             }
         }
-        
+
         // Re-enqueue to ready queue (back of queue for FIFO)
         self.ready.push_back(id);
     }
@@ -757,32 +881,32 @@ impl QueueActor {
     /// Process expired timers (called periodically or on message receive)
     pub fn process_expired_timers(&mut self) {
         let now = self.clock.now();
-        
+
         while let Some(Reverse(expiry)) = self.timers.peek() {
             if expiry.expires_at > now {
                 break; // No more expired timers
             }
-            
+
             // Pop expired timer
             let expiry = self.timers.pop().unwrap().0;
-            
+
             // Handle expiration
             self.handle_lease_expired(expiry.id);
         }
     }
-    
+
     /// Process delayed messages that are now visible
     pub fn process_delayed_messages(&mut self) {
         let now = self.clock.now();
-        
+
         while let Some(Reverse(delayed)) = self.delayed.peek() {
             if delayed.visible_at > now {
                 break; // No more visible messages
             }
-            
+
             // Pop now-visible message
             let delayed = self.delayed.pop().unwrap().0;
-            
+
             // Add to ready queue
             self.ready.push_back(delayed.id);
         }
@@ -796,19 +920,32 @@ impl Actor for QueueActor {
         // Process expired timers and delayed messages on every message
         self.process_expired_timers();
         self.process_delayed_messages();
-        
+
         match msg {
-            QueueMessage::Enqueue { body, delay_seconds, .. } => {
+            QueueMessage::Enqueue {
+                body,
+                delay_seconds,
+                ..
+            } => {
                 let _response = self.handle_enqueue(body, delay_seconds);
                 // TODO: Send response back to caller via reply
             }
-            
-            QueueMessage::EnqueueBatch { messages, delay_seconds, .. } => {
+
+            QueueMessage::EnqueueBatch {
+                messages,
+                delay_seconds,
+                ..
+            } => {
                 let _response = self.handle_enqueue_batch(messages, delay_seconds);
                 // TODO: Send response back to caller via reply
             }
-            
-            QueueMessage::Reserve { lease_seconds, batch_size, wait_seconds, .. } => {
+
+            QueueMessage::Reserve {
+                lease_seconds,
+                batch_size,
+                wait_seconds,
+                ..
+            } => {
                 let _response = self.handle_reserve(lease_seconds, batch_size);
                 // NOTE: wait_seconds is handled at RPC layer, not in QueueActor
                 // QueueActor always returns immediately (never blocks)
@@ -817,19 +954,24 @@ impl Actor for QueueActor {
                 //   2. Wait up to wait_seconds for notice or timeout
                 //   3. Retry reserve on notice or timeout
                 let _ = wait_seconds; // Unused by actor, used by RPC layer
-                // TODO: Send response back to caller via reply
+                                      // TODO: Send response back to caller via reply
             }
-            
-            QueueMessage::Extend { id, token, lease_seconds, .. } => {
+
+            QueueMessage::Extend {
+                id,
+                token,
+                lease_seconds,
+                ..
+            } => {
                 let _response = self.handle_extend(id, token, lease_seconds);
                 // TODO: Send response back to caller via reply
             }
-            
+
             QueueMessage::Complete { id, token, .. } => {
                 let _response = self.handle_complete(id, token);
                 // TODO: Send response back to caller via reply
             }
-            
+
             QueueMessage::LeaseExpired { id } => {
                 self.handle_lease_expired(id);
             }
@@ -839,11 +981,11 @@ impl Actor for QueueActor {
     fn started(&mut self, _ctx: &mut Context<Self>) {
         // On actor restart, all inflight leases are dropped
         // All durable messages are recovered with their visibility times
-        
+
         // TODO: Implement full recovery scan using Midge iteration
         // For MVP, delayed messages can be re-enqueued after restart
         // or use a separate recovery mechanism
-        
+
         // The visibility_at field ensures messages aren't delivered early
         // even if they get re-added to ready queue prematurely
     }
@@ -889,7 +1031,7 @@ pub mod tests {
     fn should_enqueue_and_reserve_message() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -933,7 +1075,7 @@ pub mod tests {
     fn should_return_empty_when_reserving_empty_queue() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -960,7 +1102,7 @@ pub mod tests {
     fn should_complete_message_with_valid_token() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -970,11 +1112,11 @@ pub mod tests {
             resource: "jobs".to_string(),
         };
         let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-        
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let (msg_id, token) = match reserve_response {
             QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
             _ => panic!("Expected Reserved response"),
@@ -992,7 +1134,7 @@ pub mod tests {
     fn should_reject_complete_with_invalid_token() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1002,11 +1144,11 @@ pub mod tests {
             resource: "jobs".to_string(),
         };
         let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-        
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let msg_id = match reserve_response {
             QueueResponse::Reserved { messages } => messages[0].id,
             _ => panic!("Expected Reserved response"),
@@ -1025,7 +1167,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1034,17 +1176,23 @@ pub mod tests {
             area: "queue".to_string(),
             resource: "jobs".to_string(),
         };
-        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
-        
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+        );
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let (msg_id, token) = match reserve_response {
             QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
             _ => panic!("Expected Reserved response"),
         };
-        
+
         let old_expiry = actor.inflight.get(&msg_id).unwrap().expires_at;
 
         // Act
@@ -1061,7 +1209,7 @@ pub mod tests {
     fn should_reject_extend_with_invalid_token() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1071,11 +1219,11 @@ pub mod tests {
             resource: "jobs".to_string(),
         };
         let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-        
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let msg_id = match reserve_response {
             QueueResponse::Reserved { messages } => messages[0].id,
             _ => panic!("Expected Reserved response"),
@@ -1093,7 +1241,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1102,17 +1250,23 @@ pub mod tests {
             area: "queue".to_string(),
             resource: "jobs".to_string(),
         };
-        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
-        
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+        );
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body.clone(), None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let msg_id = match reserve_response {
             QueueResponse::Reserved { messages } => messages[0].id,
             _ => panic!("Expected Reserved response"),
         };
-        
+
         assert_eq!(actor.ready.len(), 0);
         assert_eq!(actor.inflight.len(), 1);
 
@@ -1124,10 +1278,10 @@ pub mod tests {
         assert_eq!(actor.ready.len(), 1);
         assert_eq!(actor.inflight.len(), 0);
         assert_eq!(actor.ready.front().unwrap(), &msg_id);
-        
+
         // Act - Reserve again
         let redelivery_response = actor.handle_reserve(30, Some(1));
-        
+
         // Assert - Attempts incremented
         match redelivery_response {
             QueueResponse::Reserved { messages } => {
@@ -1143,7 +1297,7 @@ pub mod tests {
     fn should_reserve_multiple_messages_in_batch() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1153,7 +1307,7 @@ pub mod tests {
             resource: "jobs".to_string(),
         };
         let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-        
+
         // Enqueue 5 messages
         for i in 0..5 {
             let body = Bytes::from(format!("message {}", i));
@@ -1179,7 +1333,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1188,12 +1342,18 @@ pub mod tests {
             area: "queue".to_string(),
             resource: "jobs".to_string(),
         };
-        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
-        
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+        );
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let (msg_id, token) = match reserve_response {
             QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
             _ => panic!("Expected Reserved response"),
@@ -1202,7 +1362,7 @@ pub mod tests {
         // Act - Extend before first timer expires
         clock.advance(Duration::from_secs(15));
         actor.handle_extend(msg_id, token, 60);
-        
+
         // Advance to first timer expiration (30s total)
         clock.advance(Duration::from_secs(15));
         actor.process_expired_timers();
@@ -1217,7 +1377,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1226,12 +1386,18 @@ pub mod tests {
             area: "queue".to_string(),
             resource: "jobs".to_string(),
         };
-        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
-        
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+        );
+
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
         let reserve_response = actor.handle_reserve(30, Some(1));
-        
+
         let (msg_id, token) = match reserve_response {
             QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
             _ => panic!("Expected Reserved response"),
@@ -1248,11 +1414,11 @@ pub mod tests {
         // before being removed, OR it could be NotFound if already cleaned up
         // Let's process timers explicitly to make this deterministic
         actor.process_expired_timers();
-        
+
         // Now the entry is definitely gone
         let extend_response2 = actor.handle_extend(msg_id, token, 60);
         assert_eq!(extend_response2, QueueResponse::NotFound);
-        
+
         let complete_response = actor.handle_complete(msg_id, token);
         assert_eq!(complete_response, QueueResponse::NotFound);
     }
@@ -1261,7 +1427,7 @@ pub mod tests {
     fn should_return_not_found_for_nonexistent_message() {
         // Arrange
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1287,7 +1453,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1296,12 +1462,18 @@ pub mod tests {
             area: "queue".to_string(),
             resource: "jobs".to_string(),
         };
-        let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+        );
 
         // Act - Enqueue with 30 second delay
         let body = Bytes::from("delayed message");
         let response = actor.handle_enqueue(body.clone(), Some(30));
-        
+
         let msg_id = match response {
             QueueResponse::Enqueued { id } => id,
             _ => panic!("Expected Enqueued response"),
@@ -1310,7 +1482,7 @@ pub mod tests {
         // Assert - Message not in ready queue
         assert_eq!(actor.ready.len(), 0);
         assert_eq!(actor.delayed.len(), 1);
-        
+
         // Act - Try to reserve immediately (should be empty)
         let reserve_response = actor.handle_reserve(30, Some(1));
         match reserve_response {
@@ -1319,15 +1491,15 @@ pub mod tests {
             }
             _ => panic!("Expected Reserved response"),
         }
-        
+
         // Act - Advance time past delay
         clock.advance(Duration::from_secs(31));
         actor.process_delayed_messages();
-        
+
         // Assert - Message now in ready queue
         assert_eq!(actor.ready.len(), 1);
         assert_eq!(actor.delayed.len(), 0);
-        
+
         // Act - Reserve now succeeds
         let reserve_response = actor.handle_reserve(30, Some(1));
         match reserve_response {
@@ -1345,7 +1517,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1401,8 +1573,11 @@ pub mod tests {
         // Verify message deleted from storage
         let cf = store.default_column_family();
         let key = QueueActor::message_key(&queue_key, msg_id);
-        let result = store.get(cf, &key);
-        assert!(result.unwrap().is_none(), "Message should be deleted from storage");
+        let txn = store
+            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .expect("begin tx");
+        let result = txn.get(&key).expect("midge get");
+        assert!(result.is_none(), "Message should be deleted from storage");
     }
 
     #[test]
@@ -1410,7 +1585,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1468,7 +1643,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1509,7 +1684,7 @@ pub mod tests {
             _ => panic!("Expected Reserved response"),
         };
         assert_eq!(reserved.len(), 5);
-        
+
         // Verify IDs match returned batch IDs
         for (i, msg) in reserved.iter().enumerate() {
             assert_eq!(msg.id, ids[i]);
@@ -1521,7 +1696,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1555,7 +1730,7 @@ pub mod tests {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
-            cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
         let queue_key = QueueKey {
@@ -1596,7 +1771,7 @@ pub mod tests {
         assert_eq!(reserved[0].body, messages[0]);
         assert_eq!(reserved[1].body, messages[1]);
         assert_eq!(reserved[2].body, messages[2]);
-        
+
         // Verify IDs are sequential
         assert_eq!(reserved[0].id, ids[0]);
         assert_eq!(reserved[1].id, ids[1]);
@@ -1605,4 +1780,3 @@ pub mod tests {
         assert_eq!(ids[2].as_u64(), ids[1].as_u64() + 1);
     }
 }
-

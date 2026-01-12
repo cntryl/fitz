@@ -30,8 +30,8 @@
 //! // Matches above subscription
 //! ```
 
-pub mod route_actor;
 pub mod protocol;
+pub mod route_actor;
 
 // Test helper - lightweight SessionActor stub for testing notification authorization
 // Available in tests (both unit tests and integration tests)

@@ -1,4 +1,4 @@
-﻿//! Queue domain integration tests
+//! Queue domain integration tests
 //!
 //! Tests durability, restart semantics, and end-to-end workflows.
 
@@ -17,23 +17,23 @@ use fitz::runtime::routing::RouteFamily;
 fn should_persist_messages_to_storage() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
-    
+
     let queue_key = QueueKey {
         family: RouteFamily::new(1),
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: "durable".to_string(),
     };
-    
+
     let mut actor = QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
     let body = Bytes::from("durable message");
-    
+
     // Act
     let response = actor.handle_enqueue(body.clone(), None);
-    
+
     // Assert
     match response {
         QueueResponse::Enqueued { id } => {
@@ -57,32 +57,33 @@ fn should_persist_messages_to_storage() {
 fn should_recover_messages_after_restart() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
-    
+
     let queue_key = QueueKey {
         family: RouteFamily::new(1),
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: "durable".to_string(),
     };
-    
+
     // Pre-populate with a message that will be recovered
     let msg_id = {
-        let mut actor = QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
+        let mut actor =
+            QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
         let body = Bytes::from("durable message");
         match actor.handle_enqueue(body, None) {
             QueueResponse::Enqueued { id } => id,
             _ => panic!("Expected Enqueued response"),
         }
     };
-    
+
     // Act - Restart actor and manually recover (simulates recovery scan)
     let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
     actor.ready.push_back(msg_id);
     let reserve_response = actor.handle_reserve(30, Some(1));
-    
+
     // Assert - Message recovered and redeliverable
     match reserve_response {
         QueueResponse::Reserved { messages } => {
@@ -101,7 +102,7 @@ fn should_recover_messages_after_restart() {
 fn should_handle_high_volume_enqueue() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -111,7 +112,7 @@ fn should_handle_high_volume_enqueue() {
         resource: "volume".to_string(),
     };
     let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-    
+
     let count = 10_000;
     let start = std::time::Instant::now();
 
@@ -124,7 +125,7 @@ fn should_handle_high_volume_enqueue() {
             _ => panic!("Expected Enqueued response"),
         }
     }
-    
+
     let elapsed = start.elapsed();
 
     // Assert
@@ -134,7 +135,7 @@ fn should_handle_high_volume_enqueue() {
         "Enqueued {} messages in {:?} ({:.0} msg/sec)",
         count, elapsed, msgs_per_sec
     );
-    
+
     // Target: 200k-1M msg/sec (this is local-only, no actor routing overhead)
     // In real usage, actor mailbox adds ~50ns overhead per message
 }
@@ -145,7 +146,7 @@ fn should_handle_high_volume_enqueue() {
 fn should_handle_concurrent_workers() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -155,7 +156,7 @@ fn should_handle_concurrent_workers() {
         resource: "workers".to_string(),
     };
     let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-    
+
     // Enqueue 100 messages
     for i in 0..100 {
         let body = Bytes::from(format!("task {}", i));
@@ -164,10 +165,10 @@ fn should_handle_concurrent_workers() {
 
     // Act - Simulate 10 workers each reserving 10 messages
     let mut completed = 0;
-    
+
     for _worker_id in 0..10 {
         let reserve_response = actor.handle_reserve(30, Some(10));
-        
+
         match reserve_response {
             QueueResponse::Reserved { messages } => {
                 for msg in messages {
@@ -204,7 +205,7 @@ fn should_increment_attempts_on_redelivery() {
 fn should_have_low_reserve_latency() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -214,7 +215,7 @@ fn should_have_low_reserve_latency() {
         resource: "perf".to_string(),
     };
     let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-    
+
     // Enqueue 1000 messages
     for i in 0..1000 {
         let body = Bytes::from(format!("message {}", i));
@@ -224,17 +225,17 @@ fn should_have_low_reserve_latency() {
     // Act - Measure reserve latency
     let iterations = 1000;
     let start = std::time::Instant::now();
-    
+
     for _ in 0..iterations {
         let _response = actor.handle_reserve(30, Some(1));
     }
-    
+
     let elapsed = start.elapsed();
     let avg_latency = elapsed / iterations;
 
     // Assert
     println!("Average reserve latency: {:?}", avg_latency);
-    
+
     // Target: <10Âµs (excluding Midge read cost)
     // Actual: ~1-2Âµs for in-memory operations + Midge read overhead
 }
@@ -245,7 +246,7 @@ fn should_have_low_reserve_latency() {
 fn should_have_low_complete_latency() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = QueueKey {
@@ -255,14 +256,14 @@ fn should_have_low_complete_latency() {
         resource: "perf".to_string(),
     };
     let mut actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
-    
+
     // Enqueue and reserve 1000 messages
     let mut messages = Vec::new();
     for i in 0..1000 {
         let body = Bytes::from(format!("message {}", i));
         actor.handle_enqueue(body, None);
     }
-    
+
     for _ in 0..100 {
         let response = actor.handle_reserve(30, Some(10));
         match response {
@@ -275,18 +276,17 @@ fn should_have_low_complete_latency() {
 
     // Act - Measure complete latency
     let start = std::time::Instant::now();
-    
+
     for msg in &messages {
         let _response = actor.handle_complete(msg.id, msg.token);
     }
-    
+
     let elapsed = start.elapsed();
     let avg_latency = elapsed / messages.len() as u32;
 
     // Assert
     println!("Average complete latency: {:?}", avg_latency);
-    
+
     // Target: <5Âµs (excluding Midge delete cost)
     // Actual: ~1Âµs for in-memory ops + Midge delete overhead
 }
-

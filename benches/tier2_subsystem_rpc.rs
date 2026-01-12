@@ -1,13 +1,13 @@
-﻿use bytes::Bytes;
+use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
-use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
-use uuid::Uuid;
-use fitz::prelude::Actor;
 use fitz::benchkit::create_bench_rpc_context;
+use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
+use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
+use fitz::prelude::Actor;
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use uuid::Uuid;
 
 #[path = "config.rs"]
 mod config;
@@ -15,7 +15,7 @@ mod config;
 /// Encode an RPC request into TLV format
 fn encode_rpc_request(correlation_id: &str, route: &str, body: &[u8]) -> Vec<u8> {
     let mut encoder = TlvEncoder::with_capacity(512);
-    
+
     // Simplified RPC request encoding:
     // Tag 1: correlation_id
     // Tag 2: route
@@ -25,14 +25,14 @@ fn encode_rpc_request(correlation_id: &str, route: &str, body: &[u8]) -> Vec<u8>
     encoder.encode(MessageType::new(2), route.as_bytes());
     encoder.encode(MessageType::new(3), b"inbox://session/1");
     encoder.encode(MessageType::new(4), body);
-    
+
     encoder.finish().to_vec()
 }
 
 /// Encode an RPC response into TLV format
 fn encode_rpc_response(correlation_id: &str, seq: u32, stream_end: bool, body: &[u8]) -> Vec<u8> {
     let mut encoder = TlvEncoder::with_capacity(512);
-    
+
     // Simplified RPC response encoding:
     // Tag 10: correlation_id
     // Tag 11: seq
@@ -42,14 +42,14 @@ fn encode_rpc_response(correlation_id: &str, seq: u32, stream_end: bool, body: &
     encoder.encode(MessageType::new(11), &seq.to_le_bytes());
     encoder.encode(MessageType::new(12), &[stream_end as u8]);
     encoder.encode(MessageType::new(13), body);
-    
+
     encoder.finish().to_vec()
 }
 
 fn bench_subsystem_request_dispatch(c: &mut Criterion) {
     let sizes = [16usize, 64usize, 256usize, 1024usize];
     let worker_counts = [1usize, 4usize, 16usize];
-    
+
     let mut group = c.benchmark_group("subsystem_rpc_dispatch");
     group.sampling_mode(SamplingMode::Flat);
 
@@ -70,7 +70,7 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
             // Setup actor with workers
             let mut actor = RpcRouteActor::new(RouteFamily::new(1));
             let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-            
+
             for i in 0..worker_count {
                 let worker_addr = RouteAddress::new(
                     RouteFamily::new(1),
@@ -89,28 +89,30 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
 
             let name = format!("dispatch_{}B_{}workers", size, worker_count);
             group.throughput(Throughput::Elements(1));
-            
+
             group.bench_function(&name, |b| {
                 let mut idx = 0usize;
                 b.iter(|| {
                     let data = &requests[idx % requests.len()];
-                    
+
                     // Parse TLV
-                            let mut correlation_id: Option<Uuid> = None;
+                    let mut correlation_id: Option<Uuid> = None;
                     let mut route = String::new();
                     let mut reply_route = String::new();
                     let mut body = Bytes::from(vec![]);
-                    
+
                     for res in decoder.iter(black_box(data)) {
                         let (mt, slice) = res.unwrap();
-                        
+
                         // Route through mux
                         if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
                             match mt.as_u16() {
                                 1 => {
                                     let id_str = String::from_utf8_lossy(slice);
-                                    correlation_id = Some(Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()));
-                                },
+                                    correlation_id = Some(
+                                        Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                    );
+                                }
                                 2 => route = String::from_utf8_lossy(slice).to_string(),
                                 3 => reply_route = String::from_utf8_lossy(slice).to_string(),
                                 4 => body = Bytes::from(slice.to_vec()),
@@ -118,7 +120,7 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
                             }
                         }
                     }
-                    
+
                     // Dispatch to actor
                     let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                     let req = RpcRequest {
@@ -129,7 +131,7 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
                         body,
                     };
                     actor.receive(RpcMessage::Request(req), &mut ctx);
-                    
+
                     idx += 1;
                 })
             });
@@ -141,7 +143,7 @@ fn bench_subsystem_request_dispatch(c: &mut Criterion) {
 
 fn bench_subsystem_response_routing(c: &mut Criterion) {
     let sizes = [16usize, 64usize, 256usize, 1024usize];
-    
+
     let mut group = c.benchmark_group("subsystem_rpc_response");
     group.sampling_mode(SamplingMode::Flat);
 
@@ -149,7 +151,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
         // Setup actor with worker and dispatched request
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-        
+
         let worker_addr = RouteAddress::new(
             RouteFamily::new(1),
             Route::new("worker://realm/service/worker1"),
@@ -181,7 +183,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
 
         let name = format!("response_routing_{}B", size);
         group.throughput(Throughput::Elements(1));
-        
+
         group.bench_function(&name, |b| {
             b.iter(|| {
                 // Parse TLV
@@ -189,17 +191,24 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
                 let mut seq = 0u64;
                 let mut stream_end = false;
                 let mut body = Bytes::from(vec![]);
-                
+
                 for res in decoder.iter(black_box(&response_data)) {
                     let (mt, slice) = res.unwrap();
-                    
+
                     // Route through mux
                     if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
                         match mt.as_u16() {
-                            10 => correlation_id = Some(Uuid::parse_str(&String::from_utf8_lossy(slice)).unwrap_or_else(|_| Uuid::new_v4())),
+                            10 => {
+                                correlation_id = Some(
+                                    Uuid::parse_str(&String::from_utf8_lossy(slice))
+                                        .unwrap_or_else(|_| Uuid::new_v4()),
+                                )
+                            }
                             11 => {
                                 if slice.len() >= 4 {
-                                    seq = u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]) as u64;
+                                    seq = u32::from_le_bytes([
+                                        slice[0], slice[1], slice[2], slice[3],
+                                    ]) as u64;
                                 }
                             }
                             12 => stream_end = slice.first().copied().unwrap_or(0) != 0,
@@ -208,7 +217,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
                         }
                     }
                 }
-                
+
                 // Handle response
                 let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                 let resp = RpcResponse {
@@ -218,7 +227,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
                     body,
                 };
                 actor.receive(RpcMessage::Response(resp), &mut ctx);
-                
+
                 // Re-establish lease for next iteration
                 let req = RpcRequest {
                     family_id: RouteFamily::new(1),
@@ -238,7 +247,7 @@ fn bench_subsystem_response_routing(c: &mut Criterion) {
 fn bench_subsystem_streaming_response(c: &mut Criterion) {
     let chunk_sizes = [64usize, 256usize, 1024usize];
     let chunk_counts = [4usize, 16usize, 64usize];
-    
+
     let mut group = c.benchmark_group("subsystem_rpc_streaming");
     group.sampling_mode(SamplingMode::Flat);
 
@@ -247,7 +256,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
             // Setup actor with worker
             let mut actor = RpcRouteActor::new(RouteFamily::new(1));
             let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-            
+
             let worker_addr = RouteAddress::new(
                 RouteFamily::new(1),
                 Route::new("worker://realm/service/worker1"),
@@ -284,7 +293,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
 
             let name = format!("streaming_{}x{}B", chunk_count, chunk_size);
             group.throughput(Throughput::Elements(chunk_count as u64));
-            
+
             group.bench_function(&name, |b| {
                 b.iter(|| {
                     for data in &responses {
@@ -293,16 +302,24 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
                         let mut seq = 0u64;
                         let mut stream_end = false;
                         let mut body = Bytes::from(vec![]);
-                        
+
                         for res in decoder.iter(black_box(data)) {
                             let (mt, slice) = res.unwrap();
-                            
+
                             if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
-                                        match mt.as_u16() {
-                                    10 => correlation_id = Some(Uuid::parse_str(&String::from_utf8_lossy(slice)).unwrap_or_else(|_| Uuid::new_v4())),
+                                match mt.as_u16() {
+                                    10 => {
+                                        correlation_id = Some(
+                                            Uuid::parse_str(&String::from_utf8_lossy(slice))
+                                                .unwrap_or_else(|_| Uuid::new_v4()),
+                                        )
+                                    }
                                     11 => {
                                         if slice.len() >= 4 {
-                                            seq = u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]) as u64;
+                                            seq = u32::from_le_bytes([
+                                                slice[0], slice[1], slice[2], slice[3],
+                                            ])
+                                                as u64;
                                         }
                                     }
                                     12 => stream_end = slice.first().copied().unwrap_or(0) != 0,
@@ -311,7 +328,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
                                 }
                             }
                         }
-                        
+
                         // Handle response chunk
                         let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                         let resp = RpcResponse {
@@ -322,7 +339,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
                         };
                         actor.receive(RpcMessage::Response(resp), &mut ctx);
                     }
-                    
+
                     // Re-establish request for next iteration
                     let req = RpcRequest {
                         family_id: RouteFamily::new(1),
@@ -342,7 +359,7 @@ fn bench_subsystem_streaming_response(c: &mut Criterion) {
 
 fn bench_subsystem_backpressure(c: &mut Criterion) {
     let request_counts = [10usize, 100usize, 500usize, 1000usize];
-    
+
     let mut group = c.benchmark_group("subsystem_rpc_backpressure");
     group.sampling_mode(SamplingMode::Flat);
 
@@ -368,7 +385,7 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
 
         let name = format!("queue_{}_requests", request_count);
         group.throughput(Throughput::Elements(request_count as u64));
-        
+
         group.bench_function(&name, |b| {
             b.iter(|| {
                 for data in &requests {
@@ -377,13 +394,18 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
                     let mut route = String::new();
                     let mut reply_route = String::new();
                     let mut body = Bytes::from(vec![]);
-                    
+
                     for res in decoder.iter(black_box(data)) {
                         let (mt, slice) = res.unwrap();
-                        
+
                         if let Ok((_cref, _grant)) = mux.route_grant(mt, slice) {
                             match mt.as_u16() {
-                                1 => correlation_id = Some(Uuid::parse_str(&String::from_utf8_lossy(slice)).unwrap_or_else(|_| Uuid::new_v4())),
+                                1 => {
+                                    correlation_id = Some(
+                                        Uuid::parse_str(&String::from_utf8_lossy(slice))
+                                            .unwrap_or_else(|_| Uuid::new_v4()),
+                                    )
+                                }
                                 2 => route = String::from_utf8_lossy(slice).to_string(),
                                 3 => reply_route = String::from_utf8_lossy(slice).to_string(),
                                 4 => body = Bytes::from(slice.to_vec()),
@@ -391,7 +413,7 @@ fn bench_subsystem_backpressure(c: &mut Criterion) {
                             }
                         }
                     }
-                    
+
                     // Enqueue request
                     let cid = correlation_id.unwrap_or_else(Uuid::new_v4);
                     let req = RpcRequest {

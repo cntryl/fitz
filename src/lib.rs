@@ -4,9 +4,9 @@
 //! distributed messaging, storage, and domain-specific protocols.
 
 pub mod api;
+pub mod auth;
 pub mod control;
 pub mod domains;
-pub mod auth;
 pub mod prelude;
 pub mod protocol;
 pub mod runtime;

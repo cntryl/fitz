@@ -1,4 +1,3 @@
-
 // LAYER: RUNTIME
 //! Core actor abstractions and lifecycle management
 
@@ -33,7 +32,8 @@ impl ActorMetrics {
     /// Record a successfully processed message
     pub fn record_processed(&self, processing_time_us: u64) {
         self.messages_processed.fetch_add(1, Ordering::Relaxed);
-        self.total_processing_time_us.fetch_add(processing_time_us, Ordering::Relaxed);
+        self.total_processing_time_us
+            .fetch_add(processing_time_us, Ordering::Relaxed);
     }
 
     /// Record an expired message
@@ -138,7 +138,11 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Create context with shared metrics
-    pub fn with_metrics(address: RouteAddress, router: Arc<Router>, metrics: Arc<ActorMetrics>) -> Self {
+    pub fn with_metrics(
+        address: RouteAddress,
+        router: Arc<Router>,
+        metrics: Arc<ActorMetrics>,
+    ) -> Self {
         Self {
             address,
             state: ActorState::Running,
@@ -156,7 +160,10 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Set the current envelope metadata being processed (internal use by scheduler)
-    pub(crate) fn set_current_metadata(&mut self, metadata: crate::runtime::envelope::EnvelopeMetadata) {
+    pub(crate) fn set_current_metadata(
+        &mut self,
+        metadata: crate::runtime::envelope::EnvelopeMetadata,
+    ) {
         self.current_metadata = Some(metadata);
     }
 
@@ -219,13 +226,17 @@ impl<A: Actor + ?Sized> Context<A> {
         self.router.route(envelope).map_err(|e| match e {
             RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
             RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                crate::runtime::router::DeliveryError::MailboxFull { capacity, current_len } => {
-                    SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    }
-                }
-                crate::runtime::router::DeliveryError::HighLaneFull { capacity, current_len } => {
+                crate::runtime::router::DeliveryError::MailboxFull {
+                    capacity,
+                    current_len,
+                } => SendError::MailboxFull {
+                    target,
+                    occupancy: current_len as f64 / capacity as f64,
+                },
+                crate::runtime::router::DeliveryError::HighLaneFull {
+                    capacity,
+                    current_len,
+                } => {
                     // High-priority lane should never be used by user code
                     // Treat as normal mailbox full for error reporting
                     SendError::MailboxFull {
@@ -259,17 +270,16 @@ impl<A: Actor + ?Sized> Context<A> {
         let metadata = self
             .current_metadata
             .as_ref()
-            .ok_or(SendError::RouteNotFound { target: self.address.clone() })?;
+            .ok_or(SendError::RouteNotFound {
+                target: self.address.clone(),
+            })?;
 
-        let source = metadata.source.as_ref()
-            .ok_or(SendError::RouteNotFound { target: self.address.clone() })?;
+        let source = metadata.source.as_ref().ok_or(SendError::RouteNotFound {
+            target: self.address.clone(),
+        })?;
 
-        let mut reply_envelope = Envelope::from_route(
-            self.address.clone(),
-            source.clone(),
-            msg,
-        )
-        .with_causation(metadata.id);
+        let mut reply_envelope = Envelope::from_route(self.address.clone(), source.clone(), msg)
+            .with_causation(metadata.id);
 
         if let Some(deadline) = metadata.deadline {
             reply_envelope = reply_envelope.with_deadline(deadline);
@@ -278,13 +288,17 @@ impl<A: Actor + ?Sized> Context<A> {
         self.router.route(reply_envelope).map_err(|e| match e {
             RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
             RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                crate::runtime::router::DeliveryError::MailboxFull { capacity, current_len } => {
-                    SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    }
-                }
-                crate::runtime::router::DeliveryError::HighLaneFull { capacity, current_len } => {
+                crate::runtime::router::DeliveryError::MailboxFull {
+                    capacity,
+                    current_len,
+                } => SendError::MailboxFull {
+                    target,
+                    occupancy: current_len as f64 / capacity as f64,
+                },
+                crate::runtime::router::DeliveryError::HighLaneFull {
+                    capacity,
+                    current_len,
+                } => {
                     // High-priority lane should never be used by user code
                     // Treat as normal mailbox full for error reporting
                     SendError::MailboxFull {
@@ -305,7 +319,7 @@ impl<A: Actor + ?Sized> Context<A> {
     /// - Sets state to Stopping
     /// - Cancels ALL timers (no timer fires after stop)
     /// - Breaks message processing loop
-    /// 
+    ///
     /// Timers are tied to actor lifecycle. On stop/restart, all timers are cleared.
     pub fn stop(&mut self) {
         self.state = ActorState::Stopping;
@@ -381,13 +395,17 @@ impl<M: Send + 'static> ActorRef<M> {
         self.router.route(envelope).map_err(|e| match e {
             RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
             RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                crate::runtime::router::DeliveryError::MailboxFull { capacity, current_len } => {
-                    SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    }
-                }
-                crate::runtime::router::DeliveryError::HighLaneFull { capacity, current_len } => {
+                crate::runtime::router::DeliveryError::MailboxFull {
+                    capacity,
+                    current_len,
+                } => SendError::MailboxFull {
+                    target,
+                    occupancy: current_len as f64 / capacity as f64,
+                },
+                crate::runtime::router::DeliveryError::HighLaneFull {
+                    capacity,
+                    current_len,
+                } => {
                     // High-priority lane should never be used by user code
                     // Treat as normal mailbox full for error reporting
                     SendError::MailboxFull {
@@ -442,8 +460,15 @@ impl fmt::Display for ActorError {
             ActorError::ActorStopped => write!(f, "Actor has stopped"),
             ActorError::SendFailed(msg) => write!(f, "Failed to send message: {}", msg),
             ActorError::Panic(msg) => write!(f, "Actor panicked: {}", msg),
-            ActorError::TypeMismatch { expected, envelope_id } => {
-                write!(f, "Type mismatch: expected {}, envelope ID {}", expected, envelope_id)
+            ActorError::TypeMismatch {
+                expected,
+                envelope_id,
+            } => {
+                write!(
+                    f,
+                    "Type mismatch: expected {}, envelope ID {}",
+                    expected, envelope_id
+                )
             }
         }
     }
@@ -454,7 +479,10 @@ impl std::error::Error for ActorError {}
 #[derive(Debug, Clone)]
 pub enum SendError {
     /// Mailbox is full (backpressure) - includes occupancy for adaptive backoff
-    MailboxFull { target: RouteAddress, occupancy: f64 },
+    MailboxFull {
+        target: RouteAddress,
+        occupancy: f64,
+    },
     /// Actor has stopped
     ActorStopped { target: RouteAddress },
     /// Route not registered
@@ -476,7 +504,12 @@ impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SendError::MailboxFull { target, occupancy } => {
-                write!(f, "Mailbox is full for {} (occupancy: {:.1}%)", target, occupancy * 100.0)
+                write!(
+                    f,
+                    "Mailbox is full for {} (occupancy: {:.1}%)",
+                    target,
+                    occupancy * 100.0
+                )
             }
             SendError::ActorStopped { target } => {
                 write!(f, "Actor {} has stopped", target)

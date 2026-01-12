@@ -7,13 +7,13 @@
 //! - Offset assignment and sequencing
 
 use bytes::Bytes;
-use fitz::domains::stream::stream_actor::StreamActor;
+use fitz::domains::stream::protocol::{IngestMetadata, StreamMessage};
 use fitz::domains::stream::store::StreamStore;
-use fitz::domains::stream::protocol::{StreamMessage, IngestMetadata};
+use fitz::domains::stream::stream_actor::StreamActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
-use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
 use fitz::runtime::router::Router;
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 
 fn make_stream_actor(
@@ -29,7 +29,7 @@ fn make_stream_actor(
     );
 
     let db = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open store"),
     );
     let store = Arc::new(StreamStore::new(db));

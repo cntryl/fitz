@@ -20,9 +20,9 @@
 //! - Middle chunks: seq=N, stream_end=false
 //! - Final chunk: seq=M, stream_end=true
 
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use uuid::Uuid;
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 /// RPC request from client to route actor
 ///
@@ -32,16 +32,16 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub struct RpcRequest {
     /// Route family for isolation
     pub family_id: RouteFamily,
-    
+
     /// Unique correlation ID for matching responses (UUID for distributed tracing)
     pub correlation_id: Uuid,
-    
+
     /// Target RPC route (e.g., "rpc://acme/auth/user/create")
     pub route: Route,
-    
+
     /// Reply inbox route (e.g., "inbox://session/123")
     pub reply_route: Route,
-    
+
     /// Request payload (Bytes for zero-copy)
     pub body: Bytes,
 }
@@ -74,13 +74,13 @@ impl RpcRequest {
 pub struct RpcResponse {
     /// Correlation ID matching the request (UUID for distributed tracing)
     pub correlation_id: Uuid,
-    
+
     /// Sequence number for streaming (starts at 0)
     pub seq: u64,
-    
+
     /// Response payload chunk (Bytes for zero-copy)
     pub body: Bytes,
-    
+
     /// True if this is the final chunk
     pub stream_end: bool,
 }
@@ -95,7 +95,7 @@ impl RpcResponse {
             stream_end: true,
         }
     }
-    
+
     /// Create streaming response chunk
     pub fn chunk(correlation_id: Uuid, seq: u64, body: Bytes, stream_end: bool) -> Self {
         Self {
@@ -120,7 +120,7 @@ pub enum RpcMessage {
         /// Address of the worker actor
         worker_addr: RouteAddress,
     },
-    
+
     /// Worker unsubscribes from this route
     ///
     /// Sent by workers to stop receiving requests. Cleans up worker registration
@@ -129,19 +129,19 @@ pub enum RpcMessage {
         /// Address of the worker actor
         worker_addr: RouteAddress,
     },
-    
+
     /// Client request to be routed to a worker
     ///
     /// Queued until a worker becomes available. Dispatched in FIFO order
     /// to maintain request ordering guarantees.
     Request(RpcRequest),
-    
+
     /// Worker response to be forwarded to client
     ///
     /// Contains correlation_id matching the original request. The route actor
     /// forwards this to the client's reply_route specified in the request.
     Response(RpcResponse),
-    
+
     /// Worker acknowledges completion (for cleanup)
     ///
     /// Sent by workers after processing completes to decrement in-flight count
@@ -157,22 +157,22 @@ impl RpcMessage {
     pub fn subscribe(worker_addr: RouteAddress) -> Self {
         Self::Subscribe { worker_addr }
     }
-    
+
     /// Create Unsubscribe message
     pub fn unsubscribe(worker_addr: RouteAddress) -> Self {
         Self::Unsubscribe { worker_addr }
     }
-    
+
     /// Create Request message
     pub fn request(req: RpcRequest) -> Self {
         Self::Request(req)
     }
-    
+
     /// Create Response message
     pub fn response(resp: RpcResponse) -> Self {
         Self::Response(resp)
     }
-    
+
     /// Create Ack message
     pub fn ack(correlation_id: Uuid) -> Self {
         Self::Ack { correlation_id }
@@ -188,10 +188,10 @@ impl RpcMessage {
 pub struct RpcWorkItem {
     /// Correlation ID for tracking
     pub correlation_id: Uuid,
-    
+
     /// Reply route for sending responses
     pub reply_route: Route,
-    
+
     /// Request payload
     pub body: Bytes,
 }
@@ -205,7 +205,7 @@ impl RpcWorkItem {
             body: req.body.clone(),
         }
     }
-    
+
     /// Create work item directly
     pub fn new(correlation_id: Uuid, reply_route: Route, body: Bytes) -> Self {
         Self {

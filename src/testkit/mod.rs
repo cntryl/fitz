@@ -4,15 +4,21 @@
 //! including notification and stream domains. Available when compiled with
 //! test configuration or the test-helpers feature.
 
+pub mod lease;
 pub mod notification;
-pub mod stream;
 pub mod queue;
 pub mod rpc;
-pub mod lease;
+pub mod stream;
 
 // Re-export common test utilities
-pub use stream::{create_test_db, create_test_store, addr_with_family, create_test_stream_actor, create_test_area_actor};
-pub use notification::{TestSink, make_router, route, addr, session_id};
-pub use queue::create_test_queue_actor;
-pub use rpc::{create_test_inbox, create_test_inbox_context, create_test_rpc_actor_with_timeout, create_test_rpc_context};
 pub use lease::create_test_lease_context;
+pub use notification::{addr, make_router, route, session_id, TestSink};
+pub use queue::create_test_queue_actor;
+pub use rpc::{
+    create_test_inbox, create_test_inbox_context, create_test_rpc_actor_with_timeout,
+    create_test_rpc_context,
+};
+pub use stream::{
+    addr_with_family, create_test_area_actor, create_test_db, create_test_store,
+    create_test_stream_actor,
+};

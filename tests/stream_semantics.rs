@@ -1,4 +1,4 @@
-﻿//! Stream Semantics Tests
+//! Stream Semantics Tests
 //!
 //! Tests core stream invariants and error conditions:
 //! - Optimistic concurrency control with expected_offset
@@ -10,7 +10,7 @@ use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamMessage;
 use fitz::prelude::Actor;
 use fitz::runtime::routing::Route;
-use fitz::testkit::{create_test_stream_actor, create_test_area_actor};
+use fitz::testkit::{create_test_area_actor, create_test_stream_actor};
 
 #[test]
 fn should_reject_commit_with_wrong_expected_offset() {
@@ -411,4 +411,3 @@ fn should_enforce_area_isolation_within_realm() {
     );
     // Assert - Independent area offsets
 }
-

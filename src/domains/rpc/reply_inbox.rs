@@ -14,11 +14,11 @@
 //! - If seq < expected: drop as duplicate
 //! - On stream_end: finalize and clear correlation state
 
-use crate::domains::rpc::protocol::RpcResponse;
 use crate::domains::rpc::errors::RpcError;
+use crate::domains::rpc::protocol::RpcResponse;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::RouteFamily;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 /// Tracks streaming state for a single correlation ID
@@ -69,7 +69,7 @@ impl ReplyInboxActor {
         Self {
             _family: family,
             streams: HashMap::with_capacity(64), // Pre-allocate for typical concurrent requests
-            max_buffer_size: 100, // Default: buffer up to 100 out-of-order chunks
+            max_buffer_size: 100,                // Default: buffer up to 100 out-of-order chunks
         }
     }
 
@@ -85,9 +85,11 @@ impl ReplyInboxActor {
     /// Handle incoming response chunk
     fn handle_response(&mut self, response: RpcResponse, _ctx: &mut Context<Self>) {
         let correlation_id = response.correlation_id;
-        
+
         // Get or create stream state
-        let stream = self.streams.entry(correlation_id)
+        let stream = self
+            .streams
+            .entry(correlation_id)
             .or_insert_with(StreamState::new);
 
         // Check sequence number
@@ -129,19 +131,19 @@ impl ReplyInboxActor {
                 let Some(stream) = self.streams.get_mut(correlation_id) else {
                     break;
                 };
-                
+
                 // Check if next expected chunk is in buffer
                 let Some(response) = stream.buffer.remove(&stream.next_seq) else {
                     break;
                 };
-                
+
                 Self::forward_response_static(&response);
                 stream.next_seq += 1;
-                
+
                 // Signal if this was the final chunk
                 response.stream_end
             };
-            
+
             // Clean up if stream ended
             if should_remove {
                 self.streams.remove(correlation_id);
@@ -160,7 +162,7 @@ impl ReplyInboxActor {
     fn handle_error(&mut self, error: RpcError, _ctx: &mut Context<Self>) {
         // Clean up any streaming state for this correlation
         self.streams.remove(&error.correlation_id);
-        
+
         // Forward error to client
         // TODO: Send error to transport actor
     }
@@ -177,7 +179,8 @@ impl ReplyInboxActor {
 
     /// Get buffered chunk count for a correlation ID
     pub fn buffered_count(&self, correlation_id: &Uuid) -> usize {
-        self.streams.get(correlation_id)
+        self.streams
+            .get(correlation_id)
             .map(|s| s.buffer.len())
             .unwrap_or(0)
     }

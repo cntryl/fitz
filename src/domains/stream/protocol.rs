@@ -24,13 +24,13 @@ pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 10_000;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Lease for area or realm offsets with end-exclusive semantics
-/// 
+///
 /// **CRITICAL**: `end` is EXCLUSIVE (not inclusive)
 /// Valid range: [next, end)
 #[derive(Debug, Clone)]
 pub struct OffsetLease {
     pub next: u64,
-    pub end: u64,  // exclusive
+    pub end: u64, // exclusive
 }
 
 impl OffsetLease {
@@ -38,19 +38,19 @@ impl OffsetLease {
     pub fn new() -> Self {
         Self { next: 0, end: 0 }
     }
-    
+
     /// Check if lease has no remaining offsets
     pub fn is_empty(&self) -> bool {
         self.next >= self.end
     }
-    
+
     /// Get number of remaining offsets
     pub fn remaining(&self) -> u64 {
         self.end.saturating_sub(self.next)
     }
-    
+
     /// Consume N offsets and return the starting offset
-    /// 
+    ///
     /// Returns None if insufficient offsets available
     pub fn consume(&mut self, count: u64) -> Option<u64> {
         if self.remaining() < count {
@@ -60,13 +60,13 @@ impl OffsetLease {
         self.next += count;
         Some(start)
     }
-    
+
     /// Update lease from area-level grant
     pub fn update_from_area_lease(&mut self, grant: &LeaseGrant) {
         self.next = grant.area_start;
         self.end = grant.area_end_exclusive;
     }
-    
+
     /// Update lease from realm-level grant
     pub fn update_from_realm_lease(&mut self, grant: &LeaseGrant) {
         self.next = grant.realm_start;
@@ -89,19 +89,19 @@ impl Default for OffsetLease {
 pub struct StreamRecord {
     /// Strict order within resource stream (server-assigned by StreamActor, strictly increasing)
     pub resource_offset: u64,
-    
+
     /// Global order within area (server-assigned via leased offsets on commit)
     pub area_offset: Option<u64>,
-    
+
     /// Global order within realm (server-assigned via leased offsets on commit)
     pub realm_offset: Option<u64>,
-    
+
     /// Event payload
     pub body: Bytes,
-    
+
     /// Optional metadata
     pub metadata: Option<Bytes>,
-    
+
     /// Server timestamp (milliseconds since epoch)
     pub created_at: u64,
 }
@@ -128,24 +128,20 @@ pub enum StreamMessage {
         expected_offset: u64,
         ingest_metadata: Option<IngestMetadata>,
     },
-    
+
     /// Append event to active session
     AppendToSession {
         session_id: String,
         body: Bytes,
         metadata: Option<Bytes>,
     },
-    
+
     /// Commit session (atomic write)
-    CommitSession {
-        session_id: String,
-    },
-    
+    CommitSession { session_id: String },
+
     /// Abort session (discard)
-    AbortSession {
-        session_id: String,
-    },
-    
+    AbortSession { session_id: String },
+
     /// Read events from stream
     Read {
         family_id: RouteFamily,
@@ -154,19 +150,19 @@ pub enum StreamMessage {
         limit: u64,
         max_bytes: Option<usize>,
     },
-    
+
     /// Peek at the last committed record in stream (tail operation)
     Peek {
         family_id: RouteFamily,
         route: Route,
     },
-    
+
     /// Get stream metadata and current state
     GetMetadata {
         family_id: RouteFamily,
         route: Route,
     },
-    
+
     // Internal actor messages
     /// Request paired area+realm offsets from AreaActor (StreamActor -> AreaActor)
     RequestLease {
@@ -175,17 +171,13 @@ pub enum StreamMessage {
         count: u64,
         reply_to: String,
     },
-    
+
     /// Lease granted from AreaActor to StreamActor
-    LeaseGranted {
-        grant: LeaseGranted,
-    },
-    
+    LeaseGranted { grant: LeaseGranted },
+
     /// Request realm offsets from RealmActor (AreaActor -> RealmActor, internal only)
-    RequestRealmLease {
-        count: u64,
-    },
-    
+    RequestRealmLease { count: u64 },
+
     /// Batch committed notification from StreamActor to AreaActor
     BatchCommitted {
         first_area_offset: u64,
@@ -193,7 +185,7 @@ pub enum StreamMessage {
         first_realm_offset: u64,
         last_realm_offset: u64,
     },
-    
+
     /// Area watermark advanced from AreaActor to RealmActor
     AreaWatermarkAdvanced {
         realm: String,
@@ -216,7 +208,7 @@ pub struct RequestLease {
 }
 
 /// Lease granted by AreaActor (paired area+realm ranges)
-/// 
+///
 /// **CRITICAL: All ranges are END-EXCLUSIVE**
 /// Valid range: [start, end_exclusive)
 #[derive(Debug, Clone)]
@@ -303,19 +295,19 @@ pub struct PeekResponse {
 pub struct StreamMetadata {
     /// Maximum events per batch
     pub max_batch_events: usize,
-    
+
     /// Maximum bytes per batch
     pub max_batch_bytes: usize,
-    
+
     /// TTL in seconds (None = no expiration)
     pub ttl_seconds: Option<u64>,
-    
+
     /// Last committed resource offset (None if stream empty)
     pub last_resource_offset: Option<u64>,
-    
+
     /// Area watermark (highest contiguous area offset)
     pub area_watermark: u64,
-    
+
     /// Realm watermark (minimum of all area watermarks in realm)
     pub realm_watermark: u64,
 }
@@ -335,25 +327,25 @@ pub struct GetMetadataResponse {
 pub enum StreamError {
     /// Optimistic concurrency conflict - expected_offset mismatch (2001)
     ConcurrencyConflict,
-    
+
     /// Session already active for this resource (2002)
     SessionAlreadyActive,
-    
+
     /// Session not found (2003)
     SessionNotFound,
-    
+
     /// Invalid read bounds (2004)
     InvalidReadBound,
-    
+
     /// Event too large (2006)
     EventTooLarge,
-    
+
     /// Session full - lease capacity reached (2007)
     SessionFull,
-    
+
     /// Batch too large (2008)
     BatchTooLarge,
-    
+
     /// Lease requested - commit queued pending lease grant (2009)
     LeaseRequested,
 }

@@ -1,12 +1,12 @@
 //! Stream benchmarking helpers
 
+use super::storage::create_bench_store;
 use crate::domains::stream::stream_actor::StreamActor;
 use crate::domains::stream::StreamStore;
 use crate::runtime::actor::Context;
 use crate::runtime::router::Router;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
-use super::storage::create_bench_store;
 
 /// Create a StreamActor and its context for benchmarking
 ///

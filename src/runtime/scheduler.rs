@@ -249,17 +249,19 @@ fn process_envelope<A: Actor>(
         None => {
             // Type mismatch - record metric and notify actor
             ctx.metrics().record_type_mismatch();
-            
+
             let error = ActorError::TypeMismatch {
                 expected: std::any::type_name::<A::Message>().to_string(),
                 envelope_id: metadata.id.as_u64(),
             };
-            
+
             eprintln!(
                 "Type mismatch: envelope {:?} for actor {:?} - expected {}, got different type",
-                metadata.id, address, std::any::type_name::<A::Message>()
+                metadata.id,
+                address,
+                std::any::type_name::<A::Message>()
             );
-            
+
             actor.on_error(error, ctx);
             return;
         }
@@ -278,13 +280,13 @@ fn process_envelope<A: Actor>(
             "Actor {:?} panicked during message processing: {:?}\nStopping actor. Supervisor will handle restart.",
             address, e
         );
-        
+
         ctx.metrics().record_panic();
         let error = ActorError::Panic(format!("{:?}", e));
-        
+
         // Call error handler but actor is now stopped
         actor.on_error(error, ctx);
-        
+
         // CRITICAL: Stop actor immediately. No further message processing.
         ctx.stop();
     } else {

@@ -42,7 +42,10 @@ impl SessionPermissions {
             .map(|p| {
                 // Remove any fragment ("#access") before compiling into a route pattern
                 let route_part = p.raw.split('#').next().unwrap_or("");
-                CompiledPermission { pattern: crate::runtime::matcher::Pattern::new(route_part), access: p.access }
+                CompiledPermission {
+                    pattern: crate::runtime::matcher::Pattern::new(route_part),
+                    access: p.access,
+                }
             })
             .collect();
 
@@ -90,7 +93,7 @@ impl fmt::Display for SessionPermissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{Permission, Access};
+    use crate::auth::{Access, Permission};
     use crate::runtime::routing::Route;
 
     #[test]

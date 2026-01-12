@@ -93,7 +93,7 @@
 ///
 /// All modes preserve at-least-once semantics for completed messages
 /// (reserve/complete cycle is always durable).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueueDurabilityPolicy {
     /// Strict durability (default)
     ///
@@ -103,8 +103,9 @@ pub enum QueueDurabilityPolicy {
     /// - Latency: ~10-50µs per message
     ///
     /// Use for: Financial transactions, orders, critical coordination
+    #[default]
     Strict,
-    
+
     /// Grouped commit with periodic fsync
     ///
     /// - fsync at most once per `interval_ms`
@@ -128,7 +129,7 @@ pub enum QueueDurabilityPolicy {
         /// - 10ms: Aggressive (1000-5000 msgs), ~800K-1M msg/sec
         interval_ms: u32,
     },
-    
+
     /// Async persistence (maximum throughput)
     ///
     /// - WAL append without fsync
@@ -145,23 +146,17 @@ pub enum QueueDurabilityPolicy {
     Async,
 }
 
-impl Default for QueueDurabilityPolicy {
-    fn default() -> Self {
-        Self::Strict
-    }
-}
-
 impl QueueDurabilityPolicy {
     /// Check if this policy guarantees true durability (survives crashes)
     pub fn is_durable(&self) -> bool {
         matches!(self, Self::Strict)
     }
-    
+
     /// Check if this policy may lose data on crash
     pub fn may_lose_data(&self) -> bool {
         !self.is_durable()
     }
-    
+
     /// Get human-readable description of durability guarantees
     pub fn description(&self) -> &'static str {
         match self {
@@ -170,23 +165,21 @@ impl QueueDurabilityPolicy {
             Self::Async => "Async persistence (best-effort)",
         }
     }
-    
+
     /// Get expected throughput range for this policy
     pub fn throughput_range(&self) -> (u32, u32) {
         match self {
             Self::Strict => (100_000, 150_000),
-            Self::Grouped { interval_ms } => {
-                match interval_ms {
-                    1 => (400_000, 600_000),
-                    5 => (600_000, 800_000),
-                    10 => (800_000, 1_000_000),
-                    _ => (500_000, 1_000_000),
-                }
-            }
+            Self::Grouped { interval_ms } => match interval_ms {
+                1 => (400_000, 600_000),
+                5 => (600_000, 800_000),
+                10 => (800_000, 1_000_000),
+                _ => (500_000, 1_000_000),
+            },
             Self::Async => (1_000_000, 2_000_000),
         }
     }
-    
+
     /// Convert policy to Midge write options
     ///
     /// Returns a tuple of (sync: bool, disable_wal: bool) that can be passed
@@ -251,9 +244,9 @@ impl QueueDurabilityPolicy {
 pub struct QueueWriteOptions {
     /// Durability policy for this write
     pub policy: QueueDurabilityPolicy,
-    
+
     /// Column family or namespace for queue writes
-    /// 
+    ///
     /// Ensures queue durability settings don't affect other domains
     pub namespace: &'static str,
 }
@@ -271,51 +264,54 @@ impl QueueWriteOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn should_default_to_strict_durability() {
         // Arrange & Act
         let policy = QueueDurabilityPolicy::default();
-        
+
         // Assert
         assert_eq!(policy, QueueDurabilityPolicy::Strict);
         assert!(policy.is_durable());
         assert!(!policy.may_lose_data());
     }
-    
+
     #[test]
     fn should_identify_strict_as_durable() {
         // Arrange
         let policy = QueueDurabilityPolicy::Strict;
-        
+
         // Act & Assert
         assert!(policy.is_durable());
         assert!(!policy.may_lose_data());
         assert_eq!(policy.description(), "Strict durability (no data loss)");
     }
-    
+
     #[test]
     fn should_identify_grouped_as_lossy() {
         // Arrange
         let policy = QueueDurabilityPolicy::Grouped { interval_ms: 5 };
-        
+
         // Act & Assert
         assert!(!policy.is_durable());
         assert!(policy.may_lose_data());
-        assert_eq!(policy.description(), "Grouped commit (loss window on crash)");
+        assert_eq!(
+            policy.description(),
+            "Grouped commit (loss window on crash)"
+        );
     }
-    
+
     #[test]
     fn should_identify_async_as_lossy() {
         // Arrange
         let policy = QueueDurabilityPolicy::Async;
-        
+
         // Act & Assert
         assert!(!policy.is_durable());
         assert!(policy.may_lose_data());
         assert_eq!(policy.description(), "Async persistence (best-effort)");
     }
-    
+
     #[test]
     fn should_return_throughput_ranges() {
         // Arrange
@@ -323,50 +319,50 @@ mod tests {
         let grouped_1ms = QueueDurabilityPolicy::Grouped { interval_ms: 1 };
         let grouped_5ms = QueueDurabilityPolicy::Grouped { interval_ms: 5 };
         let async_policy = QueueDurabilityPolicy::Async;
-        
+
         // Act & Assert
         assert_eq!(strict.throughput_range(), (100_000, 150_000));
         assert_eq!(grouped_1ms.throughput_range(), (400_000, 600_000));
         assert_eq!(grouped_5ms.throughput_range(), (600_000, 800_000));
         assert_eq!(async_policy.throughput_range(), (1_000_000, 2_000_000));
     }
-    
+
     #[test]
     fn should_convert_strict_to_midge_options() {
         // Arrange
         let policy = QueueDurabilityPolicy::Strict;
-        
+
         // Act
         let (sync, disable_wal) = policy.to_midge_options();
-        
+
         // Assert
-        assert_eq!(sync, true);         // fsync on every write
-        assert_eq!(disable_wal, false); // WAL enabled
+        assert!(sync); // fsync on every write
+        assert!(!disable_wal); // WAL enabled
     }
-    
+
     #[test]
     fn should_convert_grouped_to_midge_options() {
         // Arrange
         let policy = QueueDurabilityPolicy::Grouped { interval_ms: 5 };
-        
+
         // Act
         let (sync, disable_wal) = policy.to_midge_options();
-        
+
         // Assert
-        assert_eq!(sync, false);        // async writes
-        assert_eq!(disable_wal, false); // WAL enabled (group commit)
+        assert!(!sync); // async writes
+        assert!(!disable_wal); // WAL enabled (group commit)
     }
-    
+
     #[test]
     fn should_convert_async_to_midge_options() {
         // Arrange
         let policy = QueueDurabilityPolicy::Async;
-        
+
         // Act
         let (sync, disable_wal) = policy.to_midge_options();
-        
+
         // Assert
-        assert_eq!(sync, false);       // async writes
-        assert_eq!(disable_wal, true); // WAL disabled (memory-only)
+        assert!(!sync); // async writes
+        assert!(disable_wal); // WAL disabled (memory-only)
     }
 }

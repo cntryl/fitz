@@ -19,9 +19,6 @@ use std::sync::Arc;
 pub fn create_test_lease_context(route_str: Option<&str>) -> Context<LeaseActor> {
     let router = Arc::new(Router::new());
     let route = route_str.unwrap_or("lease://realm/locks/test/acquire");
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new(route),
-    );
+    let addr = RouteAddress::new(RouteFamily::new(1), Route::new(route));
     Context::new(addr, router)
 }

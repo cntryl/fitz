@@ -1,12 +1,12 @@
-﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
-use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
-use fitz::prelude::Actor;
+use bytes::Bytes;
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::create_bench_rpc_context;
+use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
+use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
+use fitz::prelude::Actor;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::time::Duration;
 use uuid::Uuid;
-use bytes::Bytes;
 
 #[path = "config.rs"]
 mod config;
@@ -53,9 +53,9 @@ fn bench_family_validation(c: &mut Criterion) {
         reply_route: Route::new("inbox://session/1"),
         body: Bytes::from(vec![0u8; 64]),
     };
-    
+
     let invalid_req = RpcRequest {
-        family_id: RouteFamily::new(2),  // Mismatched family
+        family_id: RouteFamily::new(2), // Mismatched family
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/service/operation"),
         reply_route: Route::new("inbox://session/1"),
@@ -72,7 +72,12 @@ fn bench_family_validation(c: &mut Criterion) {
         b.iter(|| {
             let mut actor = RpcRouteActor::new(RouteFamily::new(1));
             let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-            actor.receive(RpcMessage::Subscribe { worker_addr: worker.clone() }, &mut ctx);
+            actor.receive(
+                RpcMessage::Subscribe {
+                    worker_addr: worker.clone(),
+                },
+                &mut ctx,
+            );
             let req = valid_req.clone();
             actor.receive(black_box(RpcMessage::Request(req)), &mut ctx);
         })
@@ -82,7 +87,12 @@ fn bench_family_validation(c: &mut Criterion) {
         b.iter(|| {
             let mut actor = RpcRouteActor::new(RouteFamily::new(1));
             let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-            actor.receive(RpcMessage::Subscribe { worker_addr: worker.clone() }, &mut ctx);
+            actor.receive(
+                RpcMessage::Subscribe {
+                    worker_addr: worker.clone(),
+                },
+                &mut ctx,
+            );
             let req = invalid_req.clone();
             actor.receive(black_box(RpcMessage::Request(req)), &mut ctx);
         })
@@ -103,7 +113,7 @@ fn bench_request_dispatch(c: &mut Criterion) {
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: Bytes::from(vec![0u8; 64])
+            body: Bytes::from(vec![0u8; 64]),
         })
         .collect();
 
@@ -146,7 +156,7 @@ fn bench_request_enqueue(c: &mut Criterion) {
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: Bytes::from(vec![0u8; 64])
+            body: Bytes::from(vec![0u8; 64]),
         })
         .collect();
 
@@ -213,7 +223,7 @@ fn bench_response_routing(c: &mut Criterion) {
             let resp = responses[0].clone();
             let msg = RpcMessage::Response(resp);
             actor.receive(black_box(msg), &mut ctx);
-            
+
             // Re-establish lease for next iteration
             let req = RpcRequest {
                 family_id: RouteFamily::new(1),
@@ -255,7 +265,7 @@ fn bench_lease_tracking(c: &mut Criterion) {
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: Bytes::from(vec![0u8; 64])
+            body: Bytes::from(vec![0u8; 64]),
         })
         .collect();
 
@@ -281,7 +291,7 @@ fn bench_round_robin_distribution(c: &mut Criterion) {
         // Setup actor with N workers
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-        
+
         for i in 0..worker_count {
             let worker_addr = RouteAddress::new(
                 RouteFamily::new(1),
@@ -302,13 +312,13 @@ fn bench_round_robin_distribution(c: &mut Criterion) {
                 correlation_id: Uuid::new_v4(),
                 route: Route::new("rpc://realm/service/operation"),
                 reply_route: Route::new("inbox://session/1"),
-                body: Bytes::from(vec![0u8; 64])
+                body: Bytes::from(vec![0u8; 64]),
             })
             .collect();
 
         let name = format!("distribute_to_{}_workers", worker_count);
         group.throughput(Throughput::Elements(worker_count as u64));
-        
+
         group.bench_function(&name, |b| {
             let mut idx = 0usize;
             b.iter(|| {
@@ -334,10 +344,10 @@ fn bench_dispatch_zero_allocation(c: &mut Criterion) {
     let requests: Vec<RpcRequest> = (0..256)
         .map(|i| RpcRequest {
             family_id: RouteFamily::new(1),
-            correlation_id: Uuid::from_u128(i),  // Deterministic, no RNG
+            correlation_id: Uuid::from_u128(i), // Deterministic, no RNG
             route: Route::new("rpc://realm/service/operation"),
             reply_route: Route::new("inbox://session/1"),
-            body: Bytes::from(vec![0u8; 64])
+            body: Bytes::from(vec![0u8; 64]),
         })
         .collect();
 
@@ -371,9 +381,9 @@ fn bench_dispatch_zero_allocation(c: &mut Criterion) {
 fn bench_lease_expiration_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_hardening_expiration");
     group.sampling_mode(SamplingMode::Flat);
-    
+
     let in_flight_counts = [100usize, 1000usize, 5000usize, 10000usize];
-    
+
     for &count in &in_flight_counts {
         // Setup actor with many in-flight requests
         let mut actor = RpcRouteActor::with_timeout(
@@ -382,7 +392,7 @@ fn bench_lease_expiration_scaling(c: &mut Criterion) {
             Duration::from_secs(60), // Long timeout so none expire during test
         );
         let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-        
+
         // Register worker
         let worker_addr = RouteAddress::new(
             RouteFamily::new(1),
@@ -394,7 +404,7 @@ fn bench_lease_expiration_scaling(c: &mut Criterion) {
             },
             &mut ctx,
         );
-        
+
         // Create in-flight requests
         for i in 0..count {
             let req = RpcRequest {
@@ -406,7 +416,7 @@ fn bench_lease_expiration_scaling(c: &mut Criterion) {
             };
             actor.receive(RpcMessage::Request(req), &mut ctx);
         }
-        
+
         // Now benchmark dispatch with N in-flight leases
         let test_req = RpcRequest {
             family_id: RouteFamily::new(1),
@@ -415,7 +425,7 @@ fn bench_lease_expiration_scaling(c: &mut Criterion) {
             reply_route: Route::new("inbox://session/1"),
             body: Bytes::from(vec![0u8; 64]),
         };
-        
+
         group.throughput(Throughput::Elements(1));
         group.bench_function(format!("dispatch_with_{}_inflight", count), |b| {
             b.iter(|| {
@@ -424,32 +434,29 @@ fn bench_lease_expiration_scaling(c: &mut Criterion) {
             })
         });
     }
-    
+
     group.finish();
 }
 
 fn bench_worker_index_lookup(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_hardening_worker_lookup");
     group.sampling_mode(SamplingMode::Flat);
-    
+
     let worker_counts = [1usize, 8usize, 64usize, 256usize];
-    
+
     for &count in &worker_counts {
         // Setup actor with many workers
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let mut ctx = create_bench_rpc_context("rpc://realm/service/operation");
-        
+
         for i in 0..count {
             let worker_addr = RouteAddress::new(
                 RouteFamily::new(1),
                 Route::new(format!("worker://realm/service/worker{}", i)),
             );
-            actor.receive(
-                RpcMessage::Subscribe { worker_addr },
-                &mut ctx,
-            );
+            actor.receive(RpcMessage::Subscribe { worker_addr }, &mut ctx);
         }
-        
+
         // Benchmark dispatch (includes O(1) worker selection)
         let req = RpcRequest {
             family_id: RouteFamily::new(1),
@@ -458,7 +465,7 @@ fn bench_worker_index_lookup(c: &mut Criterion) {
             reply_route: Route::new("inbox://session/1"),
             body: Bytes::from(vec![0u8; 64]),
         };
-        
+
         group.throughput(Throughput::Elements(1));
         group.bench_function(format!("dispatch_with_{}_workers", count), |b| {
             b.iter(|| {
@@ -467,7 +474,7 @@ fn bench_worker_index_lookup(c: &mut Criterion) {
             })
         });
     }
-    
+
     group.finish();
 }
 
@@ -487,6 +494,3 @@ criterion_group! {
         bench_worker_index_lookup
 }
 criterion_main!(benches);
-
-
-

@@ -31,15 +31,18 @@ impl LeaseKey {
     /// Returns None if the route doesn't match the expected format.
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
         let path = route.as_str();
-        
+
         // Strip scheme if present (e.g., "lease://..." → "...")
         let path_without_scheme = if let Some(pos) = path.find("://") {
             &path[pos + 3..]
         } else {
             path
         };
-        
-        let parts: Vec<&str> = path_without_scheme.trim_start_matches('/').split('/').collect();
+
+        let parts: Vec<&str> = path_without_scheme
+            .trim_start_matches('/')
+            .split('/')
+            .collect();
 
         if parts.len() >= 4 {
             Some(LeaseKey {

@@ -6,13 +6,13 @@
 //! - Session permissions checked before forwarding to actors
 //! - Authorization failures return proper errors
 
-use fitz::domains::stream::stream_actor::StreamActor;
+use fitz::domains::stream::protocol::StreamMessage;
 use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::store::StreamStore;
-use fitz::domains::stream::protocol::StreamMessage;
+use fitz::domains::stream::stream_actor::StreamActor;
 use fitz::runtime::actor::Context;
-use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
 use fitz::runtime::router::Router;
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::permissions::SessionPermissions;
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ fn make_stream_actor(
     );
 
     let db = Arc::new(
-        cntryl_midge::MidgeEngine::open(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open store"),
     );
     let store = Arc::new(StreamStore::new(db));
@@ -46,7 +46,8 @@ fn make_stream_actor(
 }
 
 fn make_session_with_write_access() -> SessionActor {
-    let perms = vec![fitz::auth::Permission::parse("stream://realm1/area1/orders/*#write").unwrap()];
+    let perms =
+        vec![fitz::auth::Permission::parse("stream://realm1/area1/orders/*#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(perms);
     SessionActor::new(fitz::session::session::SessionId(1), session_perms)
 }
@@ -58,7 +59,10 @@ fn make_session_with_read_only() -> SessionActor {
 }
 
 fn make_session_with_no_access() -> SessionActor {
-    SessionActor::new(fitz::session::session::SessionId(3), SessionPermissions::empty())
+    SessionActor::new(
+        fitz::session::session::SessionId(3),
+        SessionPermissions::empty(),
+    )
 }
 
 #[test]
@@ -188,12 +192,13 @@ fn should_reject_commit_without_write_permission() {
 fn should_enforce_realm_boundary_in_permissions() {
     // Arrange
     let (mut actor, mut ctx) = make_stream_actor("realm2", "area1", "orders");
-    
+
     // Session has permission for realm1 but not realm2
-    let perms = vec![fitz::auth::Permission::parse("stream://realm1/area1/orders/*#write").unwrap()];
+    let perms =
+        vec![fitz::auth::Permission::parse("stream://realm1/area1/orders/*#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(fitz::session::session::SessionId(10), session_perms);
-    
+
     let family = *ctx.address().family();
     let route = Route::new("stream://realm2/area1/orders/append");
 
@@ -215,12 +220,13 @@ fn should_enforce_realm_boundary_in_permissions() {
 fn should_enforce_area_boundary_in_permissions() {
     // Arrange
     let (mut actor, mut ctx) = make_stream_actor("realm1", "area2", "orders");
-    
+
     // Session has permission for area1 but not area2
-    let perms = vec![fitz::auth::Permission::parse("stream://realm1/area1/orders/*#write").unwrap()];
+    let perms =
+        vec![fitz::auth::Permission::parse("stream://realm1/area1/orders/*#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(fitz::session::session::SessionId(11), session_perms);
-    
+
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area2/orders/append");
 
@@ -242,12 +248,12 @@ fn should_enforce_area_boundary_in_permissions() {
 fn should_allow_wildcard_permission_for_all_resources() {
     // Arrange
     let (mut actor, mut ctx) = make_stream_actor("realm1", "area1", "any_resource");
-    
+
     // Session has wildcard permission for all resources in area
     let perms = vec![fitz::auth::Permission::parse("stream://realm1/area1/**#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(fitz::session::session::SessionId(12), session_perms);
-    
+
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/any_resource/append");
 

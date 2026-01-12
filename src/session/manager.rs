@@ -154,7 +154,12 @@ impl Ingress for RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
     ) -> IngressDecision {
-        eprintln!("on_frame enter: session_id={} channel={} msg_type={}", session_id, channel_id, msg_type.as_u16());
+        eprintln!(
+            "on_frame enter: session_id={} channel={} msg_type={}",
+            session_id,
+            channel_id,
+            msg_type.as_u16()
+        );
         // Verify session exists
         if !self.sessions.contains_key(&session_id) {
             eprintln!("Frame for unknown session: {}", session_id);
@@ -168,7 +173,9 @@ impl Ingress for RuntimeIngress {
         {
             let mut entry = self.sessions.get_mut(&session_id).unwrap();
             if !entry.authenticated {
-                if channel_id != ChannelId::Control || msg_type != crate::protocol::tlv::MessageType::CONNECT {
+                if channel_id != ChannelId::Control
+                    || msg_type != crate::protocol::tlv::MessageType::CONNECT
+                {
                     eprintln!("forcing close for unauthenticated session {}", session_id);
                     return IngressDecision::Close("unauthenticated: connect required".to_string());
                 }
@@ -188,7 +195,11 @@ impl Ingress for RuntimeIngress {
                                         Ok(_) => {
                                             // Attempt verified permissions extraction. If verification fails, we may fall
                                             // back to no-verify parsing in the case the JWT header is malformed.
-                                            match crate::auth::permissions_from_jwt_using_jwks(compact, &jwks_url).await {
+                                            match crate::auth::permissions_from_jwt_using_jwks(
+                                                compact, &jwks_url,
+                                            )
+                                            .await
+                                            {
                                                 Ok(snapshot) => {
                                                     entry.permissions_snapshot = snapshot.clone();
                                                     entry.authenticated = true;
@@ -196,7 +207,9 @@ impl Ingress for RuntimeIngress {
                                                     self.session_actors.insert(
                                                         session_id,
                                                         crate::session::actor::SessionActor::new(
-                                                            crate::session::session::SessionId(session_id),
+                                                            crate::session::session::SessionId(
+                                                                session_id,
+                                                            ),
                                                             snapshot,
                                                         ),
                                                     );
@@ -237,16 +250,26 @@ impl Ingress for RuntimeIngress {
                                                             }
                                                         }
                                                     } else {
-                                                        eprintln!("connect failed (signature): {}", e);
-                                                        return IngressDecision::Close(format!("connect failed: {}", e));
+                                                        eprintln!(
+                                                            "connect failed (signature): {}",
+                                                            e
+                                                        );
+                                                        return IngressDecision::Close(format!(
+                                                            "connect failed: {}",
+                                                            e
+                                                        ));
                                                     }
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("jwks fetch failed (falling back to no-verify): {}", e);
+                                            eprintln!(
+                                                "jwks fetch failed (falling back to no-verify): {}",
+                                                e
+                                            );
                                             // Fall back to no-verify parsing below
-                                            match crate::auth::permissions_from_compact_jwt(compact) {
+                                            match crate::auth::permissions_from_compact_jwt(compact)
+                                            {
                                                 Ok(snapshot) => {
                                                     entry.permissions_snapshot = snapshot.clone();
                                                     entry.authenticated = true;
@@ -254,7 +277,9 @@ impl Ingress for RuntimeIngress {
                                                     self.session_actors.insert(
                                                         session_id,
                                                         crate::session::actor::SessionActor::new(
-                                                            crate::session::session::SessionId(session_id),
+                                                            crate::session::session::SessionId(
+                                                                session_id,
+                                                            ),
                                                             snapshot,
                                                         ),
                                                     );
@@ -267,14 +292,20 @@ impl Ingress for RuntimeIngress {
                                                 }
                                                 Err(e) => {
                                                     eprintln!("connect failed: {}", e);
-                                                    return IngressDecision::Close(format!("connect failed: {}", e));
+                                                    return IngressDecision::Close(format!(
+                                                        "connect failed: {}",
+                                                        e
+                                                    ));
                                                 }
                                             }
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("jwks derivation failed (falling back to no-verify): {}", e);
+                                    eprintln!(
+                                        "jwks derivation failed (falling back to no-verify): {}",
+                                        e
+                                    );
                                     match crate::auth::permissions_from_compact_jwt(compact) {
                                         Ok(snapshot) => {
                                             entry.permissions_snapshot = snapshot.clone();
@@ -296,7 +327,10 @@ impl Ingress for RuntimeIngress {
                                         }
                                         Err(e) => {
                                             eprintln!("connect failed: {}", e);
-                                            return IngressDecision::Close(format!("connect failed: {}", e));
+                                            return IngressDecision::Close(format!(
+                                                "connect failed: {}",
+                                                e
+                                            ));
                                         }
                                     }
                                 }
@@ -324,7 +358,10 @@ impl Ingress for RuntimeIngress {
                                 }
                                 Err(e) => {
                                     eprintln!("connect failed: {}", e);
-                                    return IngressDecision::Close(format!("connect failed: {}", e));
+                                    return IngressDecision::Close(format!(
+                                        "connect failed: {}",
+                                        e
+                                    ));
                                 }
                             }
                         }
@@ -376,8 +413,8 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
-    use bytes::Bytes;
     use base64::Engine;
+    use bytes::Bytes;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -430,7 +467,12 @@ mod tests {
             let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
 
             let decision = ingress
-                .on_frame(2, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt))
+                .on_frame(
+                    2,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt),
+                )
                 .await;
 
             // Assert
@@ -443,7 +485,12 @@ mod tests {
         let ingress = RuntimeIngress::new();
 
         let decision = ingress
-            .on_frame(999, ChannelId::Control, crate::protocol::tlv::MessageType::new(42), Bytes::from("test"))
+            .on_frame(
+                999,
+                ChannelId::Control,
+                crate::protocol::tlv::MessageType::new(42),
+                Bytes::from("test"),
+            )
             .await;
 
         assert!(matches!(decision, IngressDecision::Close(_)));
@@ -477,7 +524,12 @@ mod tests {
             let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
 
             ingress
-                .on_frame(3, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt))
+                .on_frame(
+                    3,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt),
+                )
                 .await;
             ingress.on_close(3, CloseReason::ClientClose).await;
         });
@@ -493,7 +545,12 @@ mod tests {
         ingress.on_open(session).await.unwrap();
 
         let decision = ingress
-            .on_frame(4, ChannelId::Pub, crate::protocol::tlv::MessageType::new(100), Bytes::from("payload"))
+            .on_frame(
+                4,
+                ChannelId::Pub,
+                crate::protocol::tlv::MessageType::new(100),
+                Bytes::from("payload"),
+            )
             .await;
 
         assert!(matches!(decision, IngressDecision::Close(_)));
@@ -507,7 +564,12 @@ mod tests {
 
         // Control message with wrong type
         let decision = ingress
-            .on_frame(5, ChannelId::Control, crate::protocol::tlv::MessageType::new(2), Bytes::from("payload"))
+            .on_frame(
+                5,
+                ChannelId::Control,
+                crate::protocol::tlv::MessageType::new(2),
+                Bytes::from("payload"),
+            )
             .await;
 
         assert!(matches!(decision, IngressDecision::Close(_)));
@@ -555,7 +617,12 @@ mod tests {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(50, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    50,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
 
             // Assert
@@ -564,7 +631,10 @@ mod tests {
 
         // Assert: permissions snapshot updated
         let retrieved = ingress.get_session(50).unwrap();
-        assert!(retrieved.permissions_snapshot.allows(&crate::runtime::routing::Route::new("notice://prod/orders/create"), crate::auth::Access::Read));
+        assert!(retrieved.permissions_snapshot.allows(
+            &crate::runtime::routing::Route::new("notice://prod/orders/create"),
+            crate::auth::Access::Read
+        ));
     }
 
     #[test]
@@ -590,7 +660,12 @@ mod tests {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(51, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    51,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
 
             // Assert
@@ -602,7 +677,7 @@ mod tests {
     fn should_set_permissions_on_connect_with_issuer_valid_signature() {
         // Arrange
         use base64::Engine;
-        use jsonwebtoken::{Header, EncodingKey};
+        use jsonwebtoken::{EncodingKey, Header};
 
         let ingress = RuntimeIngress::new();
         let session = make_session_info(80, TransportKind::Tcp);
@@ -621,11 +696,17 @@ mod tests {
 
         let secret = b"supersecretkey".to_vec();
         let header = Header::new(jsonwebtoken::Algorithm::HS256);
-        let jwt = jsonwebtoken::encode(&header, &payload, &EncodingKey::from_secret(secret.as_slice())).unwrap();
+        let jwt = jsonwebtoken::encode(
+            &header,
+            &payload,
+            &EncodingKey::from_secret(secret.as_slice()),
+        )
+        .unwrap();
 
         // Cache JWKS for the derived URL
         let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
-        let jwks = serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
+        let jwks =
+            serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
         crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
 
         // Act
@@ -633,7 +714,12 @@ mod tests {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(80, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    80,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
 
             // Assert
@@ -643,14 +729,17 @@ mod tests {
         // Assert: actor authorizes write
         let actor_ref = ingress.session_actors.get(&80).unwrap();
         let actor = actor_ref.value();
-        assert!(actor.authorize(&crate::runtime::routing::Route::new("notice://prod/orders/create"), crate::auth::Access::Write));
+        assert!(actor.authorize(
+            &crate::runtime::routing::Route::new("notice://prod/orders/create"),
+            crate::auth::Access::Write
+        ));
     }
 
     #[test]
     fn should_reject_connect_with_issuer_invalid_signature() {
         // Arrange
         use base64::Engine;
-        use jsonwebtoken::{Header, EncodingKey};
+        use jsonwebtoken::{EncodingKey, Header};
 
         let ingress = RuntimeIngress::new();
         let session = make_session_info(81, TransportKind::Tcp);
@@ -669,11 +758,14 @@ mod tests {
 
         let signing_secret = b"othersecret";
         let header = Header::new(jsonwebtoken::Algorithm::HS256);
-        let jwt = jsonwebtoken::encode(&header, &payload, &EncodingKey::from_secret(signing_secret)).unwrap();
+        let jwt =
+            jsonwebtoken::encode(&header, &payload, &EncodingKey::from_secret(signing_secret))
+                .unwrap();
 
         // Cache a different secret under the JWKS URL
         let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"supersecretkey");
-        let jwks = serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
+        let jwks =
+            serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
         crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
 
         // Act
@@ -681,7 +773,12 @@ mod tests {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(81, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    81,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
 
             // Assert
@@ -705,11 +802,14 @@ mod tests {
         assert!(ingress.session_actors.contains_key(&60));
         let actor_ref = ingress.session_actors.get(&60).unwrap();
         let actor = actor_ref.value();
-        assert!(!actor.authorize(&crate::runtime::routing::Route::new("notice://prod/orders/create"), crate::auth::Access::Write));
+        assert!(!actor.authorize(
+            &crate::runtime::routing::Route::new("notice://prod/orders/create"),
+            crate::auth::Access::Write
+        ));
     }
 
     #[test]
-fn should_update_session_actor_on_connect() {
+    fn should_update_session_actor_on_connect() {
         // Arrange
         use base64::Engine;
         let ingress = RuntimeIngress::new();
@@ -732,7 +832,12 @@ fn should_update_session_actor_on_connect() {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(61, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    61,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
 
             // Assert
@@ -742,18 +847,21 @@ fn should_update_session_actor_on_connect() {
         // Actor should now allow write on the route
         let actor_ref = ingress.session_actors.get(&61).unwrap();
         let actor = actor_ref.value();
-        assert!(actor.authorize(&crate::runtime::routing::Route::new("notice://prod/orders/create"), crate::auth::Access::Write));
+        assert!(actor.authorize(
+            &crate::runtime::routing::Route::new("notice://prod/orders/create"),
+            crate::auth::Access::Write
+        ));
     }
 
     #[test]
     fn should_deny_e2e_notification_publish_via_ingress_snapshot() {
         // Arrange
-        use base64::Engine;
-        use crate::domains::notification::session as notice_session;
         use crate::domains::notification::route_actor::NoticeRouteActor;
+        use crate::domains::notification::session as notice_session;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
-        use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
+        use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+        use base64::Engine;
         use bytes::Bytes;
 
         let ingress = RuntimeIngress::new();
@@ -775,20 +883,29 @@ fn should_update_session_actor_on_connect() {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(70, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    70,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
             assert_eq!(decision, IngressDecision::Accept);
         });
 
         // Build a notice route actor and session wrapper from ingress snapshot
         let router = Router::new();
-        let subscriber = RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
+        let subscriber =
+            RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
         let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router));
 
         let actor_ref = ingress.session_actors.get(&70).unwrap();
         let session_perms = actor_ref.value().permissions.clone();
-        let session_actor = notice_session::SessionActor::new(crate::session::session::SessionId(70), (*session_perms).clone());
+        let session_actor = notice_session::SessionActor::new(
+            crate::session::session::SessionId(70),
+            (*session_perms).clone(),
+        );
 
         // Act: Publish should be rejected because session only has read
         let res = session_actor.publish(
@@ -807,12 +924,12 @@ fn should_update_session_actor_on_connect() {
     #[test]
     fn should_allow_e2e_notification_publish_via_ingress_snapshot() {
         // Arrange
-        use base64::Engine;
-        use crate::domains::notification::session as notice_session;
         use crate::domains::notification::route_actor::NoticeRouteActor;
+        use crate::domains::notification::session as notice_session;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
-        use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
+        use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+        use base64::Engine;
         use bytes::Bytes;
 
         let ingress = RuntimeIngress::new();
@@ -834,20 +951,29 @@ fn should_update_session_actor_on_connect() {
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
             let decision = ingress
-                .on_frame(71, ChannelId::Control, crate::protocol::tlv::MessageType::CONNECT, Bytes::from(jwt.clone()))
+                .on_frame(
+                    71,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt.clone()),
+                )
                 .await;
             assert_eq!(decision, IngressDecision::Accept);
         });
 
         // Build a notice route actor and session wrapper from ingress snapshot
         let router = Router::new();
-        let subscriber = RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
+        let subscriber =
+            RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
         let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router));
 
         let actor_ref = ingress.session_actors.get(&71).unwrap();
         let session_perms = actor_ref.value().permissions.clone();
-        let session_actor = notice_session::SessionActor::new(crate::session::session::SessionId(71), (*session_perms).clone());
+        let session_actor = notice_session::SessionActor::new(
+            crate::session::session::SessionId(71),
+            (*session_perms).clone(),
+        );
 
         // Act: Publish should succeed because session now has write
         let res = session_actor.publish(

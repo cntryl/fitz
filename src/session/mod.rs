@@ -13,10 +13,10 @@
 
 #![allow(clippy::module_inception)]
 
+pub mod actor;
 pub mod manager;
 pub mod permissions;
 pub mod session;
-pub mod actor;
 
 pub use actor::SessionActor;
 

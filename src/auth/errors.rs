@@ -24,8 +24,12 @@ impl fmt::Display for AuthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AuthError::InvalidToken(msg) => write!(f, "invalid token: {}", msg),
-            AuthError::SignatureVerificationFailed(msg) => write!(f, "signature verification failed: {}", msg),
-            AuthError::ClaimsValidationFailed(msg) => write!(f, "claims validation failed: {}", msg),
+            AuthError::SignatureVerificationFailed(msg) => {
+                write!(f, "signature verification failed: {}", msg)
+            }
+            AuthError::ClaimsValidationFailed(msg) => {
+                write!(f, "claims validation failed: {}", msg)
+            }
             AuthError::JwksError(msg) => write!(f, "jwks error: {}", msg),
             AuthError::PermissionError(msg) => write!(f, "permission error: {}", msg),
         }

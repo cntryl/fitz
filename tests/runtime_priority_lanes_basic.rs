@@ -82,13 +82,14 @@ fn should_report_occupancy_for_both_lanes() {
 
     // Act - Fill normal lane via MailboxSink trait (internal API)
     let sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
-    
+
     for i in 0..5 {
         sink.deliver(Envelope::new(addr.clone(), i)).ok();
     }
 
     for i in 0..3 {
-        sink.deliver_high_priority(Envelope::new(addr.clone(), i)).ok();
+        sink.deliver_high_priority(Envelope::new(addr.clone(), i))
+            .ok();
     }
 
     // Assert
@@ -144,7 +145,10 @@ fn should_enforce_capacity_limits_on_normal_lane() {
     assert!(result.is_err());
     if let Err(e) = result {
         match e {
-            DeliveryError::MailboxFull { capacity, current_len } => {
+            DeliveryError::MailboxFull {
+                capacity,
+                current_len,
+            } => {
                 assert_eq!(capacity, 5);
                 assert_eq!(current_len, 5);
             }
@@ -174,7 +178,10 @@ fn should_enforce_capacity_limits_on_high_lane() {
     assert!(result.is_err());
     if let Err(e) = result {
         match e {
-            DeliveryError::HighLaneFull { capacity, current_len } => {
+            DeliveryError::HighLaneFull {
+                capacity,
+                current_len,
+            } => {
                 assert_eq!(capacity, 5);
                 assert_eq!(current_len, 5);
             }
@@ -236,7 +243,8 @@ fn should_verify_independent_lane_capacities() {
     }
 
     for i in 0..10 {
-        sink.deliver_high_priority(Envelope::new(addr.clone(), i)).ok();
+        sink.deliver_high_priority(Envelope::new(addr.clone(), i))
+            .ok();
     }
 
     // Assert - Both lanes are full independently

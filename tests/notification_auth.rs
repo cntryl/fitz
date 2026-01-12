@@ -1,12 +1,12 @@
-﻿use std::sync::Arc;
 use bytes::Bytes;
 use fitz::domains::notification::route_actor::NoticeRouteActor;
 use fitz::domains::notification::session::SessionActor;
-use fitz::session::permissions::SessionPermissions;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::testkit::notification::{TestSink};
+use fitz::session::permissions::SessionPermissions;
+use fitz::testkit::notification::TestSink;
+use std::sync::Arc;
 
 // Integration-style tests ensuring unauthenticated/unauthorized actions are rejected
 
@@ -21,7 +21,10 @@ fn should_reject_unauthenticated_subscribe() {
     let mut notice = NoticeRouteActor::new(RouteFamily::new(1));
     let mut ctx = Context::new(subscriber.clone(), Arc::new(router));
 
-    let session = SessionActor::new(fitz::session::session::SessionId(42), SessionPermissions::empty());
+    let session = SessionActor::new(
+        fitz::session::session::SessionId(42),
+        SessionPermissions::empty(),
+    );
 
     // Act
     let res = session.subscribe(
@@ -42,7 +45,8 @@ fn should_reject_unauthorized_publish() {
     // Arrange
     let router = Router::new();
     let sink = Arc::new(TestSink::new());
-    let subscriber = RouteAddress::new(RouteFamily::new(1), Route::new("notify://prod/orders/recv"));
+    let subscriber =
+        RouteAddress::new(RouteFamily::new(1), Route::new("notify://prod/orders/recv"));
     router.register(subscriber.clone(), sink.clone());
 
     let mut notice = NoticeRouteActor::new(RouteFamily::new(1));

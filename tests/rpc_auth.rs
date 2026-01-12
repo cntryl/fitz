@@ -1,14 +1,14 @@
-﻿use fitz::domains::rpc::{RpcRouteActor, RpcMessage, RpcRequest};
-use uuid::Uuid;
 use bytes::Bytes;
+use fitz::auth::Permission;
 use fitz::domains::rpc::session::SessionActor;
+use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcRouteActor};
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
-use fitz::runtime::routing::{Route, RouteFamily, RouteAddress};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
-use fitz::auth::Permission;
 use std::sync::Arc;
+use uuid::Uuid;
 
 // This file tests RPC authorization: verifies that SessionActor properly enforces
 // permissions for RPC operations before allowing requests to be processed.
@@ -316,8 +316,3 @@ fn should_validate_permissions_per_request() {
     assert!(result2.is_err());
     assert_eq!(actor.worker_count(), 1);
 }
-
-
-
-
-

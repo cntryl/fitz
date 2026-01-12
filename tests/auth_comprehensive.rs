@@ -7,8 +7,8 @@
 
 use fitz::auth::{Access, Claims, Permission};
 use fitz::runtime::routing::Route;
-use fitz::session::permissions::SessionPermissions;
 use fitz::session::actor::SessionActor;
+use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
 
 #[test]
@@ -16,7 +16,7 @@ fn should_reject_expired_token_in_authorize() {
     // Arrange
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -24,7 +24,7 @@ fn should_reject_expired_token_in_authorize() {
         permissions: vec![p],
         exp: 1, // Expired in 1970
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
@@ -40,7 +40,7 @@ fn should_allow_valid_token_in_authorize() {
     // Arrange
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -48,7 +48,7 @@ fn should_allow_valid_token_in_authorize() {
         permissions: vec![p],
         exp: 9999999999, // Far future
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
@@ -64,7 +64,7 @@ fn should_detect_expired_token_with_is_token_expired() {
     // Arrange
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -72,7 +72,7 @@ fn should_detect_expired_token_with_is_token_expired() {
         permissions: vec![p],
         exp: 1,
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
@@ -101,7 +101,7 @@ fn should_replace_permissions_on_reauth() {
     // Arrange
     let p1 = Permission::parse("notice://prod/orders/**#read").unwrap();
     let perms1 = SessionPermissions::from_permissions(vec![p1.clone()]);
-    
+
     let claims1 = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -109,13 +109,13 @@ fn should_replace_permissions_on_reauth() {
         permissions: vec![p1],
         exp: 9999999999,
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms1.clone());
     actor.authenticate(claims1, perms1);
 
     let p2 = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms2 = SessionPermissions::from_permissions(vec![p2.clone()]);
-    
+
     let claims2 = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -137,7 +137,7 @@ fn should_reauth_update_expiration_time() {
     // Arrange
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims_old = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -145,7 +145,7 @@ fn should_reauth_update_expiration_time() {
         permissions: vec![p.clone()],
         exp: 1000,
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims_old, perms.clone());
 
@@ -159,7 +159,7 @@ fn should_reauth_update_expiration_time() {
         permissions: vec![p],
         exp: 2000,
     };
-    
+
     actor.reauth(claims_new, perms);
 
     // Assert
@@ -184,7 +184,7 @@ fn should_batch_authorize_reject_all_on_expired_token() {
     // Arrange
     let p = Permission::parse("notice://prod/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -192,7 +192,7 @@ fn should_batch_authorize_reject_all_on_expired_token() {
         permissions: vec![p],
         exp: 1,
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
@@ -212,13 +212,13 @@ fn should_authenticate_transition_from_unauthenticated() {
     // Arrange
     let perms = SessionPermissions::empty();
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
-    
+
     assert!(!actor.is_authenticated());
 
     // Act
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms_auth = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -226,7 +226,7 @@ fn should_authenticate_transition_from_unauthenticated() {
         permissions: vec![p],
         exp: 9999999999,
     };
-    
+
     actor.authenticate(claims, perms_auth);
 
     // Assert
@@ -238,7 +238,7 @@ fn should_wildcard_permissions_match_multiple_routes() {
     // Arrange
     let p = Permission::parse("notice://prod/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -246,7 +246,7 @@ fn should_wildcard_permissions_match_multiple_routes() {
         permissions: vec![p],
         exp: 9999999999,
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
@@ -266,7 +266,7 @@ fn should_grant_all_access_when_permission_has_no_access_specifier() {
     // Arrange
     let p = Permission::parse("notice://prod/orders/**").unwrap(); // No #access = All
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
-    
+
     let claims = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),
@@ -274,7 +274,7 @@ fn should_grant_all_access_when_permission_has_no_access_specifier() {
         permissions: vec![p],
         exp: 9999999999,
     };
-    
+
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 

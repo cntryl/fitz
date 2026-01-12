@@ -1,10 +1,10 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use bytes::Bytes;
-use fitz::domains::notification::route_actor::NoticeRouteActor;
 use fitz::domains::notification::protocol::{
     NotificationMessage, PublishMessage, SubscribeMessage,
 };
+use fitz::domains::notification::route_actor::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 
@@ -12,7 +12,6 @@ use fitz::testkit::notification::{addr, make_router, route, session_id, TestSink
 
 // This file asserts scale & shape invariants: relative growth and failure modes.
 // It MUST NOT assert absolute durations or performance claims.
-
 
 #[test]
 fn should_scale_linearly_with_subscription_count() {

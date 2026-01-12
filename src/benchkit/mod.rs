@@ -6,10 +6,10 @@
 
 pub mod queue;
 pub mod rpc;
-pub mod stream;
 pub mod storage;
+pub mod stream;
 
 pub use queue::*;
 pub use rpc::*;
-pub use stream::*;
 pub use storage::*;
+pub use stream::*;

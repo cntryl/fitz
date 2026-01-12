@@ -62,29 +62,29 @@ fn should_return_mailbox_full_when_self_send_under_full_mailbox() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "self_send_test");
-    
+
     let actor = SelfSendActor {
         last_error: None,
         self_ref: None,
     };
-    
+
     let actor_ref = scheduler.spawn(actor, address.clone(), 2);
-    
+
     // Act
     // Fill the small mailbox (capacity = 2) with slow messages
     // The actor blocks on FillMailbox (50ms each), so mailbox will fill up
     let result1 = actor_ref.send(SelfSendMsg::FillMailbox);
     assert!(result1.is_ok(), "First send should succeed");
-    
+
     let result2 = actor_ref.send(SelfSendMsg::FillMailbox);
     assert!(result2.is_ok(), "Second send should succeed");
-    
+
     // Give tiny time for messages to enter channels
     thread::sleep(Duration::from_millis(2));
-    
+
     // Try to send third message (should fail with MailboxFull since actor is blocked)
     let result3 = actor_ref.send(SelfSendMsg::FillMailbox);
-    
+
     // Assert
     // The third send should fail because mailbox is full and actor is slow to process
     if result3.is_ok() {
@@ -144,30 +144,33 @@ fn should_stop_actor_immediately_after_panic() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "panic_test");
-    
+
     let actor = PanicActor { count: 0 };
     let actor_ref = scheduler.spawn(actor, address, 16);
-    
+
     // Act
     // Send: Increment, Panic, Increment, Increment
     let _ = actor_ref.send(PanicMsg::Increment);
     let _ = actor_ref.send(PanicMsg::Panic);
     let _ = actor_ref.send(PanicMsg::Increment);
     let _ = actor_ref.send(PanicMsg::Increment);
-    
+
     // Give time for processing
     thread::sleep(Duration::from_millis(100));
-    
+
     // Query count
     let (tx, rx) = crossbeam_channel::bounded(1);
     let _ = actor_ref.send(PanicMsg::GetCount(tx));
-    
+
     thread::sleep(Duration::from_millis(50));
-    
+
     // Assert
     // Count should be 1 (only first Increment processed before panic)
     // After panic, actor stops, so subsequent messages are never processed
-    assert!(rx.try_recv().is_err(), "Actor should have stopped after panic");
+    assert!(
+        rx.try_recv().is_err(),
+        "Actor should have stopped after panic"
+    );
 }
 
 // ============================================================================
@@ -204,28 +207,26 @@ fn should_process_messages_with_two_phase_scheduler() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "priority_test");
-    
-    let actor = PriorityActor {
-        work_count: 0,
-    };
-    
+
+    let actor = PriorityActor { work_count: 0 };
+
     let actor_ref = scheduler.spawn(actor, address, 32);
-    
+
     // Act
     // Send many normal messages
     for i in 0..20 {
         let _ = actor_ref.send(PriorityMsg::Work(i));
     }
-    
+
     // Give time for processing
     thread::sleep(Duration::from_millis(200));
-    
+
     // Query counts
     let (tx, rx) = crossbeam_channel::bounded(1);
     let _ = actor_ref.send(PriorityMsg::GetCount(tx));
-    
+
     let work_count = rx.recv_timeout(Duration::from_millis(100)).unwrap();
-    
+
     // Assert
     // All messages should be processed
     assert_eq!(work_count, 20, "All work messages should be processed");
@@ -271,28 +272,30 @@ fn should_cancel_timers_automatically_on_stop() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "timer_test");
-    
+
     let actor = TimerActor { timer_count: 0 };
     let actor_ref = scheduler.spawn(actor, address, 16);
-    
+
     // Act
     // Schedule timer, then immediately stop
     let _ = actor_ref.send(TimerMsg::ScheduleTimer);
     thread::sleep(Duration::from_millis(10)); // Let timer be scheduled
     let _ = actor_ref.send(TimerMsg::Stop);
-    
+
     // Wait longer than timer duration
     thread::sleep(Duration::from_millis(150));
-    
+
     // Try to query count (should fail because actor stopped)
     let (tx, rx) = crossbeam_channel::bounded(1);
     let _ = actor_ref.send(TimerMsg::GetCount(tx));
-    
+
     // Assert
     // Query should fail because actor is stopped
     // This demonstrates that Context::stop() calls timer_manager.clear()
-    assert!(rx.recv_timeout(Duration::from_millis(50)).is_err(),
-            "Actor should be stopped and not respond");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "Actor should be stopped and not respond"
+    );
 }
 
 // ============================================================================
@@ -339,27 +342,30 @@ fn should_record_type_mismatch_metric_when_error_occurs() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "type_mismatch_test");
-    
+
     let actor = TypeMismatchActor { errors: Vec::new() };
     let actor_ref = scheduler.spawn(actor, address.clone(), 16);
-    
+
     // Act
     // Send a valid message first
     let _ = actor_ref.send(TypeMismatchMsg::ValidMessage);
     thread::sleep(Duration::from_millis(50));
-    
+
     // Now send a different message type (simulate type mismatch)
     // This would require creating an envelope with wrong type, which is
     // difficult to do directly. Instead, we verify the infrastructure exists.
-    
+
     // Query metrics
     let (tx, rx) = crossbeam_channel::bounded(1);
     let _ = actor_ref.send(TypeMismatchMsg::GetMetrics(tx));
     let type_mismatch_count = rx.recv_timeout(Duration::from_millis(100)).unwrap();
-    
+
     // Assert
     // Verify metric tracking exists (infrastructure test)
-    assert_eq!(type_mismatch_count, 0, "No type mismatches in this test scenario");
+    assert_eq!(
+        type_mismatch_count, 0,
+        "No type mismatches in this test scenario"
+    );
 }
 
 // ============================================================================
@@ -401,10 +407,10 @@ fn should_enforce_time_budget_per_tick() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "fairness_test");
-    
+
     let actor = FairnessActor { work_count: 0 };
     let actor_ref = scheduler.spawn(actor, address, 64);
-    
+
     // Act
     // Send 30 messages, each taking 500 microseconds
     // Total work = 15ms, but tick budget is 5ms
@@ -412,19 +418,19 @@ fn should_enforce_time_budget_per_tick() {
     for _ in 0..30 {
         let _ = actor_ref.send(FairnessMsg::Work(500));
     }
-    
+
     // Give time for processing (should take multiple ticks)
     thread::sleep(Duration::from_millis(200));
-    
+
     // Query work count
     let (tx, rx) = crossbeam_channel::bounded(1);
     let _ = actor_ref.send(FairnessMsg::GetCount(tx));
     let work_count = rx.recv_timeout(Duration::from_millis(100)).unwrap();
-    
+
     // Assert
     // All messages should eventually be processed
     assert_eq!(work_count, 30, "All work messages should be processed");
-    
+
     // The fact that this test completes demonstrates that the actor
     // yields control periodically due to time budget enforcement.
     // Without the time budget, a slow actor could monopolize the thread.
@@ -439,18 +445,18 @@ fn should_use_relaxed_ordering_for_metrics() {
     // Arrange
     let scheduler = Scheduler::new(1);
     let address = test_address(1, "metrics_test");
-    
+
     #[derive(Debug)]
     enum MetricsMsg {
         Process,
         GetSnapshot(crossbeam_channel::Sender<fitz::runtime::actor::ActorMetricsSnapshot>),
     }
-    
+
     struct MetricsActor;
-    
+
     impl Actor for MetricsActor {
         type Message = MetricsMsg;
-        
+
         fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
             match msg {
                 MetricsMsg::Process => {
@@ -463,28 +469,31 @@ fn should_use_relaxed_ordering_for_metrics() {
             }
         }
     }
-    
+
     let actor = MetricsActor;
     let actor_ref = scheduler.spawn(actor, address, 32);
-    
+
     // Act
     // Send fewer messages accounting for batch processing (16 per tick)
     for _ in 0..16 {
         let _ = actor_ref.send(MetricsMsg::Process);
     }
-    
+
     // Wait for processing
     thread::sleep(Duration::from_millis(300));
-    
+
     // Query metrics
     let (tx, rx) = crossbeam_channel::bounded(1);
     let _ = actor_ref.send(MetricsMsg::GetSnapshot(tx));
     let snapshot = rx.recv_timeout(Duration::from_millis(200)).unwrap();
-    
+
     // Assert
     // Metrics should be captured successfully
-    assert_eq!(snapshot.messages_processed, 16, "All messages should be counted");
-    
+    assert_eq!(
+        snapshot.messages_processed, 16,
+        "All messages should be counted"
+    );
+
     // This test verifies that metrics can be queried without blocking
     // The implementation uses AtomicU64 with Relaxed ordering (verified by code inspection)
 }
