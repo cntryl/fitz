@@ -5,4 +5,5 @@ pub mod lease;
 pub mod notification;
 pub mod queue;
 pub mod rpc;
+pub mod schedule;
 pub mod stream;

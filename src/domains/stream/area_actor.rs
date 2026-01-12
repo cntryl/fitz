@@ -159,7 +159,7 @@ impl AreaActor {
             // Persist watermark to storage
             let _ = self
                 .store
-                .set_watermark(&self.realm, &self.area, self.area_watermark);
+                .set_watermark(self.family_id.id(), &self.realm, &self.area, self.area_watermark);
 
             // Build area watermark publish message (debounced, best-effort)
             let route_str = format!("notice://{}/{}/*/watermark", self.realm, self.area);

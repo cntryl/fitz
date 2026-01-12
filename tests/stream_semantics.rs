@@ -7,7 +7,7 @@
 //! - Offset lease coordination between actors
 //! - Batch size limits
 use bytes::Bytes;
-use fitz::domains::stream::protocol::StreamMessage;
+use fitz::domains::stream::protocol::{StreamMessage, StreamWriteMode};
 use fitz::prelude::Actor;
 use fitz::runtime::routing::Route;
 use fitz::testkit::{create_test_area_actor, create_test_stream_actor};
@@ -37,9 +37,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::CommitSession {
-            session_id: "session1".to_string(),
-        },
+        StreamMessage::CommitSession { session_id: "session1".to_string(), mode: crate::domains::stream::StreamWriteMode::Sync },
         &mut ctx,
     );
     // Act - Try to begin session with wrong expected_offset
@@ -108,9 +106,7 @@ fn should_allow_new_session_after_commit() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::CommitSession {
-            session_id: "session1".to_string(),
-        },
+        StreamMessage::CommitSession { session_id: "session1".to_string(), mode: crate::domains::stream::StreamWriteMode::Sync },
         &mut ctx,
     );
     // Second session (should succeed)
@@ -371,9 +367,7 @@ fn should_request_lease_when_insufficient_capacity() {
     }
     // Try to commit (should request lease if insufficient)
     actor.receive(
-        StreamMessage::CommitSession {
-            session_id: "large_session".to_string(),
-        },
+        StreamMessage::CommitSession { session_id: "large_session".to_string(), mode: StreamWriteMode::Sync },
         &mut ctx,
     );
     // Assert - LeaseRequested error or successful commit after lease grant
@@ -405,9 +399,7 @@ fn should_process_pending_commits_after_lease_grant() {
     );
     // Try commit (will be queued if no lease)
     actor.receive(
-        StreamMessage::CommitSession {
-            session_id: "pending_session".to_string(),
-        },
+        StreamMessage::CommitSession { session_id: "pending_session".to_string(), mode: StreamWriteMode::Sync },
         &mut ctx,
     );
     // Act - Grant lease

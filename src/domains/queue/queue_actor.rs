@@ -188,48 +188,40 @@ pub struct QueueActor {
 }
 
 impl QueueActor {
-    /// Create a new queue actor with system clock and Strict durability
+    /// Create a new queue actor. Persistence mode is locked to buffered-only (throughput-first).
     pub fn new(
         family: RouteFamily,
         queue_key: QueueKey,
         store: Arc<cntryl_midge::MidgeEngine>,
         max_attempts: Option<u32>,
     ) -> Self {
-        Self::with_durability(
-            family,
-            queue_key,
-            store,
-            max_attempts,
-            super::durability::QueueDurabilityPolicy::Strict,
-        )
-    }
-
-    /// Create a new queue actor with explicit durability policy
-    pub fn with_durability(
-        family: RouteFamily,
-        queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
-        max_attempts: Option<u32>,
-        durability: super::durability::QueueDurabilityPolicy,
-    ) -> Self {
-        Self::with_clock_and_durability(
+        Self::with_clock_and_locked_durability(
             family,
             queue_key,
             store,
             Box::new(SystemClock),
             max_attempts,
-            durability,
         )
     }
 
-    /// Create a new queue actor with a custom clock and durability (for testing)
-    pub fn with_clock_and_durability(
+    /// Create a new queue actor with a custom clock (for testing). Persistence is locked to buffered-only.
+    pub fn with_clock(
         family: RouteFamily,
         queue_key: QueueKey,
         store: Arc<cntryl_midge::MidgeEngine>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
-        durability: super::durability::QueueDurabilityPolicy,
+    ) -> Self {
+        Self::with_clock_and_locked_durability(family, queue_key, store, clock, max_attempts)
+    }
+
+    /// Internal constructor used by public constructors. DOES NOT allow selectable durability.
+    fn with_clock_and_locked_durability(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        clock: Box<dyn Clock>,
+        max_attempts: Option<u32>,
     ) -> Self {
         // Recover next_id from Midge on startup
         let next_id = Self::recover_next_id(&store, &queue_key);
@@ -245,42 +237,18 @@ impl QueueActor {
             delayed: BinaryHeap::new(),
             clock,
             max_attempts,
-            durability,
+            // LOCKED: queue writes are ALWAYS buffered (throughput-first)
+            durability: super::durability::QueueDurabilityPolicy::Async,
         }
     }
 
-    /// Get the durability policy for this queue
-    pub fn durability(&self) -> super::durability::QueueDurabilityPolicy {
-        self.durability
-    }
-
-    /// Create a new queue actor with a custom clock (for testing, Strict durability)
-    ///
-    /// DEPRECATED: Use `with_clock_and_durability` for new code
-    #[doc(hidden)]
-    pub fn with_clock(
-        family: RouteFamily,
-        queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
-        clock: Box<dyn Clock>,
-        max_attempts: Option<u32>,
-    ) -> Self {
-        Self::with_clock_and_durability(
-            family,
-            queue_key,
-            store,
-            clock,
-            max_attempts,
-            super::durability::QueueDurabilityPolicy::Strict,
-        )
-    }
 
     /// Recover next message ID from durable storage
     fn recover_next_id(store: &cntryl_midge::Engine, queue_key: &QueueKey) -> u64 {
         let key = Self::next_id_key(queue_key);
-        let cf = store.default_column_family();
+        let cf_id = cntryl_midge::ColumnFamilyId(queue_key.family.id() as u32);
 
-        match store.begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly) {
+        match store.begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly) {
             Ok(txn) => match txn.get(&key) {
                 Ok(Some(bytes)) => {
                     if bytes.len() == 8 {
@@ -329,22 +297,21 @@ impl QueueActor {
         // opts.set_sync(sync);
         // opts.set_disable_wal(disable_wal);
         // self.store.commit_transaction_boxed(txn, &opts).unwrap();
-        let cf = self.store.default_column_family();
+        let cf_id = cntryl_midge::ColumnFamilyId(self.family.id() as u32);
         let key = Self::next_id_key(&self.queue_key);
         let value = self.next_id.to_le_bytes();
 
         match self
             .store
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(mut txn) => {
                 if let Err(e) = txn.put(key, value.to_vec(), None) {
                     eprintln!("WARN: Failed to enqueue next_id in txn: {:?}", e);
                 } else {
-                    let (sync, disable_wal) = self.durability.to_midge_options();
-                    let opts = if disable_wal {
-                        cntryl_midge::WriteOptions::no_wal()
-                    } else if sync {
+                    let (sync, _disable_wal) = self.durability.to_midge_options();
+                    // Note: disable_wal not supported in transactions, only sync vs buffered
+                    let opts = if sync {
                         cntryl_midge::WriteOptions::sync()
                     } else {
                         cntryl_midge::WriteOptions::buffered()
@@ -487,11 +454,11 @@ impl QueueActor {
         }
 
         // Perform ONE Midge transaction for all messages
-        let cf = self.store.default_column_family();
+        let cf_id = cntryl_midge::ColumnFamilyId(self.family.id() as u32);
 
         let mut txn = match self
             .store
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(t) => t,
             Err(e) => {
@@ -513,10 +480,9 @@ impl QueueActor {
         }
 
         // Commit with durability policy options
-        let (sync, disable_wal) = self.durability.to_midge_options();
-        let opts = if disable_wal {
-            cntryl_midge::WriteOptions::no_wal()
-        } else if sync {
+        let (sync, _disable_wal) = self.durability.to_midge_options();
+        // Note: disable_wal not supported in transactions, only sync vs buffered
+        let opts = if sync {
             cntryl_midge::WriteOptions::sync()
         } else {
             cntryl_midge::WriteOptions::buffered()
@@ -582,13 +548,13 @@ impl QueueActor {
             };
 
             // Load from Midge
-            let cf = self.store.default_column_family();
+            let cf_id = cntryl_midge::ColumnFamilyId(self.family.id() as u32);
             let key = Self::message_key(&self.queue_key, id);
 
             // Use a read-only transaction for consistent reads
             let txn = match self
                 .store
-                .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+                .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             {
                 Ok(t) => t,
                 Err(e) => {
@@ -714,21 +680,20 @@ impl QueueActor {
         // opts.set_sync(sync);
         // opts.set_disable_wal(disable_wal);
         // self.store.commit_transaction_boxed(txn, &opts).ok();
-        let cf = self.store.default_column_family();
+        let cf_id = cntryl_midge::ColumnFamilyId(self.family.id() as u32);
         let key = Self::message_key(&self.queue_key, id);
 
         match self
             .store
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(mut txn) => {
                 if let Err(e) = txn.delete(key) {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
                 } else {
-                    let (sync, disable_wal) = self.durability.to_midge_options();
-                    let opts = if disable_wal {
-                        cntryl_midge::WriteOptions::no_wal()
-                    } else if sync {
+                    let (sync, _disable_wal) = self.durability.to_midge_options();
+                    // Note: disable_wal not supported in transactions, only sync vs buffered
+                    let opts = if sync {
                         cntryl_midge::WriteOptions::sync()
                     } else {
                         cntryl_midge::WriteOptions::buffered()
@@ -766,12 +731,12 @@ impl QueueActor {
         self.inflight.remove(&id);
 
         // Increment attempts in storage and check DLQ threshold
-        let cf = self.store.default_column_family();
+        let cf_id = cntryl_midge::ColumnFamilyId(self.family.id() as u32);
         let key = Self::message_key(&self.queue_key, id);
 
         match self
             .store
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(mut txn) => {
                 match txn.get(&key) {
@@ -795,11 +760,10 @@ impl QueueActor {
                                             id, e
                                         );
                                     } else {
-                                        let (sync, disable_wal) =
+                                        let (sync, _disable_wal) =
                                             self.durability.to_midge_options();
-                                        let opts = if disable_wal {
-                                            cntryl_midge::WriteOptions::no_wal()
-                                        } else if sync {
+                                        // Note: disable_wal not supported in transactions
+                                        let opts = if sync {
                                             cntryl_midge::WriteOptions::sync()
                                         } else {
                                             cntryl_midge::WriteOptions::buffered()
@@ -830,10 +794,9 @@ impl QueueActor {
                                         id, e
                                     );
                                 } else {
-                                    let (sync, disable_wal) = self.durability.to_midge_options();
-                                    let opts = if disable_wal {
-                                        cntryl_midge::WriteOptions::no_wal()
-                                    } else if sync {
+                                    let (sync, _disable_wal) = self.durability.to_midge_options();
+                                    // Note: disable_wal not supported in transactions
+                                    let opts = if sync {
                                         cntryl_midge::WriteOptions::sync()
                                     } else {
                                         cntryl_midge::WriteOptions::buffered()
@@ -1571,10 +1534,10 @@ pub mod tests {
         assert_eq!(actor.inflight.len(), 0);
 
         // Verify message deleted from storage
-        let cf = store.default_column_family();
+        let cf_id = cntryl_midge::ColumnFamilyId(queue_key.family.id() as u32);
         let key = QueueActor::message_key(&queue_key, msg_id);
         let txn = store
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .expect("begin tx");
         let result = txn.get(&key).expect("midge get");
         assert!(result.is_none(), "Message should be deleted from storage");

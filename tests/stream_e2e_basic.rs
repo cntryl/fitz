@@ -7,7 +7,7 @@
 //! - Offset assignment and sequencing
 
 use bytes::Bytes;
-use fitz::domains::stream::protocol::{IngestMetadata, StreamMessage};
+use fitz::domains::stream::protocol::{IngestMetadata, StreamMessage, StreamWriteMode};
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::stream_actor::StreamActor;
 use fitz::prelude::Actor;
@@ -77,6 +77,7 @@ fn should_append_single_event_to_stream() {
     actor.receive(
         StreamMessage::CommitSession {
             session_id: "test_session".to_string(),
+            mode: StreamWriteMode::Sync,
         },
         &mut ctx,
     );
@@ -128,6 +129,7 @@ fn should_append_batch_of_events() {
     actor.receive(
         StreamMessage::CommitSession {
             session_id: "batch_session".to_string(),
+            mode: StreamWriteMode::Sync,
         },
         &mut ctx,
     );
@@ -175,6 +177,7 @@ fn should_assign_sequential_resource_offsets() {
     actor.receive(
         StreamMessage::CommitSession {
             session_id: "session1".to_string(),
+            mode: StreamWriteMode::Sync,
         },
         &mut ctx,
     );
@@ -202,6 +205,7 @@ fn should_assign_sequential_resource_offsets() {
     actor.receive(
         StreamMessage::CommitSession {
             session_id: "session2".to_string(),
+            mode: StreamWriteMode::Sync,
         },
         &mut ctx,
     );
@@ -253,6 +257,7 @@ fn should_handle_session_with_ingest_metadata() {
     actor.receive(
         StreamMessage::CommitSession {
             session_id: "import_session".to_string(),
+            mode: StreamWriteMode::Sync,
         },
         &mut ctx,
     );
@@ -345,6 +350,7 @@ fn should_peek_at_last_committed_event() {
         actor.receive(
             StreamMessage::CommitSession {
                 session_id: format!("session_{}", i),
+                mode: StreamWriteMode::Sync,
             },
             &mut ctx,
         );

@@ -21,6 +21,7 @@
 //! This module is the core of Fitz and must remain pure and deterministic.
 
 pub mod actor;
+pub mod cf_validation;
 pub mod context;
 pub mod envelope;
 pub mod mailbox;

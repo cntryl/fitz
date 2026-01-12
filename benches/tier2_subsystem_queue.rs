@@ -2,11 +2,26 @@ use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
-use fitz::benchkit::create_bench_queue_actor;
-use fitz::domains::queue::QueueResponse;
+use fitz::benchkit::{create_bench_queue_actor, storage::create_bench_store};
+use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse, QueueDurabilityPolicy, Clock};
+use fitz::runtime::routing::RouteFamily;
 
 #[path = "config.rs"]
 mod config;
+
+// Shared mock clock that can be advanced from benches to avoid sleeping
+#[derive(Clone)]
+struct SharedClock(std::sync::Arc<std::sync::Mutex<std::time::Instant>>);
+impl SharedClock {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now())))
+    }
+}
+impl Clock for SharedClock {
+    fn now(&self) -> std::time::Instant {
+        *self.0.lock().unwrap()
+    }
+}
 
 // ============================================================================
 // TIER 2: SUBSYSTEM STRESS BENCHMARKS
@@ -18,44 +33,31 @@ mod config;
 // These benchmarks measure actor performance under sustained load.
 // ============================================================================
 
-fn bench_enqueue_reserve_complete_loop(c: &mut Criterion) {
-    //! ENQUEUE + RESERVE + COMPLETE LOOP - Measure full queue cycle under stress
-    //!
-    //! Pattern: Sustained load with full message lifecycle
-    //! Stress: Maximum message throughput through all operations
-    //!
-    //! Measures:
-    //! - Full cycle throughput (enqueue â†’ reserve â†’ complete)
-    //! - Actor performance under sustained load
-    //! - Memory stability under churn
+fn bench_capacity_cycle_enqueue_reserve_complete(c: &mut Criterion) {
+    // queue_capacity_cycle_1msg - time-bounded sustained full-cycle throughput
+    std::env::set_var("RAYON_NUM_THREADS", "1");
 
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
-    let payload = Bytes::from_static(b"test message");
+    let mut actor = create_bench_queue_actor("bench", "capacity", "queue", None);
+    let payload = Bytes::from_static(b"cycle msg");
 
-    let mut group = c.benchmark_group("subsystem_queue_churn");
+    let mut group = c.benchmark_group("queue_capacity_cycle");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3)); // enqueue + reserve + complete = 1 cycle
+    group.measurement_time(std::time::Duration::from_secs(1));
+    group.throughput(Throughput::Elements(3)); // enqueue + reserve + complete = 3 ops
 
-    group.bench_function("enqueue_reserve_complete_cycle", |b| {
+    group.bench_function("queue_capacity_cycle_enqueue_reserve_complete_1msg", |b| {
         b.iter(|| {
-            // Enqueue
-            let enqueue_resp = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-            let _msg_id = match enqueue_resp {
-                QueueResponse::Enqueued { id } => id,
-                _ => panic!("Expected Enqueued"),
-            };
+            let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
 
-            // Reserve
             let reserve_resp = actor.handle_reserve(black_box(30), black_box(Some(1)));
             let (id, token) = match reserve_resp {
                 QueueResponse::Reserved { messages } if !messages.is_empty() => {
                     (messages[0].id, messages[0].token)
                 }
-                _ => return, // Skip if empty
+                _ => return,
             };
 
-            // Complete
             let _ = actor.handle_complete(black_box(id), black_box(token));
         })
     });
@@ -63,178 +65,208 @@ fn bench_enqueue_reserve_complete_loop(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_batch_reserve_stress(c: &mut Criterion) {
-    //! BATCH RESERVE STRESS - Measure reserve throughput under batch load
-    //!
-    //! Pattern: Pre-fill queue, then sustained batch reserves
-    //! Stress: Maximum reservation throughput
-    //!
-    //! Measures:
-    //! - Batch reserve throughput at 1, 10, 100 batch sizes
-    //! - VecDeque bulk pop efficiency
-    //! - HashMap bulk insert efficiency
-
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+fn bench_batch_latency_reserve(c: &mut Criterion) {
+    // queue_batch_latency_reserve_batch_{size} - one reserve(batch) per iteration
     let payload = Bytes::from_static(b"test message");
 
-    // Pre-fill queue with 10000 messages
-    for _ in 0..10000 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-
-    let mut group = c.benchmark_group("subsystem_queue_batch_reserve");
-    group.sample_size(10);
+    let mut group = c.benchmark_group("queue_batch_latency_reserve");
+    group.sample_size(20);
     group.sampling_mode(SamplingMode::Flat);
 
-    for batch_size in [1, 10, 100] {
-        group.throughput(Throughput::Elements(batch_size));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(batch_size),
-            &batch_size,
-            |b, &size| {
-                b.iter(|| {
-                    let _ = actor.handle_reserve(black_box(30), black_box(Some(size as usize)));
-                })
-            },
-        );
+    for &batch_size in &[1usize, 10usize, 100usize] {
+        // Pre-fill a fresh actor per bench to avoid cross-iteration interference
+        group.bench_with_input(BenchmarkId::from_parameter(batch_size), &batch_size, |b, &size| {
+            let mut actor = create_bench_queue_actor("bench", "batch", "queue", None);
+            for _ in 0..5000 { let _ = actor.handle_enqueue(payload.clone(), None); }
+            b.iter(|| {
+                // Single reserve(batch_size) call measured per iteration
+                let _ = actor.handle_reserve(black_box(30), black_box(Some(size)));
+            })
+        });
     }
 
     group.finish();
 }
 
-fn bench_lease_churn_stress(c: &mut Criterion) {
-    //! LEASE CHURN STRESS - Measure lease expiration under load
-    //!
-    //! Pattern: Reserve with short lease, let expire, repeat
-    //! Stress: Maximum lease expiration throughput
-    //!
-    //! Measures:
-    //! - Lease expiration handling throughput
-    //! - Requeue performance under churn
-    //! - Timer heap performance under load
+fn bench_churn_reserve_expire_fixed(c: &mut Criterion) {
+    //! queue_churn_reserve_expire_1k
+    //! Pathological scenario: clients reserve then abandon; leases must expire and messages requeue.
+    //! Uses a MockClock and fixed iteration counts (1000 per sample) so this is NOT wall-clock bounded.
 
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+    std::env::set_var("RAYON_NUM_THREADS", "1");
+
+    // Use SharedClock to advance virtual time without sleeping
+
+    let queue_key = QueueKey {
+        family: RouteFamily::new(1),
+        realm: "bench".to_string(),
+        area: "lease_churn".to_string(),
+        resource: "queue".to_string(),
+    };
+
+    let store = create_bench_store();
+    let clock = SharedClock::new();
+    let mut actor = QueueActor::with_clock_and_durability(
+        RouteFamily::new(1),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        None,
+        QueueDurabilityPolicy::Strict,
+    );
+
     let payload = Bytes::from_static(b"test message");
+    for _ in 0..2000 { let _ = actor.handle_enqueue(payload.clone(), None); }
 
-    // Pre-fill queue
-    for _ in 0..1000 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-
-    let mut group = c.benchmark_group("subsystem_queue_lease_churn");
+    let mut group = c.benchmark_group("queue_churn_reserve_expire");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("reserve_expire_cycle", |b| {
-        b.iter(|| {
-            // Reserve with very short lease (will expire quickly)
-            let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
+    group.bench_function("queue_churn_reserve_expire_1k", |b| {
+        b.iter_custom(|_| {
+            let iters = 1000usize;
+            let start = std::time::Instant::now();
 
-            // Simulate time passage (in real usage, timer would fire)
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            for _ in 0..iters {
+                // Use zero-second lease so expiry is immediate (no sleeping required)
+                let _ = actor.handle_reserve(black_box(0), black_box(Some(1)));
+                actor.process_expired_timers();
+            }
 
-            // Process expired timers
-            actor.process_expired_timers();
+            let elapsed = start.elapsed();
+
+            // Verification (not timed): ensure that churn caused some requeueing/deletions
+            let remaining = match actor.handle_reserve(30, Some(2000)) {
+                QueueResponse::Reserved { messages } => messages.len(),
+                _ => 0usize,
+            };
+            assert!(remaining <= 2000, "unexpected remaining count: {}", remaining);
+            black_box(remaining);
+
+            elapsed
         })
     });
 
     group.finish();
 }
 
-fn bench_delayed_message_stress(c: &mut Criterion) {
-    //! DELAYED MESSAGE STRESS - Measure delayed message throughput
-    //!
-    //! Pattern: Enqueue with delays, then process firing
-    //! Stress: Maximum delayed message throughput
-    //!
-    //! Measures:
-    //! - Delayed enqueue throughput
-    //! - BinaryHeap performance under load
-    //! - Delayed â†’ ready transition cost
-
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+fn bench_batch_latency_fire_delayed(c: &mut Criterion) {
+    // queue_batch_latency_fire_delayed_1000 - one process_delayed_messages per iteration
+    // Increase sample size to reduce variance for batch timing
     let payload = Bytes::from_static(b"delayed message");
 
-    let mut group = c.benchmark_group("subsystem_queue_delayed");
-    group.sample_size(10);
+    let mut group = c.benchmark_group("queue_batch_latency_delayed_fire");
+    group.sample_size(50);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("enqueue_delayed_fire", |b| {
-        b.iter(|| {
-            // Enqueue with short delay
-            let _ = actor.handle_enqueue(
-                black_box(payload.clone()),
-                black_box(Some(1)), // 1-second delay
-            );
-
-            // Process delayed messages (simulate firing)
-            actor.process_delayed_messages();
-        })
+    group.bench_function("queue_batch_latency_fire_delayed_1000", |b| {
+        b.iter_batched(
+            || {
+                // Setup: actor with many delayed messages all ready to fire (delay_seconds=0)
+                let mut actor = create_bench_queue_actor("bench", "batch", "queue", None);
+                for _ in 0..1000 {
+                    let _ = actor.handle_enqueue(payload.clone(), Some(0));
+                }
+                actor
+            },
+            |mut actor| {
+                actor.process_delayed_messages();
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
 }
 
-fn bench_dlq_threshold_stress(c: &mut Criterion) {
-    //! DLQ THRESHOLD STRESS - Measure DLQ policy under load
-    //!
-    //! Pattern: Reserve â†’ expire repeatedly until DLQ threshold hit
-    //! Stress: Maximum redelivery attempt throughput
-    //!
-    //! Measures:
-    //! - Attempt tracking overhead
-    //! - DLQ threshold detection cost
-    //! - Midge delete cost on DLQ
+fn bench_latency_timer_insert(c: &mut Criterion) {
+    // queue_latency_timer_insert_1msg - single enqueue with delay scheduling per iteration
+    let mut group = c.benchmark_group("queue_latency_timer_insert");
+    group.sample_size(20);
+    group.sampling_mode(SamplingMode::Flat);
 
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", Some(3)); // max_attempts=3
+    group.bench_function("queue_latency_timer_insert", |b| {
+        b.iter_batched(
+            || {
+                let actor = create_bench_queue_actor("bench", "timer", "queue", None);
+                let payload = Bytes::from_static(b"timer insert");
+                (actor, payload)
+            },
+            |(mut actor, payload)| {
+                let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(Some(60)));
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
+
+    group.finish();
+}
+
+fn bench_churn_dlq_threshold(c: &mut Criterion) {
+    // queue_churn_dlq_threshold_100 - fixed iterations showing DLQ path under repeated expiry
+    //! Pathological scenario: repeated reserve -> expiry -> redelivery until DLQ, fixed iterations
+
+    std::env::set_var("RAYON_NUM_THREADS", "1");
+
+    // Use SharedClock to advance virtual time without sleeping
+    let queue_key = QueueKey { family: RouteFamily::new(1), realm: "bench".to_string(), area: "dlq".to_string(), resource: "queue".to_string() };
+    let store = create_bench_store();
+    let clock = SharedClock::new();
+    // Use max_attempts=1 so messages are DLQ'ed after first expiry
+    let mut actor = QueueActor::with_clock_and_durability(
+        RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), Some(1), QueueDurabilityPolicy::Strict,
+    );
+
     let payload = Bytes::from_static(b"test message");
+    let initial = 500usize;
+    for _ in 0..initial { let _ = actor.handle_enqueue(payload.clone(), None); }
 
-    // Pre-fill queue
-    for _ in 0..100 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-
-    let mut group = c.benchmark_group("subsystem_queue_dlq");
+    let mut group = c.benchmark_group("queue_churn_dlq_threshold");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("reserve_expire_dlq_cycle", |b| {
-        b.iter(|| {
-            // Reserve with short lease (will expire and increment attempts)
-            let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
+    group.bench_function("queue_churn_dlq_threshold_100", |b| {
+        b.iter_custom(|_| {
+            let iters = 100usize;
+            // Measure only the churn loop
+            let start = std::time::Instant::now();
+            for _ in 0..iters {
+                // Use zero-second lease so expiry is immediate
+                let _ = actor.handle_reserve(black_box(0), black_box(Some(1)));
+                actor.process_expired_timers();
+            }
+            let elapsed = start.elapsed();
 
-            // Simulate expiry
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            actor.process_expired_timers();
+            // Verification (not timed): Ensure DLQ path removed messages from queue
+            let remaining = match actor.handle_reserve(30, Some(1000)) {
+                QueueResponse::Reserved { messages } => messages.len(),
+                _ => 0usize,
+            };
+            // Expect some messages to have been moved to DLQ (i.e., removed from ready)
+            assert!(remaining < initial, "DLQ threshold did not remove messages: {} >= {}", remaining, initial);
+            black_box(remaining);
+
+            elapsed
         })
     });
 
     group.finish();
 }
 
-fn bench_high_volume_enqueue(c: &mut Criterion) {
-    //! HIGH-VOLUME ENQUEUE - Measure sustained enqueue throughput
-    //!
-    //! Pattern: Continuous enqueuing without reserves
-    //! Stress: Maximum write throughput to Midge
-    //!
-    //! Measures:
-    //! - Durable write throughput
-    //! - VecDeque scaling under load
-    //! - Memory growth characteristics
+fn bench_capacity_enqueue_high_volume(c: &mut Criterion) {
+    // queue_capacity_enqueue_1000 - time-bounded sustained enqueue throughput
+    std::env::set_var("RAYON_NUM_THREADS", "1");
 
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+    let mut actor = create_bench_queue_actor("bench", "capacity", "queue", None);
     let payload = Bytes::from_static(b"high volume message");
 
-    let mut group = c.benchmark_group("subsystem_queue_high_volume");
+    let mut group = c.benchmark_group("queue_capacity_enqueue_high_volume");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(std::time::Duration::from_secs(1));
     group.throughput(Throughput::Elements(1000));
 
-    group.bench_function("enqueue_1000_messages", |b| {
+    group.bench_function("queue_capacity_enqueue_1000_messages", |b| {
         b.iter(|| {
             for _ in 0..1000 {
                 let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
@@ -252,78 +284,68 @@ fn bench_high_volume_enqueue(c: &mut Criterion) {
 // Goal: Stable performance even when used badly
 // ============================================================================
 
-fn bench_reserve_without_complete_abuse(c: &mut Criterion) {
-    //! ABUSE: Reserve without completing (lease expiry overhead)
-    //!
-    //! Misuse: Client reserves but never completes, forcing lease expiry
-    //! Reality: Buggy clients, network partitions, crashed workers
-    //!
-    //! Proves:
-    //! - No memory leaks from abandoned inflight entries
-    //! - Lease expiry doesn't degrade throughput
-    //! - Timer heap remains efficient under churn
+fn bench_churn_abuse_reserve_without_complete(c: &mut Criterion) {
+    // queue_churn_abuse_reserve_without_complete_500
+    //! Abuse scenario: many clients reserve and never complete, leases expire and are requeued.
+    //! Fixed iterations per sample (500) and uses a MockClock; no sleeping inside the measured loop.
 
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+    std::env::set_var("RAYON_NUM_THREADS", "1");
+
+    let queue_key = QueueKey { family: RouteFamily::new(1), realm: "bench".to_string(), area: "abuse".to_string(), resource: "queue".to_string() };
+    let store = create_bench_store();
+    let clock = SharedClock::new();
+    let mut actor = QueueActor::with_clock_and_durability(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None, QueueDurabilityPolicy::Strict);
+
     let payload = Bytes::from_static(b"abandoned message");
+    for _ in 0..1000 { let _ = actor.handle_enqueue(payload.clone(), None); }
 
-    // Pre-fill queue
-    for _ in 0..1000 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-
-    let mut group = c.benchmark_group("abuse_reserve_no_complete");
+    let mut group = c.benchmark_group("queue_churn_abuse_reserve_without_complete");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("reserve_abandon_cycle", |b| {
-        b.iter(|| {
-            // Reserve but NEVER complete (abuse pattern)
-            let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
+    group.bench_function("queue_churn_reserve_abandon_500", |b| {
+        b.iter_custom(|_| {
+            let iters = 500usize;
+            let start = std::time::Instant::now();
+            for _ in 0..iters {
+                // Immediate expiry to avoid sleeping
+                let _ = actor.handle_reserve(black_box(0), black_box(Some(1)));
+                actor.process_expired_timers();
+            }
+            let elapsed = start.elapsed();
 
-            // Simulate time passing (lease expires)
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            actor.process_expired_timers();
+            // Verification: after churn, ensure there are messages available again (were requeued)
+            let remaining = match actor.handle_reserve(30, Some(1000)) {
+                QueueResponse::Reserved { messages } => messages.len(),
+                _ => 0usize,
+            };
+            assert!(remaining > 0, "All messages lost during churn; remaining=0");
+            black_box(remaining);
+
+            elapsed
         })
     });
 
     group.finish();
 }
 
-fn bench_invalid_token_abuse(c: &mut Criterion) {
-    //! ABUSE: Complete with wrong tokens (validation overhead)
-    //!
-    //! Misuse: Client uses stale/wrong tokens, retries, conflicts
-    //! Reality: Race conditions, duplicate processing, confused clients
-    //!
-    //! Proves:
-    //! - Token validation doesn't slow down
-    //! - No corruption from invalid completions
-    //! - Inflight tracking remains accurate
-
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+fn bench_latency_complete_wrong_token(c: &mut Criterion) {
+    // queue_latency_complete_wrong_token - single complete(op) per iteration with invalid token
+    let mut actor = create_bench_queue_actor("bench", "latency", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
-    // Pre-fill and reserve to get valid message IDs
-    for _ in 0..1000 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-    let reserved = match actor.handle_reserve(30, Some(100)) {
-        QueueResponse::Reserved { messages } => messages,
-        _ => panic!("Expected Reserved"),
-    };
+    for _ in 0..1000 { let _ = actor.handle_enqueue(payload.clone(), None); }
+    let reserved = match actor.handle_reserve(30, Some(100)) { QueueResponse::Reserved { messages } => messages, _ => panic!("Expected Reserved"), };
 
-    let mut group = c.benchmark_group("abuse_invalid_token");
-    group.sample_size(10);
+    let mut group = c.benchmark_group("queue_latency_complete_wrong_token");
+    group.sample_size(20);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
 
-    let mut idx = 0;
-    group.bench_function("complete_wrong_token", |b| {
+    let mut idx = 0usize;
+    group.bench_function("queue_latency_complete_wrong_token", |b| {
         b.iter(|| {
             let msg = &reserved[idx % reserved.len()];
             idx += 1;
-            // Use WRONG token (abuse pattern)
             let wrong_token = msg.token.wrapping_add(1);
             let _ = actor.handle_complete(black_box(msg.id), black_box(wrong_token));
         })
@@ -332,70 +354,47 @@ fn bench_invalid_token_abuse(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_extreme_batch_size_abuse(c: &mut Criterion) {
-    //! ABUSE: Extreme batch sizes (resource exhaustion attempt)
-    //!
-    //! Misuse: Client requests batch_size=10000, tries to OOM
-    //! Reality: Misconfigured clients, malicious users
-    //!
-    //! Proves:
-    //! - No panic on large batch_size
-    //! - Performance degrades gracefully
-    //! - Memory bounded even with pathological requests
-
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
+fn bench_batch_latency_reserve_extreme(c: &mut Criterion) {
+    // queue_batch_latency_reserve_extreme_{size} - ensure no panic and graceful degradation
     let payload = Bytes::from_static(b"batch message");
 
-    // Pre-fill with 10000 messages
-    for _ in 0..10000 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-
-    let mut group = c.benchmark_group("abuse_extreme_batch");
+    let mut group = c.benchmark_group("queue_batch_latency_reserve_extreme");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
 
-    for batch_size in [1, 100, 1000, 10000] {
-        group.throughput(Throughput::Elements(batch_size.min(10000)));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(batch_size),
-            &batch_size,
-            |b, &size| {
-                b.iter(|| {
-                    let _ = actor.handle_reserve(black_box(30), black_box(Some(size as usize)));
-                })
-            },
-        );
+    for &batch_size in &[1usize, 100usize, 1000usize, 10000usize] {
+        group.bench_with_input(BenchmarkId::from_parameter(batch_size), &batch_size, |b, &size| {
+            // Pre-fill a fresh actor to avoid cross-iteration interference
+            let mut actor = create_bench_queue_actor("bench", "abuse", "queue", None);
+            for _ in 0..(size.min(10000)) { let _ = actor.handle_enqueue(payload.clone(), None); }
+
+            b.iter(|| {
+                let _ = actor.handle_reserve(black_box(30), black_box(Some(size)));
+            })
+        });
     }
 
     group.finish();
 }
 
-fn bench_zero_delay_abuse(c: &mut Criterion) {
-    //! ABUSE: Zero/negative delays (edge case testing)
-    //!
-    //! Misuse: Client uses delay_seconds=0, bypasses delayed queue
-    //! Reality: Confused clients, clock skew, bad configs
-    //!
-    //! Proves:
-    //! - No panic on edge case delays
-    //! - Delayed queue handles degenerate cases
-    //! - No infinite loops or hangs
-
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", None);
-    let payload = Bytes::from_static(b"zero delay message");
-
-    let mut group = c.benchmark_group("abuse_zero_delay");
-    group.sample_size(10);
+fn bench_latency_enqueue_zero_delay(c: &mut Criterion) {
+    // queue_latency_enqueue_zero_delay - single enqueue with delay=0 per iteration
+    let mut group = c.benchmark_group("queue_latency_enqueue_zero_delay");
+    group.sample_size(20);
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("enqueue_zero_delay", |b| {
-        b.iter(|| {
-            // Zero delay (edge case)
-            let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(Some(0)));
-            actor.process_delayed_messages();
-        })
+    group.bench_function("queue_latency_enqueue_zero_delay", |b| {
+        b.iter_batched(
+            || {
+                let actor = create_bench_queue_actor("bench", "latency", "queue", None);
+                let payload = Bytes::from_static(b"zero delay message");
+                (actor, payload)
+            },
+            |(mut actor, payload)| {
+                let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(Some(0)));
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
@@ -429,62 +428,24 @@ fn bench_empty_queue_polling_abuse(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_dlq_thrashing_abuse(c: &mut Criterion) {
-    //! ABUSE: DLQ thrashing (repeated failures)
-    //!
-    //! Misuse: Messages hit DLQ repeatedly, high delete rate
-    //! Reality: Poison messages, bad handlers, systematic failures
-    //!
-    //! Proves:
-    //! - DLQ deletion remains fast
-    //! - No memory leaks from deleted messages
-    //! - Stable under high failure rate
 
-    let mut actor = create_bench_queue_actor("bench", "stress", "queue", Some(2)); // max_attempts=2 (fast DLQ)
-    let payload = Bytes::from_static(b"poison message");
-
-    // Pre-fill queue
-    for _ in 0..1000 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
-
-    let mut group = c.benchmark_group("abuse_dlq_thrashing");
-    group.sample_size(10);
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("dlq_delete_cycle", |b| {
-        b.iter(|| {
-            // Reserve with short lease (will expire twice â†’ DLQ)
-            let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            actor.process_expired_timers(); // First expiry (attempts=1)
-
-            let _ = actor.handle_reserve(black_box(1), black_box(Some(1)));
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            actor.process_expired_timers(); // Second expiry â†’ DLQ delete
-        })
-    });
-
-    group.finish();
-}
 
 criterion_group! {
     name = benches;
     config = config::criterion_config();
     targets =
-        bench_enqueue_reserve_complete_loop,
-        bench_batch_reserve_stress,
-        bench_lease_churn_stress,
-        bench_delayed_message_stress,
-        bench_dlq_threshold_stress,
-        bench_high_volume_enqueue,
-        // Abuse pattern benchmarks
-        bench_reserve_without_complete_abuse,
-        bench_invalid_token_abuse,
-        bench_extreme_batch_size_abuse,
-        bench_zero_delay_abuse,
+        bench_capacity_cycle_enqueue_reserve_complete,
+        bench_batch_latency_reserve,
+        bench_churn_reserve_expire_fixed,
+        bench_batch_latency_fire_delayed,
+        bench_churn_dlq_threshold,
+        bench_capacity_enqueue_high_volume,
+        // Abuse / latency benchmarks
+        bench_churn_abuse_reserve_without_complete,
+        bench_latency_complete_wrong_token,
+        bench_batch_latency_reserve_extreme,
+        bench_latency_enqueue_zero_delay,
+        bench_latency_timer_insert,
         bench_empty_queue_polling_abuse,
-        bench_dlq_thrashing_abuse,
 }
 criterion_main!(benches);

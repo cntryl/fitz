@@ -5,6 +5,7 @@
 //! test configuration or the test-helpers feature.
 
 pub mod lease;
+pub mod midge;
 pub mod notification;
 pub mod queue;
 pub mod rpc;
@@ -12,6 +13,7 @@ pub mod stream;
 
 // Re-export common test utilities
 pub use lease::create_test_lease_context;
+pub use midge::{create_test_engine, create_test_engine_with_cfs};
 pub use notification::{addr, make_router, route, session_id, TestSink};
 pub use queue::create_test_queue_actor;
 pub use rpc::{

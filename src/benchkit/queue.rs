@@ -1,7 +1,8 @@
 //! Queue benchmarking helpers
 
 use super::storage::create_bench_store;
-use crate::domains::queue::{QueueActor, QueueDurabilityPolicy, QueueKey, QueueProducer};
+use crate::domains::queue::{QueueActor, QueueKey, QueueProducer};
+use crate::domains::queue::durability::QueueDurabilityPolicy;
 use crate::runtime::routing::RouteFamily;
 use std::time::Duration;
 
@@ -25,14 +26,18 @@ pub fn create_bench_queue_actor(
     resource: &str,
     max_attempts: Option<u32>,
 ) -> QueueActor {
-    create_bench_queue_actor_with_durability(
-        realm,
-        area,
-        resource,
-        max_attempts,
-        QueueDurabilityPolicy::Strict,
-    )
+    let queue_key = QueueKey {
+        family: RouteFamily::new(1),
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resource: resource.to_string(),
+    };
+
+    let store = create_bench_store();
+    // QUEUE PERSISTENCE LOCKED: buffered-only
+    QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
 }
+
 
 /// Create a QueueActor for benchmarking with explicit durability policy
 ///
@@ -58,23 +63,10 @@ pub fn create_bench_queue_actor_with_durability(
     area: &str,
     resource: &str,
     max_attempts: Option<u32>,
-    durability: QueueDurabilityPolicy,
+    _durability: QueueDurabilityPolicy,
 ) -> QueueActor {
-    let queue_key = QueueKey {
-        family: RouteFamily::new(1),
-        realm: realm.to_string(),
-        area: area.to_string(),
-        resource: resource.to_string(),
-    };
-
-    let store = create_bench_store();
-    QueueActor::with_durability(
-        RouteFamily::new(1),
-        queue_key,
-        store,
-        max_attempts,
-        durability,
-    )
+    // Legacy API removed; callers must not choose durability. Keep a compat shim.
+    create_bench_queue_actor(realm, area, resource, max_attempts)
 }
 
 /// Create a QueueProducer for benchmarking producer-side batching

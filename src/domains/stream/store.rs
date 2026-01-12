@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use super::protocol::{IngestMetadata, StreamRecord};
+use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_staging_value,
     encode_area_key, encode_realm_key, encode_resource_key, encode_staging_key,
@@ -104,6 +104,7 @@ impl StreamStore {
 
     pub fn begin_session(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
@@ -112,10 +113,10 @@ impl StreamStore {
         let session_id = Uuid::new_v4().to_string();
 
         // Create transaction for staging (O(1) memory)
-        let cf = self.db.default_column_family();
+        // Use RouteFamily id as column family id to provide family isolation
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin transaction: {:?}", e))?;
 
         let session = AppendSession {
@@ -138,6 +139,7 @@ impl StreamStore {
 
     pub fn append_to_session(
         &self,
+        family: u64,
         session_id: &SessionId,
         event: EventPayload,
     ) -> Result<(), String> {
@@ -178,10 +180,12 @@ impl StreamStore {
     /// - Does NOT scan for max offset (StreamActor is sequencer)
     pub fn commit_session(
         &self,
+        family: u64,
         session_id: &SessionId,
         first_resource_offset: u64,
         first_area_offset: u64,
         first_realm_offset: u64,
+        mode: StreamWriteMode,
     ) -> Result<CommitResponse, String> {
         let session = self
             .sessions
@@ -201,10 +205,9 @@ impl StreamStore {
             .unwrap()
             .as_millis() as u64;
 
-        let cf = self.db.default_column_family();
         let mut txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         // Read events from staging transaction and add to transaction
@@ -280,7 +283,10 @@ impl StreamStore {
         txn.put(counter_key, counter_value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
 
-        let opts = cntryl_midge::WriteOptions::sync();
+        let opts = match mode {
+            StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
+            StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
+        };
         self.db
             .commit(txn, opts)
             .map_err(|e| format!("midge commit error: {:?}", e))?;
@@ -320,14 +326,13 @@ impl StreamStore {
     /// Watermark is for area/realm dimensions only.
     pub fn peek_resource(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
     ) -> Result<Option<StreamRecord>, String> {
-        let cf = self.db.default_column_family();
-
         // Use offset counter to find last committed offset (no tail scan)
-        let next_offset = self.get_next_resource_offset(realm, area, resource)?;
+        let next_offset = self.get_next_resource_offset(family, realm, area, resource)?;
         if next_offset == 0 {
             return Ok(None); // Stream empty
         }
@@ -337,7 +342,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let value_bytes = match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
             Some(bytes) => bytes.to_vec(),
@@ -363,6 +368,7 @@ impl StreamStore {
     /// Watermark is only relevant for area/realm dimensions.
     pub fn read_resource(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
@@ -372,10 +378,8 @@ impl StreamStore {
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         // Fast path for single-record reads (limit=1, no byte limit)
         if limit == 1 && max_bytes.is_none() {
-            return self.read_resource_single(realm, area, resource, from_offset);
+            return self.read_resource_single(family, realm, area, resource, from_offset);
         }
-
-        let cf = self.db.default_column_family();
 
         // Build prefix for this resource
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
@@ -395,7 +399,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -458,12 +462,16 @@ impl StreamStore {
     /// Avoids scan overhead by using direct get with inline key buffer
     fn read_resource_single(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
         from_offset: u64,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
-        let cf = self.db.default_column_family();
+        let txn = self
+            .db
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
         // Use inline buffer for key to avoid heap allocation
         // Most keys are <200 bytes, use 256 for safety
@@ -500,7 +508,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn.get(key).map_err(|e| format!("get error: {:?}", e))? {
             Some(value_bytes) => {
@@ -539,15 +547,14 @@ impl StreamStore {
 
     pub fn read_area(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
-        let cf = self.db.default_column_family();
-        let watermark = self.get_watermark(realm, area)?;
-
+        let watermark = self.get_watermark(family, realm, area)?;
         // Area index is pre-interleaved by writes - no K-way merge needed!
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Area as u8];
         prefix_key.extend_from_slice(realm.as_bytes());
@@ -564,7 +571,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -626,13 +633,13 @@ impl StreamStore {
 
     pub fn read_realm(
         &self,
+        family: u64,
         realm: &str,
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
-        let cf = self.db.default_column_family();
-        let realm_watermark = self.get_realm_watermark(realm)?;
+        let realm_watermark = self.get_realm_watermark(family, realm)?;
 
         // Realm index is pre-interleaved by writes - scan sequentially!
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Realm as u8];
@@ -648,7 +655,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -708,13 +715,12 @@ impl StreamStore {
         Ok((records, cursor))
     }
 
-    pub fn get_watermark(&self, realm: &str, area: &str) -> Result<u64, String> {
-        let cf = self.db.default_column_family();
+    pub fn get_watermark(&self, family: u64, realm: &str, area: &str) -> Result<u64, String> {
         let key = encode_watermark_key(realm, area);
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn
             .get(&key)
@@ -728,14 +734,13 @@ impl StreamStore {
         }
     }
 
-    pub fn set_watermark(&self, realm: &str, area: &str, watermark: u64) -> Result<(), String> {
-        let cf = self.db.default_column_family();
+    pub fn set_watermark(&self, family: u64, realm: &str, area: &str, watermark: u64) -> Result<(), String> {
         let key = encode_watermark_key(realm, area);
         let value = WatermarkValue { watermark };
 
         let mut txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
@@ -745,13 +750,12 @@ impl StreamStore {
             .map_err(|e| format!("midge commit error: {:?}", e))
     }
 
-    pub fn get_realm_watermark(&self, realm: &str) -> Result<u64, String> {
-        let cf = self.db.default_column_family();
+    pub fn get_realm_watermark(&self, family: u64, realm: &str) -> Result<u64, String> {
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn
             .get(&key)
@@ -765,14 +769,13 @@ impl StreamStore {
         }
     }
 
-    pub fn set_realm_watermark(&self, realm: &str, watermark: u64) -> Result<(), String> {
-        let cf = self.db.default_column_family();
+    pub fn set_realm_watermark(&self, family: u64, realm: &str, watermark: u64) -> Result<(), String> {
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
         let value = WatermarkValue { watermark };
 
         let mut txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
@@ -787,13 +790,14 @@ impl StreamStore {
     /// Used for describe_stream / introspection API
     pub fn get_metadata(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
     ) -> Result<super::protocol::StreamMetadata, String> {
-        let last_resource_offset = self.get_last_resource_offset(realm, area, resource)?;
-        let area_watermark = self.get_watermark(realm, area)?;
-        let realm_watermark = self.get_realm_watermark(realm)?;
+        let last_resource_offset = self.get_last_resource_offset(family, realm, area, resource)?;
+        let area_watermark = self.get_watermark(family, realm, area)?;
+        let realm_watermark = self.get_realm_watermark(family, realm)?;
 
         Ok(super::protocol::StreamMetadata {
             max_batch_events: self.limits.max_batch_events,
@@ -811,11 +815,11 @@ impl StreamStore {
     /// next_resource_offset and avoid reusing offsets after restart.
     pub fn get_last_resource_offset(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
     ) -> Result<Option<u64>, String> {
-        let cf = self.db.default_column_family();
 
         // Build prefix for this resource
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
@@ -831,7 +835,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -856,17 +860,17 @@ impl StreamStore {
     /// the next offset to use.
     pub fn get_next_resource_offset(
         &self,
+        family: u64,
         realm: &str,
         area: &str,
         resource: &str,
     ) -> Result<u64, String> {
-        let cf = self.db.default_column_family();
         let counter_key =
             crate::domains::stream::storage::encode_offset_counter_key(realm, area, resource);
 
         let txn = self
             .db
-            .begin_tx(cf.id(), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn.get(&counter_key) {
             Ok(Some(value_bytes)) => {

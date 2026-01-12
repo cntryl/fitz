@@ -127,7 +127,7 @@ fn bench_append_commit_single_event(c: &mut Criterion) {
                 &mut ctx,
             );
 
-            actor.receive(StreamMessage::CommitSession { session_id }, &mut ctx);
+            actor.receive(StreamMessage::CommitSession { session_id, mode: crate::domains::stream::StreamWriteMode::Sync }, &mut ctx);
 
             expected_offset += 1;
             payload_idx += 1;
@@ -195,7 +195,7 @@ fn bench_append_commit_batches(c: &mut Criterion) {
                 }
 
                 // CommitSession
-                actor.receive(StreamMessage::CommitSession { session_id }, &mut ctx);
+                actor.receive(StreamMessage::CommitSession { session_id, mode: crate::domains::stream::StreamWriteMode::Sync }, &mut ctx);
 
                 expected_offset += batch_size as u64;
                 offset += batch_size as u64;

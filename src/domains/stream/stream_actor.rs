@@ -10,7 +10,7 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::protocol::{
     AppendResponse, BeginSessionResponse, CommitSessionResponse, LeaseGrant, OffsetLease,
-    PeekResponse, ReadResponse, StreamError, StreamMessage, DEFAULT_LEASE_SIZE, MAX_EVENT_SIZE,
+    PeekResponse, ReadResponse, StreamError, StreamMessage, DEFAULT_LEASE_SIZE, MAX_EVENT_SIZE, StreamWriteMode,
 };
 use super::store::{EventPayload, SessionId, StreamStore};
 use std::collections::VecDeque;
@@ -48,7 +48,7 @@ pub struct StreamActor {
     active_session: Option<SessionId>,
 
     /// Pending commits awaiting lease grants
-    pending_commits: VecDeque<SessionId>,
+    pending_commits: VecDeque<(SessionId, StreamWriteMode)>,
 
     /// Cached routes (hot path optimization)
     area_actor_route: Route,
@@ -73,7 +73,7 @@ impl StreamActor {
     ) -> Self {
         // **CRITICAL: Recover next_resource_offset from metadata counter**
         // This prevents offset reuse after TTL expiry and process restart
-        let next_resource_offset = match store.get_next_resource_offset(&realm, &area, &resource) {
+        let next_resource_offset = match store.get_next_resource_offset(family_id.id(), &realm, &area, &resource) {
             Ok(offset) => offset,
             Err(e) => {
                 eprintln!(
@@ -127,7 +127,7 @@ impl StreamActor {
         // Begin session in store (no offsets allocated yet)
         let session_id = self
             .store
-            .begin_session(&self.realm, &self.area, &self.resource, ingest_metadata)
+            .begin_session(self.family_id.id(), &self.realm, &self.area, &self.resource, ingest_metadata)
             .map_err(|_| StreamError::SessionAlreadyActive)?;
 
         self.active_session = Some(session_id.clone());
@@ -149,7 +149,7 @@ impl StreamActor {
         let event = EventPayload { body, metadata };
 
         self.store
-            .append_to_session(session_id, event)
+            .append_to_session(self.family_id.id(), session_id, event)
             .map_err(|_| StreamError::EventTooLarge)?;
 
         Ok(AppendResponse { success: true })
@@ -158,6 +158,7 @@ impl StreamActor {
     fn handle_commit_session(
         &mut self,
         session_id: &SessionId,
+        mode: StreamWriteMode,
         ctx: &mut Context<Self>,
     ) -> Result<CommitSessionResponse, StreamError> {
         // Verify this is the active session
@@ -194,8 +195,8 @@ impl StreamActor {
             let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
             let _ = ctx.send(area_addr, lease_req);
 
-            // Queue this commit to be processed when lease arrives
-            self.pending_commits.push_back(session_id.clone());
+            // Queue this commit (and its mode) to be processed when lease arrives
+            self.pending_commits.push_back((session_id.clone(), mode));
             return Err(StreamError::LeaseRequested);
         }
 
@@ -212,10 +213,12 @@ impl StreamActor {
         let response = self
             .store
             .commit_session(
+                self.family_id.id(),
                 session_id,
                 first_resource_offset,
                 first_area_offset,
                 first_realm_offset,
+                mode,
             )
             .map_err(|_| StreamError::ConcurrencyConflict)?;
 
@@ -295,6 +298,7 @@ impl StreamActor {
         let (records, cursor) = self
             .store
             .read_resource(
+                self.family_id.id(),
                 &self.realm,
                 &self.area,
                 &self.resource,
@@ -311,7 +315,7 @@ impl StreamActor {
         // Peek at last committed record (tail operation)
         let record = self
             .store
-            .peek_resource(&self.realm, &self.area, &self.resource)
+            .peek_resource(self.family_id.id(), &self.realm, &self.area, &self.resource)
             .map_err(|_| StreamError::InvalidReadBound)?;
 
         Ok(PeekResponse { record })
@@ -321,7 +325,7 @@ impl StreamActor {
         // Get stream metadata (limits, TTL, offsets, watermarks)
         let metadata = self
             .store
-            .get_metadata(&self.realm, &self.area, &self.resource)
+            .get_metadata(self.family_id.id(), &self.realm, &self.area, &self.resource)
             .map_err(|_| StreamError::InvalidReadBound)?;
 
         Ok(super::protocol::GetMetadataResponse { metadata })
@@ -340,11 +344,11 @@ impl StreamActor {
     /// Process pending commits after lease grant arrives
     fn process_pending_commits(&mut self, ctx: &mut Context<Self>) {
         // Process all pending commits that now have sufficient leases
-        while let Some(session_id) = self.pending_commits.pop_front() {
+        while let Some((session_id, mode)) = self.pending_commits.pop_front() {
             // Try to commit (will re-queue if still insufficient)
-            if self.handle_commit_session(&session_id, ctx).is_err() {
+            if self.handle_commit_session(&session_id, mode, ctx).is_err() {
                 // If still insufficient, push back and stop
-                self.pending_commits.push_front(session_id);
+                self.pending_commits.push_front((session_id, mode));
                 break;
             }
         }
@@ -370,8 +374,8 @@ impl Actor for StreamActor {
             } => {
                 let _ = self.handle_append_to_session(&session_id, body, metadata);
             }
-            StreamMessage::CommitSession { session_id } => {
-                let _ = self.handle_commit_session(&session_id, ctx);
+            StreamMessage::CommitSession { session_id, mode } => {
+                let _ = self.handle_commit_session(&session_id, mode, ctx);
             }
             StreamMessage::AbortSession { session_id } => {
                 let _ = self.handle_abort_session(&session_id);

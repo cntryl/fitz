@@ -34,7 +34,7 @@ fn bench_producer_batched_enqueue(c: &mut Criterion) {
     let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message payload");
 
-    let mut group = c.benchmark_group("hotpath_producer_batched_enqueue");
+    let mut group = c.benchmark_group("queue_batch_latency_producer_batched_enqueue");
     group.sampling_mode(SamplingMode::Flat);
 
     for batch_size in [10, 100, 1000] {
@@ -75,11 +75,11 @@ fn bench_enqueue_only(c: &mut Criterion) {
     let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message payload");
 
-    let mut group = c.benchmark_group("hotpath_queue_enqueue");
+    let mut group = c.benchmark_group("queue_latency_enqueue");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("enqueue_no_delay", |b| {
+    group.bench_function("queue_latency_enqueue_no_delay", |b| {
         b.iter(|| {
             let _result = actor.handle_enqueue(
                 black_box(payload.clone()),
@@ -103,7 +103,7 @@ fn bench_reserve_only_empty(c: &mut Criterion) {
 
     let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
 
-    let mut group = c.benchmark_group("hotpath_queue_reserve");
+    let mut group = c.benchmark_group("queue_latency_reserve");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
@@ -138,7 +138,7 @@ fn bench_reserve_only_full(c: &mut Criterion) {
         let _ = actor.handle_enqueue(payload.clone(), None);
     }
 
-    let mut group = c.benchmark_group("hotpath_queue_reserve");
+    let mut group = c.benchmark_group("queue_latency_reserve");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
@@ -179,12 +179,12 @@ fn bench_complete_only(c: &mut Criterion) {
     };
     let tokens: Vec<(u64, u64)> = reserved.iter().map(|r| (r.id.as_u64(), r.token)).collect();
 
-    let mut group = c.benchmark_group("hotpath_queue_complete");
+    let mut group = c.benchmark_group("queue_latency_complete");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     let mut token_idx = 0;
-    group.bench_function("complete_with_token", |b| {
+    group.bench_function("queue_latency_complete_with_token", |b| {
         b.iter(|| {
             let (id, token) = tokens[token_idx % tokens.len()];
             token_idx += 1;
@@ -217,11 +217,11 @@ fn bench_delayed_enqueue_fire(c: &mut Criterion) {
         let _ = actor.handle_enqueue(payload.clone(), Some(0)); // delay_seconds=0
     }
 
-    let mut group = c.benchmark_group("hotpath_queue_delayed");
+    let mut group = c.benchmark_group("queue_latency_delayed_fire");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("fire_delayed_messages", |b| {
+    group.bench_function("queue_latency_fire_delayed", |b| {
         b.iter(|| {
             // Process expired delayed messages (moves from BinaryHeap to VecDeque)
             actor.process_delayed_messages();
@@ -254,11 +254,11 @@ fn bench_lease_expiry_requeue(c: &mut Criterion) {
     // Wait for leases to expire (simulate time passage)
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    let mut group = c.benchmark_group("hotpath_queue_expiry");
+    let mut group = c.benchmark_group("queue_latency_expiry");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("requeue_expired_lease", |b| {
+    group.bench_function("queue_latency_requeue_expired_lease", |b| {
         b.iter(|| {
             // Process expired timers (moves from inflight to ready)
             actor.process_expired_timers();
@@ -284,7 +284,7 @@ fn bench_batch_enqueue_scaling(c: &mut Criterion) {
     let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message payload");
 
-    let mut group = c.benchmark_group("hotpath_queue_batch_enqueue");
+    let mut group = c.benchmark_group("queue_batch_latency_enqueue");
     group.sampling_mode(SamplingMode::Flat);
 
     for batch_size in [1, 10, 100, 1000] {
@@ -322,7 +322,7 @@ fn bench_batch_reserve_scaling(c: &mut Criterion) {
     let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
-    let mut group = c.benchmark_group("hotpath_queue_batch_reserve");
+    let mut group = c.benchmark_group("queue_batch_latency_reserve");
     group.sampling_mode(SamplingMode::Flat);
 
     for batch_size in [1, 10, 100] {

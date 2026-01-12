@@ -137,7 +137,8 @@ pub enum StreamMessage {
     },
 
     /// Commit session (atomic write)
-    CommitSession { session_id: String },
+    /// Requires the caller to specify a write mode: Buffered or Sync.
+    CommitSession { session_id: String, mode: StreamWriteMode }, // caller must specify StreamWriteMode (Buffered|Sync)
 
     /// Abort session (discard)
     AbortSession { session_id: String },
@@ -221,6 +222,15 @@ pub struct LeaseGranted {
 
 // Backward compatibility alias (for gradual migration)
 pub type LeaseGrant = LeaseGranted;
+
+/// Write mode for stream commits
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamWriteMode {
+    /// Buffered: throughput-first, may lose recent events on crash
+    Buffered,
+    /// Sync: correctness-first, writes are committed synchronously
+    Sync,
+}
 
 /// Batch committed notification from StreamActor to AreaActor
 #[derive(Debug, Clone)]

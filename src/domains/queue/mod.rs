@@ -117,7 +117,7 @@ pub mod protocol;
 pub mod queue_actor;
 pub mod session;
 
-pub use durability::{QueueDurabilityPolicy, QueueWriteOptions};
+// Do NOT export queue durability policies - queues have locked persistence semantics (buffered only).
 pub use producer::QueueProducer;
 pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 pub use queue_actor::{Clock, QueueActor, SystemClock};
