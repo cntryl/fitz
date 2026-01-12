@@ -251,7 +251,6 @@ fn should_track_committed_ranges_for_gap_detection() {
 fn should_debounce_area_watermark_notifications() {
     use crossbeam_channel::bounded;
     use fitz::domains::notification::protocol::NotificationMessage;
-    use fitz::domains::notification::protocol::PublishMessage;
     use fitz::prelude::Actor as PreActor;
     use fitz::runtime::routing::Route;
     use fitz::runtime::routing::RouteAddress;
@@ -275,13 +274,10 @@ fn should_debounce_area_watermark_notifications() {
         type Message = NotificationMessage;
 
         fn receive(&mut self, msg: Self::Message, _ctx: &mut fitz::runtime::actor::Context<Self>) {
-            match msg {
-                NotificationMessage::Publish(p) => {
-                    if let Some(tx) = &self.tx {
-                        let _ = tx.send(p.payload.clone());
-                    }
+            if let NotificationMessage::Publish(p) = msg {
+                if let Some(tx) = &self.tx {
+                    let _ = tx.send(p.payload.clone());
                 }
-                _ => {}
             }
         }
     }
