@@ -103,6 +103,10 @@ pub trait Actor: Send + 'static {
     fn on_error(&mut self, error: ActorError, _ctx: &mut Context<Self>) {
         eprintln!("Actor error: {}", error);
     }
+
+    /// Called when a timer fires (timer scheduling via `Context::timer_manager()`)
+    /// Default implementation is no-op. Actors may override to handle timers.
+    fn on_timer(&mut self, _timer_id: crate::runtime::context::TimerId, _ctx: &mut Context<Self>) {}
 }
 
 /// Context provided to actors during message processing

@@ -200,6 +200,30 @@ impl Scheduler {
                     process_envelope(envelope, &mut actor, &mut ctx, &address, start);
                     processed_normal += 1;
                 }
+
+                // After processing messages, handle any fired timers for this actor
+                let fired_timers = ctx.timer_manager().fired_timers();
+                for timer_id in fired_timers {
+                    let start = Instant::now();
+                    // Invoke on_timer with panic safety similar to message processing
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        actor.on_timer(timer_id, &mut ctx);
+                    })) {
+                        eprintln!(
+                            "Actor {:?} panicked during timer handling: {:?}\nStopping actor. Supervisor will handle restart.",
+                            address, e
+                        );
+
+                        ctx.metrics().record_panic();
+                        let error = ActorError::Panic(format!("timer panic: {:?}", e));
+                        actor.on_error(error, &mut ctx);
+                        ctx.stop();
+                        break;
+                    } else {
+                        let elapsed = start.elapsed().as_micros() as u64;
+                        ctx.metrics().record_processed(elapsed);
+                    }
+                }
             }
 
             // Call stopped hook

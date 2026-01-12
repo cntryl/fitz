@@ -37,9 +37,17 @@ pub struct RealmActor {
 
     /// Realm watermark (minimum of all area watermarks)
     realm_watermark: u64,
+
+    /// Debounce timer id for realm watermark notification
+    notification_timer: Option<crate::runtime::context::TimerId>,
+
+    /// Pending realm watermark publish message (debounced)
+    pending_publish: Option<crate::domains::notification::protocol::PublishMessage>,
 }
 
 impl RealmActor {
+    const NOTICE_DEBOUNCE_MS: u64 = 25;
+
     pub fn new(family_id: RouteFamily, realm: String, store: Arc<StreamStore>) -> Self {
         Self {
             family_id,
@@ -48,6 +56,8 @@ impl RealmActor {
             next_realm_offset: 0,
             area_watermarks: HashMap::new(),
             realm_watermark: 0,
+            notification_timer: None,
+            pending_publish: None,
         }
     }
 
@@ -111,8 +121,15 @@ impl RealmActor {
             });
             let payload = Bytes::from(payload_json.to_string());
             let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
-            let notice_addr = RouteAddress::new(self.family_id, route);
-            let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+
+            // Debounce realm watermark publish (do not send immediately)
+            self.pending_publish = Some(publish_msg);
+            if self.notification_timer.is_none() {
+                let timer_id = ctx
+                    .timer_manager()
+                    .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
+                self.notification_timer = Some(timer_id);
+            }
         }
     }
 
@@ -142,6 +159,17 @@ impl Actor for RealmActor {
                 self.handle_area_watermark_advanced(area, watermark, ctx);
             }
             _ => {}
+        }
+    }
+
+    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        if self.notification_timer.is_some() && Some(timer_id) == self.notification_timer {
+            if let Some(publish_msg) = self.pending_publish.take() {
+                let route = publish_msg.route.clone();
+                let notice_addr = RouteAddress::new(self.family_id, route);
+                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+            }
+            self.notification_timer = None;
         }
     }
 }

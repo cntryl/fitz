@@ -248,6 +248,91 @@ fn should_track_committed_ranges_for_gap_detection() {
     assert_eq!(area_actor.watermark(), 8);
 }
 #[test]
+fn should_debounce_area_watermark_notifications() {
+    use fitz::runtime::scheduler::Scheduler;
+    use crossbeam_channel::bounded;
+    use std::thread;
+    use fitz::runtime::routing::RouteFamily;
+    use fitz::runtime::routing::RouteAddress;
+    use fitz::runtime::routing::Route;
+    use fitz::domains::notification::protocol::NotificationMessage;
+    use fitz::domains::notification::protocol::PublishMessage;
+    use fitz::prelude::Actor as PreActor;
+
+    // Arrange
+    let scheduler = Scheduler::new(1);
+    scheduler.start();
+    let family = RouteFamily::new(1);
+
+    // Spawn a notification collector at the notice route
+    let (tx, rx) = bounded::<bytes::Bytes>(1);
+
+    struct Collector {
+        tx: Option<crossbeam_channel::Sender<bytes::Bytes>>,
+    }
+
+    impl PreActor for Collector {
+        type Message = NotificationMessage;
+
+        fn receive(&mut self, msg: Self::Message, _ctx: &mut fitz::runtime::actor::Context<Self>) {
+            match msg {
+                NotificationMessage::Publish(p) => {
+                    if let Some(tx) = &self.tx {
+                        let _ = tx.send(p.payload.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let collector_addr = RouteAddress::new(
+        family,
+        Route::new("notice://realm1/area1/*/watermark".to_string()),
+    );
+    let collector = Collector { tx: Some(tx) };
+    let _ = scheduler.spawn(collector, collector_addr.clone(), 16);
+
+    // Spawn AreaActor
+    use fitz::domains::stream::area_actor::AreaActor;
+    use fitz::domains::stream::store::StreamStore;
+
+    let db = std::sync::Arc::new(
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default()).unwrap(),
+    );
+    let store = std::sync::Arc::new(StreamStore::new(db));
+
+    let area_addr = RouteAddress::new(
+        family,
+        Route::new("stream://realm1/area1/__area__".to_string()),
+    );
+
+    let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
+    let _ = scheduler.spawn(actor, area_addr.clone(), 16);
+
+    // Act - send batch committed to advance watermark
+    let area_ref = fitz::runtime::actor::ActorRef::new(area_addr, scheduler.router());
+    let _ = area_ref.send(fitz::domains::stream::protocol::StreamMessage::BatchCommitted {
+        first_area_offset: 1,
+        last_area_offset: 3,
+        first_realm_offset: 1,
+        last_realm_offset: 3,
+    });
+
+    // Assert - no immediate notification (debounced)
+    assert!(rx.recv_timeout(std::time::Duration::from_millis(10)).is_err());
+
+    // After debounce period, notification should arrive
+    let payload = rx.recv_timeout(std::time::Duration::from_millis(200)).unwrap();
+    let payload_str = String::from_utf8(payload.to_vec()).unwrap();
+    assert!(payload_str.contains("watermark"));
+
+    // Cleanup
+    let _ = area_ref.send(fitz::domains::stream::protocol::StreamMessage::LeaseGranted {
+        grant: fitz::domains::stream::protocol::LeaseGrant { area_start: 0, area_end_exclusive: 0, realm_start: 0, realm_end_exclusive: 0 },
+    });
+    thread::sleep(std::time::Duration::from_millis(20));
+}#[test]
 fn should_request_lease_when_insufficient_capacity() {
     // Arrange
     let (mut actor, mut ctx) = create_test_stream_actor("realm1", "area1", "orders");

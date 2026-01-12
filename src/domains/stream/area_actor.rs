@@ -47,9 +47,17 @@ pub struct AreaActor {
 
     /// Pending lease requests awaiting realm lease grant
     pending_lease_requests: VecDeque<(String, String, u64, String)>,
+
+    /// Debounce timer id for area watermark notification
+    notification_timer: Option<crate::runtime::context::TimerId>,
+
+    /// Pending area watermark publish message (debounced)
+    pending_publish: Option<PublishMessage>,
 }
 
 impl AreaActor {
+    const NOTICE_DEBOUNCE_MS: u64 = 25;
+
     pub fn new(
         family_id: RouteFamily,
         realm: String,
@@ -67,6 +75,8 @@ impl AreaActor {
             realm_lease_next: 0,
             realm_lease_end: 0,
             pending_lease_requests: VecDeque::new(),
+            notification_timer: None,
+            pending_publish: None,
         }
     }
 
@@ -151,7 +161,7 @@ impl AreaActor {
                 .store
                 .set_watermark(&self.realm, &self.area, self.area_watermark);
 
-            // Emit area watermark notification (ephemeral, best-effort)
+            // Build area watermark publish message (debounced, best-effort)
             let route_str = format!("notice://{}/{}/*/watermark", self.realm, self.area);
             let route = Route::new(route_str);
             let payload_json = serde_json::json!({
@@ -164,8 +174,15 @@ impl AreaActor {
             });
             let payload = Bytes::from(payload_json.to_string());
             let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
-            let notice_addr = RouteAddress::new(self.family_id, route);
-            let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+
+            // Store and debounce the publish (do not send immediately)
+            self.pending_publish = Some(publish_msg);
+            if self.notification_timer.is_none() {
+                let timer_id = ctx
+                    .timer_manager()
+                    .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
+                self.notification_timer = Some(timer_id);
+            }
 
             // Notify RealmActor
             let notification = StreamMessage::AreaWatermarkAdvanced {
@@ -290,6 +307,18 @@ impl Actor for AreaActor {
                 self.process_pending_lease_requests(ctx);
             }
             _ => {}
+        }
+    }
+
+    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        // If our debounce timer fired, send the pending publish
+        if self.notification_timer.is_some() && Some(timer_id) == self.notification_timer {
+            if let Some(publish_msg) = self.pending_publish.take() {
+                let route = publish_msg.route.clone();
+                let notice_addr = RouteAddress::new(self.family_id, route);
+                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+            }
+            self.notification_timer = None;
         }
     }
 }

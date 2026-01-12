@@ -7,6 +7,7 @@
 use fitz::runtime::actor::{Actor, ActorError, ActorRef, Context, SendError};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
+use fitz::runtime::context::TimerId;
 use std::thread;
 use std::time::Duration;
 
@@ -253,9 +254,8 @@ impl Actor for TimerActor {
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
             TimerMsg::ScheduleTimer => {
-                // Schedule a timer (note: timer firing requires external mechanism)
+                // Schedule a timer
                 let _timer_id = ctx.timer_manager().schedule_once(Duration::from_millis(50));
-                // Timer would need to be checked and converted to messages elsewhere
             }
             TimerMsg::Stop => {
                 ctx.stop();
@@ -264,6 +264,11 @@ impl Actor for TimerActor {
                 let _ = tx.send(self.timer_count);
             }
         }
+    }
+
+    fn on_timer(&mut self, _timer_id: TimerId, _ctx: &mut Context<Self>) {
+        // Increment count when timer fires
+        self.timer_count += 1;
     }
 }
 
@@ -296,6 +301,33 @@ fn should_cancel_timers_automatically_on_stop() {
         rx.recv_timeout(Duration::from_millis(50)).is_err(),
         "Actor should be stopped and not respond"
     );
+}
+
+#[test]
+fn should_fire_timer_when_scheduled() {
+    // Arrange
+    let scheduler = Scheduler::new(1);
+    scheduler.start();
+    let address = test_address(1, "timer_fire_test");
+
+    let actor = TimerActor { timer_count: 0 };
+    let actor_ref = scheduler.spawn(actor, address, 16);
+
+    // Act
+    let _ = actor_ref.send(TimerMsg::ScheduleTimer);
+    thread::sleep(Duration::from_millis(120)); // Wait for timer to fire
+
+    // Query count
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let _ = actor_ref.send(TimerMsg::GetCount(tx));
+    let count = rx.recv_timeout(Duration::from_millis(100)).unwrap();
+
+    // Assert
+    assert_eq!(count, 1, "Timer should have fired once");
+
+    // Cleanup
+    let _ = actor_ref.send(TimerMsg::Stop);
+    thread::sleep(Duration::from_millis(50));
 }
 
 // ============================================================================

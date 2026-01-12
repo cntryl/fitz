@@ -53,9 +53,17 @@ pub struct StreamActor {
     /// Cached routes (hot path optimization)
     area_actor_route: Route,
     commit_notification_route: Route,
+
+    /// Debounce timer id for commit notification
+    commit_timer: Option<crate::runtime::context::TimerId>,
+
+    /// Pending commit publish message (debounced)
+    pending_publish: Option<PublishMessage>,
 }
 
 impl StreamActor {
+    const NOTICE_DEBOUNCE_MS: u64 = 25;
+
     pub fn new(
         family_id: RouteFamily,
         realm: String,
@@ -95,6 +103,8 @@ impl StreamActor {
             pending_commits: VecDeque::new(),
             area_actor_route,
             commit_notification_route,
+            commit_timer: None,
+            pending_publish: None,
         }
     }
 
@@ -240,8 +250,15 @@ impl StreamActor {
         let payload = Bytes::from(payload_json.to_string());
 
         let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
-        let notice_addr = RouteAddress::new(self.family_id, route);
-        let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+
+        // Debounce commit notifications (do not send immediately)
+        self.pending_publish = Some(publish_msg);
+        if self.commit_timer.is_none() {
+            let timer_id = ctx
+                .timer_manager()
+                .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
+            self.commit_timer = Some(timer_id);
+        }
 
         Ok(CommitSessionResponse {
             first_resource_offset: response.first_resource_offset,
@@ -382,6 +399,18 @@ impl Actor for StreamActor {
                 self.process_pending_commits(ctx);
             }
             _ => {}
+        }
+    }
+
+    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        // If commit debounce timer fired, send pending publish
+        if self.commit_timer.is_some() && Some(timer_id) == self.commit_timer {
+            if let Some(publish_msg) = self.pending_publish.take() {
+                let route = publish_msg.route.clone();
+                let notice_addr = RouteAddress::new(self.family_id, route);
+                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+            }
+            self.commit_timer = None;
         }
     }
 }
