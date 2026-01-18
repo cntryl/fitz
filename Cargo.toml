@@ -202,3 +202,38 @@ path = "benches/tier3_system_notice.rs"
 name = "tier4_integration_notice"
 harness = false
 path = "benches/tier4_integration_notice.rs"
+
+[[bench]]
+name = "tier1_hotpath_kv"
+harness = false
+path = "benches/tier1_hotpath_kv.rs"
+
+[[bench]]
+name = "tier2_subsystem_kv"
+harness = false
+path = "benches/tier2_subsystem_kv.rs"
+
+[[bench]]
+name = "tier3_system_kv"
+harness = false
+path = "benches/tier3_system_kv.rs"
+
+[[bench]]
+name = "tier4_integration_schedule"
+harness = false
+path = "benches/tier4_integration_schedule.rs"
+
+[[bench]]
+name = "tier1_hotpath_lease"
+harness = false
+path = "benches/tier1_hotpath_lease.rs"
+
+[[bench]]
+name = "tier3_system_lease"
+harness = false
+path = "benches/tier3_system_lease.rs"
+
+[[bench]]
+name = "tier4_integration_lease"
+harness = false
+path = "benches/tier4_integration_lease.rs"
