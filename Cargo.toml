@@ -43,6 +43,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 
 # Lock-free / concurrency crates used by lease service
+parking_lot = "0.12"
 crossbeam-epoch = "0.9"
 crossbeam-queue = "0.3"
 crossbeam-skiplist = "0.1"
