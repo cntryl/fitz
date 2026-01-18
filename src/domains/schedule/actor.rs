@@ -4,7 +4,7 @@ use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
 use crate::domains::notification::protocol::{NotificationMessage, PublishMessage};
 use bytes::Bytes;
-use chrono::{DateTime, Utc, TimeZone, Datelike, Timelike};
+use chrono::{DateTime, Utc, Datelike, Timelike};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -24,9 +24,9 @@ impl CronSchedule {
         if field == "*" {
             return (min..=max).collect();
         }
-        if field.starts_with("*/") {
-            if let Ok(step) = field[2..].parse::<u32>() {
-                return (min..=max).filter(|v| (v - min) % step == 0).collect();
+        if let Some(stripped) = field.strip_prefix("*/") {
+            if let Ok(step) = stripped.parse::<u32>() {
+                return (min..=max).filter(|v| (v - min).is_multiple_of(step)).collect();
             }
         }
         // CSV of numbers
@@ -52,11 +52,11 @@ impl CronSchedule {
     }
 
     fn matches_dt(&self, dt: &DateTime<Utc>) -> bool {
-        let m = dt.minute() as u32;
-        let h = dt.hour() as u32;
-        let d = dt.day() as u32;
-        let mo = dt.month() as u32;
-        let w = dt.weekday().num_days_from_sunday() as u32;
+        let m = dt.minute();
+        let h = dt.hour();
+        let d = dt.day();
+        let mo = dt.month();
+        let w = dt.weekday().num_days_from_sunday();
         self.minute.contains(&m)
             && self.hour.contains(&h)
             && self.day.contains(&d)
@@ -169,7 +169,7 @@ impl ScheduleActor {
                 route.as_str().as_bytes(),
                 payload.clone(),
                 def.last_fire_at,
-                self.write_options.clone(),
+                self.write_options,
             )?;
 
         self.schedules.insert(id, def);
@@ -179,7 +179,7 @@ impl ScheduleActor {
 
     pub fn delete_schedule(&mut self, id: u64) -> Result<(), String> {
         self.schedules.remove(&id);
-        self.store.delete(self.family.id(), id, self.write_options.clone())
+        self.store.delete(self.family.id(), id, self.write_options)
     }
 
     fn extract_realm_and_area(route: &Route) -> Option<(String, String)> {
@@ -194,31 +194,7 @@ impl ScheduleActor {
         None
     }
 
-    fn fire_schedule(&mut self, def: &mut ScheduleDef, ctx: &mut Context<Self>) {
-        // Build notice route: notice://{realm}/{area}/{resource}/{operation}
-        let Some((realm, area)) = Self::extract_realm_and_area(&def.route) else {
-            warn!("failed to extract realm/area from schedule route: {}", def.route.as_str());
-            return;
-        };
-        // Extract payload resource and operation
-        match SchedulePayload::decode(&def.payload) {
-            Ok(sp) => {
-                let notice_path = if sp.operation.is_empty() {
-                    format!("notice://{}/{}/{}", realm, area, sp.resource)
-                } else {
-                    format!("notice://{}/{}/{}/{}", realm, area, sp.resource, sp.operation)
-                };
-                let route = Route::new(notice_path.clone());
-                let publish = PublishMessage::new(self.family, route.clone(), def.payload.clone());
-                let notice_addr = RouteAddress::new(self.family, route);
-                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish));
-                info!("fired schedule {} -> {}", def.id, notice_path);
-            }
-            Err(e) => {
-                warn!("failed decode schedule payload for {}: {}", def.id, e);
-            }
-        }
-    }
+
 
     fn scan_and_fire(&mut self, ctx: &mut Context<Self>) {
         let now_dt = self.clock.now();
@@ -227,7 +203,7 @@ impl ScheduleActor {
         let mut to_fire: Vec<(u64, Route, Bytes)> = Vec::new();
         for (id, def) in self.schedules.iter() {
             // Check if any matching time exists between last_fire_at (exclusive) and now (inclusive)
-            let last = DateTime::<Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(def.last_fire_at.max(0), 0), Utc);
+            let last = DateTime::from_timestamp(def.last_fire_at.max(0), 0).unwrap_or_else(Utc::now);
             // iterate minute-by-minute from last+1min up to now
             let mut t = last + chrono::Duration::minutes(1);
             let mut matched = false;
@@ -236,7 +212,7 @@ impl ScheduleActor {
                     matched = true;
                     break;
                 }
-                t = t + chrono::Duration::minutes(1);
+                t += chrono::Duration::minutes(1);
                 // safety cap
                 if (t - last).num_minutes() > 10_000 {
                     break;
@@ -256,7 +232,7 @@ impl ScheduleActor {
                     def.route.as_str().as_bytes(),
                     def.payload.clone(),
                     def.last_fire_at,
-                    self.write_options.clone(),
+                    self.write_options,
                 );
             }
 

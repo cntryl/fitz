@@ -295,17 +295,18 @@ impl StreamActor {
         max_bytes: Option<usize>,
     ) -> Result<ReadResponse, StreamError> {
         // Read from Midge storage (NOT from memory!) with cursor
+        let params = crate::domains::stream::store::ReadResourceParams {
+            family: self.family_id.id(),
+            realm: &self.realm,
+            area: &self.area,
+            resource: &self.resource,
+            from_offset,
+            limit,
+            max_bytes,
+        };
         let (records, cursor) = self
             .store
-            .read_resource(
-                self.family_id.id(),
-                &self.realm,
-                &self.area,
-                &self.resource,
-                from_offset,
-                limit,
-                max_bytes,
-            )
+            .read_resource(&params)
             .map_err(|_| StreamError::InvalidReadBound)?;
 
         Ok(ReadResponse { records, cursor })

@@ -3,7 +3,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{create_bench_queue_actor, storage::create_bench_store};
-use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse, QueueDurabilityPolicy, Clock};
+use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse, Clock};
 use fitz::runtime::routing::RouteFamily;
 
 #[path = "config.rs"]
@@ -18,8 +18,13 @@ impl SharedClock {
     }
 }
 impl Clock for SharedClock {
-    fn now(&self) -> std::time::Instant {
+    fn now_instant(&self) -> std::time::Instant {
         *self.0.lock().unwrap()
+    }
+    fn now_epoch_ms(&self) -> u64 {
+        // For a mock clock used in benchmarks, just return a fixed value
+        // This is only used for epoch-based timestamps which aren't critical for benches
+        0
     }
 }
 
@@ -106,13 +111,12 @@ fn bench_churn_reserve_expire_fixed(c: &mut Criterion) {
 
     let store = create_bench_store();
     let clock = SharedClock::new();
-    let mut actor = QueueActor::with_clock_and_durability(
+    let mut actor = QueueActor::with_clock(
         RouteFamily::new(1),
         queue_key,
         store,
         Box::new(clock.clone()),
         None,
-        QueueDurabilityPolicy::Strict,
     );
 
     let payload = Bytes::from_static(b"test message");
@@ -213,8 +217,8 @@ fn bench_churn_dlq_threshold(c: &mut Criterion) {
     let store = create_bench_store();
     let clock = SharedClock::new();
     // Use max_attempts=1 so messages are DLQ'ed after first expiry
-    let mut actor = QueueActor::with_clock_and_durability(
-        RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), Some(1), QueueDurabilityPolicy::Strict,
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), Some(1),
     );
 
     let payload = Bytes::from_static(b"test message");
@@ -294,7 +298,7 @@ fn bench_churn_abuse_reserve_without_complete(c: &mut Criterion) {
     let queue_key = QueueKey { family: RouteFamily::new(1), realm: "bench".to_string(), area: "abuse".to_string(), resource: "queue".to_string() };
     let store = create_bench_store();
     let clock = SharedClock::new();
-    let mut actor = QueueActor::with_clock_and_durability(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None, QueueDurabilityPolicy::Strict);
+    let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
 
     let payload = Bytes::from_static(b"abandoned message");
     for _ in 0..1000 { let _ = actor.handle_enqueue(payload.clone(), None); }

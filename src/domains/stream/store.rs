@@ -48,6 +48,18 @@ impl Default for BatchLimits {
     }
 }
 
+/// Parameters for reading stream resource records
+#[derive(Debug, Clone)]
+pub struct ReadResourceParams<'a> {
+    pub family: u64,
+    pub realm: &'a str,
+    pub area: &'a str,
+    pub resource: &'a str,
+    pub from_offset: u64,
+    pub limit: u64,
+    pub max_bytes: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StreamTTL {
     pub ttl_seconds: Option<u64>,
@@ -139,7 +151,7 @@ impl StreamStore {
 
     pub fn append_to_session(
         &self,
-        family: u64,
+        _family: u64,
         session_id: &SessionId,
         event: EventPayload,
     ) -> Result<(), String> {
@@ -368,48 +380,48 @@ impl StreamStore {
     /// Watermark is only relevant for area/realm dimensions.
     pub fn read_resource(
         &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-        from_offset: u64,
-        limit: u64,
-        max_bytes: Option<usize>,
+        params: &ReadResourceParams,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         // Fast path for single-record reads (limit=1, no byte limit)
-        if limit == 1 && max_bytes.is_none() {
-            return self.read_resource_single(family, realm, area, resource, from_offset);
+        if params.limit == 1 && params.max_bytes.is_none() {
+            return self.read_resource_single(
+                params.family,
+                params.realm,
+                params.area,
+                params.resource,
+                params.from_offset,
+            );
         }
 
         // Build prefix for this resource
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
-        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.extend_from_slice(params.realm.as_bytes());
         prefix_key.push(0);
-        prefix_key.extend_from_slice(area.as_bytes());
+        prefix_key.extend_from_slice(params.area.as_bytes());
         prefix_key.push(0);
-        prefix_key.extend_from_slice(resource.as_bytes());
+        prefix_key.extend_from_slice(params.resource.as_bytes());
         prefix_key.push(0);
 
-        let start_key = encode_resource_key(realm, area, resource, from_offset);
+        let start_key = encode_resource_key(params.realm, params.area, params.resource, params.from_offset);
 
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(start_key))
             .prefix(Bytes::from(prefix_key))
-            .limit(limit as usize);
+            .limit(params.limit as usize);
 
         let txn = self
             .db
-            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cntryl_midge::ColumnFamilyId(params.family as u32), cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         let results = iter.collect_all();
 
-        let mut records = Vec::with_capacity(limit.min(1000) as usize);
+        let mut records = Vec::with_capacity(params.limit.min(1000) as usize);
         let mut total_bytes = 0;
-        let mut last_offset = from_offset;
-        let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
+        let mut last_offset = params.from_offset;
+        let max_bytes_limit = params.max_bytes.unwrap_or(usize::MAX);
 
         for (_, value_bytes) in results {
             let resource_value = ResourceValue::decode(&value_bytes);
@@ -439,7 +451,7 @@ impl StreamStore {
             });
         }
 
-        let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
+        let has_more = records.len() == params.limit as usize || total_bytes >= max_bytes_limit;
 
         // Cache last record to avoid repeated last() lookups
         let (last_area_offset, last_realm_offset) = if let Some(last_rec) = records.last() {

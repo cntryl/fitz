@@ -177,7 +177,7 @@ impl KvActor {
         match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
                 found: true,
-                value: Some(Bytes::from(value)),
+                value: Some(value),
             },
             Ok(None) => KvResponse::GetResult {
                 found: false,

@@ -20,7 +20,7 @@
 /// - Uses proper session flow
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::domains::stream::protocol::StreamMessage;
+use fitz::domains::stream::protocol::{StreamMessage, StreamWriteMode};
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::stream_actor::StreamActor;
 use fitz::prelude::Actor;
@@ -153,7 +153,7 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
 
                     // CommitSession
                     actors[res_idx].receive(
-                        StreamMessage::CommitSession { session_id, mode: crate::domains::stream::StreamWriteMode::Sync },
+                        StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync },
                         &mut contexts[res_idx],
                     );
 
@@ -223,7 +223,7 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
 
                 // CommitSession
                 actors[res_idx].receive(
-                    StreamMessage::CommitSession { session_id, mode: crate::domains::stream::StreamWriteMode::Sync },
+                    StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync },
                     &mut contexts[res_idx],
                 );
 
@@ -279,7 +279,7 @@ fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
                 }
 
                 actor.receive(
-                    StreamMessage::CommitSession { session_id, mode: crate::domains::stream::StreamWriteMode::Sync },
+                    StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync },
                     &mut contexts[res_idx],
                 );
 
