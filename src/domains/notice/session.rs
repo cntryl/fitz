@@ -1,13 +1,13 @@
 use crate::auth::Access;
-use crate::domains::notification::protocol::{PublishMessage, SubscribeMessage};
-use crate::domains::notification::route_actor::NoticeRouteActor;
+use crate::domains::notice::protocol::{PublishMessage, SubscribeMessage};
+use crate::domains::notice::route_actor::NoticeRouteActor;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
-/// Lightweight SessionActor helpers for the notification domain.
+/// Lightweight SessionActor helpers for the notice domain.
 ///
 /// Responsibilities:
 /// - Enforce session-level authorization for subscribe/publish operations
@@ -43,7 +43,7 @@ impl SessionActor {
 
         let msg = SubscribeMessage::new(family, pattern, self.session_id, ctx.address().clone());
         notice_actor.receive(
-            crate::domains::notification::protocol::NotificationMessage::Subscribe(msg),
+            crate::domains::notice::protocol::NotificationMessage::Subscribe(msg),
             ctx,
         );
         Ok(())
@@ -64,7 +64,7 @@ impl SessionActor {
 
         let msg = PublishMessage::new(family, route, payload);
         notice_actor.receive(
-            crate::domains::notification::protocol::NotificationMessage::Publish(msg),
+            crate::domains::notice::protocol::NotificationMessage::Publish(msg),
             ctx,
         );
         Ok(())
@@ -75,7 +75,7 @@ impl SessionActor {
 mod tests {
     use super::*;
     use crate::auth::Permission;
-    use crate::domains::notification::route_actor::NoticeRouteActor;
+    use crate::domains::notice::route_actor::NoticeRouteActor;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

@@ -36,8 +36,8 @@
 //! 3. **Production parity**: Tests must match production behavior
 //! 4. **Architectural invariant**: Explicit mapping is foundational to Fitz design
 
-use std::sync::Arc;
 use cntryl_midge::{Engine, MidgeOptions};
+use std::sync::Arc;
 
 /// Create a test Midge engine with support for multiple column families
 ///
@@ -71,8 +71,7 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     // TODO: Once Midge supports CF pre-registration via MidgeOptions,
     // configure them here. For now, we rely on Midge's auto-creation behavior.
     Arc::new(
-        Engine::open_with_options(MidgeOptions::default())
-            .expect("Failed to create test engine")
+        Engine::open_with_options(MidgeOptions::default()).expect("Failed to create test engine"),
     )
 }
 

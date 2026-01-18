@@ -4,7 +4,7 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::domains::notification::protocol::{NotificationMessage, PublishMessage};
+use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -42,7 +42,7 @@ pub struct RealmActor {
     notification_timer: Option<crate::runtime::context::TimerId>,
 
     /// Pending realm watermark publish message (debounced)
-    pending_publish: Option<crate::domains::notification::protocol::PublishMessage>,
+    pending_publish: Option<crate::domains::notice::protocol::PublishMessage>,
 }
 
 impl RealmActor {
@@ -107,7 +107,9 @@ impl RealmActor {
         // Emit realm watermark notification ONLY if watermark advanced
         if new_watermark > old_watermark {
             // Persist realm watermark to storage
-            let _ = self.store.set_realm_watermark(self.family_id.id(), &self.realm, new_watermark);
+            let _ = self
+                .store
+                .set_realm_watermark(self.family_id.id(), &self.realm, new_watermark);
 
             let route_str = format!("notice://{}/*/*/watermark", self.realm);
             let route = Route::new(route_str);

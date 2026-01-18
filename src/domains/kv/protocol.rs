@@ -5,9 +5,9 @@
 //! - Resource (table) isolation
 //! - Explicit RouteFamily → ColumnFamily mapping
 
+use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use cntryl_midge::WriteOptions;
-use crate::runtime::routing::RouteFamily;
 
 /// KV operation request
 #[derive(Debug, Clone)]
@@ -109,10 +109,7 @@ pub enum KvResponse {
     RollbackOk,
 
     /// Get result
-    GetResult {
-        found: bool,
-        value: Option<Bytes>,
-    },
+    GetResult { found: bool, value: Option<Bytes> },
 
     /// Put succeeded
     PutOk,
@@ -127,15 +124,10 @@ pub enum KvResponse {
     DeleteRangeOk,
 
     /// Scan results
-    ScanResult {
-        items: Vec<KvPair>,
-        has_more: bool,
-    },
+    ScanResult { items: Vec<KvPair>, has_more: bool },
 
     /// Error occurred
-    Error {
-        error: KvError,
-    },
+    Error { error: KvError },
 }
 
 /// Key-value pair
@@ -164,10 +156,7 @@ pub enum KvError {
     NoActiveTx,
 
     /// Operation targets different resource than the active transaction
-    TxScopeViolation {
-        expected: String,
-        actual: String,
-    },
+    TxScopeViolation { expected: String, actual: String },
 
     /// Key not found (if applicable for operation)
     NotFound,
@@ -194,7 +183,11 @@ impl std::fmt::Display for KvError {
             KvError::TxAlreadyActive => write!(f, "Transaction already active"),
             KvError::NoActiveTx => write!(f, "No active transaction"),
             KvError::TxScopeViolation { expected, actual } => {
-                write!(f, "Transaction scope violation: expected resource '{}', got '{}'", expected, actual)
+                write!(
+                    f,
+                    "Transaction scope violation: expected resource '{}', got '{}'",
+                    expected, actual
+                )
             }
             KvError::NotFound => write!(f, "Key not found"),
             KvError::AlreadyExists => write!(f, "Key already exists"),

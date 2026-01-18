@@ -1,5 +1,5 @@
+use crate::protocol::tlv::TlvDecoder;
 use bytes::Bytes;
-use crate::protocol::tlv::{TlvDecoder};
 
 /// TLV payload for schedules. MUST be TLV encoded.
 /// Fields required:
@@ -48,7 +48,7 @@ impl SchedulePayload {
 
     pub fn encode(&self) -> Bytes {
         // Encode as TLV records with types 1,2,3 using TlvEncoder
-        use crate::protocol::tlv::{TlvEncoder, MessageType};
+        use crate::protocol::tlv::{MessageType, TlvEncoder};
         let mut enc = TlvEncoder::new();
         enc.encode(MessageType(1), self.cron.as_bytes());
         enc.encode(MessageType(2), self.resource.as_bytes());
@@ -60,7 +60,7 @@ impl SchedulePayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::tlv::{TlvEncoder, MessageType};
+    use crate::protocol::tlv::{MessageType, TlvEncoder};
 
     #[test]
     fn should_roundtrip_schedule_tlv() {

@@ -11,7 +11,7 @@
 //! - **Unsubscribe**: Remove specific subscription
 //! - **UnsubscribeAll**: Clean up all subscriptions for a disconnected session
 
-use crate::domains::notification::protocol::{
+use crate::domains::notice::protocol::{
     NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };

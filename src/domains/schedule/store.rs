@@ -32,7 +32,10 @@ impl ScheduleStore {
         // Use RouteFamily id as Midge column family id to ensure isolation
         let mut txn = self
             .db
-            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(
+                cntryl_midge::ColumnFamilyId(family as u32),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let mut val = Vec::with_capacity(8 + 4 + route.len() + payload.len());
@@ -53,7 +56,10 @@ impl ScheduleStore {
     pub fn delete(&self, family: u64, id: u64, write_options: WriteOptions) -> Result<(), String> {
         let mut txn = self
             .db
-            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(
+                cntryl_midge::ColumnFamilyId(family as u32),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
         txn.delete(Self::encode_key(family, id))
             .map_err(|e| format!("delete failed: {:?}", e))?;
@@ -66,7 +72,10 @@ impl ScheduleStore {
     pub fn list(&self, family: u64) -> Result<Vec<(u64, Bytes, Bytes, i64)>, String> {
         let txn = self
             .db
-            .begin_tx(cntryl_midge::ColumnFamilyId(family as u32), cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                cntryl_midge::ColumnFamilyId(family as u32),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let prefix = format!("family:{}:sch:", family);

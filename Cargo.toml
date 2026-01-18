@@ -129,9 +129,9 @@ harness = false
 path = "benches/tier2_subsystem_protocol.rs"
 
 [[bench]]
-name = "tier1_hotpath_notification"
+name = "tier1_hotpath_notice"
 harness = false
-path = "benches/tier1_hotpath_notification.rs"
+path = "benches/tier1_hotpath_notice.rs"
 
 [[bench]]
 name = "tier1_hotpath_rpc"
@@ -144,6 +144,16 @@ harness = false
 path = "benches/tier2_subsystem_rpc.rs"
 
 [[bench]]
+name = "tier3_system_rpc"
+harness = false
+path = "benches/tier3_system_rpc.rs"
+
+[[bench]]
+name = "tier4_integration_rpc"
+harness = false
+path = "benches/tier4_integration_rpc.rs"
+
+[[bench]]
 name = "tier1_hotpath_stream"
 harness = false
 path = "benches/tier1_hotpath_stream.rs"
@@ -152,6 +162,16 @@ path = "benches/tier1_hotpath_stream.rs"
 name = "tier2_subsystem_stream"
 harness = false
 path = "benches/tier2_subsystem_stream.rs"
+
+[[bench]]
+name = "tier3_system_stream"
+harness = false
+path = "benches/tier3_system_stream.rs"
+
+[[bench]]
+name = "tier4_integration_stream"
+harness = false
+path = "benches/tier4_integration_stream.rs"
 
 [[bench]]
 name = "tier1_hotpath_queue"
@@ -167,3 +187,18 @@ path = "benches/tier2_subsystem_queue.rs"
 name = "tier3_system_queue"
 harness = false
 path = "benches/tier3_system_queue.rs"
+
+[[bench]]
+name = "tier4_integration_queue"
+harness = false
+path = "benches/tier4_integration_queue.rs"
+
+[[bench]]
+name = "tier3_system_notice"
+harness = false
+path = "benches/tier3_system_notice.rs"
+
+[[bench]]
+name = "tier4_integration_notice"
+harness = false
+path = "benches/tier4_integration_notice.rs"

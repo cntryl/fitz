@@ -3,14 +3,15 @@
 use bytes::Bytes;
 use std::sync::Arc;
 
-use crate::domains::notification::protocol::{NotificationMessage, PublishMessage};
+use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::protocol::{
     AppendResponse, BeginSessionResponse, CommitSessionResponse, LeaseGrant, OffsetLease,
-    PeekResponse, ReadResponse, StreamError, StreamMessage, DEFAULT_LEASE_SIZE, MAX_EVENT_SIZE, StreamWriteMode,
+    PeekResponse, ReadResponse, StreamError, StreamMessage, StreamWriteMode, DEFAULT_LEASE_SIZE,
+    MAX_EVENT_SIZE,
 };
 use super::store::{EventPayload, SessionId, StreamStore};
 use std::collections::VecDeque;
@@ -73,16 +74,17 @@ impl StreamActor {
     ) -> Self {
         // **CRITICAL: Recover next_resource_offset from metadata counter**
         // This prevents offset reuse after TTL expiry and process restart
-        let next_resource_offset = match store.get_next_resource_offset(family_id.id(), &realm, &area, &resource) {
-            Ok(offset) => offset,
-            Err(e) => {
-                eprintln!(
-                    "FATAL: Failed to recover resource offset for {}/{}/{}: {}",
-                    realm, area, resource, e
-                );
-                0 // Fallback to 0, may cause conflict if stream has data
-            }
-        };
+        let next_resource_offset =
+            match store.get_next_resource_offset(family_id.id(), &realm, &area, &resource) {
+                Ok(offset) => offset,
+                Err(e) => {
+                    eprintln!(
+                        "FATAL: Failed to recover resource offset for {}/{}/{}: {}",
+                        realm, area, resource, e
+                    );
+                    0 // Fallback to 0, may cause conflict if stream has data
+                }
+            };
 
         let area_actor_route = Route::new(format!("stream://{}/{}/__area__", realm, area));
         let commit_notification_route = Route::new(format!(
@@ -127,7 +129,13 @@ impl StreamActor {
         // Begin session in store (no offsets allocated yet)
         let session_id = self
             .store
-            .begin_session(self.family_id.id(), &self.realm, &self.area, &self.resource, ingest_metadata)
+            .begin_session(
+                self.family_id.id(),
+                &self.realm,
+                &self.area,
+                &self.resource,
+                ingest_metadata,
+            )
             .map_err(|_| StreamError::SessionAlreadyActive)?;
 
         self.active_session = Some(session_id.clone());

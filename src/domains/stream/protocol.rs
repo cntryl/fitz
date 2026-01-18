@@ -138,7 +138,10 @@ pub enum StreamMessage {
 
     /// Commit session (atomic write)
     /// Requires the caller to specify a write mode: Buffered or Sync.
-    CommitSession { session_id: String, mode: StreamWriteMode }, // caller must specify StreamWriteMode (Buffered|Sync)
+    CommitSession {
+        session_id: String,
+        mode: StreamWriteMode,
+    }, // caller must specify StreamWriteMode (Buffered|Sync)
 
     /// Abort session (discard)
     AbortSession { session_id: String },

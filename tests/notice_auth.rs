@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use fitz::domains::notification::route_actor::NoticeRouteActor;
-use fitz::domains::notification::session::SessionActor;
+use fitz::domains::notice::route_actor::NoticeRouteActor;
+use fitz::domains::notice::session::SessionActor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::permissions::SessionPermissions;
-use fitz::testkit::notification::TestSink;
+use fitz::testkit::notice::TestSink;
 use std::sync::Arc;
 
 // Integration-style tests ensuring unauthenticated/unauthorized actions are rejected

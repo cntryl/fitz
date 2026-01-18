@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use fitz::domains::notification::protocol::{
-    NotificationMessage, PublishMessage, SubscribeMessage,
-};
-use fitz::domains::notification::route_actor::NoticeRouteActor;
+use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
+use fitz::domains::notice::route_actor::NoticeRouteActor;
 use fitz::runtime::actor::Actor;
 use fitz::runtime::actor::Context;
 
-use fitz::testkit::notification::{addr, make_router, session_id, TestSink};
+use fitz::testkit::notice::{addr, make_router, session_id, TestSink};
 
 // This file asserts the basic golden path: one subscription receives one notification.
 // Keep tests simple â€” no fanout or scale complexity here.
@@ -30,7 +28,7 @@ fn should_deliver_single_notification_to_single_subscription() {
     let family = *ctx.address().family();
     let subscribe = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/*"),
+        fitz::testkit::notice::route("notify://realm/area/users/*"),
         session_id(1),
         subscriber.clone(),
     );
@@ -43,7 +41,7 @@ fn should_deliver_single_notification_to_single_subscription() {
     // Act
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv"),
         Bytes::from("hi"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);

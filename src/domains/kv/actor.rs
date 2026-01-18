@@ -22,9 +22,9 @@
 //! 3. RouteFamily → ColumnFamily mapping is explicit (no default CF)
 //! 4. No buffering, retries, or caching - direct Midge passthrough
 
-use std::sync::Arc;
 use bytes::Bytes;
 use cntryl_midge::{ColumnFamilyId, Engine as MidgeEngine, TransactionMode};
+use std::sync::Arc;
 
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
@@ -64,34 +64,60 @@ impl KvActor {
     /// Handle KV message
     pub fn handle(&mut self, msg: KvMessage) -> KvResponse {
         match msg {
-            KvMessage::Begin { route_family, realm: _, area: _, resource, mode, write_options } => {
-                self.handle_begin(route_family, resource, mode, write_options)
-            }
+            KvMessage::Begin {
+                route_family,
+                realm: _,
+                area: _,
+                resource,
+                mode,
+                write_options,
+            } => self.handle_begin(route_family, resource, mode, write_options),
             KvMessage::Commit => self.handle_commit(),
             KvMessage::Rollback => self.handle_rollback(),
-            KvMessage::Get { route_family, resource, key } => {
-                self.handle_get(route_family, resource, key)
-            }
-            KvMessage::Put { route_family, resource, key, value } => {
-                self.handle_put(route_family, resource, key, value)
-            }
-            KvMessage::Insert { route_family, resource, key, value } => {
-                self.handle_insert(route_family, resource, key, value)
-            }
-            KvMessage::Delete { route_family, resource, key } => {
-                self.handle_delete(route_family, resource, key)
-            }
-            KvMessage::DeleteRange { route_family, resource, start, end } => {
-                self.handle_delete_range(route_family, resource, start, end)
-            }
-            KvMessage::Scan { route_family, resource, query } => {
-                self.handle_scan(route_family, resource, query)
-            }
+            KvMessage::Get {
+                route_family,
+                resource,
+                key,
+            } => self.handle_get(route_family, resource, key),
+            KvMessage::Put {
+                route_family,
+                resource,
+                key,
+                value,
+            } => self.handle_put(route_family, resource, key, value),
+            KvMessage::Insert {
+                route_family,
+                resource,
+                key,
+                value,
+            } => self.handle_insert(route_family, resource, key, value),
+            KvMessage::Delete {
+                route_family,
+                resource,
+                key,
+            } => self.handle_delete(route_family, resource, key),
+            KvMessage::DeleteRange {
+                route_family,
+                resource,
+                start,
+                end,
+            } => self.handle_delete_range(route_family, resource, start, end),
+            KvMessage::Scan {
+                route_family,
+                resource,
+                query,
+            } => self.handle_scan(route_family, resource, query),
         }
     }
 
     /// Begin a new transaction
-    fn handle_begin(&mut self, route_family: RouteFamily, resource: String, mode: TxMode, write_options: cntryl_midge::WriteOptions) -> KvResponse {
+    fn handle_begin(
+        &mut self,
+        route_family: RouteFamily,
+        resource: String,
+        mode: TxMode,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> KvResponse {
         // Check if transaction already active
         if self.active_tx.is_some() {
             return KvResponse::Error {
@@ -156,7 +182,12 @@ impl KvActor {
     }
 
     /// Get a value by key
-    fn handle_get(&mut self, _route_family: RouteFamily, resource: String, key: Bytes) -> KvResponse {
+    fn handle_get(
+        &mut self,
+        _route_family: RouteFamily,
+        resource: String,
+        key: Bytes,
+    ) -> KvResponse {
         let active = match self.get_active_tx_or_err() {
             Ok(tx) => tx,
             Err(err) => return err,
@@ -190,7 +221,13 @@ impl KvActor {
     }
 
     /// Put (upsert) a key-value pair
-    fn handle_put(&mut self, _route_family: RouteFamily, resource: String, key: Bytes, value: Bytes) -> KvResponse {
+    fn handle_put(
+        &mut self,
+        _route_family: RouteFamily,
+        resource: String,
+        key: Bytes,
+        value: Bytes,
+    ) -> KvResponse {
         let active = match self.get_active_tx_or_err() {
             Ok(tx) => tx,
             Err(err) => return err,
@@ -217,7 +254,13 @@ impl KvActor {
     }
 
     /// Insert a key-value pair (fail if exists)
-    fn handle_insert(&mut self, _route_family: RouteFamily, resource: String, key: Bytes, value: Bytes) -> KvResponse {
+    fn handle_insert(
+        &mut self,
+        _route_family: RouteFamily,
+        resource: String,
+        key: Bytes,
+        value: Bytes,
+    ) -> KvResponse {
         let active = match self.get_active_tx_or_err() {
             Ok(tx) => tx,
             Err(err) => return err,
@@ -259,7 +302,12 @@ impl KvActor {
     }
 
     /// Delete a key
-    fn handle_delete(&mut self, _route_family: RouteFamily, resource: String, key: Bytes) -> KvResponse {
+    fn handle_delete(
+        &mut self,
+        _route_family: RouteFamily,
+        resource: String,
+        key: Bytes,
+    ) -> KvResponse {
         let active = match self.get_active_tx_or_err() {
             Ok(tx) => tx,
             Err(err) => return err,
@@ -286,7 +334,13 @@ impl KvActor {
     }
 
     /// Delete a range of keys [start, end)
-    fn handle_delete_range(&mut self, _route_family: RouteFamily, resource: String, start: Bytes, end: Bytes) -> KvResponse {
+    fn handle_delete_range(
+        &mut self,
+        _route_family: RouteFamily,
+        resource: String,
+        start: Bytes,
+        end: Bytes,
+    ) -> KvResponse {
         let active = match self.get_active_tx_or_err() {
             Ok(tx) => tx,
             Err(err) => return err,
@@ -321,7 +375,12 @@ impl KvActor {
     }
 
     /// Scan a range of keys
-    fn handle_scan(&mut self, _route_family: RouteFamily, resource: String, query: ScanQuery) -> KvResponse {
+    fn handle_scan(
+        &mut self,
+        _route_family: RouteFamily,
+        resource: String,
+        query: ScanQuery,
+    ) -> KvResponse {
         let active = match self.get_active_tx_or_err() {
             Ok(tx) => tx,
             Err(err) => return err,
@@ -366,7 +425,7 @@ impl KvActor {
         match active.tx.scan(&midge_query) {
             Ok(mut iterator) => {
                 let mut items = Vec::new();
-                
+
                 while let Some((key, value)) = iterator.next() {
                     let user_key = match Self::strip_scoped_prefix(&resource, &key) {
                         Some(k) => k,
@@ -403,7 +462,7 @@ impl KvActor {
     fn resolve_column_family(route_family: RouteFamily, _resource: &str) -> ColumnFamilyId {
         // Validate RouteFamily is not zero (would map to default CF)
         crate::runtime::cf_validation::validate_route_family(route_family);
-        
+
         // Map RouteFamily → ColumnFamily (1:1 by value)
         // Resource is enforced via key prefixing within the column family.
         ColumnFamilyId(route_family.id() as u32)
@@ -484,7 +543,7 @@ mod tests {
     fn test_actor() -> KvActor {
         let store = Arc::new(
             MidgeEngine::open_with_options(cntryl_midge::MidgeOptions::default())
-                .expect("Failed to open Midge")
+                .expect("Failed to open Midge"),
         );
         KvActor::new(store)
     }
@@ -637,7 +696,10 @@ mod tests {
 
         // Assert
         match get_response {
-            KvResponse::GetResult { found: true, value: Some(v) } => assert_eq!(v, value),
+            KvResponse::GetResult {
+                found: true,
+                value: Some(v),
+            } => assert_eq!(v, value),
             _ => panic!("Expected GetResult with value"),
         }
     }

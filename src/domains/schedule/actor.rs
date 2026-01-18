@@ -1,10 +1,10 @@
+use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::domains::schedule::protocol::SchedulePayload;
 use crate::domains::schedule::store::ScheduleStore;
 use crate::runtime::actor::{Actor, Context};
-use crate::runtime::routing::{Route, RouteFamily, RouteAddress};
-use crate::domains::notification::protocol::{NotificationMessage, PublishMessage};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
-use chrono::{DateTime, Utc, Datelike, Timelike};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -26,7 +26,9 @@ impl CronSchedule {
         }
         if let Some(stripped) = field.strip_prefix("*/") {
             if let Ok(step) = stripped.parse::<u32>() {
-                return (min..=max).filter(|v| (v - min).is_multiple_of(step)).collect();
+                return (min..=max)
+                    .filter(|v| (v - min).is_multiple_of(step))
+                    .collect();
             }
         }
         // CSV of numbers
@@ -162,15 +164,14 @@ impl ScheduleActor {
         };
 
         // persist
-        self.store
-            .insert(
-                self.family.id(),
-                id,
-                route.as_str().as_bytes(),
-                payload.clone(),
-                def.last_fire_at,
-                self.write_options,
-            )?;
+        self.store.insert(
+            self.family.id(),
+            id,
+            route.as_str().as_bytes(),
+            payload.clone(),
+            def.last_fire_at,
+            self.write_options,
+        )?;
 
         self.schedules.insert(id, def);
         info!("created schedule {} for family {}", id, self.family.id());
@@ -194,8 +195,6 @@ impl ScheduleActor {
         None
     }
 
-
-
     fn scan_and_fire(&mut self, ctx: &mut Context<Self>) {
         let now_dt = self.clock.now();
         let now_secs = now_dt.timestamp();
@@ -203,7 +202,8 @@ impl ScheduleActor {
         let mut to_fire: Vec<(u64, Route, Bytes)> = Vec::new();
         for (id, def) in self.schedules.iter() {
             // Check if any matching time exists between last_fire_at (exclusive) and now (inclusive)
-            let last = DateTime::from_timestamp(def.last_fire_at.max(0), 0).unwrap_or_else(Utc::now);
+            let last =
+                DateTime::from_timestamp(def.last_fire_at.max(0), 0).unwrap_or_else(Utc::now);
             // iterate minute-by-minute from last+1min up to now
             let mut t = last + chrono::Duration::minutes(1);
             let mut matched = false;
@@ -238,7 +238,10 @@ impl ScheduleActor {
 
             // Emit notice using cloned route & payload
             let Some((realm, area)) = Self::extract_realm_and_area(&route) else {
-                warn!("failed to extract realm/area from schedule route: {}", route.as_str());
+                warn!(
+                    "failed to extract realm/area from schedule route: {}",
+                    route.as_str()
+                );
                 continue;
             };
             match SchedulePayload::decode(&payload) {
@@ -246,7 +249,10 @@ impl ScheduleActor {
                     let notice_path = if sp.operation.is_empty() {
                         format!("notice://{}/{}/{}", realm, area, sp.resource)
                     } else {
-                        format!("notice://{}/{}/{}/{}", realm, area, sp.resource, sp.operation)
+                        format!(
+                            "notice://{}/{}/{}/{}",
+                            realm, area, sp.resource, sp.operation
+                        )
                     };
                     let r = Route::new(notice_path.clone());
                     let publish = PublishMessage::new(self.family, r.clone(), payload.clone());

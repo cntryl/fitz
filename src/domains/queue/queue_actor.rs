@@ -1,4 +1,4 @@
-﻿//! QueueActor: manages a single durable message queue
+//! QueueActor: manages a single durable message queue
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
@@ -204,7 +204,13 @@ impl QueueActor {
         store: Arc<cntryl_midge::MidgeEngine>,
         max_attempts: Option<u32>,
     ) -> Self {
-        Self::with_clock(family, queue_key, store, Box::new(SystemClock), max_attempts)
+        Self::with_clock(
+            family,
+            queue_key,
+            store,
+            Box::new(SystemClock),
+            max_attempts,
+        )
     }
 
     /// Create a new queue actor with a custom clock (for testing). Persistence is locked to buffered-only.
@@ -234,7 +240,6 @@ impl QueueActor {
         actor.recover_ready_and_delayed_from_store();
         actor
     }
-
 
     /// Recover next message ID from durable storage
     fn recover_next_id(store: &cntryl_midge::Engine, queue_key: &QueueKey) -> u64 {
@@ -418,7 +423,11 @@ impl QueueActor {
 
         // Persist updated next_id counter in the SAME transaction as the batch.
         let next_id = base_id + (batch.len() as u64);
-        if let Err(e) = txn.put(Self::meta_key(&self.queue_key), next_id.to_le_bytes().to_vec(), None) {
+        if let Err(e) = txn.put(
+            Self::meta_key(&self.queue_key),
+            next_id.to_le_bytes().to_vec(),
+            None,
+        ) {
             return QueueResponse::Error {
                 message: format!("Failed to update queue meta: {:?}", e),
             };
@@ -645,7 +654,10 @@ impl QueueActor {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
                 } else {
                     // Use buffered writes for throughput (queues represent intent, not events of record)
-                    if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
+                    if let Err(e) = self
+                        .store
+                        .commit(txn, cntryl_midge::WriteOptions::buffered())
+                    {
                         eprintln!(
                             "WARN: Failed to commit delete txn for message {}: {:?}",
                             id, e
@@ -706,7 +718,10 @@ impl QueueActor {
                                             "WARN: Failed to delete DLQ message {}: {:?}",
                                             id, e
                                         );
-                                    } else if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
+                                    } else if let Err(e) = self
+                                        .store
+                                        .commit(txn, cntryl_midge::WriteOptions::buffered())
+                                    {
                                         eprintln!(
                                             "WARN: Failed to commit DLQ delete txn {}: {:?}",
                                             id, e
@@ -730,7 +745,10 @@ impl QueueActor {
                                         "WARN: Failed to increment attempts for message {}: {:?}",
                                         id, e
                                     );
-                                } else if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::buffered()) {
+                                } else if let Err(e) = self
+                                    .store
+                                    .commit(txn, cntryl_midge::WriteOptions::buffered())
+                                {
                                     eprintln!(
                                         "WARN: Failed to commit retry txn for message {}: {:?}",
                                         id, e
@@ -883,7 +901,10 @@ impl QueueActor {
         {
             Ok(txn) => txn,
             Err(e) => {
-                eprintln!("WARN: Failed to begin recovery tx for queue {:?}: {:?}", self.queue_key, e);
+                eprintln!(
+                    "WARN: Failed to begin recovery tx for queue {:?}: {:?}",
+                    self.queue_key, e
+                );
                 return;
             }
         };
@@ -913,9 +934,13 @@ impl QueueActor {
 
         for (key_bytes, value_bytes) in results {
             let key_str = String::from_utf8_lossy(&key_bytes);
-            let Some(pos) = key_str.rfind(":msg:") else { continue };
+            let Some(pos) = key_str.rfind(":msg:") else {
+                continue;
+            };
             let id_str = &key_str[pos + 5..];
-            let Ok(id_u64) = id_str.parse::<u64>() else { continue };
+            let Ok(id_u64) = id_str.parse::<u64>() else {
+                continue;
+            };
             let id = MessageId::new(id_u64);
 
             let record = match Self::decode_record(&value_bytes) {
@@ -979,9 +1004,7 @@ pub mod tests {
         pub fn advance(&self, duration: Duration) {
             let mut state = self.state.lock().unwrap();
             state.instant += duration;
-            state.epoch_ms = state
-                .epoch_ms
-                .saturating_add(duration.as_millis() as u64);
+            state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
         }
     }
 
@@ -997,7 +1020,7 @@ pub mod tests {
 
     fn unique_queue_key(resource_prefix: &str) -> QueueKey {
         QueueKey {
-            family: RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            family: RouteFamily::new(0), /* CF=0 for Midge test limitation */
             realm: "test".to_string(),
             area: "queue".to_string(),
             resource: format!("{}-{}", resource_prefix, Uuid::new_v4()),
@@ -1053,7 +1076,12 @@ pub mod tests {
                 .expect("Failed to open Midge"),
         );
         let queue_key = unique_queue_key("jobs-empty");
-        let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
+            queue_key,
+            store,
+            None,
+        );
 
         // Act
         let response = actor.handle_reserve(30, Some(10));
@@ -1075,7 +1103,12 @@ pub mod tests {
                 .expect("Failed to open Midge"),
         );
         let queue_key = unique_queue_key("jobs-complete");
-        let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
+            queue_key,
+            store,
+            None,
+        );
 
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
@@ -1102,7 +1135,12 @@ pub mod tests {
                 .expect("Failed to open Midge"),
         );
         let queue_key = unique_queue_key("jobs-invalid-token");
-        let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
+            queue_key,
+            store,
+            None,
+        );
 
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
@@ -1131,7 +1169,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-extend");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1167,7 +1205,12 @@ pub mod tests {
                 .expect("Failed to open Midge"),
         );
         let queue_key = unique_queue_key("jobs-extend-invalid");
-        let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
+            queue_key,
+            store,
+            None,
+        );
 
         let body = Bytes::from("test message");
         actor.handle_enqueue(body, None);
@@ -1195,7 +1238,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-redelivery");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1245,7 +1288,12 @@ pub mod tests {
                 .expect("Failed to open Midge"),
         );
         let queue_key = unique_queue_key("jobs-reserve-batch");
-        let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
+            queue_key,
+            store,
+            None,
+        );
 
         // Enqueue 5 messages
         for i in 0..5 {
@@ -1277,7 +1325,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-stale-timer");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1316,7 +1364,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-expired-lease");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1360,7 +1408,12 @@ pub mod tests {
                 .expect("Failed to open Midge"),
         );
         let queue_key = unique_queue_key("jobs-not-found");
-        let mut actor = QueueActor::new(RouteFamily::new(0) /* CF=0 for Midge test limitation */, queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
+            queue_key,
+            store,
+            None,
+        );
         let fake_id = MessageId::new(99999);
 
         // Act
@@ -1382,7 +1435,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-delay");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1441,7 +1494,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-dlq");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key.clone(),
             store.clone(),
             Box::new(clock.clone()),
@@ -1504,7 +1557,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-unlimited");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1557,7 +1610,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-batch-atomic");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1605,7 +1658,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-batch-empty");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),
@@ -1634,7 +1687,7 @@ pub mod tests {
         );
         let queue_key = unique_queue_key("jobs-batch-fifo");
         let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0) /* CF=0 for Midge test limitation */,
+            RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
             store,
             Box::new(clock.clone()),

@@ -101,7 +101,9 @@ pub fn validate_route_family(family: crate::runtime::routing::RouteFamily) {
 /// let cf_id = route_family_to_cf(family);
 /// assert_eq!(cf_id.0, 1);
 /// ```
-pub fn route_family_to_cf(family: crate::runtime::routing::RouteFamily) -> cntryl_midge::ColumnFamilyId {
+pub fn route_family_to_cf(
+    family: crate::runtime::routing::RouteFamily,
+) -> cntryl_midge::ColumnFamilyId {
     validate_route_family(family);
     cntryl_midge::ColumnFamilyId(family.id() as u32)
 }

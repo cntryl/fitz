@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::domains::notification::protocol::{NotificationMessage, PublishMessage};
+use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -157,9 +157,12 @@ impl AreaActor {
         // Persist watermark and notify RealmActor if watermark advanced
         if self.area_watermark > old_watermark {
             // Persist watermark to storage
-            let _ = self
-                .store
-                .set_watermark(self.family_id.id(), &self.realm, &self.area, self.area_watermark);
+            let _ = self.store.set_watermark(
+                self.family_id.id(),
+                &self.realm,
+                &self.area,
+                self.area_watermark,
+            );
 
             // Build area watermark publish message (debounced, best-effort)
             let route_str = format!("notice://{}/{}/*/watermark", self.realm, self.area);

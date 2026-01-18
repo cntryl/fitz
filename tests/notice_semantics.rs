@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use fitz::domains::notification::protocol::{
-    NotificationMessage, PublishMessage, SubscribeMessage,
-};
-use fitz::domains::notification::route_actor::NoticeRouteActor;
+use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
+use fitz::domains::notice::route_actor::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 
-use fitz::testkit::notification::{addr, make_router, session_id, TestSink};
+use fitz::testkit::notice::{addr, make_router, session_id, TestSink};
 
 // This file asserts notification semantics: verifies delivery rules (who receives notifications).
 // It MUST NOT test implementation details such as matcher internals or data structures.
@@ -27,7 +25,7 @@ fn should_deliver_notification_to_exact_matching_subscription() {
     let family = *ctx.address().family();
     let subscribe = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv"),
         session_id(1),
         subscriber.clone(),
     );
@@ -37,7 +35,7 @@ fn should_deliver_notification_to_exact_matching_subscription() {
     // Act
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv"),
         Bytes::from("hello"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
@@ -60,7 +58,7 @@ fn should_not_deliver_notification_when_no_subscription_matches() {
     let family = *ctx.address().family();
     let subscribe = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv"),
         session_id(1),
         subscriber.clone(),
     );
@@ -70,7 +68,7 @@ fn should_not_deliver_notification_when_no_subscription_matches() {
     // Act - publish to a different route
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/other/recv"),
+        fitz::testkit::notice::route("notify://realm/area/other/recv"),
         Bytes::from("hello"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
@@ -103,7 +101,7 @@ fn should_deliver_notification_to_all_matching_subscriptions() {
     let mut ctx1 = Context::new(sub1.clone(), Arc::new(router.clone()));
     let subscribe1 = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/*"),
+        fitz::testkit::notice::route("notify://realm/area/users/*"),
         session_id(1),
         sub1.clone(),
     );
@@ -112,7 +110,7 @@ fn should_deliver_notification_to_all_matching_subscriptions() {
     let mut ctx2 = Context::new(sub2.clone(), Arc::new(router.clone()));
     let subscribe2 = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/*"),
+        fitz::testkit::notice::route("notify://realm/area/users/*"),
         session_id(2),
         sub2.clone(),
     );
@@ -121,7 +119,7 @@ fn should_deliver_notification_to_all_matching_subscriptions() {
     let mut ctx3 = Context::new(sub3.clone(), Arc::new(router.clone()));
     let subscribe3 = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/*"),
+        fitz::testkit::notice::route("notify://realm/area/users/*"),
         session_id(3),
         sub3.clone(),
     );
@@ -131,7 +129,7 @@ fn should_deliver_notification_to_all_matching_subscriptions() {
     let mut pubctx = Context::new(sub1.clone(), Arc::new(router.clone()));
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv1"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv1"),
         Bytes::from("hey"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
@@ -157,7 +155,7 @@ fn should_not_duplicate_delivery_for_same_subscription() {
     // Subscribe twice with identical session, subscriber and pattern
     let subscribe = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/*"),
+        fitz::testkit::notice::route("notify://realm/area/users/*"),
         session_id(1),
         subscriber.clone(),
     );
@@ -168,7 +166,7 @@ fn should_not_duplicate_delivery_for_same_subscription() {
     // Act
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv"),
         Bytes::from("hello"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
@@ -195,7 +193,7 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     let mut ctx1 = Context::new(sub1.clone(), Arc::new(router.clone()));
     let subscribe1 = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/*"),
+        fitz::testkit::notice::route("notify://realm/area/users/*"),
         session_id(1),
         sub1.clone(),
     );
@@ -204,7 +202,7 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     let mut ctx2 = Context::new(sub2.clone(), Arc::new(router.clone()));
     let subscribe2 = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/*/recv2"),
+        fitz::testkit::notice::route("notify://realm/area/*/recv2"),
         session_id(2),
         sub2.clone(),
     );
@@ -214,7 +212,7 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     let mut pubctx = Context::new(sub1.clone(), Arc::new(router.clone()));
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/users/recv2"),
+        fitz::testkit::notice::route("notify://realm/area/users/recv2"),
         Bytes::from("overlap"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
@@ -244,7 +242,7 @@ fn should_deliver_multiple_notifications_independently() {
     let mut ctx_a = Context::new(a.clone(), Arc::new(router.clone()));
     let sub_a = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/a"),
+        fitz::testkit::notice::route("notify://realm/area/a"),
         session_id(1),
         a.clone(),
     );
@@ -253,7 +251,7 @@ fn should_deliver_multiple_notifications_independently() {
     let mut ctx_b = Context::new(b.clone(), Arc::new(router.clone()));
     let sub_b = SubscribeMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/b"),
+        fitz::testkit::notice::route("notify://realm/area/b"),
         session_id(2),
         b.clone(),
     );
@@ -263,12 +261,12 @@ fn should_deliver_multiple_notifications_independently() {
     let mut pubctx = Context::new(a.clone(), Arc::new(router.clone()));
     let pub1 = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/a"),
+        fitz::testkit::notice::route("notify://realm/area/a"),
         Bytes::from("1"),
     );
     let pub2 = PublishMessage::new(
         family,
-        fitz::testkit::notification::route("notify://realm/area/b"),
+        fitz::testkit::notice::route("notify://realm/area/b"),
         Bytes::from("2"),
     );
     actor.receive(NotificationMessage::Publish(pub1), &mut pubctx);

@@ -129,7 +129,7 @@ This file tracks **confirmed** (code-backed) violations and consistency breaks a
 
 **Code paths**
 
-- Default implementation: [src/domains/notification/route_actor.rs](src/domains/notification/route_actor.rs#L173-L176)
+- Default implementation: [src/domains/notice/route_actor.rs](src/domains/notice/route_actor.rs#L173-L176)
 
 **Why it matters**
 

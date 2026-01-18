@@ -3,7 +3,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{create_bench_queue_actor, storage::create_bench_store};
-use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse, Clock};
+use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse};
 use fitz::runtime::routing::RouteFamily;
 
 #[path = "config.rs"]
@@ -14,7 +14,9 @@ mod config;
 struct SharedClock(std::sync::Arc<std::sync::Mutex<std::time::Instant>>);
 impl SharedClock {
     fn new() -> Self {
-        Self(std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now())))
+        Self(std::sync::Arc::new(std::sync::Mutex::new(
+            std::time::Instant::now(),
+        )))
     }
 }
 impl Clock for SharedClock {
@@ -80,14 +82,20 @@ fn bench_batch_latency_reserve(c: &mut Criterion) {
 
     for &batch_size in &[1usize, 10usize, 100usize] {
         // Pre-fill a fresh actor per bench to avoid cross-iteration interference
-        group.bench_with_input(BenchmarkId::from_parameter(batch_size), &batch_size, |b, &size| {
-            let mut actor = create_bench_queue_actor("bench", "batch", "queue", None);
-            for _ in 0..5000 { let _ = actor.handle_enqueue(payload.clone(), None); }
-            b.iter(|| {
-                // Single reserve(batch_size) call measured per iteration
-                let _ = actor.handle_reserve(black_box(30), black_box(Some(size)));
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(batch_size),
+            &batch_size,
+            |b, &size| {
+                let mut actor = create_bench_queue_actor("bench", "batch", "queue", None);
+                for _ in 0..5000 {
+                    let _ = actor.handle_enqueue(payload.clone(), None);
+                }
+                b.iter(|| {
+                    // Single reserve(batch_size) call measured per iteration
+                    let _ = actor.handle_reserve(black_box(30), black_box(Some(size)));
+                })
+            },
+        );
     }
 
     group.finish();
@@ -120,7 +128,9 @@ fn bench_churn_reserve_expire_fixed(c: &mut Criterion) {
     );
 
     let payload = Bytes::from_static(b"test message");
-    for _ in 0..2000 { let _ = actor.handle_enqueue(payload.clone(), None); }
+    for _ in 0..2000 {
+        let _ = actor.handle_enqueue(payload.clone(), None);
+    }
 
     let mut group = c.benchmark_group("queue_churn_reserve_expire");
     group.sample_size(10);
@@ -144,7 +154,11 @@ fn bench_churn_reserve_expire_fixed(c: &mut Criterion) {
                 QueueResponse::Reserved { messages } => messages.len(),
                 _ => 0usize,
             };
-            assert!(remaining <= 2000, "unexpected remaining count: {}", remaining);
+            assert!(
+                remaining <= 2000,
+                "unexpected remaining count: {}",
+                remaining
+            );
             black_box(remaining);
 
             elapsed
@@ -213,17 +227,28 @@ fn bench_churn_dlq_threshold(c: &mut Criterion) {
     std::env::set_var("RAYON_NUM_THREADS", "1");
 
     // Use SharedClock to advance virtual time without sleeping
-    let queue_key = QueueKey { family: RouteFamily::new(1), realm: "bench".to_string(), area: "dlq".to_string(), resource: "queue".to_string() };
+    let queue_key = QueueKey {
+        family: RouteFamily::new(1),
+        realm: "bench".to_string(),
+        area: "dlq".to_string(),
+        resource: "queue".to_string(),
+    };
     let store = create_bench_store();
     let clock = SharedClock::new();
     // Use max_attempts=1 so messages are DLQ'ed after first expiry
     let mut actor = QueueActor::with_clock(
-        RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), Some(1),
+        RouteFamily::new(1),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        Some(1),
     );
 
     let payload = Bytes::from_static(b"test message");
     let initial = 500usize;
-    for _ in 0..initial { let _ = actor.handle_enqueue(payload.clone(), None); }
+    for _ in 0..initial {
+        let _ = actor.handle_enqueue(payload.clone(), None);
+    }
 
     let mut group = c.benchmark_group("queue_churn_dlq_threshold");
     group.sample_size(10);
@@ -247,7 +272,12 @@ fn bench_churn_dlq_threshold(c: &mut Criterion) {
                 _ => 0usize,
             };
             // Expect some messages to have been moved to DLQ (i.e., removed from ready)
-            assert!(remaining < initial, "DLQ threshold did not remove messages: {} >= {}", remaining, initial);
+            assert!(
+                remaining < initial,
+                "DLQ threshold did not remove messages: {} >= {}",
+                remaining,
+                initial
+            );
             black_box(remaining);
 
             elapsed
@@ -295,13 +325,26 @@ fn bench_churn_abuse_reserve_without_complete(c: &mut Criterion) {
 
     std::env::set_var("RAYON_NUM_THREADS", "1");
 
-    let queue_key = QueueKey { family: RouteFamily::new(1), realm: "bench".to_string(), area: "abuse".to_string(), resource: "queue".to_string() };
+    let queue_key = QueueKey {
+        family: RouteFamily::new(1),
+        realm: "bench".to_string(),
+        area: "abuse".to_string(),
+        resource: "queue".to_string(),
+    };
     let store = create_bench_store();
     let clock = SharedClock::new();
-    let mut actor = QueueActor::with_clock(RouteFamily::new(1), queue_key, store, Box::new(clock.clone()), None);
+    let mut actor = QueueActor::with_clock(
+        RouteFamily::new(1),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        None,
+    );
 
     let payload = Bytes::from_static(b"abandoned message");
-    for _ in 0..1000 { let _ = actor.handle_enqueue(payload.clone(), None); }
+    for _ in 0..1000 {
+        let _ = actor.handle_enqueue(payload.clone(), None);
+    }
 
     let mut group = c.benchmark_group("queue_churn_abuse_reserve_without_complete");
     group.sample_size(10);
@@ -338,8 +381,13 @@ fn bench_latency_complete_wrong_token(c: &mut Criterion) {
     let mut actor = create_bench_queue_actor("bench", "latency", "queue", None);
     let payload = Bytes::from_static(b"test message");
 
-    for _ in 0..1000 { let _ = actor.handle_enqueue(payload.clone(), None); }
-    let reserved = match actor.handle_reserve(30, Some(100)) { QueueResponse::Reserved { messages } => messages, _ => panic!("Expected Reserved"), };
+    for _ in 0..1000 {
+        let _ = actor.handle_enqueue(payload.clone(), None);
+    }
+    let reserved = match actor.handle_reserve(30, Some(100)) {
+        QueueResponse::Reserved { messages } => messages,
+        _ => panic!("Expected Reserved"),
+    };
 
     let mut group = c.benchmark_group("queue_latency_complete_wrong_token");
     group.sample_size(20);
@@ -367,15 +415,21 @@ fn bench_batch_latency_reserve_extreme(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for &batch_size in &[1usize, 100usize, 1000usize, 10000usize] {
-        group.bench_with_input(BenchmarkId::from_parameter(batch_size), &batch_size, |b, &size| {
-            // Pre-fill a fresh actor to avoid cross-iteration interference
-            let mut actor = create_bench_queue_actor("bench", "abuse", "queue", None);
-            for _ in 0..(size.min(10000)) { let _ = actor.handle_enqueue(payload.clone(), None); }
+        group.bench_with_input(
+            BenchmarkId::from_parameter(batch_size),
+            &batch_size,
+            |b, &size| {
+                // Pre-fill a fresh actor to avoid cross-iteration interference
+                let mut actor = create_bench_queue_actor("bench", "abuse", "queue", None);
+                for _ in 0..(size.min(10000)) {
+                    let _ = actor.handle_enqueue(payload.clone(), None);
+                }
 
-            b.iter(|| {
-                let _ = actor.handle_reserve(black_box(30), black_box(Some(size)));
-            })
-        });
+                b.iter(|| {
+                    let _ = actor.handle_reserve(black_box(30), black_box(Some(size)));
+                })
+            },
+        );
     }
 
     group.finish();
@@ -431,8 +485,6 @@ fn bench_empty_queue_polling_abuse(c: &mut Criterion) {
 
     group.finish();
 }
-
-
 
 criterion_group! {
     name = benches;

@@ -127,7 +127,13 @@ fn bench_append_commit_single_event(c: &mut Criterion) {
                 &mut ctx,
             );
 
-            actor.receive(StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync }, &mut ctx);
+            actor.receive(
+                StreamMessage::CommitSession {
+                    session_id,
+                    mode: StreamWriteMode::Sync,
+                },
+                &mut ctx,
+            );
 
             expected_offset += 1;
             payload_idx += 1;
@@ -195,7 +201,13 @@ fn bench_append_commit_batches(c: &mut Criterion) {
                 }
 
                 // CommitSession
-                actor.receive(StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync }, &mut ctx);
+                actor.receive(
+                    StreamMessage::CommitSession {
+                        session_id,
+                        mode: StreamWriteMode::Sync,
+                    },
+                    &mut ctx,
+                );
 
                 expected_offset += batch_size as u64;
                 offset += batch_size as u64;
@@ -243,7 +255,13 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
             );
         }
 
-        actor.receive(StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync }, &mut ctx);
+        actor.receive(
+            StreamMessage::CommitSession {
+                session_id,
+                mode: StreamWriteMode::Sync,
+            },
+            &mut ctx,
+        );
 
         expected_offset += 100;
     }
@@ -313,7 +331,13 @@ fn bench_resource_read_batched(c: &mut Criterion) {
             );
         }
 
-        actor.receive(StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync }, &mut ctx);
+        actor.receive(
+            StreamMessage::CommitSession {
+                session_id,
+                mode: StreamWriteMode::Sync,
+            },
+            &mut ctx,
+        );
 
         expected_offset += 100;
     }
@@ -410,7 +434,13 @@ fn bench_area_read_sequential(c: &mut Criterion) {
                 );
             }
 
-            actor.receive(StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync }, &mut ctx);
+            actor.receive(
+                StreamMessage::CommitSession {
+                    session_id,
+                    mode: StreamWriteMode::Sync,
+                },
+                &mut ctx,
+            );
 
             expected_offset += 50;
         }
@@ -530,7 +560,13 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
                     );
                 }
 
-                actor.receive(StreamMessage::CommitSession { session_id, mode: StreamWriteMode::Sync }, &mut ctx);
+                actor.receive(
+                    StreamMessage::CommitSession {
+                        session_id,
+                        mode: StreamWriteMode::Sync,
+                    },
+                    &mut ctx,
+                );
 
                 expected_offset += 50;
             }

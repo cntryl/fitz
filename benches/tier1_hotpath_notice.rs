@@ -2,8 +2,8 @@ use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
-use fitz::domains::notification::bench::Matcher;
-use fitz::domains::notification::protocol::NotifyMessage;
+use fitz::domains::notice::bench::Matcher;
+use fitz::domains::notice::protocol::NotifyMessage;
 use fitz::protocol::tlv::MessageType;
 use fitz::runtime::routing::Route;
 use std::sync::Arc;
