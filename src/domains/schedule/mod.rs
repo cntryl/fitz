@@ -7,3 +7,5 @@
 pub mod actor;
 pub mod protocol;
 pub mod store;
+
+pub use actor::{CronSchedule, ScheduleActor, ScheduleMessage};

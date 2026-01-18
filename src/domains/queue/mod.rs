@@ -1,28 +1,57 @@
-//! Queue domain: message queues with at-least-once delivery and buffered persistence
+//! Queue domain: competing consumer work queues with automatic redelivery
 //!
-//! Provides FIFO message queues with:
-//! - **Buffered storage**: Messages persist with buffered writes (intent, not events)
+//! Provides work queues optimized for competing consumers:
+//! - **Competing consumer semantics**: Multiple consumers can reserve messages fairly
 //! - **Lease-based visibility**: Reserved messages invisible to other consumers
-//! - **Automatic redelivery**: Expired leases return messages to ready queue
+//! - **Automatic redelivery**: Expired or crashed leases return messages to ready queue
 //! - **At-least-once delivery**: Messages may be delivered multiple times
-//! - **FIFO ordering**: Messages delivered in enqueue order
-//! - **Producer batching**: Client-side batching for multi-million msg/sec throughput
+//! - **Minimal fairness**: Messages distributed fairly among consumers (not strict FIFO)
+//! - **Atomic batch operations**: All-or-nothing for ID allocation + message writes
+//! - **Full recovery**: Persisted state survives process crashes
+//!
+//! # Competing Consumer Model
+//!
+//! Designed for scenarios like:
+//! - Multiple worker threads processing tasks from a queue
+//! - Multiple services consuming from the same queue
+//! - Fair work distribution (not strict FIFO ordering)
+//!
+//! Example:
+//! ```text
+//! Consumer A reserves message 1 (lease 30s)
+//! Consumer B reserves message 2 (lease 30s)
+//! Consumer C tries to reserve → gets nothing (queue empty)
+//! Consumer A crashes before completing message 1
+//! After 30s, lease expires → message 1 returns to ready queue
+//! Consumer C tries again → gets message 1 (redelivery)
+//! ```
+//!
+//! # Key Design Decisions
+//!
+//! - **Not strict FIFO**: Multiple competing consumers naturally break FIFO ordering.
+//!   Messages are delivered in ready-queue order, but reserve order is non-deterministic.
+//! - **Minimal data loss**: Uses atomic batch operations (ID allocation + writes commit together).
+//!   Messages may be lost only if batch commit itself fails (unlikely with sync writes).
+//! - **Automatic redelivery**: Lease expiration automatically returns messages (ephemeral leases).
+//!   Crashes automatically trigger redelivery (inflight state not persisted).
+//! - **Fair distribution**: Reserve operations pop from front of ready queue (simple FIFO internally).
+//!   Multiple competing consumers naturally distribute work.
 //!
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! - Messages are requests for future work, not historical facts
-//! - Lost intent is acceptable - producers can regenerate work items
-//! - All writes use `WriteOptions::buffered()` for maximum throughput
-//! - Work is idempotent or can be safely retried
+//! - Minimal data loss acceptable (batch commits are atomic)
+//! - Producers can regenerate lost work items
+//! - Batch operations use sync() writes for consistency (competing consumers need correctness over peak throughput)
 //!
 //! # Key Features
 //!
 //! - **Single-node**: No distributed coordination (MVP)
-//! - **Ephemeral leases**: Lease state lost on restart
-//! - **Microsecond latency**: In-memory scheduling with buffered persistence
+//! - **Ephemeral leases**: Lease state lost on restart (automatic redelivery)
+//! - **Microsecond latency**: In-memory reserve/complete with persistent backing
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
 //! - **Dead Letter Queue (DLQ)**: Optional max_attempts threshold for failed messages
+//! - **Atomic recovery**: Full state restored after restart (messages + delayed visibility)
 //!
 //! # Route Format
 //!
@@ -34,25 +63,47 @@
 //!
 //! # Operations
 //!
-//! - **enqueue**: Add message to queue (returns MessageId)
-//! - **reserve**: Lease one or more messages for processing
+//! - **enqueue**: Add message to queue (returns MessageId, atomic batch operation)
+//! - **reserve**: Lease one or more messages for processing (fair distribution)
 //! - **extend**: Extend lease expiration for a reserved message
 //! - **complete**: Mark message as processed and delete it
 //!
-//! # Lease Protocol
+//! # Competing Consumer Protocol
 //!
 //! ```text
-//! 1. Client A: Enqueue("task") → id=1
-//! 2. Client B: Reserve(lease_secs=30) → (id=1, token=abc123, body="task")
-//! 3. Client B: [Processing...]
-//! 4. Client B: Complete(id=1, token=abc123) → OK
+//! 1. Consumer A: Reserve(lease_secs=30) → (id=1, token=abc123, body="task")
+//! 2. Consumer B: Reserve(lease_secs=30) → (id=2, token=def456, body="task2")
+//! 3. Consumer A: [Processing task 1...]
+//! 4. Consumer B: [Processing task 2...]
+//! 5. Consumer A crashes → Lease expires after 30 seconds
+//! 6. Consumer C: Reserve(lease_secs=30) → (id=1, token=xyz789, body="task")
+//!    ^^^ Message 1 redelivered with same body but new token
+//! 7. Consumer A recovers: Try Complete(id=1, token=abc123) → LeaseExpired (old token invalid)
+//! 8. Consumer C: Complete(id=1, token=xyz789) → OK (new token valid)
 //! ```
 //!
-//! If Client B crashes before completing:
-//! - Lease expires after 30 seconds
-//! - Message returns to ready queue
-//! - Message.attempts incremented
-//! - Next reserve gets the message again
+//! # Atomicity Guarantee (V-001 Fix)
+//!
+//! Batch enqueue operations are atomic:
+//! - ID allocation happens INSIDE Midge transaction
+//! - All message writes + next_id update in SINGLE transaction
+//! - If crash before commit: no IDs lost or duplicated
+//! - Prevents ID collisions across restarts
+//!
+//! # Recovery Guarantee (V-003 Fix)
+//!
+//! Process restart fully recovers queue state:
+//! - All persisted messages recovered from storage
+//! - Delayed messages have correct visibility windows (using absolute epoch_ms)
+//! - In-flight messages automatically redelivered (leases are ephemeral)
+//! - next_id correctly initialized to prevent duplicate IDs
+//!
+//! # Time Semantics (V-002 Fix)
+//!
+//! All persisted times use SystemTime::UNIX_EPOCH (milliseconds):
+//! - visible_at_ms is absolute epoch, not relative delay
+//! - Delays survive process restarts correctly
+//! - No clock skew issues between restarts
 //!
 //! # Dead Letter Queue (DLQ) Policy
 //!

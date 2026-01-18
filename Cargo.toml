@@ -43,7 +43,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 
 # Lock-free / concurrency crates used by lease service
-parking_lot = "0.12"
 crossbeam-epoch = "0.9"
 crossbeam-queue = "0.3"
 crossbeam-skiplist = "0.1"
@@ -198,3 +197,48 @@ path = "benches/tier3_system_notice.rs"
 name = "tier4_integration_notice"
 harness = false
 path = "benches/tier4_integration_notice.rs"
+
+[[bench]]
+name = "tier1_hotpath_kv"
+harness = false
+path = "benches/tier1_hotpath_kv.rs"
+
+[[bench]]
+name = "tier2_subsystem_kv"
+harness = false
+path = "benches/tier2_subsystem_kv.rs"
+
+[[bench]]
+name = "tier3_system_kv"
+harness = false
+path = "benches/tier3_system_kv.rs"
+
+[[bench]]
+name = "tier4_integration_kv"
+harness = false
+path = "benches/tier4_integration_kv.rs"
+
+[[bench]]
+name = "tier1_hotpath_schedule"
+harness = false
+path = "benches/tier1_hotpath_schedule.rs"
+
+[[bench]]
+name = "tier4_integration_schedule"
+harness = false
+path = "benches/tier4_integration_schedule.rs"
+
+[[bench]]
+name = "tier1_hotpath_lease"
+harness = false
+path = "benches/tier1_hotpath_lease.rs"
+
+[[bench]]
+name = "tier3_system_lease"
+harness = false
+path = "benches/tier3_system_lease.rs"
+
+[[bench]]
+name = "tier4_integration_lease"
+harness = false
+path = "benches/tier4_integration_lease.rs"

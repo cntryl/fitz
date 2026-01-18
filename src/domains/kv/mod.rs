@@ -35,6 +35,8 @@
 
 pub mod actor;
 pub mod protocol;
+pub mod session;
 
 pub use actor::KvActor;
 pub use protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
+pub use session::SessionActor;

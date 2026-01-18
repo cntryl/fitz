@@ -1,0 +1,343 @@
+queue_batch_latency_producer_batched_enqueue/10
+                        time:   [302.08 µs 333.91 µs 361.44 µs]
+                        thrpt:  [27.667 Kelem/s 29.948 Kelem/s 33.104 Kelem/s]
+                 change:
+                        time:   [-5.5792% +5.6087% +17.365%] (p = 0.40 > 0.05)
+                        thrpt:  [-14.796% -5.3108% +5.9089%]
+                        No change in performance detected.
+queue_batch_latency_producer_batched_enqueue/100
+                        time:   [1.9319 ms 2.2205 ms 2.5133 ms]
+                        thrpt:  [39.788 Kelem/s 45.035 Kelem/s 51.763 Kelem/s]
+                 change:
+                        time:   [+3.4881% +22.761% +44.691%] (p = 0.04 < 0.05)
+                        thrpt:  [-30.887% -18.541% -3.3705%]
+                        Performance has regressed.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+queue_batch_latency_producer_batched_enqueue/1000
+                        time:   [22.375 ms 25.364 ms 28.634 ms]
+                        thrpt:  [34.924 Kelem/s 39.426 Kelem/s 44.693 Kelem/s]
+                 change:
+                        time:   [+13.415% +54.769% +115.09%] (p = 0.01 < 0.05)
+                        thrpt:  [-53.508% -35.388% -11.828%]
+                        Performance has regressed.
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high mild
+
+queue_latency_enqueue/queue_latency_enqueue_no_delay
+                        time:   [69.123 µs 75.165 µs 81.253 µs]
+                        thrpt:  [12.307 Kelem/s 13.304 Kelem/s 14.467 Kelem/s]
+                 change:
+                        time:   [-19.052% -11.958% -4.6384%] (p = 0.01 < 0.05)
+                        thrpt:  [+4.8640% +13.582% +23.537%]
+                        Performance has improved.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+
+queue_latency_reserve/reserve_empty_queue
+                        time:   [38.440 ns 39.206 ns 40.144 ns]
+                        thrpt:  [24.910 Melem/s 25.506 Melem/s 26.015 Melem/s]
+                 change:
+                        time:   [-0.9663% +1.2408% +3.6735%] (p = 0.37 > 0.05)
+                        thrpt:  [-3.5433% -1.2255% +0.9757%]
+                        No change in performance detected.
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high mild
+
+queue_latency_reserve/reserve_full_queue
+                        time:   [38.029 ns 39.090 ns 40.703 ns]
+                        thrpt:  [24.568 Melem/s 25.582 Melem/s 26.295 Melem/s]
+                 change:
+                        time:   [-1.7073% +1.2902% +5.8801%] (p = 0.61 > 0.05)
+                        thrpt:  [-5.5536% -1.2738% +1.7369%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+queue_latency_complete/queue_latency_complete_with_token
+                        time:   [36.388 ns 43.919 ns 55.587 ns]
+                        thrpt:  [17.990 Melem/s 22.769 Melem/s 27.482 Melem/s]
+                 change:
+                        time:   [+1.3657% +22.304% +56.890%] (p = 0.14 > 0.05)
+                        thrpt:  [-36.261% -18.236% -1.3473%]
+                        No change in performance detected.
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high severe
+
+queue_latency_delayed_fire/queue_latency_fire_delayed
+                        time:   [31.950 ns 32.775 ns 33.946 ns]
+                        thrpt:  [29.459 Melem/s 30.511 Melem/s 31.299 Melem/s]
+                 change:
+                        time:   [-0.4423% +2.2682% +6.7826%] (p = 0.23 > 0.05)
+                        thrpt:  [-6.3518% -2.2179% +0.4443%]
+                        No change in performance detected.
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+
+queue_latency_expiry/queue_latency_requeue_expired_lease
+                        time:   [31.958 ns 33.361 ns 35.288 ns]
+                        thrpt:  [28.338 Melem/s 29.975 Melem/s 31.291 Melem/s]
+                 change:
+                        time:   [+0.1602% +4.5396% +10.328%] (p = 0.12 > 0.05)
+                        thrpt:  [-9.3613% -4.3425% -0.1599%]
+                        No change in performance detected.
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+
+queue_batch_latency_enqueue/1
+                        time:   [86.762 µs 88.880 µs 91.346 µs]
+                        thrpt:  [10.947 Kelem/s 11.251 Kelem/s 11.526 Kelem/s]
+                 change:
+                        time:   [+2.1242% +6.4133% +11.491%] (p = 0.01 < 0.05)
+                        thrpt:  [-10.307% -6.0267% -2.0800%]
+                        Performance has regressed.
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high mild
+queue_batch_latency_enqueue/10
+                        time:   [351.06 µs 369.23 µs 390.45 µs]
+                        thrpt:  [25.611 Kelem/s 27.084 Kelem/s 28.485 Kelem/s]
+                 change:
+                        time:   [-8.3677% -0.9103% +6.9401%] (p = 0.83 > 0.05)
+                        thrpt:  [-6.4897% +0.9187% +9.1318%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+queue_batch_latency_enqueue/100
+                        time:   [2.5373 ms 2.6948 ms 2.8617 ms]
+                        thrpt:  [34.944 Kelem/s 37.108 Kelem/s 39.412 Kelem/s]
+                 change:
+                        time:   [-3.7150% +5.0847% +14.852%] (p = 0.31 > 0.05)
+                        thrpt:  [-12.931% -4.8386% +3.8584%]
+                        No change in performance detected.
+queue_batch_latency_enqueue/1000
+                        time:   [23.948 ms 25.811 ms 27.886 ms]
+                        thrpt:  [35.861 Kelem/s 38.744 Kelem/s 41.758 Kelem/s]
+                 change:
+                        time:   [-5.6001% +4.6454% +17.540%] (p = 0.45 > 0.05)
+                        thrpt:  [-14.923% -4.4392% +5.9323%]
+                        No change in performance detected.
+
+queue_batch_latency_reserve/1
+                        time:   [39.574 ns 49.229 ns 65.197 ns]
+                        thrpt:  [15.338 Melem/s 20.313 Melem/s 25.269 Melem/s]
+                 change:
+                        time:   [-98.006% -97.522% -96.729%] (p = 0.00 < 0.05)
+                        thrpt:  [+2957.4% +3934.7% +4914.0%]
+                        Performance has improved.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+queue_batch_latency_reserve/10
+                        time:   [40.830 ns 42.300 ns 44.046 ns]
+                        thrpt:  [227.03 Melem/s 236.41 Melem/s 244.92 Melem/s]
+                 change:
+                        time:   [-99.859% -99.848% -99.836%] (p = 0.00 < 0.05)
+                        thrpt:  [+60977% +65618% +70895%]
+                        Performance has improved.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+queue_batch_latency_reserve/100
+                        time:   [40.414 ns 41.964 ns 43.795 ns]
+                        thrpt:  [2.2833 Gelem/s 2.3830 Gelem/s 2.4744 Gelem/s]
+                 change:
+                        time:   [-99.984% -99.983% -99.982%] (p = 0.00 < 0.05)
+                        thrpt:  [+562353% +592347% +620276%]
+                        Performance has improved.
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high mild
+
+queue_capacity_cycle/queue_capacity_cycle_enqueue_reserve_complete_1msg
+                        time:   [152.75 µs 176.50 µs 216.41 µs]
+                        thrpt:  [13.862 Kelem/s 16.997 Kelem/s 19.639 Kelem/s]
+                 change:
+                        time:   [-27.782% -2.8044% +31.445%] (p = 0.87 > 0.05)
+                        thrpt:  [-23.923% +2.8853% +38.469%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+queue_batch_latency_reserve/1
+                        time:   [3.4290 µs 3.6760 µs 3.9688 µs]
+                        change: [+5401.0% +7367.2% +9417.1%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high mild
+queue_batch_latency_reserve/10
+                        time:   [29.030 µs 31.065 µs 33.476 µs]
+                        change: [+67915% +73340% +80429%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high mild
+queue_batch_latency_reserve/100
+                        time:   [240.80 µs 247.54 µs 256.37 µs]
+                        change: [+560551% +589795% +619874%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high severe
+
+queue_churn_reserve_expire/queue_churn_reserve_expire_1k
+                        time:   [0.0000 ps 0.0000 ps 0.0000 ps]
+                        change: [+2.5724% +21.144% +40.233%] (p = 0.05 < 0.05)
+                        Performance has regressed.
+
+queue_batch_latency_delayed_fire/queue_batch_latency_fire_delayed_1000
+                        time:   [5.8953 ms 7.1336 ms 8.4108 ms]
+                        change: [-29.400% -8.2040% +18.062%] (p = 0.51 > 0.05)
+                        No change in performance detected.
+
+queue_churn_dlq_threshold/queue_churn_dlq_threshold_100
+                        time:   [0.0000 ps 0.0000 ps 0.0000 ps]
+                        change: [-4.7601% -3.7019% -2.3791%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+
+queue_capacity_enqueue_high_volume/queue_capacity_enqueue_1000_messages
+                        time:   [63.295 ms 69.765 ms 75.827 ms]
+                        thrpt:  [13.188 Kelem/s 14.334 Kelem/s 15.799 Kelem/s]
+                 change:
+                        time:   [-33.536% -25.846% -17.550%] (p = 0.00 < 0.05)
+                        thrpt:  [+21.286% +34.855% +50.458%]
+                        Performance has improved.
+
+queue_churn_abuse_reserve_without_complete/queue_churn_reserve_abandon_500
+                        time:   [0.0000 ps 0.0000 ps 0.0000 ps]
+                        change: [-22.373% -0.8644% +23.980%] (p = 0.84 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+queue_latency_complete_wrong_token/queue_latency_complete_wrong_token
+                        time:   [48.625 ns 49.576 ns 50.760 ns]
+                        change: [+2.0790% +4.1657% +6.5699%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 20 measurements (10.00%)
+  1 (5.00%) high mild
+  1 (5.00%) high severe
+
+queue_batch_latency_reserve_extreme/1
+                        time:   [39.413 ns 39.879 ns 40.389 ns]
+                        change: [-0.1019% +1.1280% +2.4962%] (p = 0.12 > 0.05)
+                        No change in performance detected.
+queue_batch_latency_reserve_extreme/100
+                        time:   [39.676 ns 40.031 ns 40.589 ns]
+                        change: [-3.0221% -0.4691% +1.7319%] (p = 0.77 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+queue_batch_latency_reserve_extreme/1000
+                        time:   [78.502 ns 79.659 ns 80.883 ns]
+                        change: [-10.020% -5.2578% -0.9447%] (p = 0.05 < 0.05)
+                        Change within noise threshold.
+queue_batch_latency_reserve_extreme/10000
+                        time:   [16.670 ms 17.294 ms 17.940 ms]
+                        change: [-42.756% -37.771% -32.351%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+queue_latency_enqueue_zero_delay/queue_latency_enqueue_zero_delay
+                        time:   [12.056 ms 12.417 ms 12.778 ms]
+                        change: [+1.6913% +4.9925% +8.5908%] (p = 0.01 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 20 measurements (25.00%)
+  2 (10.00%) low mild
+  3 (15.00%) high mild
+
+queue_latency_timer_insert/queue_latency_timer_insert
+                        time:   [7.8531 ms 9.6030 ms 11.231 ms]
+                        change: [-33.818% -19.298% -5.2970%] (p = 0.01 < 0.05)
+                        Performance has improved.
+
+abuse_empty_polling/reserve_empty_tight_loop
+                        time:   [41.702 ns 42.795 ns 43.958 ns]
+                        thrpt:  [22.749 Melem/s 23.367 Melem/s 23.980 Melem/s]
+                 change:
+                        time:   [+7.7965% +10.427% +13.457%] (p = 0.00 < 0.05)
+                        thrpt:  [-11.861% -9.4422% -7.2326%]
+                        Performance has regressed.
+
+queue_capacity_system_sustained/queue_capacity_sustained_100ops_enqueue_reserve
+                        time:   [4.1329 ms 4.5828 ms 5.2613 ms]
+                        thrpt:  [19.007 Kelem/s 21.821 Kelem/s 24.196 Kelem/s]
+                 change:
+                        time:   [-7.9048% +3.9722% +20.809%] (p = 0.67 > 0.05)
+                        thrpt:  [-17.225% -3.8204% +8.5833%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+queue_capacity_system_mixed_workload/queue_capacity_mixed_70i_20d_10dlq
+                        time:   [9.0460 ms 9.2125 ms 9.3700 ms]
+                        thrpt:  [10.672 Kelem/s 10.855 Kelem/s 11.055 Kelem/s]
+                 change:
+                        time:   [-3.2430% -0.0835% +3.2975%] (p = 0.96 > 0.05)
+                        thrpt:  [-3.1922% +0.0836% +3.3516%]
+                        No change in performance detected.
+
+queue_capacity_system_cold_start/queue_capacity_recover_100_messages
+                        time:   [10.344 ms 11.158 ms 11.790 ms]
+                        thrpt:  [8.4821 Kelem/s 8.9625 Kelem/s 9.6672 Kelem/s]
+                 change:
+                        time:   [-9.8417% -2.7448% +3.0877%] (p = 0.49 > 0.05)
+                        thrpt:  [-2.9952% +2.8222% +10.916%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low severe
+
+queue_capacity_system_high_contention/queue_capacity_oscillating_1msg
+                        time:   [160.00 µs 162.68 µs 165.73 µs]
+                        thrpt:  [12.067 Kelem/s 12.294 Kelem/s 12.500 Kelem/s]
+                 change:
+                        time:   [-5.3835% +0.8201% +5.3450%] (p = 0.82 > 0.05)
+                        thrpt:  [-5.0738% -0.8134% +5.6898%]
+                        No change in performance detected.
+
+queue_integration_complete_workflow/queue_integration_enqueue_reserve_complete
+                        time:   [159.55 µs 161.63 µs 163.74 µs]
+                        thrpt:  [6.1071 Kelem/s 6.1870 Kelem/s 6.2677 Kelem/s]
+                 change:
+                        time:   [+3.5177% +6.0551% +8.3929%] (p = 0.00 < 0.05)
+                        thrpt:  [-7.7430% -5.7094% -3.3981%]
+                        Performance has regressed.
+
+queue_integration_batch_workflow/queue_integration_100enqueue_10reserve
+                        time:   [8.4977 ms 8.7863 ms 9.0156 ms]
+                        thrpt:  [11.092 Kelem/s 11.381 Kelem/s 11.768 Kelem/s]
+                 change:
+                        time:   [-4.5723% -0.5431% +3.6951%] (p = 0.82 > 0.05)
+                        thrpt:  [-3.5635% +0.5461% +4.7913%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+
+queue_integration_failure_recovery/queue_integration_retry_cycle_with_deadletter
+                        time:   [85.665 µs 88.675 µs 91.810 µs]
+                        thrpt:  [10.892 Kelem/s 11.277 Kelem/s 11.673 Kelem/s]
+                 change:
+                        time:   [-10.625% -6.3127% -2.2896%] (p = 0.01 < 0.05)
+                        thrpt:  [+2.3432% +6.7380% +11.889%]
+                        Performance has improved.
+Found 3 outliers among 10 measurements (30.00%)
+  1 (10.00%) low severe
+  1 (10.00%) low mild
+  1 (10.00%) high severe
+
+queue_integration_mixed_sequential/queue_integration_mixed_3e_2r_3c_2e
+                        time:   [552.99 µs 561.79 µs 568.89 µs]
+                        thrpt:  [17.578 Kelem/s 17.800 Kelem/s 18.084 Kelem/s]
+                 change:
+                        time:   [-2.8325% +1.6129% +7.0546%] (p = 0.56 > 0.05)
+                        thrpt:  [-6.5897% -1.5873% +2.9151%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low severe
+
+queue_integration_backpressure_deep_queue/queue_integration_deep_queue_1000plus_depth
+                        time:   [745.51 µs 757.06 µs 767.84 µs]
+                        thrpt:  [13.023 Kelem/s 13.209 Kelem/s 13.414 Kelem/s]
+                 change:
+                        time:   [-0.3303% +3.3783% +8.1541%] (p = 0.14 > 0.05)
+                        thrpt:  [-7.5394% -3.2679% +0.3314%]
+                        No change in performance detected.
+

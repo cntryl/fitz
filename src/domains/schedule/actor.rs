@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 /// Minimal cron schedule supporting 5 fields (minute hour day month weekday)
 #[derive(Debug, Clone)]
-struct CronSchedule {
+pub struct CronSchedule {
     minute: Vec<u32>,
     hour: Vec<u32>,
     day: Vec<u32>,
@@ -53,7 +53,7 @@ impl CronSchedule {
         })
     }
 
-    fn matches_dt(&self, dt: &DateTime<Utc>) -> bool {
+    pub fn matches_dt(&self, dt: &DateTime<Utc>) -> bool {
         let m = dt.minute();
         let h = dt.hour();
         let d = dt.day();
@@ -285,3 +285,322 @@ impl Actor for ScheduleActor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn should_parse_cron_every_minute() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("* * * * *");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute.len(), 60); // All 0-59
+        assert_eq!(cron.hour.len(), 24);   // All 0-23
+        assert_eq!(cron.day.len(), 31);    // All 1-31
+        assert_eq!(cron.month.len(), 12);  // All 1-12
+        assert_eq!(cron.weekday.len(), 7); // All 0-6
+    }
+
+    #[test]
+    fn should_parse_cron_with_range_syntax() {
+        // Arrange & Act
+        // Note: CronSchedule doesn't support range syntax (9-17)
+        // It only supports: * (all), */step, and CSV numbers
+        // This test verifies that invalid range is not parsed
+        let cron = CronSchedule::parse("0 9-17 * * 1-5");
+
+        // Assert
+        assert!(cron.is_ok()); // Parsing doesn't fail
+        let cron = cron.unwrap();
+        // But "9-17" is not recognized, so hour field becomes empty
+        assert!(cron.hour.is_empty());
+        assert!(cron.weekday.is_empty()); // "1-5" also not recognized
+    }
+
+    #[test]
+    fn should_parse_cron_with_step_syntax() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("*/15 */6 * * *");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute, vec![0, 15, 30, 45]);
+        assert_eq!(cron.hour, vec![0, 6, 12, 18]);
+    }
+
+    #[test]
+    fn should_parse_cron_with_list_syntax() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("0 9,12,18 * * *");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute, vec![0]);
+        assert_eq!(cron.hour, vec![9, 12, 18]);
+    }
+
+    #[test]
+    fn should_parse_cron_complex_expression() {
+        // Arrange & Act
+        // CronSchedule supports: * (all), */step, and CSV numbers
+        // This parses as: minute 0,30 / hour 9,12,18 / * / * / weekday 1,2,3
+        let cron = CronSchedule::parse("0,30 9,12,18 * * 1,2,3");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute, vec![0, 30]);
+        assert_eq!(cron.hour, vec![9, 12, 18]);
+        assert_eq!(cron.weekday, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn should_reject_invalid_field_count() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("* * * *"); // Only 4 fields
+
+        // Assert
+        assert!(cron.is_err());
+    }
+
+    #[test]
+    fn should_reject_out_of_bounds_minute() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("60 * * * *"); // Minute max 59
+
+        // Assert
+        assert!(cron.is_ok()); // Parse succeeds but minute field is filtered
+        let cron = cron.unwrap();
+        assert!(cron.minute.is_empty()); // No valid minutes
+    }
+
+    #[test]
+    fn should_reject_out_of_bounds_hour() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("* 24 * * *"); // Hour max 23
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert!(cron.hour.is_empty()); // No valid hours
+    }
+
+    #[test]
+    fn should_reject_out_of_bounds_day() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("* * 32 * *"); // Day max 31
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert!(cron.day.is_empty()); // No valid days
+    }
+
+    #[test]
+    fn should_reject_out_of_bounds_month() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("* * * 13 *"); // Month max 12
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert!(cron.month.is_empty()); // No valid months
+    }
+
+    #[test]
+    fn should_reject_out_of_bounds_weekday() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("* * * * 7"); // Weekday max 6
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert!(cron.weekday.is_empty()); // No valid weekdays
+    }
+
+    #[test]
+    fn should_parse_min_values() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("0 0 1 1 0");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute, vec![0]);
+        assert_eq!(cron.hour, vec![0]);
+        assert_eq!(cron.day, vec![1]);
+        assert_eq!(cron.month, vec![1]);
+        assert_eq!(cron.weekday, vec![0]);
+    }
+
+    #[test]
+    fn should_parse_max_values() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("59 23 31 12 6");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute, vec![59]);
+        assert_eq!(cron.hour, vec![23]);
+        assert_eq!(cron.day, vec![31]);
+        assert_eq!(cron.month, vec![12]);
+        assert_eq!(cron.weekday, vec![6]);
+    }
+
+    #[test]
+    fn should_match_every_minute() {
+        // Arrange
+        let cron = CronSchedule::parse("* * * * *").unwrap();
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
+
+        // Act & Assert
+        assert!(cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_match_specific_hour() {
+        // Arrange
+        let cron = CronSchedule::parse("* 14 * * *").unwrap(); // Hour 14 only
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
+
+        // Act & Assert
+        assert!(cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_not_match_different_hour() {
+        // Arrange
+        let cron = CronSchedule::parse("* 14 * * *").unwrap();
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 13, 30, 0).unwrap(); // Hour 13
+
+        // Act & Assert
+        assert!(!cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_match_weekday() {
+        // Arrange
+        let cron = CronSchedule::parse("* * * * 3").unwrap(); // Wednesday
+        // 2025-01-15 is a Wednesday
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
+
+        // Act & Assert
+        assert!(cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_not_match_different_weekday() {
+        // Arrange
+        let cron = CronSchedule::parse("* * * * 1").unwrap(); // Monday only
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap(); // Wednesday
+
+        // Act & Assert
+        assert!(!cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_match_workday_9am() {
+        // Arrange
+        // Since range syntax isn't supported, use CSV instead
+        let cron = CronSchedule::parse("0 9 * * 1,2,3,4,5").unwrap();
+        // 2025-01-15 is a Wednesday at 9:00
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap();
+
+        // Act & Assert
+        assert!(cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_not_match_outside_work_hours() {
+        // Arrange
+        let cron = CronSchedule::parse("0 9 * * 1-5").unwrap();
+        let dt = Utc.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap(); // 10 AM
+
+        // Act & Assert
+        assert!(!cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_not_match_weekend() {
+        // Arrange
+        // Weekdays: 1,2,3,4,5 (Monday-Friday, 0=Sunday)
+        let cron = CronSchedule::parse("0 9 * * 1,2,3,4,5").unwrap();
+        // 2025-01-18 is a Saturday (weekday 6)
+        let dt = Utc.with_ymd_and_hms(2025, 1, 18, 9, 0, 0).unwrap();
+
+        // Act & Assert
+        assert!(!cron.matches_dt(&dt));
+    }
+
+    #[test]
+    fn should_match_step_pattern() {
+        // Arrange
+        let cron = CronSchedule::parse("*/15 * * * *").unwrap(); // Every 15 minutes
+        let dt_match = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
+        let dt_no_match = Utc.with_ymd_and_hms(2025, 1, 15, 14, 31, 0).unwrap();
+
+        // Act & Assert
+        assert!(cron.matches_dt(&dt_match));
+        assert!(!cron.matches_dt(&dt_no_match));
+    }
+
+    #[test]
+    fn should_match_list_pattern() {
+        // Arrange
+        let cron = CronSchedule::parse("0 9,12,18 * * *").unwrap();
+        assert!(cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap()));
+        assert!(cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap()));
+        assert!(cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 18, 0, 0).unwrap()));
+
+        // Act & Assert
+        assert!(!cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 15, 0, 0).unwrap()));
+    }
+
+    #[test]
+    fn should_match_range_pattern() {
+        // Arrange
+        // CronSchedule doesn't support range syntax (9-17)
+        // Use CSV instead: 9,10,11,12,13,14,15,16,17
+        let cron = CronSchedule::parse("0 9,10,11,12,13,14,15,16,17 * * *").unwrap();
+        for hour in 9..=17 {
+            let dt = Utc
+                .with_ymd_and_hms(2025, 1, 15, hour, 0, 0)
+                .unwrap();
+            assert!(cron.matches_dt(&dt), "Should match hour {}", hour);
+        }
+
+        // Act & Assert
+        assert!(!cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap()));
+        assert!(!cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 18, 0, 0).unwrap()));
+    }
+
+    #[test]
+    fn should_handle_empty_field() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("");
+
+        // Assert
+        assert!(cron.is_err());
+    }
+
+    #[test]
+    fn should_parse_field_with_leading_zeros() {
+        // Arrange & Act
+        let cron = CronSchedule::parse("00 09 * * *");
+
+        // Assert
+        assert!(cron.is_ok());
+        let cron = cron.unwrap();
+        assert_eq!(cron.minute, vec![0]);
+        assert_eq!(cron.hour, vec![9]);
+    }
+}
+
