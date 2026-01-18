@@ -234,6 +234,11 @@ harness = false
 path = "benches/tier1_hotpath_lease.rs"
 
 [[bench]]
+name = "tier2_subsystem_lease"
+harness = false
+path = "benches/tier2_subsystem_lease.rs"
+
+[[bench]]
 name = "tier3_system_lease"
 harness = false
 path = "benches/tier3_system_lease.rs"
