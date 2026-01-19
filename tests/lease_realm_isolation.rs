@@ -172,7 +172,7 @@ fn should_prevent_cross_realm_lease_confusion() {
 
     // Assert: Query returns nothing (or error) because realm-b/locks/resource â‰  realm-a/locks/resource
     // Realm is part of the key, so different realms cannot see each other's leases
-    assert!(true);
+
 }
 
 // ============================================================================
@@ -205,7 +205,6 @@ fn should_maintain_global_monotonic_tokens() {
     // Assert: Both operations succeed
     // Fencing tokens are allocated globally (next_token increments in both cases)
     // But leases remain isolated because they're stored under different LeaseKeys
-    assert!(true);
 }
 
 // ============================================================================
@@ -217,9 +216,9 @@ fn should_rely_on_auth_layer_for_lease_realm_validation() {
     // Arrange: Create lease actor
     let (_actor, _) = make_lease_actor();
 
-    // Assert: Lease actor stores all leases in shared HashMap
+    // Note: Lease actor stores all leases in shared HashMap.
     // The SessionActor layer (in session.rs) performs authorization checks
-    // based on token grants and route patterns before dispatching to LeaseActor
+    // based on token grants and route patterns before dispatching to LeaseActor.
     //
     // Example flow:
     // 1. Token grants access to "lease://authenticated-realm/**"
@@ -232,7 +231,6 @@ fn should_rely_on_auth_layer_for_lease_realm_validation() {
     // 2. Client sends route "lease://other-realm/locks/database"
     // 3. SessionActor checks: permissions.allows(route, Write) = false
     // 4. SessionActor returns error, never reaches LeaseActor
-    assert!(true);
 }
 
 // ============================================================================
@@ -269,8 +267,7 @@ fn should_support_lease_operations_within_realm() {
     };
     actor.receive(msg_query, &mut ctx);
 
-    // Assert: All operations succeed within same realm
-    assert!(true);
+    // Note: All operations succeed within same realm
 }
 
 // ============================================================================
@@ -291,8 +288,7 @@ fn should_require_explicit_realm_in_lease_routes() {
     };
     actor.receive(msg, &mut ctx);
 
-    // Assert: Lease is stored under LeaseKey with explicit realm
-    // There's no implicit realm default or fallback
-    // Every operation requires the realm to be explicitly provided in the route
-    assert!(true);
+    // Note: Lease is stored under LeaseKey with explicit realm.
+    // There's no implicit realm default or fallback.
+    // Every operation requires the realm to be explicitly provided in the route.
 }

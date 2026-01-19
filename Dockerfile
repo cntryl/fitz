@@ -13,9 +13,9 @@ WORKDIR /usr/src/fitz
 # Resolve target triple from TARGETPLATFORM and make it available inside the builder
 RUN set -eux; \
   case "${TARGETPLATFORM:-linux/amd64}" in \
-    "linux/amd64") TARGET_TRIPLE='x86_64-unknown-linux-musl' ;; \
-    "linux/arm64"|"linux/arm64/v8") TARGET_TRIPLE='aarch64-unknown-linux-musl' ;; \
-    *) echo "Unsupported platform: $TARGETPLATFORM"; exit 1 ;; \
+  "linux/amd64") TARGET_TRIPLE='x86_64-unknown-linux-musl' ;; \
+  "linux/arm64"|"linux/arm64/v8") TARGET_TRIPLE='aarch64-unknown-linux-musl' ;; \
+  *) echo "Unsupported platform: $TARGETPLATFORM"; exit 1 ;; \
   esac; \
   rustup target add "$TARGET_TRIPLE"; \
   echo "$TARGET_TRIPLE" > /target_triple
@@ -40,7 +40,9 @@ RUN set -eux; \
   chmod 755 target/"$TARGET_TRIPLE"/release/fitz
 
 FROM gcr.io/distroless/static
+
 WORKDIR /app
+
 # Copy the artifact for the chosen platform (wildcard matches the target dir)
 COPY --from=builder /usr/src/fitz/target/*/release/fitz /app/fitz
 
