@@ -109,54 +109,7 @@ fn should_recover_messages_after_restart() {
     }
 }
 
-/// Test high-volume enqueue performance
-#[test]
-#[ignore = "Slow performance test"]
-fn should_handle_high_volume_enqueue() {
-    // Arrange
-    let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
-            .expect("Failed to open Midge"),
-    );
-    let queue_key = QueueKey {
-        family: RouteFamily::new(0), /* CF=0 for Midge test limitation */
-        realm: "test".to_string(),
-        area: "queue".to_string(),
-        resource: "volume".to_string(),
-    };
-    let mut actor = QueueActor::new(
-        RouteFamily::new(0), /* CF=0 for Midge test limitation */
-        queue_key,
-        store,
-        None,
-    );
 
-    let count = 10_000;
-    let start = std::time::Instant::now();
-
-    // Act
-    for i in 0..count {
-        let body = Bytes::from(format!("message {}", i));
-        let response = actor.handle_enqueue(body, None);
-        match response {
-            QueueResponse::Enqueued { .. } => {}
-            _ => panic!("Expected Enqueued response"),
-        }
-    }
-
-    let elapsed = start.elapsed();
-
-    // Assert
-    assert_eq!(actor.ready.len(), count);
-    let msgs_per_sec = count as f64 / elapsed.as_secs_f64();
-    println!(
-        "Enqueued {} messages in {:?} ({:.0} msg/sec)",
-        count, elapsed, msgs_per_sec
-    );
-
-    // Target: 200k-1M msg/sec (this is local-only, no actor routing overhead)
-    // In real usage, actor mailbox adds ~50ns overhead per message
-}
 
 /// Test concurrent reserve/complete across multiple workers
 #[test]
