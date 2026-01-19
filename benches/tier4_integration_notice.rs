@@ -197,7 +197,7 @@ fn bench_high_throughput_sustained_load(c: &mut Criterion) {
     //! - GC impact at high message rates
 
     let actor = NoticeRouteActor::new(RouteFamily::new(0));
-    let payloads = vec![
+    let payloads = [
         Bytes::from_static(b"msg1"),
         Bytes::from_static(b"msg2"),
         Bytes::from_static(b"msg3"),

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
@@ -69,7 +69,7 @@ fn should_scale_linearly_with_subscription_count() {
     let small_total: usize = small_sinks.iter().map(|s| s.count()).sum();
     let large_total: usize = large_sinks.iter().map(|s| s.count()).sum();
 
-    // Assert: deliveries scale linearly (large â‰ˆ 4 * small)
+    // Assert: deliveries scale linearly (large Ã¢â€°Ë† 4 * small)
     assert_eq!(small_total, small_n);
     assert_eq!(large_total, large_n);
     assert!(large_total >= small_total * 4, "expected large >= 4*small");

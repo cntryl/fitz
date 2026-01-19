@@ -238,6 +238,25 @@ pub enum QueueMessage {
     LeaseExpired { id: MessageId },
 }
 
+/// Queue errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueError {
+    /// Invalid realm format (3010)
+    InvalidRealm,
+
+    /// Realm mismatch - operation targets different realm than active subscription (3011)
+    RealmMismatch,
+}
+
+impl QueueError {
+    pub fn code(&self) -> u16 {
+        match self {
+            QueueError::InvalidRealm => 3010,
+            QueueError::RealmMismatch => 3011,
+        }
+    }
+}
+
 /// Queue operation responses
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueResponse {

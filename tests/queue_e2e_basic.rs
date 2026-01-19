@@ -1,4 +1,4 @@
-//! Queue domain integration tests
+﻿//! Queue domain integration tests
 //!
 //! Tests durability, restart semantics, and end-to-end workflows.
 
@@ -264,8 +264,8 @@ fn should_have_low_reserve_latency() {
     // Assert
     println!("Average reserve latency: {:?}", avg_latency);
 
-    // Target: <10Ã‚Âµs (excluding Midge read cost)
-    // Actual: ~1-2Ã‚Âµs for in-memory operations + Midge read overhead
+    // Target: <10Ãƒâ€šÃ‚Âµs (excluding Midge read cost)
+    // Actual: ~1-2Ãƒâ€šÃ‚Âµs for in-memory operations + Midge read overhead
 }
 
 /// Test complete latency (performance)
@@ -320,6 +320,6 @@ fn should_have_low_complete_latency() {
     // Assert
     println!("Average complete latency: {:?}", avg_latency);
 
-    // Target: <5Ã‚Âµs (excluding Midge delete cost)
-    // Actual: ~1Ã‚Âµs for in-memory ops + Midge delete overhead
+    // Target: <5Ãƒâ€šÃ‚Âµs (excluding Midge delete cost)
+    // Actual: ~1Ãƒâ€šÃ‚Âµs for in-memory ops + Midge delete overhead
 }

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
@@ -9,7 +9,7 @@ use fitz::runtime::actor::Context;
 use fitz::testkit::notice::{addr, make_router, session_id, TestSink};
 
 // This file asserts the basic golden path: one subscription receives one notification.
-// Keep tests simple â€” no fanout or scale complexity here.
+// Keep tests simple Ã¢â‚¬â€ no fanout or scale complexity here.
 
 /// E2E basic test: single notification delivered to single matching subscription
 #[test]

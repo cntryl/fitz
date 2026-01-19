@@ -129,3 +129,22 @@ mod tests {
         assert_eq!(dec.cron, "0 12 * * 1-5");
     }
 }
+
+/// Schedule errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleError {
+    /// Invalid realm format (3040)
+    InvalidRealm,
+
+    /// Realm mismatch - operation targets different realm than existing schedule (3041)
+    RealmMismatch,
+}
+
+impl ScheduleError {
+    pub fn code(&self) -> u16 {
+        match self {
+            ScheduleError::InvalidRealm => 3040,
+            ScheduleError::RealmMismatch => 3041,
+        }
+    }
+}

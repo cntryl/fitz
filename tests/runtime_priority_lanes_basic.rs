@@ -1,4 +1,4 @@
-// Priority Lanes Basic Functionality Tests
+﻿// Priority Lanes Basic Functionality Tests
 //
 // Tests demonstrating that the dual-lane priority system works correctly:
 // 1. High-priority messages process first

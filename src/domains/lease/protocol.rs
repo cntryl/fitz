@@ -57,6 +57,25 @@ impl LeaseKey {
     }
 }
 
+/// Lease errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseError {
+    /// Invalid realm format (3020)
+    InvalidRealm,
+
+    /// Realm mismatch - operation targets different realm than existing lease (3021)
+    RealmMismatch,
+}
+
+impl LeaseError {
+    pub fn code(&self) -> u16 {
+        match self {
+            LeaseError::InvalidRealm => 3020,
+            LeaseError::RealmMismatch => 3021,
+        }
+    }
+}
+
 /// Lease domain messages
 ///
 /// All lease operations are asynchronous and return responses via

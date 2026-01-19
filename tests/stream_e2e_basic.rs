@@ -1,4 +1,4 @@
-//! Stream E2E Basic Tests
+﻿//! Stream E2E Basic Tests
 //!
 //! Tests the golden path for stream operations:
 //! - Basic append-commit flow with session
@@ -54,7 +54,7 @@ fn should_append_single_event_to_stream() {
 
     // Act - Begin session
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -65,7 +65,7 @@ fn should_append_single_event_to_stream() {
 
     // Append single event
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "test_session".to_string(),
             body: Bytes::from("event_data"),
             metadata: None,
@@ -75,7 +75,7 @@ fn should_append_single_event_to_stream() {
 
     // Commit session
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "test_session".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -104,7 +104,7 @@ fn should_append_batch_of_events() {
 
     // Act - Begin session
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -116,7 +116,7 @@ fn should_append_batch_of_events() {
     // Append multiple events
     for i in 0..5 {
         actor.receive(
-            StreamMessage::AppendToSession {
+            StreamMessage::Append {
                 session_id: "batch_session".to_string(),
                 body: Bytes::from(format!("event_{}", i)),
                 metadata: Some(Bytes::from(format!("meta_{}", i))),
@@ -127,7 +127,7 @@ fn should_append_batch_of_events() {
 
     // Commit session
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "batch_session".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -156,7 +156,7 @@ fn should_assign_sequential_resource_offsets() {
 
     // Act - First session
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -166,7 +166,7 @@ fn should_assign_sequential_resource_offsets() {
     );
 
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "session1".to_string(),
             body: Bytes::from("event_0"),
             metadata: None,
@@ -175,7 +175,7 @@ fn should_assign_sequential_resource_offsets() {
     );
 
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "session1".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -184,7 +184,7 @@ fn should_assign_sequential_resource_offsets() {
 
     // Second session (should start at offset 1)
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 1,
@@ -194,7 +194,7 @@ fn should_assign_sequential_resource_offsets() {
     );
 
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "session2".to_string(),
             body: Bytes::from("event_1"),
             metadata: None,
@@ -203,7 +203,7 @@ fn should_assign_sequential_resource_offsets() {
     );
 
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "session2".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -236,7 +236,7 @@ fn should_handle_session_with_ingest_metadata() {
 
     // Act - Begin session with metadata
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -246,7 +246,7 @@ fn should_handle_session_with_ingest_metadata() {
     );
 
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "import_session".to_string(),
             body: Bytes::from("data"),
             metadata: None,
@@ -255,7 +255,7 @@ fn should_handle_session_with_ingest_metadata() {
     );
 
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "import_session".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -281,7 +281,7 @@ fn should_abort_session_without_committing() {
 
     // Act - Begin session and append
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -291,7 +291,7 @@ fn should_abort_session_without_committing() {
     );
 
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "abort_session".to_string(),
             body: Bytes::from("should_not_commit"),
             metadata: None,
@@ -301,7 +301,7 @@ fn should_abort_session_without_committing() {
 
     // Abort instead of commit
     actor.receive(
-        StreamMessage::AbortSession {
+        StreamMessage::Rollback {
             session_id: "abort_session".to_string(),
         },
         &mut ctx,
@@ -309,7 +309,7 @@ fn should_abort_session_without_committing() {
 
     // Assert - Stream still at offset 0
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 0, // Should still be 0
@@ -329,7 +329,7 @@ fn should_peek_at_last_committed_event() {
     // Commit several events
     for i in 0..3 {
         actor.receive(
-            StreamMessage::BeginSession {
+            StreamMessage::Begin {
                 family_id: family,
                 route: route.clone(),
                 expected_offset: i,
@@ -339,7 +339,7 @@ fn should_peek_at_last_committed_event() {
         );
 
         actor.receive(
-            StreamMessage::AppendToSession {
+            StreamMessage::Append {
                 session_id: format!("session_{}", i),
                 body: Bytes::from(format!("event_{}", i)),
                 metadata: None,
@@ -348,7 +348,7 @@ fn should_peek_at_last_committed_event() {
         );
 
         actor.receive(
-            StreamMessage::CommitSession {
+            StreamMessage::Commit {
                 session_id: format!("session_{}", i),
                 mode: StreamWriteMode::Sync,
             },
@@ -358,7 +358,7 @@ fn should_peek_at_last_committed_event() {
 
     // Act - Peek should return last event
     actor.receive(
-        StreamMessage::Peek {
+        StreamMessage::Last {
             family_id: family,
             route,
         },
@@ -377,7 +377,7 @@ fn should_isolate_streams_across_resources() {
 
     // Act - Append to both streams
     actor1.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: Route::new("stream://realm1/area1/orders/append"),
             expected_offset: 0,
@@ -387,7 +387,7 @@ fn should_isolate_streams_across_resources() {
     );
 
     actor2.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: Route::new("stream://realm1/area1/invoices/append"),
             expected_offset: 0,

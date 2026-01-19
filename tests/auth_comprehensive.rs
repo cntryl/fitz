@@ -1,6 +1,6 @@
-//! Comprehensive auth tests for token expiration, reauth flow, and edge cases
+﻿//! Comprehensive auth tests for token expiration, reauth flow, and edge cases
 //!
-//! Tests the complete auth → session → authorization pipeline with focus on:
+//! Tests the complete auth â†’ session â†’ authorization pipeline with focus on:
 //! - Token expiration enforcement in authorize()
 //! - Token refresh via reauth()
 //! - Edge cases and security boundaries

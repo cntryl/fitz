@@ -30,7 +30,7 @@ fn bench_acquire_renew_cycle(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("acquire_renew_cycle");
     group.measurement_time(Duration::from_millis(500));
-    group.throughput(Throughput::Elements(1 as u64));
+    group.throughput(Throughput::Elements(1_u64));
 
     group.bench_function("renew_cycle", |b| {
         b.iter(|| {
@@ -52,7 +52,7 @@ fn bench_full_lifecycle(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("full_lifecycle");
     group.measurement_time(Duration::from_millis(500));
-    group.throughput(Throughput::Elements(1 as u64));
+    group.throughput(Throughput::Elements(1_u64));
 
     group.bench_function("acquire_renew_release", |b| {
         b.iter(|| {
@@ -97,7 +97,7 @@ fn bench_contended_renewal(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("contended_renewal");
     group.measurement_time(Duration::from_millis(500));
-    group.throughput(Throughput::Elements(10 as u64));
+    group.throughput(Throughput::Elements(10_u64));
 
     group.bench_function("ten_concurrent_renewals", |b| {
         b.iter(|| {
@@ -106,7 +106,7 @@ fn bench_contended_renewal(c: &mut Criterion) {
 
             // Setup: create 10 leases
             for i in 0..10 {
-                let route = Route::new(&format!("lease://realm/locks/lock-{}/acquire", i));
+                let route = Route::new(format!("lease://realm/locks/lock-{}/acquire", i));
                 let acquire_msg = LeaseMessage::Acquire {
                     family_id: family,
                     route,
@@ -118,7 +118,7 @@ fn bench_contended_renewal(c: &mut Criterion) {
 
             // Renew all of them
             for i in 0..10 {
-                let route = Route::new(&format!("lease://realm/locks/lock-{}/renew", i));
+                let route = Route::new(format!("lease://realm/locks/lock-{}/renew", i));
                 let renew_msg = LeaseMessage::Renew {
                     family_id: black_box(family),
                     route: black_box(route),
@@ -150,7 +150,7 @@ fn bench_token_validation(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("token_validation");
     group.measurement_time(Duration::from_millis(500));
-    group.throughput(Throughput::Elements(1 as u64));
+    group.throughput(Throughput::Elements(1_u64));
 
     // Measure cost of fencing (wrong token)
     group.bench_function("renew_with_wrong_token", |b| {
@@ -174,7 +174,7 @@ fn bench_multi_owner_contention(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("multi_owner_contention");
     group.measurement_time(Duration::from_millis(500));
-    group.throughput(Throughput::Elements(1 as u64));
+    group.throughput(Throughput::Elements(1_u64));
 
     group.bench_function("acquire_held_by_other", |b| {
         let mut actor = LeaseActor::new(family);

@@ -125,7 +125,7 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
 
                     // BeginSession
                     actors[res_idx].receive(
-                        StreamMessage::BeginSession {
+                        StreamMessage::Begin {
                             family_id,
                             route: route.clone(),
                             expected_offset: expected_offsets[res_idx],
@@ -141,7 +141,7 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
                     for _ in 0..batch_size {
                         let payload = black_box(&payloads[payload_offset % payloads.len()]);
                         actors[res_idx].receive(
-                            StreamMessage::AppendToSession {
+                            StreamMessage::Append {
                                 session_id: session_id.clone(),
                                 body: Bytes::from(payload.clone()),
                                 metadata: None,
@@ -153,7 +153,7 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
 
                     // CommitSession
                     actors[res_idx].receive(
-                        StreamMessage::CommitSession {
+                        StreamMessage::Commit {
                             session_id,
                             mode: StreamWriteMode::Sync,
                         },
@@ -198,7 +198,7 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
 
                 // BeginSession
                 actors[res_idx].receive(
-                    StreamMessage::BeginSession {
+                    StreamMessage::Begin {
                         family_id,
                         route: route.clone(),
                         expected_offset: expected_offsets[res_idx],
@@ -214,7 +214,7 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
                     let idx = global_event_idx % payloads.len();
                     let payload = black_box(&payloads[idx]);
                     actors[res_idx].receive(
-                        StreamMessage::AppendToSession {
+                        StreamMessage::Append {
                             session_id: session_id.clone(),
                             body: Bytes::from(payload.clone()),
                             metadata: None,
@@ -226,7 +226,7 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
 
                 // CommitSession
                 actors[res_idx].receive(
-                    StreamMessage::CommitSession {
+                    StreamMessage::Commit {
                         session_id,
                         mode: StreamWriteMode::Sync,
                     },
@@ -262,7 +262,7 @@ fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
 
             for chunk_start in (0..100).step_by(10) {
                 actor.receive(
-                    StreamMessage::BeginSession {
+                    StreamMessage::Begin {
                         family_id,
                         route: route.clone(),
                         expected_offset,
@@ -275,7 +275,7 @@ fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
 
                 for i in 0..10 {
                     actor.receive(
-                        StreamMessage::AppendToSession {
+                        StreamMessage::Append {
                             session_id: session_id.clone(),
                             body: Bytes::from(payloads[(chunk_start + i) % payloads.len()].clone()),
                             metadata: None,
@@ -285,7 +285,7 @@ fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
                 }
 
                 actor.receive(
-                    StreamMessage::CommitSession {
+                    StreamMessage::Commit {
                         session_id,
                         mode: StreamWriteMode::Sync,
                     },

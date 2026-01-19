@@ -1,4 +1,4 @@
-//! Stream Authorization Tests
+﻿//! Stream Authorization Tests
 //!
 //! Tests that stream operations enforce session-level permissions:
 //! - Write operations require Write access
@@ -73,7 +73,7 @@ fn should_allow_begin_session_with_write_permission() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
 
-    let msg = StreamMessage::BeginSession {
+    let msg = StreamMessage::Begin {
         family_id: family,
         route: route.clone(),
         expected_offset: 0,
@@ -95,7 +95,7 @@ fn should_reject_begin_session_without_write_permission() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
 
-    let msg = StreamMessage::BeginSession {
+    let msg = StreamMessage::Begin {
         family_id: family,
         route,
         expected_offset: 0,
@@ -166,7 +166,7 @@ fn should_reject_commit_without_write_permission() {
     let route = Route::new("stream://realm1/area1/orders/append");
 
     // Begin session with write permission
-    let begin_msg = StreamMessage::BeginSession {
+    let begin_msg = StreamMessage::Begin {
         family_id: family,
         route,
         expected_offset: 0,
@@ -176,7 +176,7 @@ fn should_reject_commit_without_write_permission() {
 
     // Try to commit with read-only session (different session, no write permission for commit)
     let session_read = make_session_with_read_only();
-    let commit_msg = StreamMessage::CommitSession {
+    let commit_msg = StreamMessage::Commit {
         session_id: "session_id".to_string(),
         mode: StreamWriteMode::Sync,
     };
@@ -203,7 +203,7 @@ fn should_enforce_realm_boundary_in_permissions() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm2/area1/orders/append");
 
-    let msg = StreamMessage::BeginSession {
+    let msg = StreamMessage::Begin {
         family_id: family,
         route,
         expected_offset: 0,
@@ -231,7 +231,7 @@ fn should_enforce_area_boundary_in_permissions() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area2/orders/append");
 
-    let msg = StreamMessage::BeginSession {
+    let msg = StreamMessage::Begin {
         family_id: family,
         route,
         expected_offset: 0,
@@ -258,7 +258,7 @@ fn should_allow_wildcard_permission_for_all_resources() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/any_resource/append");
 
-    let msg = StreamMessage::BeginSession {
+    let msg = StreamMessage::Begin {
         family_id: family,
         route,
         expected_offset: 0,
@@ -299,7 +299,7 @@ fn should_deny_write_with_read_only_permission() {
     let (mut actor, mut ctx) = make_stream_actor("realm1", "area1", "orders");
     let session_read = make_session_with_read_only();
     let family = *ctx.address().family();
-    let write_msg = StreamMessage::BeginSession {
+    let write_msg = StreamMessage::Begin {
         family_id: family,
         route: Route::new("stream://realm1/area1/orders/append"),
         expected_offset: 0,
@@ -320,7 +320,7 @@ fn should_check_permissions_on_peek_operation() {
     let session_no_access = make_session_with_no_access();
     let family = *ctx.address().family();
 
-    let msg = StreamMessage::Peek {
+    let msg = StreamMessage::Last {
         family_id: family,
         route: Route::new("stream://realm1/area1/orders/peek"),
     };

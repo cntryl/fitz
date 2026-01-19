@@ -1,6 +1,6 @@
-//! KV domain end-to-end tests
+﻿//! KV domain end-to-end tests
 //!
-//! Tests full transaction lifecycle: Begin → Get/Put/Delete/Scan → Commit/Rollback
+//! Tests full transaction lifecycle: Begin â†’ Get/Put/Delete/Scan â†’ Commit/Rollback
 //! across multiple resources, families, and write options.
 
 use bytes::Bytes;

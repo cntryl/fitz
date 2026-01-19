@@ -26,6 +26,7 @@ use bytes::Bytes;
 use cntryl_midge::{ColumnFamilyId, Engine as MidgeEngine, TransactionMode};
 use std::sync::Arc;
 
+use crate::auth::validate_realm_format;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
@@ -34,6 +35,8 @@ use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode}
 
 /// Active KV transaction state
 pub struct ActiveKvTx {
+    /// Realm this transaction is bound to (resolved from auth)
+    pub bound_realm: String,
     /// Resource (table) this transaction is bound to
     pub bound_resource: String,
     /// Resolved column family for this transaction
@@ -66,12 +69,12 @@ impl KvActor {
         match msg {
             KvMessage::Begin {
                 route_family,
-                realm: _,
+                realm,
                 area: _,
                 resource,
                 mode,
                 write_options,
-            } => self.handle_begin(route_family, resource, mode, write_options),
+            } => self.handle_begin(route_family, realm, resource, mode, write_options),
             KvMessage::Commit => self.handle_commit(),
             KvMessage::Rollback => self.handle_rollback(),
             KvMessage::Get {
@@ -114,6 +117,7 @@ impl KvActor {
     fn handle_begin(
         &mut self,
         route_family: RouteFamily,
+        realm: String,
         resource: String,
         mode: TxMode,
         write_options: cntryl_midge::WriteOptions,
@@ -122,6 +126,13 @@ impl KvActor {
         if self.active_tx.is_some() {
             return KvResponse::Error {
                 error: KvError::TxAlreadyActive,
+            };
+        }
+
+        // Validate realm format (strict opaque identifier check)
+        if validate_realm_format(&realm).is_err() {
+            return KvResponse::Error {
+                error: KvError::InvalidRealm,
             };
         }
 
@@ -137,6 +148,7 @@ impl KvActor {
         match self.store.begin_tx(cf, tx_mode) {
             Ok(tx) => {
                 self.active_tx = Some(ActiveKvTx {
+                    bound_realm: realm,
                     bound_resource: resource,
                     column_family: cf,
                     tx,
@@ -203,7 +215,8 @@ impl KvActor {
             };
         }
 
-        let scoped_key = Self::encode_scoped_key(&resource, &key);
+        let realm = active.bound_realm.clone();
+        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
@@ -243,7 +256,8 @@ impl KvActor {
             };
         }
 
-        let scoped_key = Self::encode_scoped_key(&resource, &key);
+        let realm = active.bound_realm.clone();
+        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
 
         match active.tx.put(scoped_key, value.to_vec(), None) {
             Ok(()) => KvResponse::PutOk,
@@ -277,7 +291,8 @@ impl KvActor {
         }
 
         // Check if key exists first
-        let scoped_key = Self::encode_scoped_key(&resource, &key);
+        let realm = active.bound_realm.clone();
+        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(_)) => {
@@ -323,7 +338,8 @@ impl KvActor {
             };
         }
 
-        let scoped_key = Self::encode_scoped_key(&resource, &key);
+        let realm = active.bound_realm.clone();
+        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
 
         match active.tx.delete(scoped_key) {
             Ok(()) => KvResponse::DeleteOk,
@@ -363,8 +379,9 @@ impl KvActor {
             };
         }
 
-        let scoped_start = Self::encode_scoped_key(&resource, &start);
-        let scoped_end = Self::encode_scoped_key(&resource, &end);
+        let realm = active.bound_realm.clone();
+        let scoped_start = Self::encode_scoped_key(&realm, &resource, &start);
+        let scoped_end = Self::encode_scoped_key(&realm, &resource, &end);
 
         match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => KvResponse::DeleteRangeOk,
@@ -396,16 +413,17 @@ impl KvActor {
             };
         }
 
-        let prefix = Self::resource_prefix(&resource);
+        let realm = active.bound_realm.clone();
+        let prefix = Self::realm_resource_prefix(&realm, &resource);
         let start_key = query
             .start
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&resource, k))
+            .map(|k| Self::encode_scoped_key(&realm, &resource, k))
             .unwrap_or_else(|| prefix.clone());
         let end_key = query
             .end
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&resource, k))
+            .map(|k| Self::encode_scoped_key(&realm, &resource, k))
             .unwrap_or_else(|| Self::prefix_range_end(&prefix));
 
         // Build Midge Query
@@ -427,7 +445,7 @@ impl KvActor {
                 let mut items = Vec::new();
 
                 while let Some((key, value)) = iterator.next() {
-                    let user_key = match Self::strip_scoped_prefix(&resource, &key) {
+                    let user_key = match Self::strip_scoped_prefix(&realm, &resource, &key) {
                         Some(k) => k,
                         None => continue,
                     };
@@ -455,6 +473,15 @@ impl KvActor {
         })
     }
 
+    fn realm_resource_prefix(realm: &str, resource: &str) -> Vec<u8> {
+        let mut prefix = Vec::with_capacity(realm.len() + resource.len() + 2);
+        prefix.extend_from_slice(realm.as_bytes());
+        prefix.push(0);
+        prefix.extend_from_slice(resource.as_bytes());
+        prefix.push(0);
+        prefix
+    }
+
     /// Resolve column family from RouteFamily and resource
     ///
     /// Uses explicit mapping: ColumnFamilyId = RouteFamily.id (cast to u32)
@@ -475,14 +502,14 @@ impl KvActor {
         prefix
     }
 
-    fn encode_scoped_key(resource: &str, user_key: &[u8]) -> Vec<u8> {
-        let mut out = Self::resource_prefix(resource);
+    fn encode_scoped_key(realm: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
+        let mut out = Self::realm_resource_prefix(realm, resource);
         out.extend_from_slice(user_key);
         out
     }
 
-    fn strip_scoped_prefix(resource: &str, scoped_key: &[u8]) -> Option<Vec<u8>> {
-        let prefix = Self::resource_prefix(resource);
+    fn strip_scoped_prefix(realm: &str, resource: &str, scoped_key: &[u8]) -> Option<Vec<u8>> {
+        let prefix = Self::realm_resource_prefix(realm, resource);
         scoped_key
             .strip_prefix(prefix.as_slice())
             .map(|rest| rest.to_vec())
@@ -1163,7 +1190,7 @@ mod tests {
         // Assert - Just verify it returns results (order depends on storage)
         match response {
             KvResponse::ScanResult { items, .. } => {
-                assert!(items.len() > 0);
+                assert!(!items.is_empty());
             }
             _ => panic!("Expected ScanResult"),
         }

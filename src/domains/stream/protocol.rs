@@ -122,7 +122,7 @@ pub enum StreamMessage {
     /// Begin streaming append session
     /// Client provides: resource path, expected_offset, optional metadata
     /// NO client-supplied area/realm offsets
-    BeginSession {
+    Begin {
         family_id: RouteFamily,
         route: Route,
         expected_offset: u64,
@@ -130,7 +130,7 @@ pub enum StreamMessage {
     },
 
     /// Append event to active session
-    AppendToSession {
+    Append {
         session_id: String,
         body: Bytes,
         metadata: Option<Bytes>,
@@ -138,13 +138,13 @@ pub enum StreamMessage {
 
     /// Commit session (atomic write)
     /// Requires the caller to specify a write mode: Buffered or Sync.
-    CommitSession {
+    Commit {
         session_id: String,
         mode: StreamWriteMode,
     }, // caller must specify StreamWriteMode (Buffered|Sync)
 
-    /// Abort session (discard)
-    AbortSession { session_id: String },
+    /// Rollback session (discard)
+    Rollback { session_id: String },
 
     /// Read events from stream
     Read {
@@ -155,8 +155,8 @@ pub enum StreamMessage {
         max_bytes: Option<usize>,
     },
 
-    /// Peek at the last committed record in stream (tail operation)
-    Peek {
+    /// Get the last visible entry in the stream (tail operation)
+    Last {
         family_id: RouteFamily,
         route: Route,
     },
@@ -338,6 +338,12 @@ pub struct GetMetadataResponse {
 /// Stream errors
 #[derive(Debug, Clone, Copy)]
 pub enum StreamError {
+    /// Invalid realm format (3000)
+    InvalidRealm,
+
+    /// Realm mismatch - operation targets different realm than active session (3001)
+    RealmMismatch,
+
     /// Optimistic concurrency conflict - expected_offset mismatch (2001)
     ConcurrencyConflict,
 
@@ -366,6 +372,8 @@ pub enum StreamError {
 impl StreamError {
     pub fn code(&self) -> u16 {
         match self {
+            StreamError::InvalidRealm => 3000,
+            StreamError::RealmMismatch => 3001,
             StreamError::ConcurrencyConflict => 2001,
             StreamError::SessionAlreadyActive => 2002,
             StreamError::SessionNotFound => 2003,

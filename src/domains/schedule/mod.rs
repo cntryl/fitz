@@ -6,6 +6,8 @@
 
 pub mod actor;
 pub mod protocol;
+pub mod session;
 pub mod store;
 
 pub use actor::{CronSchedule, ScheduleActor, ScheduleMessage};
+pub use session::SessionActor;

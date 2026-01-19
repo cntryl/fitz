@@ -21,7 +21,7 @@ fn bench_single_route_intensive(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("single_route_intensive");
     group.measurement_time(Duration::from_millis(500));
-    group.throughput(Throughput::Elements(100 as u64));
+    group.throughput(Throughput::Elements(100_u64));
 
     let mut idx = 0;
     group.bench_function("acquire_release_sequence", |b| {
@@ -185,7 +185,7 @@ fn bench_mixed_operations_high_load(c: &mut Criterion) {
     let mut group = c.benchmark_group("mixed_operations_high_load");
     group.measurement_time(Duration::from_millis(500));
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3 as u64));
+    group.throughput(Throughput::Elements(3_u64));
 
     let mut phase = 0;
     group.bench_function("cycling_query_renew_operations", |b| {

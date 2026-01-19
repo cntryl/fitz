@@ -158,3 +158,22 @@ impl NotifyMessage {
         Self { route, payload }
     }
 }
+
+/// Notice errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeError {
+    /// Invalid realm format (3030)
+    InvalidRealm,
+
+    /// Realm mismatch - operation targets different realm than active subscription (3031)
+    RealmMismatch,
+}
+
+impl NoticeError {
+    pub fn code(&self) -> u16 {
+        match self {
+            NoticeError::InvalidRealm => 3030,
+            NoticeError::RealmMismatch => 3031,
+        }
+    }
+}

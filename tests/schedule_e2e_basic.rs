@@ -1,4 +1,4 @@
-//! Schedule domain E2E integration tests
+﻿//! Schedule domain E2E integration tests
 //!
 //! Tests schedule protocol encoding/decoding and cron parsing validation
 //! Note: Persistence tests skipped due to Midge commit() bug with writes
@@ -205,8 +205,8 @@ fn should_handle_unicode_in_resource_and_operation() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 0 * * *".to_string(),
-        resource: "café_backup".to_string(),
-        operation: "café_sync".to_string(),
+        resource: "cafÃ©_backup".to_string(),
+        operation: "cafÃ©_sync".to_string(),
     };
 
     // Act
@@ -216,8 +216,8 @@ fn should_handle_unicode_in_resource_and_operation() {
     // Assert
     assert!(decoded.is_ok());
     let decoded = decoded.unwrap();
-    assert_eq!(decoded.resource, "café_backup");
-    assert_eq!(decoded.operation, "café_sync");
+    assert_eq!(decoded.resource, "cafÃ©_backup");
+    assert_eq!(decoded.operation, "cafÃ©_sync");
 }
 
 #[test]

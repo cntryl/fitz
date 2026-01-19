@@ -33,7 +33,7 @@ impl SessionActor {
         actor: &mut StreamActor,
         ctx: &mut Context<StreamActor>,
     ) -> Result<(), String> {
-        if let StreamMessage::BeginSession { ref route, .. } = msg {
+        if let StreamMessage::Begin { ref route, .. } = msg {
             if !self.permissions.allows(route, Access::Write) {
                 return Err("unauthorized: begin session".to_string());
             }
@@ -52,7 +52,7 @@ impl SessionActor {
         actor: &mut StreamActor,
         ctx: &mut Context<StreamActor>,
     ) -> Result<(), String> {
-        if let StreamMessage::AppendToSession { .. } = msg {
+        if let StreamMessage::Append { .. } = msg {
             // Permission was checked when session was begun
             actor.receive(msg, ctx);
             Ok(())
@@ -68,7 +68,7 @@ impl SessionActor {
         actor: &mut StreamActor,
         ctx: &mut Context<StreamActor>,
     ) -> Result<(), String> {
-        if let StreamMessage::CommitSession { .. } = msg {
+        if let StreamMessage::Commit { .. } = msg {
             // Permission was checked when session was begun
             actor.receive(msg, ctx);
             Ok(())
@@ -77,14 +77,14 @@ impl SessionActor {
         }
     }
 
-    /// Abort session
+    /// Rollback session
     pub fn abort_session(
         &self,
         msg: StreamMessage,
         actor: &mut StreamActor,
         ctx: &mut Context<StreamActor>,
     ) -> Result<(), String> {
-        if let StreamMessage::AbortSession { .. } = msg {
+        if let StreamMessage::Rollback { .. } = msg {
             actor.receive(msg, ctx);
             Ok(())
         } else {
@@ -101,7 +101,7 @@ impl SessionActor {
     ) -> Result<(), String> {
         let route = match &msg {
             StreamMessage::Read { route, .. } => route,
-            StreamMessage::Peek { route, .. } => route,
+            StreamMessage::Last { route, .. } => route,
             StreamMessage::GetMetadata { route, .. } => route,
             _ => return Err("invalid message type".to_string()),
         };

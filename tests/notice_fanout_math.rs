@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
@@ -8,7 +8,7 @@ use fitz::runtime::actor::Context;
 
 use fitz::testkit::notice::{addr, make_router, session_id, TestSink};
 
-// This file asserts notification fanout math: deterministic N â†’ M delivery counts.
+// This file asserts notification fanout math: deterministic N Ã¢â€ â€™ M delivery counts.
 // It MUST NOT test performance or internal routing mechanics.
 
 #[test]

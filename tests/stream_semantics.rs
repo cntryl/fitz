@@ -1,4 +1,4 @@
-//! Stream Semantics Tests
+﻿//! Stream Semantics Tests
 //!
 //! Tests core stream invariants and error conditions:
 //! - Optimistic concurrency control with expected_offset
@@ -20,7 +20,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
     let route = Route::new("stream://realm1/area1/orders/append");
     // Commit first event (offset 0)
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -29,7 +29,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "session1".to_string(),
             body: Bytes::from("event_0"),
             metadata: None,
@@ -37,7 +37,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "session1".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -45,7 +45,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
     );
     // Act - Try to begin session with wrong expected_offset
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 0, // Wrong! Should be 1
@@ -64,7 +64,7 @@ fn should_reject_second_session_when_one_active() {
     let route = Route::new("stream://realm1/area1/orders/append");
     // Act - Begin first session
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -74,7 +74,7 @@ fn should_reject_second_session_when_one_active() {
     );
     // Try to begin second session
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 0,
@@ -92,7 +92,7 @@ fn should_allow_new_session_after_commit() {
     let route = Route::new("stream://realm1/area1/orders/append");
     // Act - First session
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -101,7 +101,7 @@ fn should_allow_new_session_after_commit() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "session1".to_string(),
             body: Bytes::from("event_0"),
             metadata: None,
@@ -109,7 +109,7 @@ fn should_allow_new_session_after_commit() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "session1".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -117,7 +117,7 @@ fn should_allow_new_session_after_commit() {
     );
     // Second session (should succeed)
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 1,
@@ -135,7 +135,7 @@ fn should_allow_new_session_after_abort() {
     let route = Route::new("stream://realm1/area1/orders/append");
     // Act - Begin and abort
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -144,14 +144,14 @@ fn should_allow_new_session_after_abort() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::AbortSession {
+        StreamMessage::Rollback {
             session_id: "session1".to_string(),
         },
         &mut ctx,
     );
     // New session (should succeed with same offset)
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 0, // Still 0 since previous aborted
@@ -352,7 +352,7 @@ fn should_request_lease_when_insufficient_capacity() {
     let route = Route::new("stream://realm1/area1/orders/append");
     // Act - Begin session (will have empty leases initially)
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route: route.clone(),
             expected_offset: 0,
@@ -363,7 +363,7 @@ fn should_request_lease_when_insufficient_capacity() {
     // Append events
     for i in 0..10 {
         actor.receive(
-            StreamMessage::AppendToSession {
+            StreamMessage::Append {
                 session_id: "large_session".to_string(),
                 body: Bytes::from(format!("event_{}", i)),
                 metadata: None,
@@ -373,7 +373,7 @@ fn should_request_lease_when_insufficient_capacity() {
     }
     // Try to commit (should request lease if insufficient)
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "large_session".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -390,7 +390,7 @@ fn should_process_pending_commits_after_lease_grant() {
     let route = Route::new("stream://realm1/area1/orders/append");
     // Begin session and append
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 0,
@@ -399,7 +399,7 @@ fn should_process_pending_commits_after_lease_grant() {
         &mut ctx,
     );
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "pending_session".to_string(),
             body: Bytes::from("event_data"),
             metadata: None,
@@ -408,7 +408,7 @@ fn should_process_pending_commits_after_lease_grant() {
     );
     // Try commit (will be queued if no lease)
     actor.receive(
-        StreamMessage::CommitSession {
+        StreamMessage::Commit {
             session_id: "pending_session".to_string(),
             mode: StreamWriteMode::Sync,
         },
@@ -436,7 +436,7 @@ fn should_reject_event_exceeding_max_size() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
     actor.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: family,
             route,
             expected_offset: 0,
@@ -447,7 +447,7 @@ fn should_reject_event_exceeding_max_size() {
     // Act - Try to append oversized event (>1MB)
     let huge_payload = vec![0u8; 2 * 1024 * 1024]; // 2 MB
     actor.receive(
-        StreamMessage::AppendToSession {
+        StreamMessage::Append {
             session_id: "oversized_session".to_string(),
             body: Bytes::from(huge_payload),
             metadata: None,
@@ -464,7 +464,7 @@ fn should_enforce_realm_isolation() {
     // Both use same area/resource name but different realms
     // Act - Append to both
     actor1.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: *ctx1.address().family(),
             route: Route::new("stream://realm1/area1/orders/append"),
             expected_offset: 0,
@@ -473,7 +473,7 @@ fn should_enforce_realm_isolation() {
         &mut ctx1,
     );
     actor2.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: *ctx2.address().family(),
             route: Route::new("stream://realm2/area1/orders/append"),
             expected_offset: 0,
@@ -491,7 +491,7 @@ fn should_enforce_area_isolation_within_realm() {
     // Same realm, different areas
     // Act - Both should have independent offsets
     actor1.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: *ctx1.address().family(),
             route: Route::new("stream://realm1/area1/orders/append"),
             expected_offset: 0,
@@ -500,7 +500,7 @@ fn should_enforce_area_isolation_within_realm() {
         &mut ctx1,
     );
     actor2.receive(
-        StreamMessage::BeginSession {
+        StreamMessage::Begin {
             family_id: *ctx2.address().family(),
             route: Route::new("stream://realm1/area2/orders/append"),
             expected_offset: 0,

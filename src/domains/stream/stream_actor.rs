@@ -320,8 +320,8 @@ impl StreamActor {
         Ok(ReadResponse { records, cursor })
     }
 
-    fn handle_peek(&self) -> Result<PeekResponse, StreamError> {
-        // Peek at last committed record (tail operation)
+    fn handle_last(&self) -> Result<PeekResponse, StreamError> {
+        // Get the last visible entry in the stream (tail operation)
         let record = self
             .store
             .peek_resource(self.family_id.id(), &self.realm, &self.area, &self.resource)
@@ -369,24 +369,24 @@ impl Actor for StreamActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            StreamMessage::BeginSession {
+            StreamMessage::Begin {
                 expected_offset,
                 ingest_metadata,
                 ..
             } => {
                 let _ = self.handle_begin_session(expected_offset, ingest_metadata, ctx);
             }
-            StreamMessage::AppendToSession {
+            StreamMessage::Append {
                 session_id,
                 body,
                 metadata,
             } => {
                 let _ = self.handle_append_to_session(&session_id, body, metadata);
             }
-            StreamMessage::CommitSession { session_id, mode } => {
+            StreamMessage::Commit { session_id, mode } => {
                 let _ = self.handle_commit_session(&session_id, mode, ctx);
             }
-            StreamMessage::AbortSession { session_id } => {
+            StreamMessage::Rollback { session_id } => {
                 let _ = self.handle_abort_session(&session_id);
             }
             StreamMessage::Read {
@@ -397,8 +397,8 @@ impl Actor for StreamActor {
             } => {
                 let _ = self.handle_read(from_offset, limit, max_bytes);
             }
-            StreamMessage::Peek { .. } => {
-                let _ = self.handle_peek();
+            StreamMessage::Last { .. } => {
+                let _ = self.handle_last();
             }
             StreamMessage::GetMetadata { .. } => {
                 let _ = self.handle_get_metadata();

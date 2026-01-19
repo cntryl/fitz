@@ -97,7 +97,7 @@ fn bench_full_lifecycle_sequence(c: &mut Criterion) {
 
 fn bench_multi_resource_leases(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    let routes = vec![
+    let routes = [
         Route::new("lease://realm/area1/resource1/acquire"),
         Route::new("lease://realm/area2/resource2/acquire"),
         Route::new("lease://realm/area3/resource3/acquire"),

@@ -57,16 +57,13 @@ fn bench_complete_workflow_enqueue_reserve_complete(c: &mut Criterion) {
             let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
 
             // Assert & cleanup: Complete the message
-            match reserve_response {
-                QueueResponse::Reserved { messages } => {
-                    if !messages.is_empty() {
-                        let _ = actor.handle_complete(
-                            black_box(messages[0].id),
-                            black_box(messages[0].token),
-                        );
-                    }
+            if let QueueResponse::Reserved { messages } = reserve_response {
+                if !messages.is_empty() {
+                    let _ = actor.handle_complete(
+                        black_box(messages[0].id),
+                        black_box(messages[0].token),
+                    );
                 }
-                _ => {}
             }
         })
     });
@@ -153,14 +150,11 @@ fn bench_failure_recovery_deadletter_workflow(c: &mut Criterion) {
             for _attempt in 0..3 {
                 let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
 
-                match reserve_response {
-                    QueueResponse::Reserved { messages } => {
-                        if !messages.is_empty() {
-                            // Simulate failure by not completing (would be nack in real system)
-                            let _ = actor.handle_reserve(black_box(30), black_box(Some(1)));
-                        }
+                if let QueueResponse::Reserved { messages } = reserve_response {
+                    if !messages.is_empty() {
+                        // Simulate failure by not completing (would be nack in real system)
+                        let _ = actor.handle_reserve(black_box(30), black_box(Some(1)));
                     }
-                    _ => {}
                 }
             }
 

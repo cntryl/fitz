@@ -146,6 +146,12 @@ pub enum KvError {
     /// Invalid request parameters
     InvalidRequest(String),
 
+    /// Realm validation failed
+    InvalidRealm,
+
+    /// Realm mismatch (transaction bound to different realm)
+    RealmMismatch,
+
     /// Resource (table) not found or CF mapping failed
     UnknownResource(String),
 
@@ -179,6 +185,8 @@ impl std::fmt::Display for KvError {
         match self {
             KvError::InvalidRoute(msg) => write!(f, "Invalid route: {}", msg),
             KvError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
+            KvError::InvalidRealm => write!(f, "Invalid realm"),
+            KvError::RealmMismatch => write!(f, "Realm mismatch"),
             KvError::UnknownResource(res) => write!(f, "Unknown resource: {}", res),
             KvError::TxAlreadyActive => write!(f, "Transaction already active"),
             KvError::NoActiveTx => write!(f, "No active transaction"),

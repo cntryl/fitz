@@ -1,4 +1,4 @@
-/// Tier 1: Stream Domain Hot-Path Microbenchmarks
+﻿/// Tier 1: Stream Domain Hot-Path Microbenchmarks
 ///
 /// Tests isolated, single-actor hot paths with minimal coordination.
 /// CRITICAL: All write benches MUST use the full session flow:
@@ -77,11 +77,11 @@ fn create_bench_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
         .collect()
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// WRITE BENCHMARKS — FULL SESSION FLOW
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// WRITE BENCHMARKS â€” FULL SESSION FLOW
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-/// BENCH 1: Single event commit (BeginSession → Append(1) → CommitSession)
+/// BENCH 1: Single event commit (BeginSession â†’ Append(1) â†’ CommitSession)
 /// Measures: worst-case latency per event (no batching amortization)
 fn bench_append_commit_single_event(c: &mut Criterion) {
     let (mut actor, mut ctx) =
@@ -103,9 +103,9 @@ fn bench_append_commit_single_event(c: &mut Criterion) {
         b.iter(|| {
             let payload = black_box(&payloads[payload_idx % payloads.len()]);
 
-            // FULL FLOW: BeginSession → Append → CommitSession
+            // FULL FLOW: BeginSession â†’ Append â†’ CommitSession
             actor.receive(
-                StreamMessage::BeginSession {
+                StreamMessage::Begin {
                     family_id,
                     route: route.clone(),
                     expected_offset,
@@ -119,7 +119,7 @@ fn bench_append_commit_single_event(c: &mut Criterion) {
             let session_id = format!("bench-session-{}", expected_offset);
 
             actor.receive(
-                StreamMessage::AppendToSession {
+                StreamMessage::Append {
                     session_id: session_id.clone(),
                     body: Bytes::from(payload.clone()),
                     metadata: None,
@@ -128,7 +128,7 @@ fn bench_append_commit_single_event(c: &mut Criterion) {
             );
 
             actor.receive(
-                StreamMessage::CommitSession {
+                StreamMessage::Commit {
                     session_id,
                     mode: StreamWriteMode::Sync,
                 },
@@ -175,7 +175,7 @@ fn bench_append_commit_batches(c: &mut Criterion) {
             b.iter(|| {
                 // BeginSession
                 actor.receive(
-                    StreamMessage::BeginSession {
+                    StreamMessage::Begin {
                         family_id,
                         route: route.clone(),
                         expected_offset,
@@ -191,7 +191,7 @@ fn bench_append_commit_batches(c: &mut Criterion) {
                     let idx = (offset as usize + i) % payloads.len();
                     let payload = black_box(&payloads[idx]);
                     actor.receive(
-                        StreamMessage::AppendToSession {
+                        StreamMessage::Append {
                             session_id: session_id.clone(),
                             body: Bytes::from(payload.clone()),
                             metadata: None,
@@ -202,7 +202,7 @@ fn bench_append_commit_batches(c: &mut Criterion) {
 
                 // CommitSession
                 actor.receive(
-                    StreamMessage::CommitSession {
+                    StreamMessage::Commit {
                         session_id,
                         mode: StreamWriteMode::Sync,
                     },
@@ -233,7 +233,7 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
     // Commit 1000 events in batches of 100
     for chunk_start in (0..1000).step_by(100) {
         actor.receive(
-            StreamMessage::BeginSession {
+            StreamMessage::Begin {
                 family_id,
                 route: route.clone(),
                 expected_offset,
@@ -246,7 +246,7 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
 
         for i in 0..100 {
             actor.receive(
-                StreamMessage::AppendToSession {
+                StreamMessage::Append {
                     session_id: session_id.clone(),
                     body: Bytes::from(payloads[chunk_start + i].clone()),
                     metadata: None,
@@ -256,7 +256,7 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
         }
 
         actor.receive(
-            StreamMessage::CommitSession {
+            StreamMessage::Commit {
                 session_id,
                 mode: StreamWriteMode::Sync,
             },
@@ -309,7 +309,7 @@ fn bench_resource_read_batched(c: &mut Criterion) {
     // Commit 1000 events in batches of 100
     for chunk_start in (0..1000).step_by(100) {
         actor.receive(
-            StreamMessage::BeginSession {
+            StreamMessage::Begin {
                 family_id,
                 route: route.clone(),
                 expected_offset,
@@ -322,7 +322,7 @@ fn bench_resource_read_batched(c: &mut Criterion) {
 
         for i in 0..100 {
             actor.receive(
-                StreamMessage::AppendToSession {
+                StreamMessage::Append {
                     session_id: session_id.clone(),
                     body: Bytes::from(payloads[chunk_start + i].clone()),
                     metadata: None,
@@ -332,7 +332,7 @@ fn bench_resource_read_batched(c: &mut Criterion) {
         }
 
         actor.receive(
-            StreamMessage::CommitSession {
+            StreamMessage::Commit {
                 session_id,
                 mode: StreamWriteMode::Sync,
             },
@@ -371,7 +371,7 @@ fn bench_resource_read_batched(c: &mut Criterion) {
 }
 
 /// BENCH 4: Sequential read from area stream (multi-resource interleaved)
-/// Measures: read throughput with pointer indirection (area → resource lookup)
+/// Measures: read throughput with pointer indirection (area â†’ resource lookup)
 fn bench_area_read_sequential(c: &mut Criterion) {
     // Create multiple resources in same area to populate area index
     let db = Arc::new(
@@ -411,7 +411,7 @@ fn bench_area_read_sequential(c: &mut Criterion) {
         // Commit events in batches
         for chunk_start in (0..events_per_resource).step_by(50) {
             actor.receive(
-                StreamMessage::BeginSession {
+                StreamMessage::Begin {
                     family_id: family,
                     route: route.clone(),
                     expected_offset,
@@ -425,7 +425,7 @@ fn bench_area_read_sequential(c: &mut Criterion) {
             for i in 0..50 {
                 let idx = (chunk_start + i) % payloads.len();
                 actor.receive(
-                    StreamMessage::AppendToSession {
+                    StreamMessage::Append {
                         session_id: session_id.clone(),
                         body: Bytes::from(payloads[idx].clone()),
                         metadata: None,
@@ -435,7 +435,7 @@ fn bench_area_read_sequential(c: &mut Criterion) {
             }
 
             actor.receive(
-                StreamMessage::CommitSession {
+                StreamMessage::Commit {
                     session_id,
                     mode: StreamWriteMode::Sync,
                 },
@@ -492,7 +492,7 @@ fn bench_area_read_sequential(c: &mut Criterion) {
 }
 
 /// BENCH 5: Sequential read from realm stream (multi-area interleaved)
-/// Measures: read throughput with 2-level pointer indirection (realm → area → resource)
+/// Measures: read throughput with 2-level pointer indirection (realm â†’ area â†’ resource)
 /// This is the PRIMARY test for pointer chasing overhead!
 fn bench_realm_read_sequential(c: &mut Criterion) {
     // Create multiple areas with multiple resources to populate realm index
@@ -536,7 +536,7 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
             // Commit events in batches
             for chunk_start in (0..events_per_resource).step_by(50) {
                 actor.receive(
-                    StreamMessage::BeginSession {
+                    StreamMessage::Begin {
                         family_id: family,
                         route: route.clone(),
                         expected_offset,
@@ -551,7 +551,7 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
                 for i in 0..50 {
                     let idx = (chunk_start + i) % payloads.len();
                     actor.receive(
-                        StreamMessage::AppendToSession {
+                        StreamMessage::Append {
                             session_id: session_id.clone(),
                             body: Bytes::from(payloads[idx].clone()),
                             metadata: None,
@@ -561,7 +561,7 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
                 }
 
                 actor.receive(
-                    StreamMessage::CommitSession {
+                    StreamMessage::Commit {
                         session_id,
                         mode: StreamWriteMode::Sync,
                     },
@@ -595,7 +595,7 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
 
     group.bench_function("realm_read_sequential_256B", |b| {
         b.iter(|| {
-            // Read 1000 events from realm index (requires realm → area → resource lookups)
+            // Read 1000 events from realm index (requires realm â†’ area â†’ resource lookups)
             realm_actor.receive(
                 StreamMessage::Read {
                     family_id: family,

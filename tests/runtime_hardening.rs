@@ -1,4 +1,4 @@
-// LAYER: TESTS
+﻿// LAYER: TESTS
 //! Runtime hardening invariant tests
 //!
 //! These tests verify the correctness guarantees added during the

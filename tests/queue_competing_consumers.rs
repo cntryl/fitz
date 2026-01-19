@@ -1,4 +1,4 @@
-//! Competing consumer integration tests for queue domain
+﻿//! Competing consumer integration tests for queue domain
 //!
 //! Tests multi-consumer scenarios, crash recovery with in-flight messages,
 //! and atomicity guarantees across process restarts.
@@ -79,7 +79,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
 
     // Assert
     assert_eq!(actor.ready.len(), 0);
-    assert!(actor.inflight.len() > 0, "Should have in-flight messages");
+    assert!(!actor.inflight.is_empty(), "Should have in-flight messages");
 
     // Verify no message was reserved twice
     let mut all_ids: Vec<_> = _consumer_a_msgs
