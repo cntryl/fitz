@@ -141,34 +141,7 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use fitz::domains::queue::{QueueActor, QueueMessage};
-//! use fitz::runtime::scheduler::Scheduler;
-//!
-//! let scheduler = Scheduler::new(1);
-//! let store = Arc::new(cntryl_midge::MidgeEngine::open("data").unwrap());
-//!
-//! // Queue with DLQ (max 3 attempts)
-//! let queue_actor = QueueActor::new(RouteFamily::new(1), queue_key, store, Some(3));
-//! let actor_ref = scheduler.spawn(queue_actor, 1000);
-//!
-//! // Enqueue a message
-//! actor_ref.send(QueueMessage::Enqueue {
-//!     family_id,
-//!     route,
-//!     body: Bytes::from("task data"),
-//!     delay_seconds: None,
-//! });
-//!
-//! // Reserve with long polling (handled by RPC layer)
-//! actor_ref.send(QueueMessage::Reserve {
-//!     family_id,
-//!     route,
-//!     lease_seconds: 30,
-//!     batch_size: Some(10),
-//!     wait_seconds: Some(60), // RPC will wait up to 60s if empty
-//! });
-//! ```
+//! Queue operations are dispatched via RPC or WebSocket messages.
 
 pub mod producer;
 pub mod protocol;

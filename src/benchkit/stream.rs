@@ -1,6 +1,6 @@
 //! Stream benchmarking helpers
 
-use super::storage::create_bench_store;
+use super::storage::{create_bench_store, create_local_bench_store};
 use crate::domains::stream::stream_actor::StreamActor;
 use crate::domains::stream::StreamStore;
 use crate::runtime::actor::Context;
@@ -19,11 +19,6 @@ use std::sync::Arc;
 ///
 /// # Returns
 /// Tuple of (StreamActor, Context) ready for benchmarking
-///
-/// # Example
-/// ```ignore
-/// let (actor, ctx) = create_bench_stream_actor("bench-realm", "bench-area", "bench-stream");
-/// ```
 pub fn create_bench_stream_actor(
     realm: &str,
     area: &str,
@@ -50,6 +45,44 @@ pub fn create_bench_stream_actor(
     (actor, ctx)
 }
 
+/// Create a StreamActor and its context for integration benchmarking with local disk storage
+///
+/// Creates an actor with local disk-backed storage for realistic production testing.
+///
+/// # Arguments
+/// * `realm` - Realm name for the stream
+/// * `area` - Area name for the stream  
+/// * `resource` - Resource name for the stream
+///
+/// # Returns
+/// Tuple of (StreamActor, Context, TempDir). The TempDir must be kept alive for the
+/// lifetime of the actor, otherwise the directory will be deleted.
+pub fn create_local_bench_stream_actor(
+    realm: &str,
+    area: &str,
+    resource: &str,
+) -> (StreamActor, Context<StreamActor>, tempfile::TempDir) {
+    let router = Arc::new(Router::new());
+    let family = RouteFamily::new(1);
+    let addr = RouteAddress::new(
+        family,
+        Route::new(format!("stream://{}/{}/{}/append", realm, area, resource)),
+    );
+
+    let (db, temp_dir) = create_local_bench_store();
+    let store = Arc::new(StreamStore::new(db));
+    let actor = StreamActor::new(
+        family,
+        realm.to_string(),
+        area.to_string(),
+        resource.to_string(),
+        store,
+    );
+    let ctx = Context::new(addr, router);
+
+    (actor, ctx, temp_dir)
+}
+
 /// Generate deterministic event payloads for benchmarking
 ///
 /// Creates a vector of payloads with deterministic content suitable for
@@ -61,11 +94,6 @@ pub fn create_bench_stream_actor(
 ///
 /// # Returns
 /// Vector of byte arrays, each containing the event index in the first 8 bytes
-///
-/// # Example
-/// ```ignore
-/// let payloads = create_bench_event_payloads(1000, 256);
-/// ```
 pub fn create_bench_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
     (0..count)
         .map(|i| {

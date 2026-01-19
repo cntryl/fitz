@@ -12,11 +12,6 @@ use std::sync::Arc;
 ///
 /// # Arguments
 /// * `route_str` - The route string for the RPC endpoint
-///
-/// # Example
-/// ```ignore
-/// let ctx = create_bench_rpc_context("rpc://realm/service/operation");
-/// ```
 pub fn create_bench_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
     let router = Arc::new(Router::new());
     let addr = RouteAddress::new(RouteFamily::new(1), Route::new(route_str));

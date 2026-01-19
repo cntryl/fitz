@@ -32,25 +32,6 @@
 //! ```
 //!
 //! Client A learns it no longer holds the lease and must stop work.
-//!
-//! # Usage
-//!
-//! ```ignore
-//! use fitz::domains::lease::{LeaseActor, LeaseMessage};
-//! use fitz::runtime::scheduler::Scheduler;
-//!
-//! let scheduler = Scheduler::new(1);
-//! let lease_actor = LeaseActor::new(RouteFamily::new(1));
-//! let actor_ref = scheduler.spawn(lease_actor, 100);
-//!
-//! // Acquire a lease
-//! actor_ref.send(LeaseMessage::Acquire {
-//!     family_id,
-//!     route,
-//!     owner_id: "client-1".to_string(),
-//!     ttl_secs: 30,
-//! });
-//! ```
 
 pub mod guard;
 pub mod lease_actor;

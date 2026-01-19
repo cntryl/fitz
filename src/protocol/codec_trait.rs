@@ -11,31 +11,6 @@ use crate::protocol::frame_context::FrameContext;
 /// 1. Parse incoming TLV-encoded messages
 /// 2. Encode outgoing responses
 /// 3. Support synchronous, deterministic processing
-///
-/// # Implementation Pattern
-///
-/// ```ignore
-/// pub fn parse_request(
-///     ctx: &FrameContext,
-///     payload: &[u8],
-/// ) -> Result<DomainMessage, String> {
-///     let mut dec = TlvDecoder::new(payload);
-///     match ctx.msg_type {
-///         100 => parse_operation_a(&mut dec),
-///         101 => parse_operation_b(&mut dec),
-///         _ => Err(format!("Unknown operation: {}", ctx.msg_type)),
-///     }
-/// }
-///
-/// pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
-///     let mut enc = TlvEncoder::new();
-///     match response {
-///         DomainResponse::Ok => { /* encode ok */ },
-///         DomainResponse::Error(e) => { /* encode error */ },
-///     }
-///     enc.finish()
-/// }
-/// ```
 pub trait DomainCodec {
     /// The message type this codec handles
     type Message;
@@ -73,15 +48,6 @@ pub enum DomainResponse {
 }
 
 /// Codec builder pattern for consistent initialization
-///
-/// # Example
-///
-/// ```ignore
-/// let codec = CodecBuilder::new()
-///     .with_family(1)
-///     .with_max_payload(1024 * 1024)
-///     .build::<MyDomainCodec>()?;
-/// ```
 pub struct CodecBuilder {
     family: u16,
     max_payload: usize,

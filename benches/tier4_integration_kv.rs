@@ -1,19 +1,16 @@
 //! KV domain tier 4 integration benchmarks
 //!
-//! Full system pipeline with durability (when Midge commit bug is fixed)
-//! Currently: Measures operation latency through engine routing + domain handling
+//! Full system pipeline with local disk storage (realistic)
+//! Measures operation latency through engine routing + domain handling with durable storage
 //! Includes domain context creation overhead, TLV serialization, routing
 //!
-//! Note: Cannot measure persistence/recovery due to Midge commit() bug
-//! See TODO.md: "Midge commit() fails when transaction contains writes"
-//! Workaround: Measure Begin→Op→Rollback (no durability test)
-//! Target: Understand total latency including engine + routing overhead
+//! Uses local disk-backed Midge engine to reflect production conditions
 
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use fitz::benchkit::create_local_bench_store;
 use fitz::domains::kv::{KvActor, KvMessage, TxMode};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::create_test_engine_with_cfs;
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -28,28 +25,31 @@ fn bench_full_pipeline_put(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(500));
 
     group.bench_function("create_actor_begin_put_rollback", |b| {
-        b.iter(|| {
-            let store = create_test_engine_with_cfs(vec![1]);
-            let mut actor = KvActor::new(store);
+        b.iter_batched(
+            || create_local_bench_store(),
+            |(store, _temp_dir)| {
+                let mut actor = KvActor::new(store);
 
-            actor.handle(KvMessage::Begin {
-                route_family: RouteFamily::new(1),
-                realm: "integration".to_string(),
-                area: "kv".to_string(),
-                resource: "full_pipeline".to_string(),
-                mode: TxMode::ReadWrite,
-                write_options: cntryl_midge::WriteOptions::buffered(),
-            });
+                actor.handle(KvMessage::Begin {
+                    route_family: RouteFamily::new(1),
+                    realm: "integration".to_string(),
+                    area: "kv".to_string(),
+                    resource: "full_pipeline".to_string(),
+                    mode: TxMode::ReadWrite,
+                    write_options: cntryl_midge::WriteOptions::buffered(),
+                });
 
-            actor.handle(KvMessage::Put {
-                route_family: RouteFamily::new(1),
-                resource: "full_pipeline".to_string(),
-                key: Bytes::from_static(b"integration_key"),
-                value: Bytes::from_static(b"integration_value_with_some_length"),
-            });
+                actor.handle(KvMessage::Put {
+                    route_family: RouteFamily::new(1),
+                    resource: "full_pipeline".to_string(),
+                    key: Bytes::from_static(b"integration_key"),
+                    value: Bytes::from_static(b"integration_value_with_some_length"),
+                });
 
-            actor.handle(KvMessage::Rollback);
-        })
+                actor.handle(KvMessage::Rollback);
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
@@ -57,7 +57,7 @@ fn bench_full_pipeline_put(c: &mut Criterion) {
 
 fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
     // Realistic transaction sequence: Begin, get, put, delete, rollback
-    let store = create_test_engine_with_cfs(vec![1, 2]);
+    let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
     // Setup some initial data
@@ -128,7 +128,7 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
 
 fn bench_multi_resource_transaction(c: &mut Criterion) {
     // Transactions spanning multiple resources within same realm/area
-    let store = create_test_engine_with_cfs(vec![1, 2, 3]);
+    let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
     let mut group = c.benchmark_group("kv_integration_multi_resource");
@@ -182,7 +182,7 @@ fn bench_multi_resource_transaction(c: &mut Criterion) {
 
 fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
     // Separate transactions on different families within same benchmark iteration
-    let store = create_test_engine_with_cfs(vec![1, 2, 3]);
+    let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
     let mut group = c.benchmark_group("kv_integration_cross_family_sequence");

@@ -16,20 +16,6 @@
 //! 4. Execute work with `handle.fencing_token()`
 //! 5. Release via `handle.release(ctx)`
 //!
-//! # Example
-//!
-//! ```ignore
-//! match msg {
-//!     DoWork { lease_handle } => {
-//!         if !lease_handle.is_valid() {
-//!             return Err("Lease expired");
-//!         }
-//!         perform_critical_work(lease_handle.fencing_token())?;
-//!         lease_handle.release(ctx)?;
-//!         Ok(())
-//!     }
-//! }
-//! ```
 
 use super::protocol::{LeaseMessage, LeaseResponse};
 use crate::runtime::routing::{Route, RouteFamily};

@@ -18,17 +18,6 @@
 //! - `*` matches a single path segment
 //! - `**` matches zero or more path segments
 //! - Wildcards apply only within the same RouteFamily
-//!
-//! # Example
-//!
-//! ```ignore
-//! // Subscribe to all orders
-//! subscribe(family, "notice://acme/orders/*", subscriber);
-//!
-//! // Publish to create operation
-//! publish(family, "notice://acme/orders/create", payload);
-//! // Matches above subscription
-//! ```
 
 pub mod protocol;
 pub mod route_actor;

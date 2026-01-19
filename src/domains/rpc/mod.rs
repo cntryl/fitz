@@ -42,36 +42,6 @@
 //! - `rpc://acme/auth/user/create`
 //! - `rpc://acme/inventory/item/update`
 //! - `rpc://acme/reports/monthly/generate`
-//!
-//! # Example
-//!
-//! ```ignore
-//! // Worker registers for a route
-//! send(actor, RpcMessage::Subscribe {
-//!     worker: worker_addr,
-//!     max_concurrent: 1
-//! });
-//!
-//! // Client sends request
-//! send(actor, RpcMessage::Request {
-//!     request: RpcRequest {
-//!         correlation_id: "req-001",
-//!         route: "rpc://acme/auth/user/create",
-//!         reply_route: client_addr,
-//!         body: b"..."
-//!     }
-//! });
-//!
-//! // Worker processes and responds
-//! send(actor, RpcMessage::Response {
-//!     response: RpcResponse {
-//!         correlation_id: "req-001",
-//!         seq: 0,
-//!         body: b"...",
-//!         stream_end: true
-//!     }
-//! });
-//! ```
 
 pub mod errors;
 pub mod protocol;

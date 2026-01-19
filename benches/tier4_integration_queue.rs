@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::benchkit::create_bench_queue_actor;
+use fitz::benchkit::create_local_bench_queue_actor;
 use fitz::domains::queue::QueueResponse;
 use std::time::Duration;
 
@@ -13,6 +13,8 @@ mod config;
 // Target: Measure FULL END-TO-END scenarios with realistic workloads
 // Goal: Prove predictable latency and throughput under complex scenarios
 // Patterns: Multi-actor sequences, transactional workflows, failure recovery
+//
+// Uses local disk-backed storage (midge) for realistic persistence characteristics
 //
 // These benchmarks simulate complete queue workflows including:
 // - Enqueue → Reserve → Complete sequences
@@ -33,7 +35,6 @@ fn bench_complete_workflow_enqueue_reserve_complete(c: &mut Criterion) {
     //! - Complete acknowledgment and cleanup
     //! - Full transactional consistency
 
-    let mut actor = create_bench_queue_actor("bench", "integration", "queue", None);
     let payload = Bytes::from_static(b"workflow message");
 
     let mut group = c.benchmark_group("queue_integration_complete_workflow");
@@ -43,29 +44,33 @@ fn bench_complete_workflow_enqueue_reserve_complete(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1)); // 1 complete transaction per iteration
 
     group.bench_function("queue_integration_enqueue_reserve_complete", |b| {
-        b.iter(|| {
-            // Arrange: Enqueue a message
-            let enqueue_response =
-                actor.handle_enqueue(black_box(payload.clone()), black_box(None));
+        b.iter_batched(
+            || create_local_bench_queue_actor("bench", "integration", "queue", None),
+            |(mut actor, _temp_dir)| {
+                // Arrange: Enqueue a message
+                let enqueue_response =
+                    actor.handle_enqueue(black_box(payload.clone()), black_box(None));
 
-            // Act: Reserve the message
-            let _message_id = match enqueue_response {
-                QueueResponse::Enqueued { id } => id,
-                _ => return, // Skip if enqueue failed
-            };
+                // Act: Reserve the message
+                let _message_id = match enqueue_response {
+                    QueueResponse::Enqueued { id } => id,
+                    _ => return, // Skip if enqueue failed
+                };
 
-            let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
+                let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
 
-            // Assert & cleanup: Complete the message
-            if let QueueResponse::Reserved { messages } = reserve_response {
-                if !messages.is_empty() {
-                    let _ = actor.handle_complete(
-                        black_box(messages[0].id),
-                        black_box(messages[0].token),
-                    );
+                // Assert & cleanup: Complete the message
+                if let QueueResponse::Reserved { messages } = reserve_response {
+                    if !messages.is_empty() {
+                        let _ = actor.handle_complete(
+                            black_box(messages[0].id),
+                            black_box(messages[0].token),
+                        );
+                    }
                 }
-            }
-        })
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
@@ -83,7 +88,6 @@ fn bench_batch_workflow_many_enqueue_one_reserve(c: &mut Criterion) {
     //! - Queue depth impact
     //! - Amortized costs at scale
 
-    let mut actor = create_bench_queue_actor("bench", "integration", "queue", None);
     let payload = Bytes::from_static(b"batch message");
 
     let mut group = c.benchmark_group("queue_integration_batch_workflow");
@@ -93,22 +97,26 @@ fn bench_batch_workflow_many_enqueue_one_reserve(c: &mut Criterion) {
     group.throughput(Throughput::Elements(100)); // 100 messages enqueued + 1 reserve
 
     group.bench_function("queue_integration_100enqueue_10reserve", |b| {
-        b.iter(|| {
-            // Enqueue 100 messages
-            for _ in 0..100 {
-                let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-            }
-
-            // Reserve 10 messages at once
-            let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(10)));
-
-            // Complete all reserved messages
-            if let QueueResponse::Reserved { messages } = reserve_response {
-                for msg in messages {
-                    let _ = actor.handle_complete(black_box(msg.id), black_box(msg.token));
+        b.iter_batched(
+            || create_local_bench_queue_actor("bench", "integration", "queue", None),
+            |(mut actor, _temp_dir)| {
+                // Enqueue 100 messages
+                for _ in 0..100 {
+                    let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
                 }
-            }
-        })
+
+                // Reserve 10 messages at once
+                let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(10)));
+
+                // Complete all reserved messages
+                if let QueueResponse::Reserved { messages } = reserve_response {
+                    for msg in messages {
+                        let _ = actor.handle_complete(black_box(msg.id), black_box(msg.token));
+                    }
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
@@ -126,7 +134,6 @@ fn bench_failure_recovery_deadletter_workflow(c: &mut Criterion) {
     //! - Dead-letter classification
     //! - Failed message recovery costs
 
-    let mut actor = create_bench_queue_actor("bench", "integration", "queue", Some(3));
     let payload = Bytes::from_static(b"retry message");
 
     let mut group = c.benchmark_group("queue_integration_failure_recovery");
@@ -136,37 +143,41 @@ fn bench_failure_recovery_deadletter_workflow(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1)); // 1 retry cycle per iteration
 
     group.bench_function("queue_integration_retry_cycle_with_deadletter", |b| {
-        b.iter(|| {
-            // Arrange: Enqueue a message with retry limit
-            let enqueue_response =
-                actor.handle_enqueue(black_box(payload.clone()), black_box(Some(5)));
+        b.iter_batched(
+            || create_local_bench_queue_actor("bench", "integration", "queue", Some(3)),
+            |(mut actor, _temp_dir)| {
+                // Arrange: Enqueue a message with retry limit
+                let enqueue_response =
+                    actor.handle_enqueue(black_box(payload.clone()), black_box(Some(5)));
 
-            let _message_id = match enqueue_response {
-                QueueResponse::Enqueued { id } => id,
-                _ => return,
-            };
+                let _message_id = match enqueue_response {
+                    QueueResponse::Enqueued { id } => id,
+                    _ => return,
+                };
 
-            // Act: Reserve → Nack (simulate failure) → Retry
-            for _attempt in 0..3 {
-                let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
+                // Act: Reserve → Nack (simulate failure) → Retry
+                for _attempt in 0..3 {
+                    let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
 
-                if let QueueResponse::Reserved { messages } = reserve_response {
-                    if !messages.is_empty() {
-                        // Simulate failure by not completing (would be nack in real system)
-                        let _ = actor.handle_reserve(black_box(30), black_box(Some(1)));
+                    if let QueueResponse::Reserved { messages } = reserve_response {
+                        if !messages.is_empty() {
+                            // Simulate failure by not completing (would be nack in real system)
+                            let _ = actor.handle_reserve(black_box(30), black_box(Some(1)));
+                        }
                     }
                 }
-            }
 
-            // Final reserve - should eventually hit dead-letter or be completed
-            let final_reserve = actor.handle_reserve(black_box(30), black_box(Some(1)));
-            if let QueueResponse::Reserved { messages } = final_reserve {
-                if !messages.is_empty() {
-                    let _ = actor
-                        .handle_complete(black_box(messages[0].id), black_box(messages[0].token));
+                // Final reserve - should eventually hit dead-letter or be completed
+                let final_reserve = actor.handle_reserve(black_box(30), black_box(Some(1)));
+                if let QueueResponse::Reserved { messages } = final_reserve {
+                    if !messages.is_empty() {
+                        let _ = actor
+                            .handle_complete(black_box(messages[0].id), black_box(messages[0].token));
+                    }
                 }
-            }
-        })
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
@@ -184,7 +195,6 @@ fn bench_mixed_sequential_workflow(c: &mut Criterion) {
     //! - Lock contention under varied operations
     //! - Realistic producer-consumer patterns
 
-    let mut actor = create_bench_queue_actor("bench", "integration", "queue", None);
     let payload = Bytes::from_static(b"mixed op message");
 
     let mut group = c.benchmark_group("queue_integration_mixed_sequential");
@@ -194,29 +204,33 @@ fn bench_mixed_sequential_workflow(c: &mut Criterion) {
     group.throughput(Throughput::Elements(10)); // 10 operations per iteration
 
     group.bench_function("queue_integration_mixed_3e_2r_3c_2e", |b| {
-        b.iter(|| {
-            // Operation sequence: 3 enqueues → 2 reserves → 3 completes → 2 enqueues
-            for _ in 0..3 {
-                let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-            }
-
-            let reserve1 = actor.handle_reserve(black_box(30), black_box(Some(2)));
-            let mut message_ids = Vec::new();
-            if let QueueResponse::Reserved { messages } = reserve1 {
-                message_ids.extend(messages);
-            }
-
-            for _ in 0..3 {
-                if !message_ids.is_empty() {
-                    let msg = message_ids.pop().unwrap();
-                    let _ = actor.handle_complete(black_box(msg.id), black_box(msg.token));
+        b.iter_batched(
+            || create_local_bench_queue_actor("bench", "integration", "queue", None),
+            |(mut actor, _temp_dir)| {
+                // Operation sequence: 3 enqueues → 2 reserves → 3 completes → 2 enqueues
+                for _ in 0..3 {
+                    let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
                 }
-            }
 
-            for _ in 0..2 {
-                let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-            }
-        })
+                let reserve1 = actor.handle_reserve(black_box(30), black_box(Some(2)));
+                let mut message_ids = Vec::new();
+                if let QueueResponse::Reserved { messages } = reserve1 {
+                    message_ids.extend(messages);
+                }
+
+                for _ in 0..3 {
+                    if !message_ids.is_empty() {
+                        let msg = message_ids.pop().unwrap();
+                        let _ = actor.handle_complete(black_box(msg.id), black_box(msg.token));
+                    }
+                }
+
+                for _ in 0..2 {
+                    let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();
@@ -234,13 +248,7 @@ fn bench_backpressure_deep_queue_scenario(c: &mut Criterion) {
     //! - Iteration efficiency over large datasets
     //! - Sustained load without degradation
 
-    let mut actor = create_bench_queue_actor("bench", "integration", "queue", None);
     let payload = Bytes::from_static(b"backpressure message");
-
-    // Pre-fill queue to depth
-    for _ in 0..500 {
-        let _ = actor.handle_enqueue(payload.clone(), None);
-    }
 
     let mut group = c.benchmark_group("queue_integration_backpressure_deep_queue");
     group.sample_size(10);
@@ -249,19 +257,30 @@ fn bench_backpressure_deep_queue_scenario(c: &mut Criterion) {
     group.throughput(Throughput::Elements(10)); // 5 enqueue + 5 reserve per iteration
 
     group.bench_function("queue_integration_deep_queue_1000plus_depth", |b| {
-        b.iter(|| {
-            // Maintain deep queue state with equal enqueue/reserve
-            for _ in 0..5 {
-                let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
-            }
-
-            let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(5)));
-            if let QueueResponse::Reserved { messages } = reserve_response {
-                for msg in messages {
-                    let _ = actor.handle_complete(black_box(msg.id), black_box(msg.token));
+        b.iter_batched(
+            || {
+                let (mut actor, temp_dir) = create_local_bench_queue_actor("bench", "integration", "queue", None);
+                // Pre-fill queue to depth
+                for _ in 0..500 {
+                    let _ = actor.handle_enqueue(payload.clone(), None);
                 }
-            }
-        })
+                (actor, temp_dir)
+            },
+            |(mut actor, _temp_dir)| {
+                // Maintain deep queue state with equal enqueue/reserve
+                for _ in 0..5 {
+                    let _ = actor.handle_enqueue(black_box(payload.clone()), black_box(None));
+                }
+
+                let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(5)));
+                if let QueueResponse::Reserved { messages } = reserve_response {
+                    for msg in messages {
+                        let _ = actor.handle_complete(black_box(msg.id), black_box(msg.token));
+                    }
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 
     group.finish();

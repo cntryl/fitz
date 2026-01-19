@@ -19,19 +19,6 @@
 //! - **Batch sizes**: 100-1000 messages
 //! - **Latency tradeoff**: Adds up to `flush_interval_ms` latency
 //! - **CPU efficiency**: Amortizes serialization and network overhead
-//!
-//! # Usage
-//!
-//! ```ignore
-//! let mut producer = QueueProducer::new(actor_ref, 100, Duration::from_millis(5));
-//!
-//! // Messages are buffered
-//! producer.enqueue(Bytes::from("msg1"), None)?;
-//! producer.enqueue(Bytes::from("msg2"), None)?;
-//!
-//! // Explicit flush
-//! let ids = producer.flush()?;
-//! ```
 
 use crate::domains::queue::{QueueActor, QueueResponse};
 use bytes::Bytes;

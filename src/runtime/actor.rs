@@ -191,26 +191,6 @@ impl<A: Actor + ?Sized> Context<A> {
     ///
     /// **WARNING**: Sending to self during `receive()` can deadlock if the mailbox is full.
     /// Consider using deferred sends or checking mailbox capacity first.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// impl Actor for MyActor {
-    ///     type Message = MyMessage;
-    ///     
-    ///     fn receive(&mut self, msg: MyMessage, ctx: &mut Context<Self>) {
-    ///         // Send a message to another actor
-    ///         let other_address = self.other_actor_ref.address();
-    ///         match ctx.send(other_address.clone(), ResponseMessage::Done) {
-    ///             Ok(_) => {},
-    ///             Err(SendError::MailboxFull { occupancy, .. }) if occupancy > 0.9 => {
-    ///                 // Implement backoff
-    ///             }
-    ///             Err(e) => eprintln!("Send failed: {}", e),
-    ///         }
-    ///     }
-    /// }
-    /// ```
     pub fn send<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
