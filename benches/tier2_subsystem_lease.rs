@@ -5,9 +5,9 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::runtime::actor::Actor;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::testkit::lease::create_test_lease_context;
-use fitz::runtime::actor::Actor;
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -31,7 +31,7 @@ fn bench_acquire_renew_cycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("acquire_renew_cycle");
     group.measurement_time(Duration::from_millis(500));
     group.throughput(Throughput::Elements(1 as u64));
-    
+
     group.bench_function("renew_cycle", |b| {
         b.iter(|| {
             let msg = LeaseMessage::Renew {
@@ -49,17 +49,17 @@ fn bench_acquire_renew_cycle(c: &mut Criterion) {
 
 fn bench_full_lifecycle(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    
+
     let mut group = c.benchmark_group("full_lifecycle");
     group.measurement_time(Duration::from_millis(500));
     group.throughput(Throughput::Elements(1 as u64));
-    
+
     group.bench_function("acquire_renew_release", |b| {
         b.iter(|| {
             let mut actor = LeaseActor::new(family);
             let mut ctx = create_test_lease_context(None);
             let route = Route::new("lease://realm/locks/lifecycle-test/acquire");
-            
+
             // Acquire
             let acquire_msg = LeaseMessage::Acquire {
                 family_id: black_box(family),
@@ -68,7 +68,7 @@ fn bench_full_lifecycle(c: &mut Criterion) {
                 ttl_secs: black_box(30),
             };
             actor.receive(acquire_msg, &mut ctx);
-            
+
             // Renew
             let renew_msg = LeaseMessage::Renew {
                 family_id: black_box(family),
@@ -78,7 +78,7 @@ fn bench_full_lifecycle(c: &mut Criterion) {
                 ttl_secs: black_box(30),
             };
             actor.receive(renew_msg, &mut ctx);
-            
+
             // Release
             let release_msg = LeaseMessage::Release {
                 family_id: black_box(family),
@@ -94,16 +94,16 @@ fn bench_full_lifecycle(c: &mut Criterion) {
 
 fn bench_contended_renewal(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    
+
     let mut group = c.benchmark_group("contended_renewal");
     group.measurement_time(Duration::from_millis(500));
     group.throughput(Throughput::Elements(10 as u64));
-    
+
     group.bench_function("ten_concurrent_renewals", |b| {
         b.iter(|| {
             let mut actor = LeaseActor::new(family);
             let mut ctx = create_test_lease_context(None);
-            
+
             // Setup: create 10 leases
             for i in 0..10 {
                 let route = Route::new(&format!("lease://realm/locks/lock-{}/acquire", i));
@@ -115,7 +115,7 @@ fn bench_contended_renewal(c: &mut Criterion) {
                 };
                 actor.receive(acquire_msg, &mut ctx);
             }
-            
+
             // Renew all of them
             for i in 0..10 {
                 let route = Route::new(&format!("lease://realm/locks/lock-{}/renew", i));
@@ -151,7 +151,7 @@ fn bench_token_validation(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_validation");
     group.measurement_time(Duration::from_millis(500));
     group.throughput(Throughput::Elements(1 as u64));
-    
+
     // Measure cost of fencing (wrong token)
     group.bench_function("renew_with_wrong_token", |b| {
         b.iter(|| {
@@ -159,7 +159,7 @@ fn bench_token_validation(c: &mut Criterion) {
                 family_id: black_box(family),
                 route: black_box(route.clone()),
                 owner_id: black_box("client-1".to_string()),
-                fencing_token: black_box(999),  // Wrong token
+                fencing_token: black_box(999), // Wrong token
                 ttl_secs: black_box(30),
             };
             actor.receive(msg, &mut ctx);
@@ -171,11 +171,11 @@ fn bench_token_validation(c: &mut Criterion) {
 fn bench_multi_owner_contention(c: &mut Criterion) {
     let family = RouteFamily::new(1);
     let route = Route::new("lease://realm/locks/db-migration/contention");
-    
+
     let mut group = c.benchmark_group("multi_owner_contention");
     group.measurement_time(Duration::from_millis(500));
     group.throughput(Throughput::Elements(1 as u64));
-    
+
     group.bench_function("acquire_held_by_other", |b| {
         let mut actor = LeaseActor::new(family);
         let mut ctx = create_test_lease_context(None);
@@ -188,12 +188,12 @@ fn bench_multi_owner_contention(c: &mut Criterion) {
             ttl_secs: 30,
         };
         actor.receive(acquire_msg, &mut ctx);
-        
+
         b.iter(|| {
             let msg = LeaseMessage::Acquire {
                 family_id: black_box(family),
                 route: black_box(route.clone()),
-                owner_id: black_box("client-2".to_string()),  // Different owner
+                owner_id: black_box("client-2".to_string()), // Different owner
                 ttl_secs: black_box(30),
             };
             actor.receive(msg, &mut ctx);

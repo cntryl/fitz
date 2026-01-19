@@ -81,11 +81,6 @@ pub fn create_test_store() -> crate::domains::stream::StreamStore {
 ///
 /// # Returns
 /// Tuple of (StreamActor, Context) ready for testing
-///
-/// # Example
-/// ```ignore
-/// let (actor, ctx) = create_test_stream_actor("test", "area", "stream");
-/// ```
 pub fn create_test_stream_actor(
     realm: &str,
     area: &str,
@@ -119,11 +114,6 @@ pub fn create_test_stream_actor(
 ///
 /// # Returns
 /// Tuple of (AreaActor, Context) ready for testing
-///
-/// # Example
-/// ```ignore
-/// let (actor, ctx) = create_test_area_actor("test", "area");
-/// ```
 pub fn create_test_area_actor(realm: &str, area: &str) -> (AreaActor, Context<AreaActor>) {
     let router = Arc::new(Router::new());
     let family = RouteFamily::new(1);

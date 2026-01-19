@@ -258,7 +258,7 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_full_pipeline_put,
         bench_full_pipeline_transaction_sequence,
         bench_multi_resource_transaction,

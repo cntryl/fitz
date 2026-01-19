@@ -14,11 +14,6 @@ use uuid::Uuid;
 ///
 /// # Arguments
 /// * `route_str` - The RPC route string (e.g., "rpc://realm/service/operation")
-///
-/// # Example
-/// ```ignore
-/// let ctx = create_test_rpc_context("rpc://realm/auth/user/authenticate");
-/// ```
 pub fn create_test_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
     let router = Arc::new(Router::new());
     let addr = RouteAddress::new(RouteFamily::new(1), Route::new(route_str));
@@ -26,21 +21,11 @@ pub fn create_test_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
 }
 
 /// Create a reply inbox actor for testing
-///
-/// # Example
-/// ```ignore
-/// let inbox = create_test_inbox();
-/// ```
 pub fn create_test_inbox() -> ReplyInboxActor {
     ReplyInboxActor::new(RouteFamily::new(1))
 }
 
 /// Create an inbox context for testing
-///
-/// # Example
-/// ```ignore
-/// let ctx = create_test_inbox_context();
-/// ```
 pub fn create_test_inbox_context() -> Context<ReplyInboxActor> {
     let router = Arc::new(Router::new());
     let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1"));
@@ -54,16 +39,6 @@ pub fn create_test_inbox_context() -> Context<ReplyInboxActor> {
 /// * `route` - RPC operation route
 /// * `reply_route` - Reply inbox route
 /// * `body` - Request body bytes
-///
-/// # Example
-/// ```ignore
-/// let req = create_test_rpc_request(
-///     Uuid::new_v4(),
-///     "rpc://realm/service/operation",
-///     "inbox://session/1",
-///     &[1, 2, 3]
-/// );
-/// ```
 pub fn create_test_rpc_request(
     correlation_id: Uuid,
     route: &str,
@@ -86,11 +61,6 @@ pub fn create_test_rpc_request(
 /// * `seq` - Sequence number (for streaming)
 /// * `stream_end` - Whether this is the final response
 /// * `body` - Response body bytes
-///
-/// # Example
-/// ```ignore
-/// let resp = create_test_rpc_response(uuid, 0, true, b"result");
-/// ```
 pub fn create_test_rpc_response(
     correlation_id: Uuid,
     seq: u64,
@@ -109,11 +79,6 @@ pub fn create_test_rpc_response(
 ///
 /// # Arguments
 /// * `id` - Worker ID number
-///
-/// # Example
-/// ```ignore
-/// let worker = create_test_worker_addr(1);
-/// ```
 pub fn create_test_worker_addr(id: u64) -> RouteAddress {
     RouteAddress::new(
         RouteFamily::new(1),
@@ -125,11 +90,6 @@ pub fn create_test_worker_addr(id: u64) -> RouteAddress {
 ///
 /// # Arguments
 /// * `timeout_ms` - Timeout in milliseconds
-///
-/// # Example
-/// ```ignore
-/// let actor = create_test_rpc_actor_with_timeout(5000);
-/// ```
 pub fn create_test_rpc_actor_with_timeout(timeout_ms: u64) -> RpcRouteActor {
     RpcRouteActor::with_timeout(
         RouteFamily::new(1),

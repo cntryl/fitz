@@ -942,7 +942,7 @@ mod tests {
     fn should_isolate_resources_in_same_family() {
         // Arrange
         let mut actor = test_actor();
-        
+
         // Begin transaction for resource1
         actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -983,7 +983,7 @@ mod tests {
         // Arrange
         let mut actor1 = test_actor();
         let mut actor2 = test_actor();
-        
+
         // Both start transactions for different resources
         actor1.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),

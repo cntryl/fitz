@@ -5,9 +5,9 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::runtime::actor::Actor;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::testkit::lease::create_test_lease_context;
-use fitz::runtime::actor::Actor;
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -54,7 +54,7 @@ fn bench_full_lifecycle_sequence(c: &mut Criterion) {
     let mut group = c.benchmark_group("full_lifecycle_sequence");
     group.measurement_time(Duration::from_millis(500));
     group.sampling_mode(SamplingMode::Flat);
-    
+
     let mut phase = 0;
     group.bench_function("acquire_renew_release_cycle", |b| {
         b.iter(|| {
@@ -120,7 +120,7 @@ fn bench_multi_resource_leases(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(500));
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(routes.len() as u64));
-    
+
     let mut idx = 0;
     group.bench_function("renew_across_resources", |b| {
         b.iter(|| {
@@ -164,7 +164,7 @@ fn bench_cross_realm_isolation(c: &mut Criterion) {
     let mut group = c.benchmark_group("cross_realm_isolation");
     group.measurement_time(Duration::from_millis(500));
     group.sampling_mode(SamplingMode::Flat);
-    
+
     let mut phase = 0;
     group.bench_function("alternate_realm_operations", |b| {
         b.iter(|| {

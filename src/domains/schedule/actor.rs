@@ -300,9 +300,9 @@ mod tests {
         assert!(cron.is_ok());
         let cron = cron.unwrap();
         assert_eq!(cron.minute.len(), 60); // All 0-59
-        assert_eq!(cron.hour.len(), 24);   // All 0-23
-        assert_eq!(cron.day.len(), 31);    // All 1-31
-        assert_eq!(cron.month.len(), 12);  // All 1-12
+        assert_eq!(cron.hour.len(), 24); // All 0-23
+        assert_eq!(cron.day.len(), 31); // All 1-31
+        assert_eq!(cron.month.len(), 12); // All 1-12
         assert_eq!(cron.weekday.len(), 7); // All 0-6
     }
 
@@ -489,7 +489,7 @@ mod tests {
     fn should_match_weekday() {
         // Arrange
         let cron = CronSchedule::parse("* * * * 3").unwrap(); // Wednesday
-        // 2025-01-15 is a Wednesday
+                                                              // 2025-01-15 is a Wednesday
         let dt = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
 
         // Act & Assert
@@ -571,9 +571,7 @@ mod tests {
         // Use CSV instead: 9,10,11,12,13,14,15,16,17
         let cron = CronSchedule::parse("0 9,10,11,12,13,14,15,16,17 * * *").unwrap();
         for hour in 9..=17 {
-            let dt = Utc
-                .with_ymd_and_hms(2025, 1, 15, hour, 0, 0)
-                .unwrap();
+            let dt = Utc.with_ymd_and_hms(2025, 1, 15, hour, 0, 0).unwrap();
             assert!(cron.matches_dt(&dt), "Should match hour {}", hour);
         }
 
@@ -603,4 +601,3 @@ mod tests {
         assert_eq!(cron.hour, vec![9]);
     }
 }
-

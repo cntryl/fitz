@@ -17,7 +17,7 @@ fn bench_put_operation(c: &mut Criterion) {
     // Setup
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
-    
+
     // Begin transaction outside the loop
     actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -50,7 +50,7 @@ fn bench_get_operation(c: &mut Criterion) {
     // Setup
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
-    
+
     // Begin transaction
     actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -81,7 +81,7 @@ fn bench_delete_operation(c: &mut Criterion) {
     // Setup
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
-    
+
     // Begin transaction
     actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -112,7 +112,7 @@ fn bench_scan_operation(c: &mut Criterion) {
     // Setup
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
-    
+
     // Begin transaction
     actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -170,7 +170,7 @@ fn bench_rollback_operation(c: &mut Criterion) {
     // Setup
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
-    
+
     // Begin transaction
     actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -205,7 +205,7 @@ fn bench_rollback_operation(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_put_operation,
         bench_get_operation,
         bench_delete_operation,

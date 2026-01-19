@@ -10,11 +10,6 @@ use crate::runtime::routing::RouteFamily;
 /// * `area` - Area name  
 /// * `resource` - Resource name
 /// * `max_attempts` - Optional max delivery attempts before DLQ
-///
-/// # Example
-/// ```ignore
-/// let actor = create_test_queue_actor("test", "queue", "jobs", None);
-/// ```
 pub fn create_test_queue_actor(
     realm: &str,
     area: &str,

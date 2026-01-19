@@ -237,7 +237,7 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_single_family_intensive,
         bench_dual_family_concurrent,
         bench_triple_family_contention,

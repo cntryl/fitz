@@ -3,9 +3,9 @@
 //! Pure cron parsing and matching operations
 //! Target: <1 µs per operation
 
+use chrono::{TimeZone, Utc};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode};
 use fitz::domains::schedule::CronSchedule;
-use chrono::{TimeZone, Utc};
 
 #[path = "config.rs"]
 mod config;

@@ -20,9 +20,7 @@ fn bench_encode_payload(c: &mut Criterion) {
     let mut group = c.benchmark_group("schedule_integration_encode");
     group.sampling_mode(SamplingMode::Flat);
 
-    group.bench_function("encode_payload", |b| {
-        b.iter(|| payload.clone().encode())
-    });
+    group.bench_function("encode_payload", |b| b.iter(|| payload.clone().encode()));
 
     group.finish();
 }

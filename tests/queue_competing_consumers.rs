@@ -107,7 +107,8 @@ fn should_redelivery_messages_after_crash() {
     // Pre-populate with messages
     let mut original_ids = Vec::new();
     {
-        let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor =
+            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
 
         for i in 0..10 {
             let body = Bytes::from(format!("task {}", i));
@@ -136,8 +137,16 @@ fn should_redelivery_messages_after_crash() {
     let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
 
     // Assert - All 10 messages recovered (inflight automatically redelivered)
-    assert_eq!(actor.ready.len(), 10, "All 10 messages should be in ready queue after restart");
-    assert_eq!(actor.inflight.len(), 0, "Inflight map should be empty after restart");
+    assert_eq!(
+        actor.ready.len(),
+        10,
+        "All 10 messages should be in ready queue after restart"
+    );
+    assert_eq!(
+        actor.inflight.len(),
+        0,
+        "Inflight map should be empty after restart"
+    );
 
     // Verify recovery can deliver all original messages
     let mut recovered_count = 0;
@@ -168,7 +177,8 @@ fn should_preserve_delayed_visibility_across_restart() {
 
     // Enqueue messages with delay
     {
-        let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor =
+            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
 
         // Message 1: immediately visible
         actor.handle_enqueue(Bytes::from("immediate"), None);
@@ -212,7 +222,8 @@ fn should_prevent_id_collisions_across_crash() {
 
     // Enqueue first batch
     {
-        let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor =
+            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
 
         for i in 0..10 {
             let body = Bytes::from(format!("batch1-{}", i));
@@ -230,7 +241,8 @@ fn should_prevent_id_collisions_across_crash() {
     // Act - Restart and enqueue second batch
     let mut second_batch_ids = Vec::new();
     {
-        let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor =
+            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
 
         for i in 0..10 {
             let body = Bytes::from(format!("batch2-{}", i));

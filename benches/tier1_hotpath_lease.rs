@@ -5,9 +5,9 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode};
 use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::runtime::actor::Actor;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::testkit::lease::create_test_lease_context;
-use fitz::runtime::actor::Actor;
 
 #[path = "config.rs"]
 mod config;

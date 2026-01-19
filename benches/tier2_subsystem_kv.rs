@@ -105,14 +105,14 @@ fn bench_read_write_mixed_transaction(c: &mut Criterion) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    
+
     actor.handle(KvMessage::Put {
         route_family: RouteFamily::new(1),
         resource: "table".to_string(),
         key: Bytes::from_static(b"setup_key"),
         value: Bytes::from_static(b"setup_value"),
     });
-    
+
     actor.handle(KvMessage::Rollback);
 
     let mut group = c.benchmark_group("kv_subsystem_mixed_read_write");
@@ -301,7 +301,7 @@ fn bench_cross_family_stress(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_transaction_lifecycle,
         bench_multi_operation_transaction,
         bench_read_write_mixed_transaction,
