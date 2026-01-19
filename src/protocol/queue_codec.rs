@@ -90,8 +90,8 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
 
 fn parse_enqueue(
     family_id: RouteFamily,
-    realm: String,
-    area: String,
+    _realm: String,
+    _area: String,
     route: String,
     payload: &[u8],
 ) -> Result<QueueMessage, String> {
@@ -133,10 +133,8 @@ fn parse_enqueue(
                 payload[offset + 6],
                 payload[offset + 7],
             ]);
-            offset += 8;
             Some(delay)
         } else {
-            offset += 1;
             None
         }
     } else {
@@ -153,8 +151,8 @@ fn parse_enqueue(
 
 fn parse_enqueue_batch(
     family_id: RouteFamily,
-    realm: String,
-    area: String,
+    _realm: String,
+    _area: String,
     route: String,
     payload: &[u8],
 ) -> Result<QueueMessage, String> {
@@ -211,10 +209,8 @@ fn parse_enqueue_batch(
                 payload[offset + 6],
                 payload[offset + 7],
             ]);
-            offset += 8;
             Some(delay)
         } else {
-            offset += 1;
             None
         }
     } else {
@@ -231,8 +227,8 @@ fn parse_enqueue_batch(
 
 fn parse_reserve(
     family_id: RouteFamily,
-    realm: String,
-    area: String,
+    _realm: String,
+    _area: String,
     route: String,
     payload: &[u8],
 ) -> Result<QueueMessage, String> {
@@ -267,10 +263,8 @@ fn parse_reserve(
                 payload[offset + 2],
                 payload[offset + 3],
             ]) as usize;
-            offset += 4;
             Some(size)
         } else {
-            offset += 1;
             None
         }
     } else {
@@ -294,10 +288,8 @@ fn parse_reserve(
                 payload[offset + 6],
                 payload[offset + 7],
             ]);
-            offset += 8;
             Some(wait)
         } else {
-            offset += 1;
             None
         }
     } else {
@@ -315,8 +307,8 @@ fn parse_reserve(
 
 fn parse_extend(
     family_id: RouteFamily,
-    realm: String,
-    area: String,
+    _realm: String,
+    _area: String,
     route: String,
     payload: &[u8],
 ) -> Result<QueueMessage, String> {
@@ -368,7 +360,6 @@ fn parse_extend(
         payload[offset + 6],
         payload[offset + 7],
     ]);
-    offset += 8;
 
     Ok(QueueMessage::Extend {
         family_id,
@@ -381,8 +372,8 @@ fn parse_extend(
 
 fn parse_complete(
     family_id: RouteFamily,
-    realm: String,
-    area: String,
+    _realm: String,
+    _area: String,
     route: String,
     payload: &[u8],
 ) -> Result<QueueMessage, String> {
@@ -418,7 +409,6 @@ fn parse_complete(
         payload[offset + 6],
         payload[offset + 7],
     ]);
-    offset += 8;
 
     Ok(QueueMessage::Complete {
         family_id,

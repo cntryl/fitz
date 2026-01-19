@@ -9,6 +9,12 @@ pub struct TlvEncoder {
     buf: Vec<u8>,
 }
 
+impl Default for TlvEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TlvEncoder {
     /// Create a new encoder
     pub fn new() -> Self {
@@ -189,6 +195,16 @@ impl<'a> TlvDecoder<'a> {
         let flag = self.get_u8()?;
         if flag == 1 {
             self.get_string().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Decode optional bytes
+    pub fn get_optional_bytes(&mut self) -> Result<Option<bytes::Bytes>, String> {
+        let flag = self.get_u8()?;
+        if flag == 1 {
+            self.get_bytes().map(Some)
         } else {
             Ok(None)
         }

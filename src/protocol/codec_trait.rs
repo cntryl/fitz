@@ -87,6 +87,12 @@ pub struct CodecBuilder {
     max_payload: usize,
 }
 
+impl Default for CodecBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodecBuilder {
     pub fn new() -> Self {
         Self {

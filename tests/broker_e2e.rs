@@ -3,7 +3,6 @@
 //! These tests verify the broker is operational and can handle basic protocol interactions.
 //! The broker must be running before these tests execute.
 
-use bytes::Bytes;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -18,6 +17,7 @@ fn encode_tcp_frame(payload: &[u8]) -> Vec<u8> {
 }
 
 /// Helper to read a length-prefixed frame
+#[allow(dead_code)]
 async fn read_tcp_frame(stream: &mut TcpStream) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;

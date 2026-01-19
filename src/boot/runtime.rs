@@ -148,18 +148,20 @@ impl BootConfig {
 
     /// Create a new config with in-memory storage (for testing)
     pub fn with_memory_storage() -> Self {
-        let mut config = Self::default();
-        config.storage_mode = StorageMode::Memory;
-        config
+        Self {
+            storage_mode: StorageMode::Memory,
+            ..Default::default()
+        }
     }
 
     /// Create a new config with local disk storage at path
     pub fn with_local_storage(path: impl Into<String>) -> Self {
-        let mut config = Self::default();
-        config.storage_mode = StorageMode::LocalDisk {
-            db_path: path.into(),
-        };
-        config
+        Self {
+            storage_mode: StorageMode::LocalDisk {
+                db_path: path.into(),
+            },
+            ..Default::default()
+        }
     }
 
     /// Set HTTP port

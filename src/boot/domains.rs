@@ -229,6 +229,7 @@ impl MailboxSink for KvDomainSink {
 /// domain-specific constructors are refactored.
 pub struct QueueDomainSink {
     /// Midge storage engine
+    #[allow(dead_code)]
     store: Arc<cntryl_midge::Engine>,
     active: AtomicBool,
 }
