@@ -1,0 +1,69 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+.github
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+.editorconfig
+
+# Rust build artifacts
+target
+# Keep Cargo.lock for reproducible builds
+*.rlib
+*.rmeta
+
+# Development and testing
+.env
+.env.local
+tests
+benches
+docs
+scripts
+
+# Build artifacts and caches
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+.cache
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Docker files (don't include Docker setup in build context)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Kubernetes and deployment
+.k8s
+k8s
+*.yaml
+
+# Documentation (optional, remove if you want docs in image)
+README.md
+CONTRIBUTING.md
+LICENSE
+
+# Inventory and project files
+inventory.md
+compose.yml

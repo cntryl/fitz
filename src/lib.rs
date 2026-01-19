@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod boot;
 pub mod control;
 pub mod domains;
 pub mod prelude;
