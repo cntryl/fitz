@@ -495,13 +495,6 @@ impl KvActor {
         ColumnFamilyId(route_family.id() as u32)
     }
 
-    fn resource_prefix(resource: &str) -> Vec<u8> {
-        let mut prefix = Vec::with_capacity(resource.len() + 1);
-        prefix.extend_from_slice(resource.as_bytes());
-        prefix.push(0);
-        prefix
-    }
-
     fn encode_scoped_key(realm: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
         let mut out = Self::realm_resource_prefix(realm, resource);
         out.extend_from_slice(user_key);

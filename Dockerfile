@@ -46,5 +46,6 @@ COPY --from=builder /usr/src/fitz/target/*/release/fitz /app/fitz
 
 # Run as non-root numeric UID; distroless has no adduser/passwd files.
 USER 65532
-EXPOSE 8080
+
+EXPOSE 4090 4091
 CMD ["/app/fitz"]
