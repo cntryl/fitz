@@ -12,8 +12,8 @@ fn should_encode_and_decode_schedule_payload() {
     // Arrange
     let original = SchedulePayload {
         cron: "0 9 * * 1-5".to_string(),
-        resource: "emails".to_string(),
-        operation: "send".to_string(),
+        target_resource: "emails".to_string(),
+        target_operation: "send".to_string(),
     };
 
     // Act
@@ -30,8 +30,8 @@ fn should_parse_valid_cron_every_minute() {
     // Arrange
     let payload = SchedulePayload {
         cron: "* * * * *".to_string(),
-        resource: "task".to_string(),
-        operation: "run".to_string(),
+        target_resource: "task".to_string(),
+        target_operation: "run".to_string(),
     };
 
     // Act
@@ -48,8 +48,8 @@ fn should_parse_valid_cron_workday_9am() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 9 * * 1-5".to_string(), // Mon-Fri at 9 AM
-        resource: "meetings".to_string(),
-        operation: "start".to_string(),
+        target_resource: "meetings".to_string(),
+        target_operation: "start".to_string(),
     };
 
     // Act
@@ -66,8 +66,8 @@ fn should_parse_valid_cron_with_step_syntax() {
     // Arrange
     let payload = SchedulePayload {
         cron: "*/15 */6 * * *".to_string(), // Every 15 min, every 6 hours
-        resource: "sync".to_string(),
-        operation: "data".to_string(),
+        target_resource: "sync".to_string(),
+        target_operation: "data".to_string(),
     };
 
     // Act
@@ -84,8 +84,8 @@ fn should_parse_valid_cron_with_list_syntax() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 9,12,18 * * *".to_string(), // At 9 AM, 12 PM, 6 PM
-        resource: "alerts".to_string(),
-        operation: "check".to_string(),
+        target_resource: "alerts".to_string(),
+        target_operation: "check".to_string(),
     };
 
     // Act
@@ -102,8 +102,8 @@ fn should_parse_valid_cron_with_range_syntax() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 9-17 * * 1-5".to_string(), // 9 AM to 5 PM, Mon-Fri
-        resource: "office".to_string(),
-        operation: "open".to_string(),
+        target_resource: "office".to_string(),
+        target_operation: "open".to_string(),
     };
 
     // Act
@@ -120,8 +120,8 @@ fn should_parse_valid_cron_max_values() {
     // Arrange - Minute max 59, Hour max 23, Day max 31, Month max 12, Weekday max 6
     let payload = SchedulePayload {
         cron: "59 23 31 12 6".to_string(),
-        resource: "last".to_string(),
-        operation: "second".to_string(),
+        target_resource: "last".to_string(),
+        target_operation: "second".to_string(),
     };
 
     // Act
@@ -138,8 +138,8 @@ fn should_parse_valid_cron_min_values() {
     // Arrange - Minute min 0, Hour min 0, Day min 1, Month min 1, Weekday min 0
     let payload = SchedulePayload {
         cron: "0 0 1 1 0".to_string(),
-        resource: "first".to_string(),
-        operation: "instant".to_string(),
+        target_resource: "first".to_string(),
+        target_operation: "instant".to_string(),
     };
 
     // Act
@@ -156,8 +156,8 @@ fn should_decode_with_empty_operation_field() {
     // Arrange - Operation can be empty string (semantic meaning: fire without routing)
     let payload = SchedulePayload {
         cron: "0 12 * * *".to_string(),
-        resource: "task".to_string(),
-        operation: "".to_string(), // Empty operation allowed
+        target_resource: "task".to_string(),
+        target_operation: "".to_string(), // Empty operation allowed
     };
 
     // Act
@@ -166,7 +166,7 @@ fn should_decode_with_empty_operation_field() {
 
     // Assert
     assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().operation, "");
+    assert_eq!(decoded.unwrap().target_operation, "");
 }
 
 #[test]
@@ -175,18 +175,18 @@ fn should_preserve_payload_through_roundtrip() {
     let payloads = vec![
         SchedulePayload {
             cron: "0 0 * * *".to_string(),
-            resource: "daily_backup".to_string(),
-            operation: "backup_full".to_string(),
+            target_resource: "daily_backup".to_string(),
+            target_operation: "backup_full".to_string(),
         },
         SchedulePayload {
             cron: "*/5 * * * *".to_string(),
-            resource: "health_check".to_string(),
-            operation: "check_services".to_string(),
+            target_resource: "health_check".to_string(),
+            target_operation: "check_services".to_string(),
         },
         SchedulePayload {
             cron: "0 */4 * * *".to_string(),
-            resource: "cache_refresh".to_string(),
-            operation: "invalidate_all".to_string(),
+            target_resource: "cache_refresh".to_string(),
+            target_operation: "invalidate_all".to_string(),
         },
     ];
 
@@ -195,8 +195,8 @@ fn should_preserve_payload_through_roundtrip() {
         let encoded = original.encode();
         let decoded = SchedulePayload::decode(&encoded).unwrap();
         assert_eq!(original.cron, decoded.cron);
-        assert_eq!(original.resource, decoded.resource);
-        assert_eq!(original.operation, decoded.operation);
+        assert_eq!(original.target_resource, decoded.target_resource);
+        assert_eq!(original.target_operation, decoded.target_operation);
     }
 }
 
@@ -205,8 +205,8 @@ fn should_handle_unicode_in_resource_and_operation() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 0 * * *".to_string(),
-        resource: "cafÃ©_backup".to_string(),
-        operation: "cafÃ©_sync".to_string(),
+        target_resource: "cafÃ©_backup".to_string(),
+        target_operation: "cafÃ©_sync".to_string(),
     };
 
     // Act
@@ -216,8 +216,8 @@ fn should_handle_unicode_in_resource_and_operation() {
     // Assert
     assert!(decoded.is_ok());
     let decoded = decoded.unwrap();
-    assert_eq!(decoded.resource, "cafÃ©_backup");
-    assert_eq!(decoded.operation, "cafÃ©_sync");
+    assert_eq!(decoded.target_resource, "cafÃ©_backup");
+    assert_eq!(decoded.target_operation, "cafÃ©_sync");
 }
 
 #[test]
@@ -226,8 +226,8 @@ fn should_handle_long_resource_and_operation_names() {
     let long_name = "a".repeat(256);
     let payload = SchedulePayload {
         cron: "0 0 * * *".to_string(),
-        resource: long_name.clone(),
-        operation: long_name.clone(),
+        target_resource: long_name.clone(),
+        target_operation: long_name.clone(),
     };
 
     // Act
@@ -237,8 +237,8 @@ fn should_handle_long_resource_and_operation_names() {
     // Assert
     assert!(decoded.is_ok());
     let decoded = decoded.unwrap();
-    assert_eq!(decoded.resource, long_name);
-    assert_eq!(decoded.operation, long_name);
+    assert_eq!(decoded.target_resource, long_name);
+    assert_eq!(decoded.target_operation, long_name);
 }
 
 #[test]
@@ -246,8 +246,8 @@ fn should_handle_special_characters_in_fields() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 0 * * *".to_string(),
-        resource: "task/with/slashes".to_string(),
-        operation: "op-with-dashes_and_underscores".to_string(),
+        target_resource: "task/with/slashes".to_string(),
+        target_operation: "op-with-dashes_and_underscores".to_string(),
     };
 
     // Act
@@ -257,8 +257,8 @@ fn should_handle_special_characters_in_fields() {
     // Assert
     assert!(decoded.is_ok());
     let decoded = decoded.unwrap();
-    assert_eq!(decoded.resource, "task/with/slashes");
-    assert_eq!(decoded.operation, "op-with-dashes_and_underscores");
+    assert_eq!(decoded.target_resource, "task/with/slashes");
+    assert_eq!(decoded.target_operation, "op-with-dashes_and_underscores");
 }
 
 #[test]
@@ -294,14 +294,14 @@ fn should_encode_multiple_payloads_independently() {
     // Arrange
     let payload1 = SchedulePayload {
         cron: "0 9 * * *".to_string(),
-        resource: "morning".to_string(),
-        operation: "start".to_string(),
+        target_resource: "morning".to_string(),
+        target_operation: "start".to_string(),
     };
 
     let payload2 = SchedulePayload {
         cron: "0 17 * * *".to_string(),
-        resource: "evening".to_string(),
-        operation: "end".to_string(),
+        target_resource: "evening".to_string(),
+        target_operation: "end".to_string(),
     };
 
     // Act
@@ -312,7 +312,7 @@ fn should_encode_multiple_payloads_independently() {
     let decoded2 = SchedulePayload::decode(&encoded2).unwrap();
 
     // Assert - Verify no cross-contamination
-    assert_eq!(decoded1.resource, "morning");
-    assert_eq!(decoded2.resource, "evening");
+    assert_eq!(decoded1.target_resource, "morning");
+    assert_eq!(decoded2.target_resource, "evening");
     assert_ne!(decoded1, decoded2);
 }

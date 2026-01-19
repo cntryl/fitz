@@ -2,15 +2,19 @@ use crate::protocol::tlv::TlvDecoder;
 use bytes::Bytes;
 
 /// TLV payload for schedules. MUST be TLV encoded.
-/// Fields required:
-/// - cron: string
-/// - resource: string
-/// - operation: string
+/// 
+/// The scheduler is a clock: it matches a cron expression against wall-clock time
+/// and emits a notice at the target route.
+/// 
+/// Required fields:
+/// - cron: string (standard 5-field cron expression)
+/// - target_resource: string (resource name to emit notice for)
+/// - target_operation: string (operation name to emit notice for)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulePayload {
     pub cron: String,
-    pub resource: String,
-    pub operation: String,
+    pub target_resource: String,
+    pub target_operation: String,
 }
 
 impl SchedulePayload {
@@ -22,27 +26,27 @@ impl SchedulePayload {
             .map_err(|e| format!("tlv decode error: {}", e))?;
 
         let mut cron: Option<String> = None;
-        let mut resource: Option<String> = None;
-        let mut operation: Option<String> = None;
+        let mut target_resource: Option<String> = None;
+        let mut target_operation: Option<String> = None;
 
         for rec in records {
             // Type numbers chosen arbitrarily and documented internally
             match rec.msg_type.0 {
                 1 => cron = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
-                2 => resource = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
-                3 => operation = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
+                2 => target_resource = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
+                3 => target_operation = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
                 _ => (),
             }
         }
 
         let cron = cron.ok_or_else(|| "missing field: cron".to_string())?;
-        let resource = resource.ok_or_else(|| "missing field: resource".to_string())?;
-        let operation = operation.ok_or_else(|| "missing field: operation".to_string())?;
+        let target_resource = target_resource.ok_or_else(|| "missing field: target_resource".to_string())?;
+        let target_operation = target_operation.ok_or_else(|| "missing field: target_operation".to_string())?;
 
         Ok(Self {
             cron,
-            resource,
-            operation,
+            target_resource,
+            target_operation,
         })
     }
 
@@ -51,8 +55,8 @@ impl SchedulePayload {
         use crate::protocol::tlv::{MessageType, TlvEncoder};
         let mut enc = TlvEncoder::new();
         enc.encode(MessageType(1), self.cron.as_bytes());
-        enc.encode(MessageType(2), self.resource.as_bytes());
-        enc.encode(MessageType(3), self.operation.as_bytes());
+        enc.encode(MessageType(2), self.target_resource.as_bytes());
+        enc.encode(MessageType(3), self.target_operation.as_bytes());
         enc.finish()
     }
 }
@@ -67,8 +71,8 @@ mod tests {
         // Arrange
         let payload = SchedulePayload {
             cron: "* * * * *".to_string(),
-            resource: "res1".to_string(),
-            operation: "op".to_string(),
+            target_resource: "res1".to_string(),
+            target_operation: "op".to_string(),
         };
 
         // Act
@@ -84,8 +88,8 @@ mod tests {
         // Arrange
         let payload = SchedulePayload {
             cron: "0 */6 * * *".to_string(),
-            resource: "notifications".to_string(),
-            operation: "send".to_string(),
+            target_resource: "notifications".to_string(),
+            target_operation: "send".to_string(),
         };
 
         // Act
@@ -94,8 +98,8 @@ mod tests {
 
         // Assert
         assert_eq!(dec.cron, "0 */6 * * *");
-        assert_eq!(dec.resource, "notifications");
-        assert_eq!(dec.operation, "send");
+        assert_eq!(dec.target_resource, "notifications");
+        assert_eq!(dec.target_operation, "send");
     }
 
     #[test]
@@ -117,8 +121,8 @@ mod tests {
         // Arrange - Every weekday at noon
         let payload = SchedulePayload {
             cron: "0 12 * * 1-5".to_string(),
-            resource: "reports".to_string(),
-            operation: "generate".to_string(),
+            target_resource: "reports".to_string(),
+            target_operation: "generate".to_string(),
         };
 
         // Act
