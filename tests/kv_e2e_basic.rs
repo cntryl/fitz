@@ -1,6 +1,6 @@
-﻿//! KV domain end-to-end tests
+//! KV domain end-to-end tests
 //!
-//! Tests full transaction lifecycle: Begin â†’ Get/Put/Delete/Scan â†’ Commit/Rollback
+//! Tests full transaction lifecycle: Begin → Get/Put/Delete/Scan → Commit/Rollback
 //! across multiple resources, families, and write options.
 
 use bytes::Bytes;
@@ -27,10 +27,14 @@ fn should_complete_transaction_begin_put_get_sequence() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    assert!(matches!(response, KvResponse::BeginOk));
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     // Act & Assert - Put
     let response = actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"user:1001"),
@@ -40,6 +44,7 @@ fn should_complete_transaction_begin_put_get_sequence() {
 
     // Act & Assert - Get
     let response = actor.handle(KvMessage::Get {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"user:1001"),
@@ -55,7 +60,7 @@ fn should_complete_transaction_begin_put_get_sequence() {
     }
 
     // Act & Assert - Rollback to cleanup
-    let response = actor.handle(KvMessage::Rollback);
+    let response = actor.handle(KvMessage::Rollback { tx_id });
     assert!(matches!(response, KvResponse::RollbackOk));
 }
 
@@ -65,7 +70,7 @@ fn should_isolate_transactions_across_resources() {
     let mut actor = create_kv_actor();
 
     // Transaction 1 - users resource
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -73,9 +78,14 @@ fn should_isolate_transactions_across_resources() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let user_key = Bytes::from_static(b"user:5001");
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: user_key.clone(),
@@ -84,6 +94,7 @@ fn should_isolate_transactions_across_resources() {
 
     // Act - Try to operate on different resource
     let response = actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "posts".to_string(), // Different resource
         key: Bytes::from_static(b"post:2001"),
@@ -99,7 +110,7 @@ fn should_isolate_transactions_across_resources() {
     ));
 
     // Cleanup - Rollback
-    actor.handle(KvMessage::Rollback);
+    actor.handle(KvMessage::Rollback { tx_id });
 }
 
 #[test]
@@ -108,7 +119,7 @@ fn should_isolate_transactions_across_column_families() {
     let mut actor = create_kv_actor();
 
     // Transaction 1 - Family 1
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -116,8 +127,13 @@ fn should_isolate_transactions_across_column_families() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id1 = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id: tx_id1,
         route_family: RouteFamily::new(1),
         resource: "table_a".to_string(),
         key: Bytes::from_static(b"key1"),
@@ -125,10 +141,10 @@ fn should_isolate_transactions_across_column_families() {
     });
 
     // Commit transaction 1
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id: tx_id1 });
 
     // Transaction 2 - Family 2 (different column family)
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(2),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -136,8 +152,13 @@ fn should_isolate_transactions_across_column_families() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id2 = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id: tx_id2,
         route_family: RouteFamily::new(2),
         resource: "table_b".to_string(),
         key: Bytes::from_static(b"key1"),
@@ -146,6 +167,7 @@ fn should_isolate_transactions_across_column_families() {
 
     // Get from Family 2
     let response = actor.handle(KvMessage::Get {
+        tx_id: tx_id2,
         route_family: RouteFamily::new(2),
         resource: "table_b".to_string(),
         key: Bytes::from_static(b"key1"),
@@ -162,7 +184,7 @@ fn should_isolate_transactions_across_column_families() {
         _ => panic!("Expected Family 2 value"),
     }
 
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id: tx_id2 });
 }
 
 #[test]
@@ -171,7 +193,7 @@ fn should_rollback_changes_on_explicit_rollback() {
     let mut actor = create_kv_actor();
 
     // Transaction 1 - Add a user (will be rolled back)
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -179,9 +201,14 @@ fn should_rollback_changes_on_explicit_rollback() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let key = Bytes::from_static(b"user:temp");
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: key.clone(),
@@ -189,16 +216,17 @@ fn should_rollback_changes_on_explicit_rollback() {
     });
 
     // Act - Rollback
-    let response = actor.handle(KvMessage::Rollback);
+    let response = actor.handle(KvMessage::Rollback { tx_id });
     assert!(matches!(response, KvResponse::RollbackOk));
 
     // Assert - Transaction ended
     let response = actor.handle(KvMessage::Get {
+        tx_id: 9999,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key,
     });
-    assert!(matches!(response, KvResponse::Error { .. })); // NoActiveTx
+    assert!(matches!(response, KvResponse::Error { .. })); // InvalidTxId
 }
 
 #[test]
@@ -207,7 +235,7 @@ fn should_handle_delete_operations() {
     let mut actor = create_kv_actor();
 
     // Setup - Begin transaction
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -215,8 +243,13 @@ fn should_handle_delete_operations() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"temp_key"),
@@ -225,6 +258,7 @@ fn should_handle_delete_operations() {
 
     // Act - Delete the key
     let response = actor.handle(KvMessage::Delete {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"temp_key"),
@@ -235,6 +269,7 @@ fn should_handle_delete_operations() {
 
     // Assert - Key is gone
     let response = actor.handle(KvMessage::Get {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"temp_key"),
@@ -247,7 +282,7 @@ fn should_handle_delete_operations() {
         }
     ));
 
-    actor.handle(KvMessage::Rollback);
+    actor.handle(KvMessage::Rollback { tx_id });
 }
 
 #[test]
@@ -257,6 +292,7 @@ fn should_reject_operations_without_begin() {
 
     // Act - Try Get without Begin
     let response = actor.handle(KvMessage::Get {
+        tx_id: 9999,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"key"),
@@ -266,7 +302,7 @@ fn should_reject_operations_without_begin() {
     assert!(matches!(
         response,
         KvResponse::Error {
-            error: fitz::domains::kv::KvError::NoActiveTx
+            error: fitz::domains::kv::KvError::InvalidTxId
         }
     ));
 }
@@ -277,7 +313,7 @@ fn should_allow_multiple_sequential_transactions() {
     let mut actor = create_kv_actor();
 
     // Transaction 1
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -285,15 +321,20 @@ fn should_allow_multiple_sequential_transactions() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id1 = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id: tx_id1,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"tx1_key"),
         value: Bytes::from_static(b"tx1_value"),
     });
 
-    actor.handle(KvMessage::Rollback);
+    actor.handle(KvMessage::Rollback { tx_id: tx_id1 });
 
     // Transaction 2
     let response = actor.handle(KvMessage::Begin {
@@ -304,9 +345,13 @@ fn should_allow_multiple_sequential_transactions() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    assert!(matches!(response, KvResponse::BeginOk));
+    let tx_id2 = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id: tx_id2,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"tx2_key"),
@@ -314,6 +359,6 @@ fn should_allow_multiple_sequential_transactions() {
     });
 
     // Assert - Can rollback second transaction
-    let response = actor.handle(KvMessage::Rollback);
+    let response = actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
     assert!(matches!(response, KvResponse::RollbackOk));
 }

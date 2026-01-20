@@ -1,0 +1,10 @@
+﻿cargo : warning: error finalizing incremental compilation session directory `\\?\D:\repos\cntryl\fitz\target\debug\incremental\fitz-2lf6l900dim06\s-hf1dp8meoj-00e8xh6-working`: Access is denied. (os error 5)
+At line:1 char:1
++ cargo build 2>&1 > build_output.txt; Get-Content build_output.txt | S ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: error ...d. (os error 5):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+warning: `fitz` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s

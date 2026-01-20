@@ -24,6 +24,7 @@
 
 use bytes::Bytes;
 use cntryl_midge::{ColumnFamilyId, Engine as MidgeEngine, TransactionMode};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::auth::validate_realm_format;
@@ -51,8 +52,10 @@ pub struct ActiveKvTx {
 pub struct KvActor {
     /// Midge storage engine
     store: Arc<MidgeEngine>,
-    /// Active transaction (if any)
-    active_tx: Option<ActiveKvTx>,
+    /// Active transactions by server-assigned ID
+    transactions: HashMap<u64, ActiveKvTx>,
+    /// Next transaction ID to assign
+    next_tx_id: u64,
 }
 
 impl KvActor {
@@ -60,7 +63,8 @@ impl KvActor {
     pub fn new(store: Arc<MidgeEngine>) -> Self {
         Self {
             store,
-            active_tx: None,
+            transactions: HashMap::new(),
+            next_tx_id: 1,
         }
     }
 
@@ -75,41 +79,47 @@ impl KvActor {
                 mode,
                 write_options,
             } => self.handle_begin(route_family, realm, resource, mode, write_options),
-            KvMessage::Commit => self.handle_commit(),
-            KvMessage::Rollback => self.handle_rollback(),
+            KvMessage::Commit { tx_id } => self.handle_commit(tx_id),
+            KvMessage::Rollback { tx_id } => self.handle_rollback(tx_id),
             KvMessage::Get {
+                tx_id,
                 route_family,
                 resource,
                 key,
-            } => self.handle_get(route_family, resource, key),
+            } => self.handle_get(tx_id, route_family, resource, key),
             KvMessage::Put {
+                tx_id,
                 route_family,
                 resource,
                 key,
                 value,
-            } => self.handle_put(route_family, resource, key, value),
+            } => self.handle_put(tx_id, route_family, resource, key, value),
             KvMessage::Insert {
+                tx_id,
                 route_family,
                 resource,
                 key,
                 value,
-            } => self.handle_insert(route_family, resource, key, value),
+            } => self.handle_insert(tx_id, route_family, resource, key, value),
             KvMessage::Delete {
+                tx_id,
                 route_family,
                 resource,
                 key,
-            } => self.handle_delete(route_family, resource, key),
+            } => self.handle_delete(tx_id, route_family, resource, key),
             KvMessage::DeleteRange {
+                tx_id,
                 route_family,
                 resource,
                 start,
                 end,
-            } => self.handle_delete_range(route_family, resource, start, end),
+            } => self.handle_delete_range(tx_id, route_family, resource, start, end),
             KvMessage::Scan {
+                tx_id,
                 route_family,
                 resource,
                 query,
-            } => self.handle_scan(route_family, resource, query),
+            } => self.handle_scan(tx_id, route_family, resource, query),
         }
     }
 
@@ -122,13 +132,6 @@ impl KvActor {
         mode: TxMode,
         write_options: cntryl_midge::WriteOptions,
     ) -> KvResponse {
-        // Check if transaction already active
-        if self.active_tx.is_some() {
-            return KvResponse::Error {
-                error: KvError::TxAlreadyActive,
-            };
-        }
-
         // Validate realm format (strict opaque identifier check)
         if validate_realm_format(&realm).is_err() {
             return KvResponse::Error {
@@ -147,14 +150,20 @@ impl KvActor {
 
         match self.store.begin_tx(cf, tx_mode) {
             Ok(tx) => {
-                self.active_tx = Some(ActiveKvTx {
-                    bound_realm: realm,
-                    bound_resource: resource,
-                    column_family: cf,
-                    tx,
-                    write_options,
-                });
-                KvResponse::BeginOk
+                let tx_id = self.next_tx_id;
+                self.next_tx_id += 1;
+
+                self.transactions.insert(
+                    tx_id,
+                    ActiveKvTx {
+                        bound_realm: realm,
+                        bound_resource: resource,
+                        column_family: cf,
+                        tx,
+                        write_options,
+                    },
+                );
+                KvResponse::BeginOk { tx_id }
             }
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
@@ -162,11 +171,11 @@ impl KvActor {
         }
     }
 
-    /// Commit the active transaction
-    fn handle_commit(&mut self) -> KvResponse {
-        match self.active_tx.take() {
+    /// Commit a transaction by ID
+    fn handle_commit(&mut self, tx_id: u64) -> KvResponse {
+        match self.transactions.remove(&tx_id) {
             None => KvResponse::Error {
-                error: KvError::NoActiveTx,
+                error: KvError::InvalidTxId,
             },
             Some(active) => {
                 // Use write options provided by user at transaction begin
@@ -180,11 +189,11 @@ impl KvActor {
         }
     }
 
-    /// Rollback the active transaction
-    fn handle_rollback(&mut self) -> KvResponse {
-        match self.active_tx.take() {
+    /// Rollback a transaction by ID
+    fn handle_rollback(&mut self, tx_id: u64) -> KvResponse {
+        match self.transactions.remove(&tx_id) {
             None => KvResponse::Error {
-                error: KvError::NoActiveTx,
+                error: KvError::InvalidTxId,
             },
             Some(_active) => {
                 // Transaction is dropped, automatically rolled back by Midge
@@ -196,11 +205,12 @@ impl KvActor {
     /// Get a value by key
     fn handle_get(
         &mut self,
+        tx_id: u64,
         _route_family: RouteFamily,
         resource: String,
         key: Bytes,
     ) -> KvResponse {
-        let active = match self.get_active_tx_or_err() {
+        let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
@@ -236,12 +246,13 @@ impl KvActor {
     /// Put (upsert) a key-value pair
     fn handle_put(
         &mut self,
+        tx_id: u64,
         _route_family: RouteFamily,
         resource: String,
         key: Bytes,
         value: Bytes,
     ) -> KvResponse {
-        let active = match self.get_active_tx_or_err() {
+        let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
@@ -270,12 +281,13 @@ impl KvActor {
     /// Insert a key-value pair (fail if exists)
     fn handle_insert(
         &mut self,
+        tx_id: u64,
         _route_family: RouteFamily,
         resource: String,
         key: Bytes,
         value: Bytes,
     ) -> KvResponse {
-        let active = match self.get_active_tx_or_err() {
+        let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
@@ -319,11 +331,12 @@ impl KvActor {
     /// Delete a key
     fn handle_delete(
         &mut self,
+        tx_id: u64,
         _route_family: RouteFamily,
         resource: String,
         key: Bytes,
     ) -> KvResponse {
-        let active = match self.get_active_tx_or_err() {
+        let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
@@ -352,12 +365,13 @@ impl KvActor {
     /// Delete a range of keys [start, end)
     fn handle_delete_range(
         &mut self,
+        tx_id: u64,
         _route_family: RouteFamily,
         resource: String,
         start: Bytes,
         end: Bytes,
     ) -> KvResponse {
-        let active = match self.get_active_tx_or_err() {
+        let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
@@ -394,11 +408,12 @@ impl KvActor {
     /// Scan a range of keys
     fn handle_scan(
         &mut self,
+        tx_id: u64,
         _route_family: RouteFamily,
         resource: String,
         query: ScanQuery,
     ) -> KvResponse {
-        let active = match self.get_active_tx_or_err() {
+        let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
@@ -467,9 +482,12 @@ impl KvActor {
     }
 
     /// Get active transaction or return error
-    fn get_active_tx_or_err(&mut self) -> Result<&mut ActiveKvTx, KvResponse> {
-        self.active_tx.as_mut().ok_or_else(|| KvResponse::Error {
-            error: KvError::NoActiveTx,
+    fn get_transaction_or_err(
+        &mut self,
+        tx_id: u64,
+    ) -> Result<&mut ActiveKvTx, KvResponse> {
+        self.transactions.get_mut(&tx_id).ok_or_else(|| KvResponse::Error {
+            error: KvError::InvalidTxId,
         })
     }
 
@@ -581,46 +599,14 @@ mod tests {
         });
 
         // Assert
-        assert!(matches!(response, KvResponse::BeginOk));
-    }
-
-    #[test]
-    fn should_reject_begin_when_transaction_already_active() {
-        // Arrange
-        let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
-            route_family: RouteFamily::new(1),
-            realm: "test".to_string(),
-            area: "kv".to_string(),
-            resource: "table1".to_string(),
-            mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        });
-
-        // Act
-        let response = actor.handle(KvMessage::Begin {
-            route_family: RouteFamily::new(1),
-            realm: "test".to_string(),
-            area: "kv".to_string(),
-            resource: "table2".to_string(),
-            mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        });
-
-        // Assert
-        assert!(matches!(
-            response,
-            KvResponse::Error {
-                error: KvError::TxAlreadyActive
-            }
-        ));
+        assert!(matches!(response, KvResponse::BeginOk { tx_id: _ }));
     }
 
     #[test]
     fn should_enforce_transaction_scope_to_single_resource() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -629,8 +615,14 @@ mod tests {
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
 
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+
         // Act - Try to operate on different resource
         let response = actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table2".to_string(),
             key: Bytes::from("key"),
@@ -653,6 +645,7 @@ mod tests {
 
         // Act & Assert - Get
         let response = actor.handle(KvMessage::Get {
+            tx_id: 999,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: Bytes::from("key"),
@@ -660,12 +653,13 @@ mod tests {
         assert!(matches!(
             response,
             KvResponse::Error {
-                error: KvError::NoActiveTx
+                error: KvError::InvalidTxId
             }
         ));
 
         // Act & Assert - Put
         let response = actor.handle(KvMessage::Put {
+            tx_id: 999,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: Bytes::from("key"),
@@ -674,7 +668,7 @@ mod tests {
         assert!(matches!(
             response,
             KvResponse::Error {
-                error: KvError::NoActiveTx
+                error: KvError::InvalidTxId
             }
         ));
     }
@@ -683,7 +677,7 @@ mod tests {
     fn should_put_and_get_value_within_transaction() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -692,11 +686,17 @@ mod tests {
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
 
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+
         let key = Bytes::from("testkey");
         let value = Bytes::from("testvalue");
 
         // Act - Put
         let put_response = actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -706,6 +706,7 @@ mod tests {
 
         // Act - Get
         let get_response = actor.handle(KvMessage::Get {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -725,7 +726,7 @@ mod tests {
     fn should_reject_insert_when_key_exists() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -733,9 +734,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let key = Bytes::from("testkey");
         actor.handle(KvMessage::Insert {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -744,6 +750,7 @@ mod tests {
 
         // Act - Try to insert again
         let response = actor.handle(KvMessage::Insert {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -763,7 +770,7 @@ mod tests {
     fn should_validate_delete_range_parameters() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -771,9 +778,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Act - End before start
         let response = actor.handle(KvMessage::DeleteRange {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             start: Bytes::from("z"),
@@ -810,7 +822,7 @@ mod tests {
     fn should_delete_existing_key() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -818,9 +830,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let key = Bytes::from("delkey");
         actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -829,6 +846,7 @@ mod tests {
 
         // Act - Delete the key
         let delete_response = actor.handle(KvMessage::Delete {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -839,6 +857,7 @@ mod tests {
 
         // Verify key is gone
         let get_response = actor.handle(KvMessage::Get {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -856,7 +875,7 @@ mod tests {
     fn should_scan_key_range() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -864,10 +883,15 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Add multiple keys
         for i in 0..5 {
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table1".to_string(),
                 key: Bytes::from(format!("key{:02}", i)),
@@ -877,6 +901,7 @@ mod tests {
 
         // Act - Scan range [key01, key04)
         let response = actor.handle(KvMessage::Scan {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             query: ScanQuery {
@@ -908,10 +933,13 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        assert!(matches!(begin_response, KvResponse::BeginOk));
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Act - Commit immediately without writing anything
-        let response = actor.handle(KvMessage::Commit);
+        let response = actor.handle(KvMessage::Commit { tx_id });
 
         // Assert
         assert!(matches!(response, KvResponse::CommitOk));
@@ -921,7 +949,7 @@ mod tests {
     fn should_rollback_transaction() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -929,9 +957,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let key = Bytes::from("rollbackkey");
         actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -939,13 +972,14 @@ mod tests {
         });
 
         // Act - Rollback
-        let response = actor.handle(KvMessage::Rollback);
+        let response = actor.handle(KvMessage::Rollback { tx_id });
 
         // Assert
         assert!(matches!(response, KvResponse::RollbackOk));
 
         // Verify transaction is no longer active
         let get_response = actor.handle(KvMessage::Get {
+            tx_id: 9999,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key,
@@ -953,7 +987,7 @@ mod tests {
         assert!(matches!(
             get_response,
             KvResponse::Error {
-                error: KvError::NoActiveTx
+                error: KvError::InvalidTxId
             }
         ));
     }
@@ -964,7 +998,7 @@ mod tests {
         let mut actor = test_actor();
 
         // Begin transaction for resource1
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -972,9 +1006,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let key = Bytes::from("testkey");
         actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -983,6 +1022,7 @@ mod tests {
 
         // Act - Try to put to different resource in same transaction (should fail)
         let response = actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table2".to_string(),
             key: key.clone(),
@@ -1005,7 +1045,7 @@ mod tests {
         let mut actor2 = test_actor();
 
         // Both start transactions for different resources
-        actor1.handle(KvMessage::Begin {
+        let begin_response1 = actor1.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -1013,8 +1053,12 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id1 = match begin_response1 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
-        actor2.handle(KvMessage::Begin {
+        let begin_response2 = actor2.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -1022,11 +1066,16 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id2 = match begin_response2 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let key = Bytes::from("samekey");
 
         // Act - Put same key to both resources
         actor1.handle(KvMessage::Put {
+            tx_id: tx_id1,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
@@ -1034,6 +1083,7 @@ mod tests {
         });
 
         actor2.handle(KvMessage::Put {
+            tx_id: tx_id2,
             route_family: RouteFamily::new(1),
             resource: "table2".to_string(),
             key: key.clone(),
@@ -1042,12 +1092,14 @@ mod tests {
 
         // Assert - Both succeed, they are isolated
         let get1 = actor1.handle(KvMessage::Get {
+            tx_id: tx_id1,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             key: key.clone(),
         });
 
         let get2 = actor2.handle(KvMessage::Get {
+            tx_id: tx_id2,
             route_family: RouteFamily::new(1),
             resource: "table2".to_string(),
             key: key.clone(),
@@ -1075,7 +1127,7 @@ mod tests {
     fn should_reject_delete_range_with_invalid_bounds() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -1083,9 +1135,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Act - End < Start
         let response = actor.handle(KvMessage::DeleteRange {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             start: Bytes::from("zzz"),
@@ -1105,7 +1162,7 @@ mod tests {
     fn should_scan_with_limit() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -1113,10 +1170,15 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Add 10 keys
         for i in 0..10 {
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table1".to_string(),
                 key: Bytes::from(format!("k{:02}", i)),
@@ -1126,6 +1188,7 @@ mod tests {
 
         // Act - Scan with limit of 3
         let response = actor.handle(KvMessage::Scan {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             query: ScanQuery {
@@ -1149,7 +1212,7 @@ mod tests {
     fn should_scan_reverse() {
         // Arrange
         let mut actor = test_actor();
-        actor.handle(KvMessage::Begin {
+        let begin_response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -1157,10 +1220,15 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Add keys
         for i in 0..5 {
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table1".to_string(),
                 key: Bytes::from(format!("k{}", i)),
@@ -1170,6 +1238,7 @@ mod tests {
 
         // Act - Scan reverse
         let response = actor.handle(KvMessage::Scan {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
             query: ScanQuery {

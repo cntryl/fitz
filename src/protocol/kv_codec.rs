@@ -27,8 +27,8 @@ pub fn parse_request(
 ) -> Result<KvMessage, String> {
     match msg_type {
         msg_type::BEGIN => parse_begin(route_family, realm, area, payload),
-        msg_type::COMMIT => Ok(KvMessage::Commit),
-        msg_type::ROLLBACK => Ok(KvMessage::Rollback),
+        msg_type::COMMIT => parse_commit(payload),
+        msg_type::ROLLBACK => parse_rollback(payload),
         msg_type::GET => parse_get(route_family, payload),
         msg_type::PUT => parse_put(route_family, payload),
         msg_type::INSERT => parse_insert(route_family, payload),
@@ -45,8 +45,8 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 
     let mut buf = Vec::new();
     match response {
-        KvResponse::BeginOk => {
-            // Empty response for begin ok
+        KvResponse::BeginOk { tx_id } => {
+            buf.put_u64(*tx_id);
         }
         KvResponse::CommitOk => {
             // Empty response for commit ok
@@ -95,6 +95,44 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 }
 
 // ===== Parsers =====
+
+fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
+    if payload.len() < 8 {
+        return Err("COMMIT payload too short".to_string());
+    }
+
+    let tx_id = u64::from_be_bytes([
+        payload[0],
+        payload[1],
+        payload[2],
+        payload[3],
+        payload[4],
+        payload[5],
+        payload[6],
+        payload[7],
+    ]);
+
+    Ok(KvMessage::Commit { tx_id })
+}
+
+fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
+    if payload.len() < 8 {
+        return Err("ROLLBACK payload too short".to_string());
+    }
+
+    let tx_id = u64::from_be_bytes([
+        payload[0],
+        payload[1],
+        payload[2],
+        payload[3],
+        payload[4],
+        payload[5],
+        payload[6],
+        payload[7],
+    ]);
+
+    Ok(KvMessage::Rollback { tx_id })
+}
 
 fn parse_begin(
     route_family: RouteFamily,
@@ -157,11 +195,24 @@ fn parse_begin(
 }
 
 fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 8 {
+    if payload.len() < 16 {
         return Err("GET payload too short".to_string());
     }
 
     let mut offset = 0;
+
+    // Read transaction ID (u64)
+    let tx_id = u64::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+        payload[offset + 4],
+        payload[offset + 5],
+        payload[offset + 6],
+        payload[offset + 7],
+    ]);
+    offset += 8;
 
     // Read resource name length (u32)
     let resource_len = u32::from_be_bytes([
@@ -199,6 +250,7 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     let key = Bytes::copy_from_slice(&payload[offset..offset + key_len]);
 
     Ok(KvMessage::Get {
+        tx_id,
         route_family,
         resource,
         key,
@@ -206,11 +258,24 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
 }
 
 fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 8 {
+    if payload.len() < 16 {
         return Err("PUT payload too short".to_string());
     }
 
     let mut offset = 0;
+
+    // Read transaction ID (u64)
+    let tx_id = u64::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+        payload[offset + 4],
+        payload[offset + 5],
+        payload[offset + 6],
+        payload[offset + 7],
+    ]);
+    offset += 8;
 
     // Read resource name length (u32)
     let resource_len = u32::from_be_bytes([
@@ -267,6 +332,7 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     let value = Bytes::copy_from_slice(&payload[offset..offset + value_len]);
 
     Ok(KvMessage::Put {
+        tx_id,
         route_family,
         resource,
         key,
@@ -275,11 +341,24 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
 }
 
 fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 8 {
+    if payload.len() < 16 {
         return Err("INSERT payload too short".to_string());
     }
 
     let mut offset = 0;
+
+    // Read transaction ID (u64)
+    let tx_id = u64::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+        payload[offset + 4],
+        payload[offset + 5],
+        payload[offset + 6],
+        payload[offset + 7],
+    ]);
+    offset += 8;
 
     // Read resource name length (u32)
     let resource_len = u32::from_be_bytes([
@@ -336,6 +415,7 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     let value = Bytes::copy_from_slice(&payload[offset..offset + value_len]);
 
     Ok(KvMessage::Insert {
+        tx_id,
         route_family,
         resource,
         key,
@@ -344,11 +424,24 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
 }
 
 fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 8 {
+    if payload.len() < 16 {
         return Err("DELETE payload too short".to_string());
     }
 
     let mut offset = 0;
+
+    // Read transaction ID (u64)
+    let tx_id = u64::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+        payload[offset + 4],
+        payload[offset + 5],
+        payload[offset + 6],
+        payload[offset + 7],
+    ]);
+    offset += 8;
 
     // Read resource name length (u32)
     let resource_len = u32::from_be_bytes([
@@ -386,6 +479,7 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     let key = Bytes::copy_from_slice(&payload[offset..offset + key_len]);
 
     Ok(KvMessage::Delete {
+        tx_id,
         route_family,
         resource,
         key,
@@ -393,11 +487,24 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
 }
 
 fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 12 {
+    if payload.len() < 20 {
         return Err("DELETE_RANGE payload too short".to_string());
     }
 
     let mut offset = 0;
+
+    // Read transaction ID (u64)
+    let tx_id = u64::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+        payload[offset + 4],
+        payload[offset + 5],
+        payload[offset + 6],
+        payload[offset + 7],
+    ]);
+    offset += 8;
 
     // Read resource name length (u32)
     let resource_len = u32::from_be_bytes([
@@ -454,6 +561,7 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
     let end = Bytes::copy_from_slice(&payload[offset..offset + end_len]);
 
     Ok(KvMessage::DeleteRange {
+        tx_id,
         route_family,
         resource,
         start,
@@ -462,11 +570,24 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
 }
 
 fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 4 {
+    if payload.len() < 12 {
         return Err("SCAN payload too short".to_string());
     }
 
     let mut offset = 0;
+
+    // Read transaction ID (u64)
+    let tx_id = u64::from_be_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+        payload[offset + 4],
+        payload[offset + 5],
+        payload[offset + 6],
+        payload[offset + 7],
+    ]);
+    offset += 8;
 
     // Read resource name length (u32)
     let resource_len = u32::from_be_bytes([
@@ -572,6 +693,7 @@ fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, St
     };
 
     Ok(KvMessage::Scan {
+        tx_id,
         route_family,
         resource,
         query: ScanQuery {
@@ -617,6 +739,7 @@ mod tests {
         let resource = "users";
         let key = b"user:1001";
         let mut payload = Vec::new();
+        payload.put_u64(1); // tx_id
         payload.put_u32(resource.len() as u32);
         payload.put_slice(resource.as_bytes());
         payload.put_u32(key.len() as u32);
@@ -632,7 +755,7 @@ mod tests {
         );
 
         // Assert
-        assert!(matches!(result, Ok(KvMessage::Get { .. })));
+        assert!(matches!(result, Ok(KvMessage::Get { tx_id: 1, .. })));
     }
 
     #[test]

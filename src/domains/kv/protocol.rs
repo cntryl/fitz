@@ -22,14 +22,15 @@ pub enum KvMessage {
         write_options: WriteOptions,
     },
 
-    /// Commit the active transaction
-    Commit,
+    /// Commit a transaction by ID
+    Commit { tx_id: u64 },
 
-    /// Rollback the active transaction
-    Rollback,
+    /// Rollback a transaction by ID
+    Rollback { tx_id: u64 },
 
     /// Get a value by key (requires active tx)
     Get {
+        tx_id: u64,
         route_family: RouteFamily,
         resource: String,
         key: Bytes,
@@ -37,6 +38,7 @@ pub enum KvMessage {
 
     /// Put (upsert) a key-value pair (requires active tx)
     Put {
+        tx_id: u64,
         route_family: RouteFamily,
         resource: String,
         key: Bytes,
@@ -45,6 +47,7 @@ pub enum KvMessage {
 
     /// Insert a key-value pair, failing if key exists (requires active tx)
     Insert {
+        tx_id: u64,
         route_family: RouteFamily,
         resource: String,
         key: Bytes,
@@ -53,6 +56,7 @@ pub enum KvMessage {
 
     /// Delete a key (requires active tx)
     Delete {
+        tx_id: u64,
         route_family: RouteFamily,
         resource: String,
         key: Bytes,
@@ -60,6 +64,7 @@ pub enum KvMessage {
 
     /// Delete a range of keys [start, end) (requires active tx)
     DeleteRange {
+        tx_id: u64,
         route_family: RouteFamily,
         resource: String,
         start: Bytes,
@@ -68,6 +73,7 @@ pub enum KvMessage {
 
     /// Scan a range of keys (requires active tx)
     Scan {
+        tx_id: u64,
         route_family: RouteFamily,
         resource: String,
         query: ScanQuery,
@@ -99,8 +105,8 @@ pub struct ScanQuery {
 /// KV operation response
 #[derive(Debug, Clone)]
 pub enum KvResponse {
-    /// Transaction began successfully
-    BeginOk,
+    /// Transaction began successfully with server-assigned ID
+    BeginOk { tx_id: u64 },
 
     /// Transaction committed successfully
     CommitOk,
@@ -155,8 +161,8 @@ pub enum KvError {
     /// Resource (table) not found or CF mapping failed
     UnknownResource(String),
 
-    /// Attempted to begin transaction when one is already active
-    TxAlreadyActive,
+    /// Invalid or unknown transaction ID
+    InvalidTxId,
 
     /// Operation requires an active transaction
     NoActiveTx,
@@ -188,7 +194,7 @@ impl std::fmt::Display for KvError {
             KvError::InvalidRealm => write!(f, "Invalid realm"),
             KvError::RealmMismatch => write!(f, "Realm mismatch"),
             KvError::UnknownResource(res) => write!(f, "Unknown resource: {}", res),
-            KvError::TxAlreadyActive => write!(f, "Transaction already active"),
+            KvError::InvalidTxId => write!(f, "Invalid or unknown transaction ID"),
             KvError::NoActiveTx => write!(f, "No active transaction"),
             KvError::TxScopeViolation { expected, actual } => {
                 write!(
