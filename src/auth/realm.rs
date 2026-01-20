@@ -33,7 +33,9 @@ impl fmt::Display for RealmError {
             RealmError::UnauthorizedRealm { .. } => {
                 write!(f, "Realm mismatch")
             }
-            RealmError::RealmNotResolved => write!(f, "Realm must be explicitly provided or derived from token"),
+            RealmError::RealmNotResolved => {
+                write!(f, "Realm must be explicitly provided or derived from token")
+            }
         }
     }
 }

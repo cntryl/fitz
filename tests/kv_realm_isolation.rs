@@ -1,4 +1,4 @@
-﻿//! KV Realm Isolation Tests
+//! KV Realm Isolation Tests
 //!
 //! Enforce Fitz multi-tenancy invariants:
 //! - Hard isolation by realm
@@ -90,7 +90,7 @@ fn should_reject_implicit_realm_without_default_realm() {
     // Act - Try to begin transaction with empty realm
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
-        realm: "".to_string(),  // Empty realm
+        realm: "".to_string(), // Empty realm
         area: "kv".to_string(),
         resource: "users".to_string(),
         mode: TxMode::ReadWrite,
@@ -169,7 +169,7 @@ fn should_isolate_kv_data_across_realms() {
     // Act - Try to read the same key from a different realm
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
-        realm: "evil".to_string(),  // Different realm, same RouteFamily
+        realm: "evil".to_string(), // Different realm, same RouteFamily
         area: "kv".to_string(),
         resource: "users".to_string(),
         mode: TxMode::ReadOnly,
@@ -259,7 +259,10 @@ fn should_enforce_realm_equality_strictly() {
                         found: true,
                         value: Some(_),
                     } => {
-                        panic!("Realm string '{}' matched 'acme' - must be strict equality", invalid_realm);
+                        panic!(
+                            "Realm string '{}' matched 'acme' - must be strict equality",
+                            invalid_realm
+                        );
                     }
                     KvResponse::GetResult {
                         found: false,
@@ -361,7 +364,7 @@ fn should_check_realm_authorization_before_touching_midge() {
     // Attempt to begin with realm containing spaces (invalid)
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
-        realm: "bad realm".to_string(),  // Contains space - INVALID
+        realm: "bad realm".to_string(), // Contains space - INVALID
         area: "kv".to_string(),
         resource: "data".to_string(),
         mode: TxMode::ReadWrite,
@@ -370,7 +373,12 @@ fn should_check_realm_authorization_before_touching_midge() {
 
     // Must be rejected BEFORE creating a transaction
     assert!(
-        matches!(response, KvResponse::Error { error: KvError::InvalidRealm }),
+        matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidRealm
+            }
+        ),
         "Malformed realm must be rejected before transaction creation"
     );
 }
@@ -462,7 +470,12 @@ fn should_not_leak_realm_existence_in_errors() {
     // Realm validation occurs BEFORE touching storage
     // Response should be generic error, not revealing realm status
     assert!(
-        matches!(response, KvResponse::Error { error: KvError::InvalidRealm } | KvResponse::BeginOk),
+        matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidRealm
+            } | KvResponse::BeginOk
+        ),
         "Response must not leak whether realm exists: {:?}",
         response
     );

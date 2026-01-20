@@ -35,7 +35,11 @@ fn should_support_weekday_ranges() {
     // Assert
     assert!(cron.is_ok());
     let cron = cron.unwrap();
-    assert_eq!(cron.weekday, vec![1, 2, 3, 4, 5], "Should parse weekday range 1-5");
+    assert_eq!(
+        cron.weekday,
+        vec![1, 2, 3, 4, 5],
+        "Should parse weekday range 1-5"
+    );
 }
 
 #[test]
@@ -49,7 +53,11 @@ fn should_support_minute_ranges() {
     // Assert
     assert!(cron.is_ok());
     let cron = cron.unwrap();
-    assert_eq!(cron.minute.len(), 31, "Should have 31 values (15-45 inclusive)");
+    assert_eq!(
+        cron.minute.len(),
+        31,
+        "Should have 31 values (15-45 inclusive)"
+    );
     assert_eq!(cron.minute[0], 15);
     assert_eq!(cron.minute[30], 45);
 }
@@ -95,7 +103,11 @@ fn should_clamp_range_to_field_bounds() {
     // Assert
     assert!(cron.is_ok());
     let cron = cron.unwrap();
-    assert_eq!(cron.hour, vec![20, 21, 22, 23], "Should clamp to valid range 20-23");
+    assert_eq!(
+        cron.hour,
+        vec![20, 21, 22, 23],
+        "Should clamp to valid range 20-23"
+    );
 }
 
 #[test]
@@ -109,7 +121,10 @@ fn should_ignore_reversed_ranges() {
     // Assert
     assert!(cron.is_ok());
     let cron = cron.unwrap();
-    assert!(cron.hour.is_empty(), "Should result in empty field for reversed range");
+    assert!(
+        cron.hour.is_empty(),
+        "Should result in empty field for reversed range"
+    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-﻿//! CRITICAL: Tests proving Fitz method/operation independence
+//! CRITICAL: Tests proving Fitz method/operation independence
 //!
 //! These tests enforce the core invariant:
 //! "Fitz methods MUST ALWAYS come from the TLV `method` field.
@@ -37,7 +37,7 @@ fn should_select_handler_by_method_not_route_operation() {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
-        resource: "users".to_string(),  // <- resource for key scoping
+        resource: "users".to_string(), // <- resource for key scoping
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -121,7 +121,7 @@ fn should_execute_identical_method_regardless_of_route_context() {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
-        resource: "posts".to_string(),  // <- Different resource (operation context)
+        resource: "posts".to_string(), // <- Different resource (operation context)
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -154,7 +154,7 @@ fn should_ignore_route_operation_segment_for_method_selection() {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
-        resource: "users".to_string(),  // <- No operation segment, just resource
+        resource: "users".to_string(), // <- No operation segment, just resource
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });

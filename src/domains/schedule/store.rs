@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use cntryl_midge::WriteOptions;
 
-const BUCKET_SIZE_SECS: i64 = 10;  // Time buckets for index
+const BUCKET_SIZE_SECS: i64 = 10; // Time buckets for index
 
 pub struct ScheduleStore {
     db: Arc<cntryl_midge::Engine>,
@@ -31,8 +31,6 @@ impl ScheduleStore {
         let ts = dt.timestamp();
         (ts.max(0) as u64) / (BUCKET_SIZE_SECS as u64)
     }
-
-
 
     /// Persist schedule definition + index entry.
     /// Value format: [4 bytes BE route_len][route bytes][payload bytes]
@@ -84,11 +82,11 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
         txn.delete(Self::encode_def_key(family, id))
             .map_err(|e| format!("delete def failed: {:?}", e))?;
-        
+
         // Also delete from all index buckets (could be in multiple if not yet fired)
         // For now, we'll rely on a lazy cleanup or schedule update
         // A more robust approach: iterate all buckets and remove
-        
+
         self.db
             .commit(txn, write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
@@ -113,14 +111,14 @@ impl ScheduleStore {
 
         let start_bucket = Self::time_to_bucket(window_start);
         let end_bucket = Self::time_to_bucket(window_end);
-        
+
         let mut due_ids = Vec::new();
 
         // Scan each bucket in the window
         for bucket in start_bucket..=end_bucket {
             let prefix = format!("family:{}:idx:{:016x}/", family, bucket);
             let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix.clone().into_bytes()));
-            
+
             let mut iter = txn
                 .scan(&query)
                 .map_err(|e| format!("scan window failed: {:?}", e))?;

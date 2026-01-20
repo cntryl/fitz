@@ -3,11 +3,11 @@
 use crate::boot::runtime::BootResult;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
-use crate::runtime::{Router, MailboxSink, Envelope, DeliveryError};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc as StdArc;
+use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::Arc as StdArc;
 
 /// Generic domain sink: Forwards envelopes to domain actors
 ///
@@ -171,7 +171,7 @@ impl MailboxSink for KvDomainSink {
             let actor = actors
                 .entry(frame_ctx.session_id)
                 .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
-            
+
             // Handle the message synchronously
             actor.handle(kv_message)
         };
@@ -279,10 +279,7 @@ impl MailboxSink for QueueDomainSink {
 /// - RPC (family 5): Request-reply with workers
 /// - Lease (family 6): Distributed locking
 /// - Schedule (family 7): Cron and delayed execution
-pub fn setup(
-    router: &StdArc<Router>,
-    store: &StdArc<cntryl_midge::Engine>,
-) -> BootResult<()> {
+pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> BootResult<()> {
     // KV domain: family 1 (REAL ACTOR)
     let kv_sink = Arc::new(KvDomainSink::new(store.clone(), router.clone()));
     router.register(

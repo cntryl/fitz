@@ -1,8 +1,8 @@
 //! Queue domain TLV message types and codec
 
-use bytes::Bytes;
-use crate::domains::queue::{QueueMessage, QueueResponse, MessageId};
+use crate::domains::queue::{MessageId, QueueMessage, QueueResponse};
 use crate::runtime::routing::{Route, RouteFamily};
+use bytes::Bytes;
 
 /// Queue domain message type IDs
 pub mod msg_type {
@@ -35,7 +35,7 @@ pub fn parse_request(
 /// Encode Queue response to bytes
 pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
     use bytes::BufMut;
-    
+
     let mut buf = Vec::new();
     match response {
         QueueResponse::Enqueued { id } => {

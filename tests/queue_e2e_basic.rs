@@ -1,4 +1,4 @@
-﻿//! Queue domain integration tests
+//! Queue domain integration tests
 //!
 //! Tests durability, restart semantics, and end-to-end workflows.
 
@@ -109,10 +109,6 @@ fn should_recover_messages_after_restart() {
     }
 }
 
-
-
-
-
 /// Test that expired messages are redelivered with incremented attempts
 /// Verifies message durability and redelivery semantics across actor restarts
 #[test]
@@ -123,12 +119,7 @@ fn should_increment_attempts_on_redelivery() {
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("redelivery");
-    let mut actor = QueueActor::new(
-        RouteFamily::new(0),
-        queue_key.clone(),
-        store.clone(),
-        None,
-    );
+    let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
 
     // Act 1: Enqueue a message
     let body = Bytes::from("test message");
@@ -152,7 +143,3 @@ fn should_increment_attempts_on_redelivery() {
     // In production, lease expiration would increment attempts.
     // This test verifies the message made the round-trip correctly.
 }
-
-
-
-

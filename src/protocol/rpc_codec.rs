@@ -19,10 +19,7 @@ pub enum RpcResponseMsg {
 }
 
 /// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(
-    ctx: &FrameContext,
-    payload: &[u8],
-) -> Result<RpcMessage, String> {
+pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<RpcMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
@@ -58,35 +55,25 @@ pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
 fn parse_subscribe(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
     let family_id = dec.get_u64()?;
     let worker_addr_str = dec.get_string()?;
-    let worker_addr = RouteAddress::new(
-        RouteFamily::new(family_id),
-        Route::new(worker_addr_str),
-    );
+    let worker_addr = RouteAddress::new(RouteFamily::new(family_id), Route::new(worker_addr_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(RpcMessage::Subscribe {
-        worker_addr,
-    })
+    Ok(RpcMessage::Subscribe { worker_addr })
 }
 
 fn parse_unsubscribe(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
     let family_id = dec.get_u64()?;
     let worker_addr_str = dec.get_string()?;
-    let worker_addr = RouteAddress::new(
-        RouteFamily::new(family_id),
-        Route::new(worker_addr_str),
-    );
+    let worker_addr = RouteAddress::new(RouteFamily::new(family_id), Route::new(worker_addr_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(RpcMessage::Unsubscribe {
-        worker_addr,
-    })
+    Ok(RpcMessage::Unsubscribe { worker_addr })
 }
 
 fn parse_rpc_request(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
@@ -158,7 +145,5 @@ fn parse_ack(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(RpcMessage::Ack {
-        correlation_id,
-    })
+    Ok(RpcMessage::Ack { correlation_id })
 }

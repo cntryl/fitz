@@ -18,10 +18,7 @@ pub enum LeaseResponse {
 }
 
 /// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(
-    ctx: &FrameContext,
-    payload: &[u8],
-) -> Result<LeaseMessage, String> {
+pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<LeaseMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {

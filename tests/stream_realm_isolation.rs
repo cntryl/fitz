@@ -1,4 +1,4 @@
-﻿//! Stream Realm Isolation Tests
+//! Stream Realm Isolation Tests
 //!
 //! Stream uses an actor-per-realm architecture for isolation:
 //! Each StreamActor is instantiated for a specific (realm, area, resource) tuple.
@@ -7,13 +7,13 @@
 //! Unlike KV, there is no shared storage that needs realm-scoped keys.
 //! Each realm gets completely separate actor instances and state.
 
+use fitz::domains::stream::protocol::StreamMessage;
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::stream_actor::StreamActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::domains::stream::protocol::StreamMessage;
 use std::sync::Arc;
 
 fn make_stream_actor(
@@ -83,8 +83,10 @@ fn should_bind_realm_immutably_at_construction() {
 #[test]
 fn should_isolate_realm_sessions() {
     // Arrange: Create two separate stream actors
-    let (mut actor_realm1, mut ctx1) = make_stream_actor("realm1", "shared-area", "shared-resource");
-    let (mut actor_realm2, mut ctx2) = make_stream_actor("realm2", "shared-area", "shared-resource");
+    let (mut actor_realm1, mut ctx1) =
+        make_stream_actor("realm1", "shared-area", "shared-resource");
+    let (mut actor_realm2, mut ctx2) =
+        make_stream_actor("realm2", "shared-area", "shared-resource");
 
     // Act: Begin session in realm1
     let msg1 = StreamMessage::Begin {
@@ -137,7 +139,7 @@ fn should_achieve_isolation_through_actor_design() {
     let addr_red = &actor_red as *const _;
     let addr_blue = &actor_blue as *const _;
     let addr_green = &actor_green as *const _;
-    
+
     assert_ne!(addr_red, addr_blue);
     assert_ne!(addr_blue, addr_green);
     assert_ne!(addr_red, addr_green);
@@ -211,7 +213,7 @@ fn should_rely_on_auth_layer_for_realm_validation() {
     // Assert: Stream actor exists for a single realm
     // The SessionActor layer (in session.rs) performs authorization checks
     // based on token grants and route patterns before dispatching to StreamActor
-    // 
+    //
     // Example flow:
     // 1. Token grants access to "stream://authenticated-realm/**"
     // 2. Client sends route "stream://authenticated-realm/secure/data"

@@ -2,10 +2,10 @@ use crate::protocol::tlv::TlvDecoder;
 use bytes::Bytes;
 
 /// TLV payload for schedules. MUST be TLV encoded.
-/// 
+///
 /// The scheduler is a clock: it matches a cron expression against wall-clock time
 /// and emits a notice at the target route.
-/// 
+///
 /// Required fields:
 /// - cron: string (standard 5-field cron expression)
 /// - target_resource: string (resource name to emit notice for)
@@ -33,15 +33,23 @@ impl SchedulePayload {
             // Type numbers chosen arbitrarily and documented internally
             match rec.msg_type.0 {
                 1 => cron = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
-                2 => target_resource = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
-                3 => target_operation = Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default()),
+                2 => {
+                    target_resource =
+                        Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default())
+                }
+                3 => {
+                    target_operation =
+                        Some(String::from_utf8(rec.value.to_vec()).unwrap_or_default())
+                }
                 _ => (),
             }
         }
 
         let cron = cron.ok_or_else(|| "missing field: cron".to_string())?;
-        let target_resource = target_resource.ok_or_else(|| "missing field: target_resource".to_string())?;
-        let target_operation = target_operation.ok_or_else(|| "missing field: target_operation".to_string())?;
+        let target_resource =
+            target_resource.ok_or_else(|| "missing field: target_resource".to_string())?;
+        let target_operation =
+            target_operation.ok_or_else(|| "missing field: target_operation".to_string())?;
 
         Ok(Self {
             cron,

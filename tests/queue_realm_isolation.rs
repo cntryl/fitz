@@ -1,11 +1,11 @@
-﻿//! Queue Realm Isolation Tests
+//! Queue Realm Isolation Tests
 //!
 //! Queue uses an actor-per-queue architecture with (realm, area, resource) tuple.
 //! Each QueueActor is instantiated for a specific realm, providing natural isolation.
 //! Cross-realm access is structurally impossible since each realm gets separate actor instances.
 
-use fitz::domains::queue::queue_actor::QueueActor;
 use fitz::domains::queue::protocol::{QueueKey, QueueMessage};
+use fitz::domains::queue::queue_actor::QueueActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
@@ -99,8 +99,7 @@ fn should_isolate_queue_messages_by_realm() {
     // realm2 queue has message [4,5,6]
     // They never mix because they're separate actors with separate storage
     assert_ne!(
-        &queue_realm1 as *const _,
-        &queue_realm2 as *const _,
+        &queue_realm1 as *const _, &queue_realm2 as *const _,
         "Queue actors must be distinct instances per realm"
     );
 }

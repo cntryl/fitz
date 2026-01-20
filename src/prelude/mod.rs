@@ -8,4 +8,3 @@ pub const DEFAULT_HTTP_PORT: u16 = 4090;
 
 /// Default TCP (length-prefixed) listen port
 pub const DEFAULT_TCP_PORT: u16 = 4091;
-

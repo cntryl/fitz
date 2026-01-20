@@ -1,6 +1,6 @@
 //! Storage initialization
 
-use crate::boot::runtime::{BootResult, BootConfig, StorageMode};
+use crate::boot::runtime::{BootConfig, BootResult, StorageMode};
 use std::sync::Arc;
 use tracing::info;
 
@@ -41,10 +41,8 @@ pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> 
 async fn init_memory(_config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
-    let store = cntryl_midge::Engine::open_with_options(
-        cntryl_midge::MidgeOptions::default(),
-    )
-    .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
+    let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
 
     info!("In-memory storage ready (data lost on shutdown)");
     Ok(Arc::new(store))
@@ -64,10 +62,8 @@ async fn init_local_disk(
         .await
         .map_err(|e| format!("Failed to create storage directory {}: {}", db_path, e))?;
 
-    let store = cntryl_midge::Engine::open_with_options(
-        cntryl_midge::MidgeOptions::default(),
-    )
-    .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
+    let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
 
     info!("Local disk storage ready at {}", db_path);
     Ok(Arc::new(store))
@@ -93,30 +89,23 @@ async fn init_cloud(
     match provider {
         "s3" => {
             // Check for AWS credentials
-            if std::env::var("AWS_ACCESS_KEY_ID").is_err()
-                && std::env::var("AWS_PROFILE").is_err()
+            if std::env::var("AWS_ACCESS_KEY_ID").is_err() && std::env::var("AWS_PROFILE").is_err()
             {
-                return Err(
-                    "AWS_ACCESS_KEY_ID or AWS_PROFILE required for S3 storage".into(),
-                );
+                return Err("AWS_ACCESS_KEY_ID or AWS_PROFILE required for S3 storage".into());
             }
             info!("S3 credentials detected");
         }
         "gcs" => {
             // Check for GCS credentials
             if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_err() {
-                return Err(
-                    "GOOGLE_APPLICATION_CREDENTIALS required for GCS storage".into(),
-                );
+                return Err("GOOGLE_APPLICATION_CREDENTIALS required for GCS storage".into());
             }
             info!("GCS credentials detected");
         }
         "azure" => {
             // Check for Azure credentials
             if std::env::var("AZURE_STORAGE_ACCOUNT_NAME").is_err() {
-                return Err(
-                    "AZURE_STORAGE_ACCOUNT_NAME required for Azure storage".into(),
-                );
+                return Err("AZURE_STORAGE_ACCOUNT_NAME required for Azure storage".into());
             }
             info!("Azure credentials detected");
         }
@@ -127,10 +116,8 @@ async fn init_cloud(
 
     // For now, cloud storage requires actual Midge cloud support
     // This would be implemented when Midge adds cloud backend support
-    let store = cntryl_midge::Engine::open_with_options(
-        cntryl_midge::MidgeOptions::default(),
-    )
-    .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
+    let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
 
     info!(
         "Cloud storage ready: {} bucket={} prefix={:?}",

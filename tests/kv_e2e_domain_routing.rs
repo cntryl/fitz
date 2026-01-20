@@ -4,9 +4,9 @@
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use fitz::protocol::kv;
     use fitz::runtime::routing::RouteFamily;
-    use bytes::Bytes;
 
     #[test]
     fn should_parse_kv_get_message() {
@@ -90,7 +90,10 @@ mod tests {
         };
 
         let encoded = kv::encode_response(&response);
-        assert!(!encoded.is_empty(), "Response encoding should produce bytes");
+        assert!(
+            !encoded.is_empty(),
+            "Response encoding should produce bytes"
+        );
     }
 
     #[test]

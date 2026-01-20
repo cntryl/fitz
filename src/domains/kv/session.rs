@@ -35,7 +35,10 @@ impl SessionActor {
 
     /// Attempt to begin a KV transaction. Returns Err if authorization fails.
     pub fn begin(&self, msg: KvMessage, kv_actor: &mut KvActor) -> Result<(), String> {
-        if let KvMessage::Begin { ref realm, mode, .. } = msg {
+        if let KvMessage::Begin {
+            ref realm, mode, ..
+        } = msg
+        {
             // Extract realm-based route for authorization check
             // Format: "kv://realm" for basic realm-level authorization
             let route = Route::new(format!("kv://{}", realm));
@@ -54,7 +57,10 @@ impl SessionActor {
                 }
                 TxMode::ReadWrite => {
                     if !self.permissions.allows(&route, Access::Write) {
-                        return Err(format!("unauthorized: write access required for realm '{}'", realm));
+                        return Err(format!(
+                            "unauthorized: write access required for realm '{}'",
+                            realm
+                        ));
                     }
                 }
             }
@@ -66,86 +72,86 @@ impl SessionActor {
         }
     }
 
-/* #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::auth::{Access, Permission};
-    use crate::domains::kv::actor::KvActor;
-    use crate::testkit::create_test_engine_with_cfs;
-    use crate::session::session::SessionId;
+    /* #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::auth::{Access, Permission};
+        use crate::domains::kv::actor::KvActor;
+        use crate::testkit::create_test_engine_with_cfs;
+        use crate::session::session::SessionId;
 
-    #[test]
-    fn should_reject_read_only_session_begin_read_write() {
-        // Arrange
-        let p = Permission::parse("kv://acme#read").unwrap();
-        let perms = SessionPermissions::from_permissions(vec![p]);
-        let actor = SessionActor::new(SessionId(1), perms);
-        let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
-        let msg = KvMessage::Begin {
-            route_family: crate::runtime::routing::RouteFamily::new(1),
-            realm: "acme".to_string(),
-            area: "kv".to_string(),
-            resource: "table1".to_string(),
-            mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        };
+        #[test]
+        fn should_reject_read_only_session_begin_read_write() {
+            // Arrange
+            let p = Permission::parse("kv://acme#read").unwrap();
+            let perms = SessionPermissions::from_permissions(vec![p]);
+            let actor = SessionActor::new(SessionId(1), perms);
+            let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
+            let msg = KvMessage::Begin {
+                route_family: crate::runtime::routing::RouteFamily::new(1),
+                realm: "acme".to_string(),
+                area: "kv".to_string(),
+                resource: "table1".to_string(),
+                mode: TxMode::ReadWrite,
+                write_options: cntryl_midge::WriteOptions::buffered(),
+            };
 
-        // Act
-        let res = actor.begin(msg, &mut kv);
+            // Act
+            let res = actor.begin(msg, &mut kv);
 
-        // Assert
-        assert!(res.is_err());
-        assert!(res.unwrap_err().contains("unauthorized"));
+            // Assert
+            assert!(res.is_err());
+            assert!(res.unwrap_err().contains("unauthorized"));
+        }
+
+        #[test]
+        fn should_allow_read_only_session_begin_read_only() {
+            // Arrange
+            let p = Permission::parse("kv://acme#read").unwrap();
+            let perms = SessionPermissions::from_permissions(vec![p]);
+            let actor = SessionActor::new(SessionId(1), perms);
+            let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
+            let msg = KvMessage::Begin {
+                route_family: crate::runtime::routing::RouteFamily::new(1),
+                realm: "acme".to_string(),
+                area: "kv".to_string(),
+                resource: "table1".to_string(),
+                mode: TxMode::ReadOnly,
+                write_options: cntryl_midge::WriteOptions::buffered(),
+            };
+
+            // Act
+            let res = actor.begin(msg, &mut kv);
+
+            // Assert
+            assert!(res.is_ok());
+        }
+
+        #[test]
+        fn should_allow_write_session_begin_read_write() {
+            // Arrange
+            let p = Permission::parse("kv://acme#write").unwrap();
+            let perms = SessionPermissions::from_permissions(vec![p]);
+            let actor = SessionActor::new(SessionId(1), perms);
+            let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
+            let msg = KvMessage::Begin {
+                route_family: crate::runtime::routing::RouteFamily::new(1),
+                realm: "acme".to_string(),
+                area: "kv".to_string(),
+                resource: "table1".to_string(),
+                mode: TxMode::ReadWrite,
+                write_options: cntryl_midge::WriteOptions::buffered(),
+            };
+
+            // Act
+            let res = actor.begin(msg, &mut kv);
+
+            // Assert
+            assert!(res.is_ok());
+        }
     }
 
-    #[test]
-    fn should_allow_read_only_session_begin_read_only() {
-        // Arrange
-        let p = Permission::parse("kv://acme#read").unwrap();
-        let perms = SessionPermissions::from_permissions(vec![p]);
-        let actor = SessionActor::new(SessionId(1), perms);
-        let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
-        let msg = KvMessage::Begin {
-            route_family: crate::runtime::routing::RouteFamily::new(1),
-            realm: "acme".to_string(),
-            area: "kv".to_string(),
-            resource: "table1".to_string(),
-            mode: TxMode::ReadOnly,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        };
-
-        // Act
-        let res = actor.begin(msg, &mut kv);
-
-        // Assert
-        assert!(res.is_ok());
-    }
-
-    #[test]
-    fn should_allow_write_session_begin_read_write() {
-        // Arrange
-        let p = Permission::parse("kv://acme#write").unwrap();
-        let perms = SessionPermissions::from_permissions(vec![p]);
-        let actor = SessionActor::new(SessionId(1), perms);
-        let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
-        let msg = KvMessage::Begin {
-            route_family: crate::runtime::routing::RouteFamily::new(1),
-            realm: "acme".to_string(),
-            area: "kv".to_string(),
-            resource: "table1".to_string(),
-            mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        };
-
-        // Act
-        let res = actor.begin(msg, &mut kv);
-
-        // Assert
-        assert!(res.is_ok());
-    }
-}
-
- */
+     */
 
     /// Forward subsequent KV operations (after begin).
     /// Realm authorization was already checked at begin time.

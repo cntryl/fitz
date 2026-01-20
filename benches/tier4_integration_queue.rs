@@ -171,8 +171,10 @@ fn bench_failure_recovery_deadletter_workflow(c: &mut Criterion) {
                 let final_reserve = actor.handle_reserve(black_box(30), black_box(Some(1)));
                 if let QueueResponse::Reserved { messages } = final_reserve {
                     if !messages.is_empty() {
-                        let _ = actor
-                            .handle_complete(black_box(messages[0].id), black_box(messages[0].token));
+                        let _ = actor.handle_complete(
+                            black_box(messages[0].id),
+                            black_box(messages[0].token),
+                        );
                     }
                 }
             },
@@ -259,7 +261,8 @@ fn bench_backpressure_deep_queue_scenario(c: &mut Criterion) {
     group.bench_function("queue_integration_deep_queue_1000plus_depth", |b| {
         b.iter_batched(
             || {
-                let (mut actor, temp_dir) = create_local_bench_queue_actor("bench", "integration", "queue", None);
+                let (mut actor, temp_dir) =
+                    create_local_bench_queue_actor("bench", "integration", "queue", None);
                 // Pre-fill queue to depth
                 for _ in 0..500 {
                     let _ = actor.handle_enqueue(payload.clone(), None);

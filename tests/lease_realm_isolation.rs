@@ -1,4 +1,4 @@
-﻿//! Lease Realm Isolation Tests
+//! Lease Realm Isolation Tests
 //!
 //! Lease uses a shared actor that stores all leases in a HashMap keyed by (family, realm, area, resource).
 //! Each LeaseKey includes the realm, ensuring realm isolation through key-based scoping.
@@ -172,7 +172,6 @@ fn should_prevent_cross_realm_lease_confusion() {
 
     // Assert: Query returns nothing (or error) because realm-b/locks/resource â‰  realm-a/locks/resource
     // Realm is part of the key, so different realms cannot see each other's leases
-
 }
 
 // ============================================================================

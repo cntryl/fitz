@@ -53,7 +53,10 @@ fn bench_complete_append_read_workflow(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let payload = Bytes::from_static(b"append read workflow");
-                (create_local_bench_stream_actor("bench", "integration", "append_read"), payload)
+                (
+                    create_local_bench_stream_actor("bench", "integration", "append_read"),
+                    payload,
+                )
             },
             |((actor, _ctx, _temp_dir), payload)| {
                 // Benchmark the actor creation + storage initialization overhead
@@ -92,7 +95,10 @@ fn bench_batch_append_consumer_read(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let payload = Bytes::from_static(b"batch append consumer read");
-                (create_local_bench_stream_actor("bench", "integration", "batch"), payload)
+                (
+                    create_local_bench_stream_actor("bench", "integration", "batch"),
+                    payload,
+                )
             },
             |((actor, _ctx, _temp_dir), payload)| {
                 // Benchmark the actor + storage overhead for batch operations
@@ -132,7 +138,13 @@ fn bench_multipartition_read_scan(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let actors: Vec<_> = (0..4)
-                    .map(|i| create_local_bench_stream_actor("bench", "integration", &format!("partition{}", i)))
+                    .map(|i| {
+                        create_local_bench_stream_actor(
+                            "bench",
+                            "integration",
+                            &format!("partition{}", i),
+                        )
+                    })
                     .collect();
                 actors
             },
@@ -209,7 +221,10 @@ fn bench_long_running_append_read_interleave(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let payload = Bytes::from_static(b"interleaved op");
-                (create_local_bench_stream_actor("bench", "integration", "long_running"), payload)
+                (
+                    create_local_bench_stream_actor("bench", "integration", "long_running"),
+                    payload,
+                )
             },
             |((actor, _ctx, _temp_dir), payload)| {
                 // Benchmark actor creation + storage overhead

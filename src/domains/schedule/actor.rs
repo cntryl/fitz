@@ -29,7 +29,7 @@ impl CronSchedule {
         if let Some(stripped) = field.strip_prefix("*/") {
             if let Ok(step) = stripped.parse::<u32>() {
                 return (min..=max)
-                    .filter(|v| (v - min) % step == 0 || *v == min)
+                    .filter(|v| (v - min).is_multiple_of(step) || *v == min)
                     .collect();
             }
         }
@@ -97,11 +97,12 @@ impl CronSchedule {
     /// Returns 24 hours in future if no match found.
     pub fn next_fire_after(&self, from: DateTime<Utc>) -> DateTime<Utc> {
         let mut candidate = from.with_second(0).unwrap() + chrono::Duration::minutes(1);
-        for _ in 0..1440 {  // 24 hours in minutes
+        for _ in 0..1440 {
+            // 24 hours in minutes
             if self.matches_dt(&candidate) {
                 return candidate;
             }
-            candidate = candidate + chrono::Duration::minutes(1);
+            candidate += chrono::Duration::minutes(1);
         }
         // Never matches: return far future
         from + chrono::Duration::days(1)
@@ -109,12 +110,13 @@ impl CronSchedule {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ScheduleDef {
     id: u64,
     route: Route,
     cron: CronSchedule,
     payload: Bytes,
-    next_fire_time: DateTime<Utc>,  // Indexed for windowed scanning
+    next_fire_time: DateTime<Utc>, // Indexed for windowed scanning
 }
 
 /// Clock abstraction for testing
@@ -222,7 +224,12 @@ impl ScheduleActor {
         )?;
 
         self.schedules.insert(id, def);
-        info!("created schedule {} for family {} (next_fire: {})", id, self.family.id(), next_fire);
+        info!(
+            "created schedule {} for family {} (next_fire: {})",
+            id,
+            self.family.id(),
+            next_fire
+        );
         Ok(id)
     }
 
@@ -249,15 +256,18 @@ impl ScheduleActor {
         // Window parameters: only scan schedules whose next_fire_time falls within this window
         // grace_period: re-check recent schedules (handles skipped ticks)
         // lookahead: pre-scan upcoming schedules
-        const GRACE_PERIOD: i64 = 2;     // seconds
-        const LOOKAHEAD: i64 = 5;        // seconds
+        const GRACE_PERIOD: i64 = 2; // seconds
+        const LOOKAHEAD: i64 = 5; // seconds
 
         let window_start = now_dt - chrono::Duration::seconds(GRACE_PERIOD);
         let window_end = now_dt + chrono::Duration::seconds(LOOKAHEAD);
 
         // WINDOWED SCAN: only load schedules due in [window_start, window_end]
         // This is O(due_count), not O(total_count)
-        let due_ids = match self.store.scan_window(self.family.id(), window_start, window_end) {
+        let due_ids = match self
+            .store
+            .scan_window(self.family.id(), window_start, window_end)
+        {
             Ok(ids) => ids,
             Err(e) => {
                 warn!("failed to scan schedule window: {}", e);
@@ -276,7 +286,7 @@ impl ScheduleActor {
 
             // Check if cron actually matches NOW (window scan is fuzzy due to buckets)
             if !def.cron.matches_dt(&now_dt) {
-                continue;  // Not actually due yet
+                continue; // Not actually due yet
             }
 
             // Emit notice (best-effort, non-blocking, OUTSIDE transaction)
@@ -305,7 +315,10 @@ impl ScheduleActor {
                         PublishMessage::new(self.family, notice_route.clone(), def.payload.clone());
                     let notice_addr = RouteAddress::new(self.family, notice_route);
                     let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish));
-                    info!("schedule {} fired -> notice at {}", schedule_id, notice_path);
+                    info!(
+                        "schedule {} fired -> notice at {}",
+                        schedule_id, notice_path
+                    );
 
                     // Compute next fire time AFTER dispatching notice
                     let next_fire = def.cron.next_fire_after(now_dt);
@@ -329,7 +342,10 @@ impl ScheduleActor {
         // Crash after dispatch but before this commit = duplicate notice (acceptable)
         // Crash before dispatch = missed notice (would happen next matching time)
         if !index_updates.is_empty() {
-            if let Err(e) = self.store.batch_update_index(self.family.id(), index_updates, self.write_options) {
+            if let Err(e) =
+                self.store
+                    .batch_update_index(self.family.id(), index_updates, self.write_options)
+            {
                 warn!("failed to batch update schedule index: {}", e);
             }
         }

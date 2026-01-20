@@ -26,7 +26,7 @@ fn bench_full_pipeline_put(c: &mut Criterion) {
 
     group.bench_function("create_actor_begin_put_rollback", |b| {
         b.iter_batched(
-            || create_local_bench_store(),
+            create_local_bench_store,
             |(store, _temp_dir)| {
                 let mut actor = KvActor::new(store);
 

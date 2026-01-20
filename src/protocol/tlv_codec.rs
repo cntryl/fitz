@@ -278,7 +278,10 @@ mod tests {
 
         assert_eq!(dec.get_optional_u64().unwrap(), Some(42));
         assert_eq!(dec.get_optional_u64().unwrap(), None);
-        assert_eq!(dec.get_optional_string().unwrap(), Some("hello".to_string()));
+        assert_eq!(
+            dec.get_optional_string().unwrap(),
+            Some("hello".to_string())
+        );
         assert_eq!(dec.get_optional_string().unwrap(), None);
         assert!(dec.is_complete());
     }

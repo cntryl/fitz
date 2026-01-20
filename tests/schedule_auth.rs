@@ -51,10 +51,10 @@ fn should_enforce_realm_equality_strictly_for_schedule() {
 
     // Act - Check realm variations that should NOT match
     let invalid_realms = vec![
-        "PROD",      // Case-sensitive: different case
-        "prod-2",    // Different realm (similar name)
-        "xprod",     // Prefix doesn't match
-        "staging",   // Completely different
+        "PROD",    // Case-sensitive: different case
+        "prod-2",  // Different realm (similar name)
+        "xprod",   // Prefix doesn't match
+        "staging", // Completely different
     ];
 
     for invalid_realm in invalid_realms {

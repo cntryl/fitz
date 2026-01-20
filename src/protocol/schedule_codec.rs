@@ -28,10 +28,7 @@ pub enum ScheduleResponse {
 }
 
 /// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(
-    ctx: &FrameContext,
-    payload: &[u8],
-) -> Result<ScheduleMessage, String> {
+pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<ScheduleMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {

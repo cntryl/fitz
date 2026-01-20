@@ -12,16 +12,16 @@ use crate::runtime::routing::{Route, RouteFamily};
 #[derive(Debug, Clone)]
 pub enum StreamResponse {
     /// Operation succeeded with optional session ID and data
-    Ok { session_id: Option<u64>, data: Vec<u8> },
+    Ok {
+        session_id: Option<u64>,
+        data: Vec<u8>,
+    },
     /// Operation failed with error message
     Error(String),
 }
 
 /// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(
-    ctx: &FrameContext,
-    payload: &[u8],
-) -> Result<StreamMessage, String> {
+pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<StreamMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {

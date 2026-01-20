@@ -9,4 +9,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = fitz::boot::BootConfig::new();
     fitz::boot::boot(config).await
 }
-

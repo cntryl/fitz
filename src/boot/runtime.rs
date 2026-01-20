@@ -1,9 +1,9 @@
 //! Boot result and configuration types
 
-use std::sync::Arc;
 use crate::api::ingress::IngressConfig;
-use crate::session::manager::RuntimeIngress;
 use crate::runtime::Router;
+use crate::session::manager::RuntimeIngress;
+use std::sync::Arc;
 use tracing::info;
 
 pub type BootResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -56,23 +56,25 @@ impl StorageMode {
                 Self::Memory
             }
             "local" | "disk" | "file" => {
-                let db_path = std::env::var("FITZ_STORAGE_PATH")
-                    .unwrap_or_else(|_| "./.fitz".to_string());
+                let db_path =
+                    std::env::var("FITZ_STORAGE_PATH").unwrap_or_else(|_| "./.fitz".to_string());
                 tracing::info!("Storage: LOCAL DISK at {}", db_path);
                 Self::LocalDisk { db_path }
             }
             "s3" | "gcs" | "azure" | "cloud" => {
-                let provider = std::env::var("FITZ_STORAGE_PROVIDER")
-                    .unwrap_or_else(|_| mode.clone());
+                let provider =
+                    std::env::var("FITZ_STORAGE_PROVIDER").unwrap_or_else(|_| mode.clone());
                 let bucket = std::env::var("FITZ_STORAGE_BUCKET")
                     .expect("FITZ_STORAGE_BUCKET required for cloud storage");
                 let prefix = std::env::var("FITZ_STORAGE_PREFIX").ok();
-                
+
                 tracing::info!(
                     "Storage: CLOUD ({}) - bucket={} prefix={:?}",
-                    provider, bucket, prefix
+                    provider,
+                    bucket,
+                    prefix
                 );
-                
+
                 Self::CloudBacked {
                     provider,
                     bucket,
@@ -80,10 +82,7 @@ impl StorageMode {
                 }
             }
             _ => {
-                tracing::warn!(
-                    "Unknown storage mode '{}', defaulting to local disk",
-                    mode
-                );
+                tracing::warn!("Unknown storage mode '{}', defaulting to local disk", mode);
                 Self::default()
             }
         }
@@ -119,7 +118,10 @@ impl BootConfig {
                 format!(
                     "{}{}",
                     bucket,
-                    prefix.as_ref().map(|p| format!("/{}", p)).unwrap_or_default()
+                    prefix
+                        .as_ref()
+                        .map(|p| format!("/{}", p))
+                        .unwrap_or_default()
                 )
             }
         }

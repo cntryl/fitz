@@ -4,7 +4,7 @@
 //! Supports Publish, Subscribe, Unsubscribe operations.
 
 use crate::domains::notice::protocol::{
-    NotifyMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+    NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };
 use crate::protocol::frame_context::FrameContext;
@@ -22,10 +22,7 @@ pub enum NoticeResponse {
 }
 
 /// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(
-    ctx: &FrameContext,
-    payload: &[u8],
-) -> Result<NotificationMessage, String> {
+pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<NotificationMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
@@ -81,10 +78,7 @@ fn parse_subscribe(dec: &mut TlvDecoder) -> Result<SubscribeMessage, String> {
     let pattern = Route::new(pattern_str);
     let session_id_u64 = dec.get_u64()?;
     let subscriber_str = dec.get_string()?;
-    let subscriber = RouteAddress::new(
-        RouteFamily::new(family_id),
-        Route::new(subscriber_str),
-    );
+    let subscriber = RouteAddress::new(RouteFamily::new(family_id), Route::new(subscriber_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -104,10 +98,7 @@ fn parse_unsubscribe(dec: &mut TlvDecoder) -> Result<UnsubscribeMessage, String>
     let pattern = Route::new(pattern_str);
     let session_id_u64 = dec.get_u64()?;
     let subscriber_str = dec.get_string()?;
-    let subscriber = RouteAddress::new(
-        RouteFamily::new(family_id),
-        Route::new(subscriber_str),
-    );
+    let subscriber = RouteAddress::new(RouteFamily::new(family_id), Route::new(subscriber_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -125,10 +116,7 @@ fn parse_unsubscribe_all(dec: &mut TlvDecoder) -> Result<UnsubscribeAllMessage, 
     let session_id_u64 = dec.get_u64()?;
     let family_id = dec.get_u64()?;
     let subscriber_str = dec.get_string()?;
-    let subscriber = RouteAddress::new(
-        RouteFamily::new(family_id),
-        Route::new(subscriber_str),
-    );
+    let subscriber = RouteAddress::new(RouteFamily::new(family_id), Route::new(subscriber_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());

@@ -35,26 +35,23 @@ pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
 /// A tuple of (Engine, TempDir). The TempDir must be kept alive for the
 /// lifetime of the engine, otherwise the directory will be deleted.
 pub fn create_local_bench_store() -> (Arc<cntryl_midge::Engine>, tempfile::TempDir) {
-    let temp_dir = tempfile::tempdir()
-        .expect("Failed to create temporary directory for local bench store");
-    
+    let temp_dir =
+        tempfile::tempdir().expect("Failed to create temporary directory for local bench store");
+
     let temp_path = temp_dir.path().to_string_lossy().to_string();
-    
+
     // Change to the temp directory for this operation so Midge uses it
-    let original_dir = std::env::current_dir()
-        .expect("Failed to get current directory");
-    
-    std::env::set_current_dir(&temp_path)
-        .expect("Failed to change to temp directory");
-    
+    let original_dir = std::env::current_dir().expect("Failed to get current directory");
+
+    std::env::set_current_dir(&temp_path).expect("Failed to change to temp directory");
+
     let store = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to create local disk store"),
     );
-    
+
     // Restore original directory
-    std::env::set_current_dir(&original_dir)
-        .expect("Failed to restore original directory");
-    
+    std::env::set_current_dir(&original_dir).expect("Failed to restore original directory");
+
     (store, temp_dir)
 }

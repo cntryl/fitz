@@ -28,10 +28,7 @@ pub use runtime::{BootConfig, BootResult};
 pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 1: Initialize tracing
     tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "fitz=info,warn".to_string())
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "fitz=info,warn".to_string()))
         .init();
 
     tracing::info!("Starting Fitz broker");

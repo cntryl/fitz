@@ -84,8 +84,6 @@ mod tests {
 
     #[test]
     fn should_create_codec_builder() {
-        let _builder = CodecBuilder::new()
-            .with_family(1)
-            .with_max_payload(1024);
+        let _builder = CodecBuilder::new().with_family(1).with_max_payload(1024);
     }
 }

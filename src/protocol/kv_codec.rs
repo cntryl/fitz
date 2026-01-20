@@ -1,8 +1,8 @@
 //! KV domain TLV message types and codec
 
-use bytes::Bytes;
-use crate::domains::kv::{KvMessage, KvResponse, TxMode, ScanQuery};
+use crate::domains::kv::{KvMessage, KvResponse, ScanQuery, TxMode};
 use crate::runtime::routing::RouteFamily;
+use bytes::Bytes;
 
 /// KV domain message type IDs
 pub mod msg_type {
@@ -42,7 +42,7 @@ pub fn parse_request(
 /// Encode KV response to bytes
 pub fn encode_response(response: &KvResponse) -> Vec<u8> {
     use bytes::BufMut;
-    
+
     let mut buf = Vec::new();
     match response {
         KvResponse::BeginOk => {
@@ -623,7 +623,13 @@ mod tests {
         payload.put_slice(key);
 
         // Act
-        let result = parse_request(msg_type::GET, RouteFamily::new(1), "acme".to_string(), "kv".to_string(), &payload);
+        let result = parse_request(
+            msg_type::GET,
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            &payload,
+        );
 
         // Assert
         assert!(matches!(result, Ok(KvMessage::Get { .. })));
