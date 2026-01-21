@@ -471,7 +471,6 @@ Purpose: durable FIFO-ish message queues with leasing and visibility timeouts.
 
 #### Message Types (u16)
 - ENQUEUE = 200
-- ENQUEUE_BATCH = 201
 - RESERVE = 202
 - EXTEND = 203
 - COMPLETE = 204
@@ -487,21 +486,6 @@ Purpose: durable FIFO-ish message queues with leasing and visibility timeouts.
 
 Response:
   [u64 BE] message_id
-```
-
-**Enqueue Batch Request (MessageType=201):**
-```
-  [u32 BE] message_count
-  [repeat for each message]
-    [u32 BE] body_len
-    [bytes]  body
-  [u8]     has_delay (0 or 1)
-  [u64 BE] delay_seconds (if has_delay=1)
-
-Response:
-  [u32 BE] id_count
-  [repeat for each id]
-    [u64 BE] message_id
 ```
 
 **Reserve Request (MessageType=202):**
@@ -560,8 +544,6 @@ errors based on the expected response shape for the operation.
 ```
 enqueue(body: bytes, delay_seconds?: u64) -> message_id | error
 
-enqueue_batch(bodies: [bytes], delay_seconds?: u64) -> [message_id] | error
-
 reserve(lease_seconds: u64, batch_size?: u32, wait_seconds?: u64)
   -> [{message_id, lease_token, body}, ...] | error
 
@@ -584,7 +566,6 @@ complete(message_id: u64, lease_token: u64) -> ok | error
 - complete with wrong token fails
 - reserve with batch_size returns up to that many messages
 - multiple consumers can reserve from same queue
-- enqueue_batch creates multiple independent messages
 
 ### RPC Domain (Request/Response & Streaming)
 Purpose: low-latency request/response with reply inbox semantics and optional streaming replies.
@@ -1188,7 +1169,6 @@ This section collects the canonical numeric constants clients must implement.
 | MessageType | Name | Purpose |
 |---|---:|---|
 | 200 | ENQUEUE | Add message to queue |
-| 201 | ENQUEUE_BATCH | Add multiple messages |
 | 202 | RESERVE | Lease message(s) |
 | 203 | EXTEND | Extend lease TTL |
 | 204 | COMPLETE | Mark message complete |
