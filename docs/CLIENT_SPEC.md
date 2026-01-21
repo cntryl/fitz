@@ -3,6 +3,8 @@
 ## Purpose
 This document defines the client contract, wire protocol expectations, and acceptance criteria for any Fitz client implementation. It is language-agnostic and focuses solely on behaviour the broker requires over supported transports (WebSocket and TCP).
 
+Normative language: **MUST**, **MUST NOT**, **SHOULD**, **MAY**.
+
 ---
 
 ## Terminology (Strict)
@@ -55,6 +57,18 @@ Common conventions (used by `src/protocol/tlv_codec.rs` and most domain codecs):
 
 Some domains embed **nested TLV** payloads (Schedule); see that domain section.
 
+### Identifier canonical forms
+Unless explicitly stated otherwise for a domain:
+- **route_family**: u64 (big-endian)
+- **session_id** (transport session): u64 (big-endian) and **NOT** encoded in TLV frames unless explicitly required by a domain
+- **tx_id**: u64 (big-endian)
+- **message_id**: u64 (big-endian)
+- **lease_token / fencing_token**: u64 (big-endian) in request payloads
+- **correlation_id**: exactly 16 raw bytes (UUID); length prefix MUST be 16
+- **route**: UTF-8 string with u32 length prefix
+
+NOTE: Some responses include optional string tokens. These are opaque and broker-specific unless explicitly documented in this spec.
+
 > Source: `src/protocol/tlv.rs` (`MessageType::{ESCAPE_MARKER=0xFF, MAX_SINGLE_BYTE=0xFE}`; length is u32 BE).
 
 ---
@@ -94,6 +108,10 @@ Some domains embed **nested TLV** payloads (Schedule); see that domain section.
 - For the current Rust broker, **Notice/RPC/Stream/Lease** payloads include `family_id`. **KV/Queue** routing is derived from the routing envelope and is not embedded in their payloads.
 - Fitz multiplexes traffic internally by mapping `MessageType` ranges to logical channels (see Constants). Clients do **not** send a channel identifier on the wire.
 - Domain semantics (ordering, delivery guarantees) are per-domain. Clients MUST follow domain-specific contracts (see domain specs).
+
+**MessageType overlap rule (authoritative):** MessageType values overlap across domains. A client MUST disambiguate by **route scheme** and **broker mapping**. A client MUST NOT assume that MessageType alone selects a domain.
+
+**Channel IDs (authoritative):** Channel IDs are broker-internal only. Clients MUST NOT encode, infer, multiplex, or depend on Channel IDs on the wire.
 
 ---
 
@@ -276,6 +294,17 @@ on_notify(route, payload) -> void  (callback/event handler)
 - **Fanout**: Single publish reaches all matching subscriptions (may be 0 to many)
 - **Session-scoped**: Subscriptions are tied to connection; lost on disconnect
 
+#### Success vs Error Encoding (Notice)
+- All notice responses begin with a **status** byte: 0 = ok, 1 = error.
+- On error, the payload MUST be `[u32 BE error_len][bytes error_msg]`.
+
+#### Retry / Idempotency (Notice)
+- `publish` is **not idempotent**; clients MUST NOT retry unless they accept duplicates.
+- `subscribe` and `unsubscribe` MAY be retried if the client can tolerate duplicate server-side state or the broker guarantees idempotency.
+
+#### Disconnect Behavior (Notice)
+- On disconnect, all subscriptions are dropped. Clients MUST re-subscribe after reconnect.
+
 #### Acceptance Tests
 - subscribe to pattern and receive matching publications
 - multiple subscriptions on same pattern both receive publications
@@ -283,6 +312,8 @@ on_notify(route, payload) -> void  (callback/event handler)
 - unsubscribe stops delivery
 - wildcard patterns match correctly
 - exact routes take precedence over patterns
+
+NOTE: Field ordering for UNSUBSCRIBE and UNSUBSCRIBE_ALL differs intentionally and is authoritative as documented. Clients MUST NOT reorder or normalize field order.
 
 ### Stream Domain (Durable append-only logs)
 Purpose: durable, strictly ordered append/read operations with watermark tracking.
@@ -444,7 +475,7 @@ last(family_id: u64, route: string) -> {data: bytes} | error
 get_metadata(family_id: u64, route: string) -> {data: bytes} | error
 ```
 
-> Note: Stream response `data` is broker-defined and may use JSON, bincode, or other formats.
+NOTE: Stream response `data` is broker-defined. Portable clients MUST treat Stream as broker-specific unless the broker documents the `data` encoding.
 
 #### Semantics & Guarantees
 - **Atomicity**: Append is atomic; partial writes are never visible
@@ -453,6 +484,22 @@ get_metadata(family_id: u64, route: string) -> {data: bytes} | error
 - **Optimistic concurrency**: `expected_offset` on append prevents lost updates
 - **Durability**: All committed data survives broker restart
 - **Isolation**: Stream sessions are isolated per resource
+
+#### Success vs Error Encoding (Stream)
+- Stream responses begin with a **status** byte: 0 = ok, 1 = error.
+- When status = ok, the payload is `[u8 has_session_id][u64 session_id (if present)][u32 data_len][bytes data]`.
+- When status = error, the payload is `[u32 error_len][bytes error_msg]`.
+
+NOTE: The optional `session_id` in responses is **not** the same as the UTF-8 `session_id` required in request payloads. The response `session_id` is an opaque handle unless the broker documents it.
+
+NOTE: The UTF-8 `session_id` used in Stream request payloads is a broker-issued opaque identifier and MUST be treated as an uninterpreted byte string by clients. The numeric `session_id` (u64) optionally returned in Stream responses is a separate identifier. Clients MUST NOT assume equivalence between request and response session IDs.
+
+#### Retry / Idempotency (Stream)
+- `begin` and `append` are **not idempotent**; clients MUST NOT retry unless they accept duplicates or enforce concurrency with `expected_offset` semantics.
+- `read`, `last`, `get_metadata` MAY be retried safely.
+
+#### Disconnect Behavior (Stream)
+- On disconnect, active stream sessions are abandoned. Clients MUST begin a new session after reconnect.
 
 #### Acceptance Tests
 - begin/append/commit cycle
@@ -559,6 +606,18 @@ complete(message_id: u64, lease_token: u64) -> ok | error
 - **Token Binding**: Complete/Extend require both message_id and lease_token (prevents replay)
 - **Durability**: All enqueued messages survive broker restart
 
+#### Success vs Error Encoding (Queue)
+- Success responses for `enqueue`, `reserve`, `extend`, `complete` are as defined in the payload layouts.
+- Errors are encoded as single-byte codes or error strings (see Error Response Encoding).
+
+#### Retry / Idempotency (Queue)
+- `enqueue` is **not idempotent**; clients MUST NOT retry unless they accept duplicate messages.
+- `reserve` MAY be retried; it is expected to be repeatable.
+- `extend` and `complete` MAY be retried if the client can tolerate `NOT_FOUND` or `LEASE_EXPIRED` errors.
+
+#### Disconnect Behavior (Queue)
+- On disconnect, leases continue to expire server-side. Clients MUST assume in-flight messages may be redelivered to other consumers after lease expiry.
+
 #### Acceptance Tests
 - enqueue/reserve/complete cycle
 - lease expiry returns message to ready queue
@@ -652,6 +711,8 @@ Response:
   [bytes]  data (empty on success)
 ```
 
+NOTE: `correlation_id_len` MUST be exactly 16. Any other value MUST be treated as a protocol error.
+
 #### Error Codes (RPC Domain - 3xxx)
 - 3001 = ERR_RPC_TIMEOUT
 - 3002 = ERR_RPC_WORKER_NOT_FOUND
@@ -680,6 +741,17 @@ send_response(correlation_id: UUID, seq: u64, body: bytes, stream_end: bool) -> 
 - **Backpressure**: RPC_BACKPRESSURE error if outbound queue is full
 - **Ordering**: Responses delivered in sequence order (if streaming)
 - **Exactly-Once Request Delivery**: Each request reaches worker once
+
+#### Success vs Error Encoding (RPC)
+- All RPC responses begin with a **status** byte: 0 = ok, 1 = error.
+- On error, the payload is `[u32 error_len][bytes error_msg]`.
+
+#### Retry / Idempotency (RPC)
+- `request` is **not idempotent** unless the application enforces idempotency via correlation_id semantics. Clients MUST NOT retry without such guarantees.
+- `ack` MAY be retried safely.
+
+#### Disconnect Behavior (RPC)
+- On disconnect, outstanding requests MAY be lost. Clients MUST treat responses as non-guaranteed and SHOULD re-issue requests only if idempotent.
 
 #### Acceptance Tests
 - single request/response cycle
@@ -845,6 +917,19 @@ operation.
 - **Read modes**: ReadOnly allows multi-reader; ReadWrite is exclusive per resource
 - **Persistence**: All committed data survives broker restart
 
+#### Success vs Error Encoding (KV)
+- Success responses are **operation-specific**; many have empty payloads.
+- Errors are encoded as `[u32 BE error_len][bytes error_msg]` with no status byte.
+
+#### Retry / Idempotency (KV)
+- `begin` is **not idempotent**; clients MUST NOT retry unless they accept duplicate transactions.
+- `get`, `scan` MAY be retried safely.
+- `put`, `insert`, `delete`, `delete_range` are **not idempotent** unless the application enforces idempotency.
+- `commit` MUST be assumed non-idempotent unless explicitly documented by a broker build and MUST NOT be retried by default.
+
+#### Disconnect Behavior (KV)
+- On disconnect, in-flight transactions MAY be abandoned or rolled back by the broker. Clients MUST begin a new transaction after reconnect.
+
 #### Client Methods (Derived)
 ```
 begin(resource: string, mode: 'ReadOnly' | 'ReadWrite', durability: 'sync' | 'buffered')
@@ -996,6 +1081,19 @@ query(family_id: u64, route: string) -> {token?: string} | error
 - **Route Partitioned**: Different routes have independent leases
 - **In-Memory**: Not persisted; lost on broker restart (use for coordination, not durability)
 
+#### Success vs Error Encoding (Lease)
+- Lease responses begin with a **status** byte: 0 = ok, 1 = error.
+- On error, the payload is `[u32 error_len][bytes error_msg]`.
+- On success, the optional token is an **opaque string**. Clients MUST NOT interpret it unless broker documentation defines its meaning.
+
+#### Retry / Idempotency (Lease)
+- `acquire` is **not idempotent**; clients SHOULD NOT retry unless they accept acquiring a newer fencing token.
+- `renew` and `release` MAY be retried but can return errors if the token is stale.
+- `query` MAY be retried safely.
+
+#### Disconnect Behavior (Lease)
+- On disconnect, leases continue to expire server-side. Clients MUST re-acquire leases after reconnect.
+
 #### Acceptance Tests
 - acquire succeeds when free, fails with ERR_LEASE_HELD when held
 - renew with valid token extends TTL
@@ -1053,6 +1151,8 @@ Response:
   [bytes]  schedule_id (if has_schedule_id=1)
 ```
 
+NOTE: LIST returns a single response per invocation. If no schedules are present, the response MUST indicate status=ok with `has_schedule_id = 0`.
+
 **Schedule Payload (nested TLV within Create):**
 Each field is a TLV record using the top-level TLV rules:
 - Type 1: cron (UTF-8 bytes)
@@ -1080,6 +1180,18 @@ list() -> ok | error
 - **Recurring**: Interval-based recurring tasks (cron-like, but fixed intervals)
 - **Cancellation**: Cancels future runs; already-running tasks may not be aborted
 - **Route Scoped**: Schedules are created per route; different routes have independent schedules
+
+#### Success vs Error Encoding (Schedule)
+- Schedule responses begin with a **status** byte: 0 = ok, 1 = error.
+- On error, the payload is `[u32 error_len][bytes error_msg]`.
+
+#### Retry / Idempotency (Schedule)
+- `create` is **not idempotent**; clients MUST NOT retry unless they accept duplicate schedules.
+- `cancel` MAY be retried and SHOULD be treated as idempotent by clients.
+- `list` MAY be retried safely.
+
+#### Disconnect Behavior (Schedule)
+- On disconnect, schedules remain active on the broker. Clients MUST assume schedules continue to run.
 
 #### Acceptance Tests
 - create_once schedules task and executes at delay
@@ -1288,6 +1400,6 @@ Domains use numeric ranges to reduce collisions, but overlaps exist. Response pa
 
 ---
 
-> Next action options: (1) add concrete TLV frame byte-level examples per method, (2) draft the acceptance test harness (examples + runner), or (3) add concise pseudo-code quickstarts for each domain. Which should I do next?
+End of specification.
 
 
