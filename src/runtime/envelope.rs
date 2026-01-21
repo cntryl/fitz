@@ -28,26 +28,6 @@
 //!
 //! Actors themselves never see envelopes directly—they receive typed messages.
 //!
-//! # Example
-//!
-//! ```ignore
-//! use fitz::runtime::envelope::Envelope;
-//! use fitz::runtime::routing::{RouteFamily, Route, RouteAddress};
-//! use std::time::{Duration, Instant};
-//!
-//! // Create an envelope with a deadline
-//! let dest = RouteAddress::new(
-//!     RouteFamily::new(1),
-//!     Route::new("/user/123")
-//! );
-//! let envelope = Envelope::new(
-//!     dest,  // destination
-//!     "Hello".to_string()  // payload
-//! ).with_deadline(Instant::now() + Duration::from_secs(5));
-//!
-//! // Create a reply envelope
-//! let reply = envelope.reply_to("World".to_string());
-//! ```
 
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
@@ -135,16 +115,6 @@ pub struct Envelope {
 
 impl Envelope {
     /// Create a new envelope with a destination and payload
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let address = RouteAddress::new(
-    ///     RouteFamily::new(1),
-    ///     Route::new("/user/123")
-    /// );
-    /// let envelope = Envelope::new(address, MyMessage::DoWork);
-    /// ```
     pub fn new<M: Any + Send + Sync>(destination: RouteAddress, payload: M) -> Self {
         Self {
             id: MessageId::new(),

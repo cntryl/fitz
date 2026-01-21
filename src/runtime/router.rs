@@ -202,27 +202,6 @@ impl RouteRegistry {
 ///
 /// Router is `Clone` and all clones share the same registry. This allows
 /// multiple threads to route messages concurrently.
-///
-/// # Example
-///
-/// ```ignore
-/// use fitz::runtime::router::{Router, MailboxSink};
-/// use fitz::runtime::envelope::Envelope;
-/// use fitz::runtime::routing::{RouteFamily, Route, RouteAddress};
-///
-/// let router = Router::new();
-/// let address = RouteAddress::new(
-///     RouteFamily::new(1),
-///     Route::new("/user/123")
-/// );
-///
-/// // Register a mailbox sink
-/// router.register(address.clone(), Arc::new(my_sink));
-///
-/// // Route an envelope
-/// let envelope = Envelope::new(address, MyMessage::DoWork);
-/// router.route(envelope)?;
-/// ```
 #[derive(Clone)]
 pub struct Router {
     registry: Arc<RouteRegistry>,
