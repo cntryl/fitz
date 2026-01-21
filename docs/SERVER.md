@@ -11,9 +11,10 @@
 3. [Layer Responsibilities](#layer-responsibilities)
 4. [Wire Protocol Implementation](#wire-protocol-implementation)
 5. [Domain Implementation](#domain-implementation)
-6. [Boot & Initialization](#boot--initialization)
-7. [Testing & Validation](#testing--validation)
-8. [Performance & Tuning](#performance--tuning)
+6. [Authentication & TLS](#authentication--tls)
+7. [Boot & Initialization](#boot--initialization)
+8. [Testing & Validation](#testing--validation)
+9. [Performance & Tuning](#performance--tuning)
 
 ---
 
@@ -131,19 +132,46 @@ This design eliminates async scheduling jitter from the hot path.
 **Behavior:**
 - Receive raw frame from transport
 - **First frame MUST be CONNECT** with JWT payload
-- Validate JWT signature and claims
-- Establish session with realm/area scopes
+- Validate JWT signature and claims (must validate signature; do NOT trust client parsing)
+- Extract JWT claims: `realm`, `areas` (array), `scopes` (array)
+- Establish session with extracted claims
+- Assign unique session ID (internal; NOT sent to client)
 - For each subsequent frame:
   - Parse TLV header (MessageType, length)
   - Extract route scheme (kv, notice, rpc, etc.)
-  - Check permissions against JWT claims
+  - Check permissions: realm match, area match, verb scope match
+  - If permission check fails: return domain error with code ERR_UNAUTHORIZED
   - Route to appropriate domain via Router
 - Return response bytes to transport
+
+**Session Lifecycle:**
+
+On successful CONNECT:
+- Create session with extracted JWT claims
+- Track subscriptions, transactions, worker registrations per session
+- Ready to accept domain requests
+
+On disconnect (graceful or abrupt):
+- Immediately clean up:
+  - All active subscriptions → drop
+  - All active KV transactions → rollback
+  - All active Stream sessions → abort
+  - All held Leases → release
+  - All RPC worker registrations → unregister
+  - Queued notifications → discard
+- Session ID becomes invalid (no recovery on reconnect)
+
+On reconnect with new CONNECT:
+- Create new session (new session ID)
+- Old session ID is discarded
+- Client MUST explicitly re-subscribe, re-begin, re-register if needed
 
 **Constraints:**
 - Do NOT implement domain business logic
 - Do NOT block on external async operations
 - Minimal parsing: enough to route, nothing more
+- MUST validate JWT signature (use external JWT library; do NOT implement JWT validation manually)
+- MUST reject expired JWTs (check `exp` claim)
 
 ### Layer 3: Runtime
 
@@ -593,6 +621,65 @@ fn match_parts(route: &[&str], pattern: &[&str]) -> bool {
     }
 }
 ```
+
+---
+
+## Authentication & TLS
+
+### JWT Validation (Layer 2: Session)
+
+Brokers MUST validate JWT in CONNECT handshake:
+
+1. **Signature Validation:** Use external JWT library (e.g., `jsonwebtoken` in Rust)
+   - Extract public key from configured issuer
+   - Validate signature using `HS256`, `RS256`, or configured algorithm
+   - Reject if signature invalid
+2. **Expiration Check:** Check `exp` claim against current time
+   - Reject if expired
+3. **Claim Extraction:** Extract required claims:
+   - `realm` (string): Route realm must match exactly
+   - `areas` (array of strings): Route area must be in array
+   - `scopes` (array of strings): Verb must be in scopes (e.g., `kv:read`, `notice:subscribe`)
+4. **Permission Enforcement:** For each request, verify:
+   - Route realm ∈ JWT realm (exact match)
+   - Route area ∈ JWT areas
+   - Request verb ∈ JWT scopes
+
+If any check fails:
+- Reject with domain error code `*001` (ERR_UNAUTHORIZED)
+- Log rejection for audit
+- Continue accepting subsequent requests from same session
+
+### TLS Configuration
+
+Brokers SHOULD support TLS for both WebSocket and TCP:
+
+1. **WebSocket TLS:**
+   - Listen on port 4090 (default) with TLS
+   - Use `wss://` scheme
+   - Configure certificate and private key
+
+2. **TCP TLS:**
+   - Listen on port 4091 (default) with TLS
+   - Upgrade connection after handshake
+   - Configure certificate and private key
+
+3. **Certificate Management:**
+   - Load from file on startup
+   - Support certificate rotation without restart (future enhancement)
+   - Log certificate expiry warnings
+
+4. **Cipher Suites:**
+   - Use strong modern cipher suites (TLS 1.2+)
+   - Disable weak ciphers (RC4, DES, NULL)
+
+### Session Identification
+
+Brokers SHOULD NOT expose session IDs to clients in standard responses. Session IDs are internal implementation detail. However, for debugging and logs:
+- Generate unique session ID per connection
+- Track in logs for audit trail
+- Use for internal state management (transactions, subscriptions)
+- Discard on disconnect
 
 ---
 

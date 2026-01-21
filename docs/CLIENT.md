@@ -20,10 +20,12 @@ This document defines what every Fitz client implementation MUST do to interoper
 10. [Permissions](#permissions)
 11. [Transactions](#transactions)
 12. [Subscriptions](#subscriptions)
-13. [Error Handling](#error-handling)
-14. [Domains](#domains)
-15. [Constants & TLV Registry](#constants--tlv-registry)
-16. [Acceptance Criteria](#acceptance-criteria)
+13. [Request/Response Correlation](#requestresponse-correlation)
+14. [Error Handling](#error-handling)
+15. [Idempotency & Retry Strategy](#idempotency--retry-strategy)
+16. [Domains](#domains)
+17. [Constants & TLV Registry](#constants--tlv-registry)
+18. [Acceptance Criteria](#acceptance-criteria)
 
 ---
 
@@ -214,14 +216,43 @@ Length: JWT byte length
 
 ### 3. Await Broker Confirmation
 
+**Session Confirmation Protocol:**
+
 Broker behavior:
-- **Valid CONNECT:** Responds with session confirmation; ready for requests
-- **Invalid CONNECT:** Closes connection without response
-- **No CONNECT:** Closes connection after timeout
+- **Valid CONNECT:** No explicit ACK message. Broker remains silent and is ready for requests.
+- **Invalid CONNECT:** Broker closes connection within 1 second (no response frame sent)
+- **No CONNECT within 10 seconds:** Broker closes connection with graceful shutdown
 
 Clients MUST:
-- Wait for broker confirmation before sending requests
-- Handle immediate connection close (treat as auth failure)
+- Wait 5–10 seconds after sending CONNECT before considering it failed
+- If no close frame within 5 seconds, assume connection is ready
+- If connection closes immediately, treat as authentication failure
+- Handle immediate connection close (treat as auth failure, do NOT retry same JWT)
+
+**Session State After Successful CONNECT:**
+
+On successful CONNECT, broker creates session and MUST:
+- Assign unique session ID (internal use only)
+- Extract JWT claims (realm, areas, scopes)
+- Establish permissions for all subsequent requests
+- Track active subscriptions, transactions, and resources
+
+**Session Cleanup On Disconnect:**
+
+When client disconnects:
+- All active subscriptions are dropped
+- All active transactions (KV) are rolled back
+- All active stream sessions are aborted
+- All held leases are released
+- All RPC worker registrations are cleared
+- Queued notifications are discarded
+
+**State NOT Restored On Reconnect:**
+
+On reconnect with new CONNECT:
+- New session ID issued (previous session ID is invalid)
+- Previous subscriptions, transactions, and worker registrations are NOT recovered
+- Client MUST explicitly re-subscribe, re-begin, or re-register if needed
 
 ### 4. Send Domain Requests
 
@@ -267,17 +298,31 @@ Authorization is **always server-side**:
 - If client sends unauthorized request, broker returns error
 - Clients MUST NOT attempt local permission checking
 
-### TLS (Strongly Recommended)
+### TLS (Mandatory in Production)
+
+**Production Deployments (REQUIRED):**
 
 Clients MUST:
-- Use `wss://` for WebSocket (TLS over WebSocket)
-- Use TLS for TCP where possible
-- Validate server certificates in production
-- Reject self-signed certificates unless explicitly trusted
+- Use `wss://` for WebSocket (never plain `ws://`)
+- Use TLS for TCP (never plain TCP on untrusted networks)
+- Validate server certificate chain against system CA roots
+- Perform hostname verification (certificate CN or SAN must match broker hostname)
+- Reject expired certificates
+- Reject revoked certificates (if OCSP stapling available)
+- Reject self-signed certificates (unless explicitly in trust store via deployment config)
+
+**Development/Testing (MAY Skip with Explicit Flag):**
+
+Clients MAY accept self-signed or invalid certificates ONLY if:
+- Explicitly enabled via configuration flag (e.g., `insecure_skip_verify=true`)
+- User acknowledges security risk in documentation
+- Never default to insecure; require explicit opt-in
 
 Clients MUST NOT:
-- Skip certificate validation to "work around" cert issues
-- Accept expired or revoked certificates
+- Skip certificate validation to "work around" deployment issues
+- Accept expired or revoked certificates without explicit flag
+- Disable hostname verification
+- Accept any certificate in production (must validate chain)
 
 
 
@@ -573,18 +618,72 @@ Wire codes **overlap across domains** (e.g., KV and Notice both use 100–104). 
 
 ## Permissions
 
-Permissions are **enforced server-side**, not client-side.
+### Permission Model (Server-Enforced)
 
-### Client Responsibilities
+Authorization is **always server-side**:
+- Broker MUST extract claims from JWT: `realm`, `areas` (array), `scopes` (array)
+- For each request, broker MUST check:
+  1. **Realm match**: Route realm ∈ JWT realm (MUST be exact match)
+  2. **Area match**: Route area ∈ JWT areas
+  3. **Scope match**: Request verb ∈ JWT scopes (e.g., `kv:read`, `notice:subscribe`, `queue:send`)
+- If any check fails, broker returns permission error (domain-specific error code)
+
+**Permission Check Order:**
+
+Broker MUST enforce permissions in this order:
+1. **Route validation:** Scheme known, depth valid, shape matches method (if fails: protocol error)
+2. **JWT validation:** Signature valid, not expired (if fails: transport error)
+3. **Permission enforcement:** Realm/area/scope match (if fails: domain error with code ERR_UNAUTHORIZED)
+4. **Domain dispatch:** Route to domain handler
+
+### Permission Error Codes
+
+If permission check fails, broker returns error in domain error encoding with these standard codes:
+
+| Error Code | Meaning | HTTP Equivalent |
+|---|---|---|
+| `*001` | ERR_UNAUTHORIZED | 403 Forbidden |
+| `*002` | ERR_INVALID_SCOPE | 403 Forbidden |
+| `*003` | ERR_REALM_MISMATCH | 403 Forbidden |
+
+Where `*` is domain prefix (1xxx for KV, 3xxx for Notice, etc.).
+
+**Example (KV domain):**
+- 1001 = ERR_UNAUTHORIZED
+- 1002 = ERR_INVALID_SCOPE  
+- 1003 = ERR_REALM_MISMATCH
+
+### JWT Claims Schema
+
+**Required Claims:**
+
+```json
+{
+  "realm": "prod",
+  "areas": ["app", "system"],
+  "scopes": ["kv:read", "kv:write", "notice:subscribe"],
+  "exp": 1234567890
+}
+```
+
+**Scope Format:** `{domain}:{verb}` or `{domain}:*` (all verbs in domain)
+
+### Client-Side Guidance
+
+Clients MUST NOT:
+- Validate JWT signatures
+- Parse or check JWT claims
+- Attempt local permission checking
+- Cache JWT results
+- Infer permissions from routes
 
 Clients MUST:
+- Obtain JWT from external auth service
+- Treat JWT as opaque string
+- Pass JWT in CONNECT record
+- Handle ERR_UNAUTHORIZED gracefully (return to user, suggest re-authentication)
 
-1. **Pass JWT credentials in CONNECT** (see [Authentication](#authentication--security))
-2. **Assume broker validates permissions** (do not second-guess)
-3. **Surface permission errors** when server rejects a request
-4. **NOT attempt to infer or downscope permissions locally**
-
-### Client Constraints
+---
 
 Clients MUST NOT:
 
@@ -743,30 +842,122 @@ Error response:
 raise DomainError(error_msg)
 ```
 
-### Idempotency & Retry
+## Request/Response Correlation
+
+### Synchronous Model
+
+**Fitz uses synchronous request/response:**
+- Client sends one request, blocks waiting for response
+- Broker processes request, sends exactly one response
+- Client receives response, unblocks
+- **Pipelining:** NOT supported (no request IDs, no response tagging)
+
+**Exception: Streaming and Fanout**
+
+For operations with multiple responses (Notice, RPC, Stream):
+- First response is immediate (operation accepted, subscription ID, etc.)
+- Subsequent responses (notifications, RPC calls) arrive asynchronously
+- Client MUST handle asynchronous delivery (subscribe to in-band notifications)
+- Connection remains open; no explicit end marker for streaming
+
+### Multi-Response Operations
+
+When a single operation generates multiple responses:
+
+**Notice SUBSCRIBE:**
+- Request → Response 1 (subscription ID)
+- Subsequent PUBLISHes → NOTIFY frames (asynchronous)
+- Client reads NOTIFYs from same connection
+
+**RPC REQUEST:**
+- Request → Response 1 (accepted, empty body)
+- Worker responses → Response 2+ (streaming, with `sequence` and `stream_end` flag)
+- Correlation ID links all responses
+
+**Stream READ:**
+- Request → Response 1 (record stream)
+- Multiple records may arrive in single response or multiple frames
+- Broker MAY split large responses across multiple frames
+
+### Connection Handling
+
+For all operations:
+- Connection remains open after response received
+- Client MAY send next request immediately (re-enters sync wait)
+- Asynchronous frames (notifications, RPC responses) arrive while waiting for next response
+- Client MUST buffer asynchronous frames and dispatch to handlers
+
+---
+
+## Idempotency & Retry Strategy
 
 Clients MUST NOT automatically retry operations unless:
 
-1. Operation is idempotent (e.g., `GET`, `READ`)
-2. OR client has mechanism to deduplicate (e.g., correlation ID tracking)
+1. Operation is idempotent (read-only, safe to retry)
+2. OR client has deduplication mechanism (correlation ID tracking)
 
-**Safe to retry:**
+**Idempotent Operations (Safe to Retry, No Deduplication Needed):**
+
+Read-only operations are safe to retry without deduplication:
 - KV: `GET`, `SCAN`
-- Stream: `READ`, `GET_METADATA`
-- Notice: NONE (publish is not idempotent)
-- Queue: `RESERVE` (may be retried, though not idempotent in strict sense)
-- RPC: NONE (unless app-level deduplication)
+- Stream: `READ`, `GET_METADATA`, `LAST`
 - Lease: `QUERY`
-- Schedule: NONE
+- Queue: `RESERVE` (with caveats; see context-dependent below)
 
-**NOT safe to retry:**
-- KV: `PUT`, `INSERT`, `DELETE`, `BEGIN`, `COMMIT`
-- Stream: `APPEND`, `BEGIN`, `COMMIT`
-- Notice: `PUBLISH`
-- Queue: `ENQUEUE`, `COMPLETE`
-- RPC: `REQUEST`, `RESPONSE`
+Retry behavior: If transport fails after sending request but before receiving response, safe to resend identical request.
+
+Broker behavior: MAY return stale data if resource has changed between retries.
+
+**NOT Idempotent (MUST NOT Retry Automatically):**
+
+Write operations, control operations, and pub/sub are NOT idempotent:
+- KV: `PUT`, `INSERT`, `DELETE`, `BEGIN`, `COMMIT`, `ROLLBACK`
+- Stream: `APPEND`, `BEGIN`, `COMMIT`, `ROLLBACK`
+- Notice: `PUBLISH`, `SUBSCRIBE`, `UNSUBSCRIBE`
+- Queue: `ENQUEUE`, `COMPLETE`, `EXTEND`, `DELETE`
+- RPC: `REQUEST`, `RESPONSE`, `ACK`
 - Lease: `ACQUIRE`, `RENEW`, `RELEASE`
 - Schedule: `CREATE`, `CANCEL`
+
+Retry behavior: Retrying these operations MAY cause duplicate execution, lost updates, or unexpected state changes.
+
+**Context-Dependent (Safe to Retry WITH Deduplication):**
+
+Operations that are safe to retry only if client tracks correlation ID:
+- Queue: `COMPLETE` (safe to retry if message_id+token already deleted)
+- RPC: `REQUEST` (safe to retry if broker caches correlation_id)
+
+Retry behavior: Clients MUST maintain deduplication state (correlation ID → result cache) to safely retry.
+
+### Recommended Retry Strategy
+
+```
+IF operation in IDEMPOTENT_LIST:
+  retry_count ← 0
+  retry_max ← 3
+  backoff ← 1 second
+  WHILE retry_count < retry_max:
+    TRY send request
+    IF response received THEN return
+    IF transport error AND retry_count < retry_max THEN
+      wait(backoff)
+      backoff ← backoff * 2 (exponential backoff)
+      retry_count ← retry_count + 1
+    ELSE
+      raise error
+
+ELSE IF operation in CONTEXT_DEPENDENT_LIST:
+  IF correlation_id in dedup_cache THEN
+    return cached_result
+  ELSE
+    result ← send request
+    dedup_cache[correlation_id] ← result
+    return result
+
+ELSE  (NOT idempotent)
+  send request exactly once
+  IF transport error THEN raise error (do NOT retry)
+```
 
 ---
 
@@ -1578,6 +1769,49 @@ Stream uses 200–206, Queue uses 200–204 (overlapping by design, disambiguate
 | 102 | UNSUBSCRIBE |
 | 103 | UNSUBSCRIBE_ALL |
 | 104 | NOTIFY |
+
+### MessageType Disambiguation
+
+When MessageType overlaps across domains (e.g., KV 100 = BEGIN, Notice 100 = PUBLISH):
+- **Disambiguation:** By route scheme (first segment of route string in request)
+- Broker MUST parse route from first TLV field to determine domain
+- Same MessageType value in different domains is independent (no collision)
+
+Example:
+- `kv://realm/area/resource` with MessageType 100 = KV BEGIN
+- `notice://realm/area/resource` with MessageType 100 = Notice PUBLISH
+
+**Future compatibility:** If domain ranges exhaust, extend to new range blocks (e.g., 1100–1199 for KV expansion)
+
+### Error Code Allocation (Authoritative)
+
+Error codes are allocated by domain in 100-block ranges:
+
+| Range | Domain | Capacity | Notes |
+|---|---|---|---|
+| 1000–1099 | KV | 100 codes | Transactions, isolation, durability |
+| 2000–2099 | Stream | 100 codes | Concurrency, watermarks, ordering |
+| 3000–3099 | Notice | 100 codes | Routing, patterns, delivery |
+| 4000–4099 | Queue | 100 codes | Leasing, visibility, delivery |
+| 5000–5099 | Lease | 100 codes | Mutual exclusion, fencing, TTL |
+| 6000–6099 | RPC | 100 codes | Routing, backpressure, correlation |
+| 7000–7099 | Schedule | 100 codes | Scheduling, persistence, execution |
+
+**Expansion Strategy:**
+
+If domain exhausts range (>99 error codes allocated):
+- First expansion block: {base}100–{base}199 (e.g., 1100–1199 for KV)
+- Second expansion: {base}200–{base}299 (e.g., 1200–1299 for KV)
+- Continue as needed
+
+**Cross-Domain Error Codes:**
+
+These error codes are standardized across ALL domains:
+- `*001` = ERR_UNAUTHORIZED (permission denied, see Permissions section)
+- `*002` = ERR_INVALID_SCOPE (scope mismatch)
+- `*003` = ERR_REALM_MISMATCH (realm not in JWT)
+
+All other error codes are domain-specific and MUST NOT be reused across domains.
 
 ### Channel IDs (Broker-Internal Reference)
 Clients do NOT encode these; listed for reference:
