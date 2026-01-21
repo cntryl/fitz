@@ -865,3 +865,521 @@ See these files for excellent benchmark patterns:
 **REMEMBER: Benchmarks should be allocation-free, deterministic, and fast!**
 
 ---
+## Build, Test & Lint Commands - QUICK REFERENCE
+
+**Local development:**
+```bash
+cargo test                          # Run all tests
+cargo test --lib                    # Unit tests only
+cargo test --test '*'               # Integration tests only
+cargo test test_guidelines_compliance  # Meta-test for test naming/structure
+cargo fmt --all -- --check          # Check formatting
+cargo clippy -D warnings            # Lint with warnings as errors
+cargo build --release               # Optimized build
+```
+
+**Common patterns:**
+- Run tests with output: `cargo test -- --nocapture`
+- Run specific integration test: `cargo test --test kv_e2e_basic`
+- Check single domain: `cargo test kv::` (tests containing "kv::")
+- Run with backtrace: `RUST_BACKTRACE=1 cargo test`
+
+**Before committing:**
+```bash
+cargo fmt --all
+cargo clippy -D warnings
+cargo test
+```
+
+---
+
+## Module Layer Architecture - THE SYSTEM DESIGN
+
+Fitz has **4 distinct layers**, each with strict responsibilities and boundaries:
+
+### Layer 1: API (Transport Edge)
+**Location:** `src/api/`  
+**Responsibility:** Socket I/O only  
+**MUST contain:**
+- Tokio async loops (TCP, WebSocket)
+- Socket accept/read/write
+- Protocol framing (TCP length-prefix, WebSocket framing)
+- Session creation and lifecycle management
+
+**MUST NOT contain:**
+- Routing logic
+- Domain business logic
+- Message parsing beyond framing
+
+**Example files:**
+- `src/api/tcp.rs` - TCP listener, length-prefixed frames
+- `src/api/ws.rs` - WebSocket upgrade, frame forwarding
+- `src/api/ingress.rs` - Async accept loop
+
+### Layer 2: Session (Middleware/Dispatcher)
+**Location:** `src/session/`  
+**Responsibility:** Frame parsing and permission checking  
+**MUST contain:**
+- TLV/codec parsing (calls Protocol layer)
+- Session-scoped state (realm, permissions, auth)
+- Permission enforcement
+- Frame → Message translation
+
+**MUST NOT contain:**
+- Actor routing
+- Domain logic
+- Async work beyond reading frames
+
+**Example files:**
+- `src/session/session.rs` - Frame receiving, routing to Runtime
+- `src/session/permissions.rs` - Authorization rules
+- `src/session/manager.rs` - Session lifecycle
+
+### Layer 3: Runtime (Deterministic Actor Engine)
+**Location:** `src/runtime/`  
+**Responsibility:** Actor lifecycle, message routing, scheduling  
+**MUST contain:**
+- `routing/` - Route addressing (RouteFamily, Route, RouteAddress)
+- `actor/` - Actor trait, mailboxes, lifecycle
+- `router/` - Message delivery and subscription indexing
+- `scheduler/` - Actor scheduling (priority lanes)
+- `matcher/` - Wildcard route pattern matching
+- `subscriptions/` - High-performance subscription lookup
+
+**MUST NOT contain:**
+- Async code
+- Domain business logic
+- Socket I/O
+
+**100% Synchronous. No `.await`, no tokio types.**
+
+**Example files:**
+- `src/runtime/routing.rs` - Route parsing, RouteFamily management
+- `src/runtime/router.rs` - Fanout, delivery
+- `src/runtime/actor.rs` - Actor trait, ActorRef, Context
+
+### Layer 4: Domains (Business Logic)
+**Location:** `src/domains/`  
+**Domains:** `kv/`, `lease/`, `notice/`, `queue/`, `rpc/`, `stream/`, `schedule/`  
+**Responsibility:** Domain-specific actor implementations  
+**MUST contain:**
+- Domain-specific `Actor` implementations
+- Request/response message types (e.g., `KvMessage`, `KvResponse`)
+- Domain state management
+- Business logic (transactions, leasing, fanout, etc.)
+
+**MUST NOT contain:**
+- Async code
+- Socket I/O
+- Routing or frame dispatch
+
+**100% Synchronous. All message handling is deterministic.**
+
+**Example structure:**
+```rust
+pub struct KvActor { /* state */ }
+impl Actor for KvActor {
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Self::Response {
+        // Synchronous business logic
+    }
+}
+```
+
+### Data Flow Through Layers
+
+```
+[CLIENT SOCKET]
+       ↓
+  API Layer (async)
+  - Read frame bytes
+  - Detect protocol
+       ↓
+  Session Layer (sync, validates auth)
+  - Parse TLV/codec
+  - Check permissions
+       ↓
+  Runtime Layer (sync, deterministic)
+  - Route message to actor
+  - Deliver to mailbox
+  - Schedule actor execution
+       ↓
+  Domains Layer (sync, business logic)
+  - Handle request
+  - Return typed response
+       ↓
+  [Response → Session → API → Socket]
+```
+
+**Critical: No stepping backwards. Data flows down only (except responses).**
+
+---
+
+## Actor Model Patterns - FITZ ACTORS
+
+All domain actors follow the **Fitz Actor Pattern**:
+
+### Actor Trait Implementation
+
+```rust
+use fitz::runtime::{Actor, Context, ActorId};
+
+pub struct MyDomainActor {
+    state: SomeState,
+}
+
+// Define message and response types
+pub enum MyMessage {
+    RequestA { param: String },
+    RequestB { count: usize },
+}
+
+pub enum MyResponse {
+    Ok { result: String },
+    Error { reason: String },
+}
+
+impl Actor for MyDomainActor {
+    type Message = MyMessage;
+    type Response = MyResponse;
+
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Self::Response {
+        match msg {
+            MyMessage::RequestA { param } => {
+                // Pure synchronous logic
+                MyResponse::Ok { result: param.to_uppercase() }
+            }
+            MyMessage::RequestB { count } => {
+                // Can use ctx for timers, but NO async
+                MyResponse::Ok { result: count.to_string() }
+            }
+        }
+    }
+}
+```
+
+### Key Invariants
+
+1. **Message enum** - Define all possible requests
+2. **Response enum** - Define all possible responses
+3. **Synchronous `receive()`** - No `.await`, no tokio types
+4. **Single responsibility** - One actor per domain/realm/area
+5. **State isolation** - Each actor has isolated state (no Arc<Mutex>)
+
+### Sending Messages to Actors
+
+**From within domain:**
+```rust
+// Send to another actor by ActorRef
+let response = ctx.send_to(&target_ref, MyMessage::RequestA { param: "test".into() })?;
+```
+
+**From Session/Runtime layer:**
+```rust
+// Runtime routes messages to correct actor automatically
+// No manual actor addressing needed - Runtime.router handles it
+```
+
+### Actor Lifecycle
+
+- **Created:** Session creates first actor for realm/area on demand
+- **Receives messages:** Via mailbox (queue in Runtime)
+- **Responds:** Return `Response` type directly (not async)
+- **Cleanup:** Runtime handles supervision and termination
+
+---
+
+## Protocol & Codec Architecture - WIRE FORMAT
+
+Fitz uses **TLV (Tag-Length-Value) encoding** for all domain operations.
+
+### Layer Location
+**Location:** `src/protocol/`
+
+### Codec Files Structure
+Each domain has a codec:
+- `src/protocol/kv_codec.rs` - KV encoding/decoding
+- `src/protocol/lease_codec.rs` - Lease encoding/decoding
+- `src/protocol/notice_codec.rs` - Notice encoding/decoding
+- `src/protocol/rpc_codec.rs` - RPC encoding/decoding
+- `src/protocol/stream_codec.rs` - Stream encoding/decoding
+- `src/protocol/queue_codec.rs` - Queue encoding/decoding
+
+### Codec Pattern (MANDATORY)
+
+Every codec must implement `CodecTrait`:
+
+```rust
+use fitz::protocol::CodecTrait;
+
+pub struct MyDomainCodec;
+
+impl CodecTrait for MyDomainCodec {
+    type Message = MyDomainMessage;
+    type Response = MyDomainResponse;
+
+    fn encode_message(msg: &Self::Message) -> Result<Vec<u8>, CodecError> {
+        // TLV encode: [tag, length, value]
+        // Use src/protocol/tlv.rs helpers
+        Ok(encoded_bytes)
+    }
+
+    fn decode_message(bytes: &[u8]) -> Result<Self::Message, CodecError> {
+        // TLV decode
+        Ok(decoded_message)
+    }
+
+    fn encode_response(resp: &Self::Response) -> Result<Vec<u8>, CodecError> {
+        Ok(encoded_bytes)
+    }
+
+    fn decode_response(bytes: &[u8]) -> Result<Self::Response, CodecError> {
+        Ok(decoded_response)
+    }
+}
+```
+
+### TLV Encoding Helpers
+**Location:** `src/protocol/tlv.rs`
+
+```rust
+use fitz::protocol::tlv::{encode_u64, encode_string, encode_bytes};
+
+// Encoding example
+let mut buffer = Vec::new();
+buffer.extend(encode_u64(TAG_TIMEOUT, 30)?);
+buffer.extend(encode_string(TAG_NAME, "lease-1")?);
+```
+
+### RouteFamily Routing
+Every codec must handle `RouteFamily`:
+```rust
+// In KvMessage or similar:
+pub struct BeginRequest {
+    pub route_family: RouteFamily,  // Always included
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    // ... domain-specific fields
+}
+```
+
+**Why RouteFamily?** Partitions domain state for sharding/performance.
+
+---
+
+## Integration Testing Patterns - TEST ARCHITECTURE
+
+### Test Organization
+
+**Unit tests:** Inside domain modules, test `Actor::receive()` directly
+```rust
+// In src/domains/kv/mod.rs or tests file
+#[test]
+fn should_return_value_when_key_exists() {
+    // Arrange
+    let mut actor = KvActor::new(test_store());
+    
+    // Act & Assert
+    // Direct actor testing
+}
+```
+
+**Integration tests:** `tests/*.rs` files, test full pipeline
+```
+tests/
+  kv_e2e_basic.rs           # Happy path
+  kv_auth.rs                # Authorization
+  kv_realm_isolation.rs     # Multi-realm
+  kv_session_permissions.rs # Permissions
+  ...
+```
+
+### Creating Test Engines
+
+Use `testkit` module for test setup:
+
+```rust
+use fitz::testkit::create_test_engine_with_cfs;
+use fitz::domains::kv::{KvActor, KvMessage, KvResponse};
+
+#[test]
+fn should_complete_transaction_begin_put_get_sequence() {
+    // Arrange - Create test actor with storage
+    let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
+    let mut actor = KvActor::new(store);
+    let route_family = RouteFamily::new(1);
+
+    // Act - Send message to actor
+    let response = actor.handle(KvMessage::Begin {
+        route_family,
+        realm: "acme".to_string(),
+        area: "kv".to_string(),
+        resource: "users".to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    });
+
+    // Assert - Check response type
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
+
+    // Continue with Put, Get, Commit/Rollback
+}
+```
+
+### Test Coverage Tiers
+
+1. **Happy path** (`e2e_basic.rs`)
+   - Normal operation sequences
+   - Basic request/response
+   - State transitions
+
+2. **Authorization** (`*_auth.rs`)
+   - Permission checks
+   - Denied access
+   - Scope validation
+
+3. **Semantics** (`*_semantics.rs`)
+   - Ordering guarantees
+   - Isolation levels
+   - Consistency properties
+
+4. **Scale** (`*_scale.rs`)
+   - Large datasets
+   - Many subscribers
+   - High throughput
+
+5. **Realm isolation** (`*_realm_isolation.rs`)
+   - Cross-realm state separation
+   - Performance isolation
+
+### Example: Multi-Step Operation Test
+
+```rust
+#[test]
+fn should_isolate_transactions_across_resources() {
+    // Arrange
+    let mut actor = create_kv_actor();
+
+    // Act - Begin transaction on "users"
+    let response = actor.handle(KvMessage::Begin { /* users resource */ });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
+
+    // Act - Put to users
+    actor.handle(KvMessage::Put {
+        tx_id,
+        resource: "users".to_string(),
+        // ...
+    });
+
+    // Act & Assert - Try to put to different resource
+    let response = actor.handle(KvMessage::Put {
+        tx_id,
+        resource: "posts".to_string(),  // Should fail or isolate
+        // ...
+    });
+    
+    // Assert - Verify isolation
+    assert!(response_indicates_isolation_or_error(&response));
+}
+```
+
+---
+
+## Routing System - FTZ:// PROTOCOL
+
+Fitz routes are hierarchical and strictly structured.
+
+### Route Format
+```
+ftz://[route_family]/[domain]/[realm]/[area]/[resource]/[operation]
+ftz://1/kv/acme/app/users/get
+     ^^  domain  realm  area   resource  operation
+```
+
+### RouteFamily
+- **Numeric identifier** for route partitioning
+- Used for **sharding state** across multiple instances
+- Set by client in every request
+- **Must be consistent** for same realm/resource pair
+- Example: `RouteFamily::new(1)` or `RouteFamily::new(42)`
+
+### Route Components
+
+| Component | Example | Purpose |
+|-----------|---------|------|
+| `domain` | `kv`, `notice`, `rpc`, `lease`, `queue`, `stream` | Service selector |
+| `realm` | `acme`, `tenant-123`, `prod` | Isolation boundary |
+| `area` | `app`, `system`, `cache` | Namespace within realm |
+| `resource` | `users`, `posts`, `events` | Entity type |
+| `operation` | `get`, `put`, `subscribe` | Action verb |
+
+### Pattern Matching (Subscriptions)
+
+Routes support **wildcard patterns** for subscriptions:
+```rust
+// Exact
+"ftz://1/notice/acme/app/users/change"
+
+// Wildcards (* = single segment)
+"ftz://1/notice/acme/app/*"              // Any resource in app/area
+"ftz://1/notice/acme/*/users"            // users across all areas
+
+// Multi-segment wildcard (** = any depth)
+"ftz://1/notice/acme/**"                 // Everything in acme realm
+```
+
+### Routing in Domain Handlers
+
+Session layer routes based on domain prefix:
+```
+kv://     → KvActor
+notice:// → NoticeActor
+rpc://    → RpcActor
+```
+
+Actors dispatch within their domain based on remaining route.
+
+**Critical:** Domain actors receive already-routed messages. They don't route themselves.
+
+---
+
+## Quick Reference - File Organization
+
+```
+src/
+├── api/                # Layer 1: Transport (ASYNC)
+│   ├── tcp.rs         # TCP listener
+│   ├── ws.rs          # WebSocket upgrade
+│   └── ingress.rs     # Connection accept loop
+├── session/           # Layer 2: Middleware (MOSTLY SYNC)
+│   ├── session.rs     # Frame parsing, routing
+│   ├── permissions.rs # Authorization logic
+│   └── manager.rs     # Session lifecycle
+├── runtime/           # Layer 3: Engine (100% SYNC)
+│   ├── routing.rs     # Route parsing, family management
+│   ├── router.rs      # Message delivery, fanout
+│   ├── actor.rs       # Actor trait, mailbox
+│   ├── scheduler.rs   # Actor scheduling
+│   └── subscriptions/ # Subscription indexing
+├── protocol/          # Layer 4: Codecs (100% SYNC)
+│   ├── kv_codec.rs
+│   ├── notice_codec.rs
+│   ├── *_codec.rs
+│   └── tlv.rs         # TLV encoding helpers
+├── domains/           # Layer 5: Business Logic (100% SYNC)
+│   ├── kv/            # KV actor and messages
+│   ├── notice/        # Pub/sub actor
+│   ├── rpc/           # RPC actor
+│   ├── lease/         # Lease actor
+│   ├── queue/         # Queue actor
+│   ├── stream/        # Stream actor
+│   └── schedule/      # Schedule actor
+└── testkit/           # Test utilities
+    └── *.rs           # Test helpers per domain
+```

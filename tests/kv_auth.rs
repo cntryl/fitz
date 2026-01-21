@@ -152,7 +152,22 @@ fn should_reject_invalid_message_type() {
     let mut kv_actor = create_kv_actor();
 
     // Act - Try to begin with non-Begin message
-    let msg = KvMessage::Commit; // Not a Begin message
+    // Get a tx_id first (we need one to create a Commit message)
+    let begin_msg = KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "test".to_string(),
+        area: "kv".to_string(),
+        resource: "data".to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    };
+    let begin_result = kv_actor.handle(begin_msg.clone());
+    let tx_id = match begin_result {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
+    
+    let msg = KvMessage::Commit { tx_id }; // Not a Begin message
 
     let result = session_actor.begin(msg, &mut kv_actor);
 
@@ -182,9 +197,23 @@ fn should_allow_subsequent_operations_after_begin() {
 
     let result = session_actor.begin(begin_msg, &mut kv_actor);
     assert!(result.is_ok());
+    
+    // Extract tx_id from successful Begin
+    let tx_id = match kv_actor.handle(KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "authed".to_string(),
+        area: "kv".to_string(),
+        resource: "data".to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    }) {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     // Act - Subsequent Put operation (realm already validated)
     let put_msg = KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"key1"),

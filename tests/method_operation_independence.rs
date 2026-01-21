@@ -44,7 +44,7 @@ fn should_select_handler_by_method_not_route_operation() {
 
     // Assert: Handler was selected by TLV method (Begin = 101), not by route
     // If operation was being used for dispatch, this would be vulnerable
-    assert!(matches!(response, KvResponse::BeginOk));
+    assert!(matches!(response, KvResponse::BeginOk { tx_id: _ }));
 }
 
 /// Invariant 2: Different requests with identical routes but different methods
@@ -66,15 +66,18 @@ fn should_dispatch_different_methods_on_same_route() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    assert!(matches!(response, KvResponse::BeginOk));
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     // Act & Assert 2: Commit transaction (method = KvMessage::Commit)
     // SAME route path, DIFFERENT method
-    let response = actor.handle(KvMessage::Commit);
+    let response = actor.handle(KvMessage::Commit { tx_id });
     assert!(matches!(response, KvResponse::CommitOk));
 
     // Arrange 2: Start a new transaction
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -82,10 +85,14 @@ fn should_dispatch_different_methods_on_same_route() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     // Act & Assert 3: Rollback transaction (method = KvMessage::Rollback)
     // SAME route path, yet ANOTHER different method
-    let response = actor.handle(KvMessage::Rollback);
+    let response = actor.handle(KvMessage::Rollback { tx_id });
     assert!(matches!(response, KvResponse::RollbackOk));
 }
 
@@ -99,7 +106,7 @@ fn should_execute_identical_method_regardless_of_route_context() {
     let mut actor = create_kv_actor();
 
     // Transaction 1: resource="users" (different from transaction 2)
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -107,8 +114,13 @@ fn should_execute_identical_method_regardless_of_route_context() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let put_response_1 = actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"key1"),
@@ -116,8 +128,8 @@ fn should_execute_identical_method_regardless_of_route_context() {
     });
 
     // Transaction 2: resource="posts" (different from transaction 1)
-    actor.handle(KvMessage::Commit);
-    actor.handle(KvMessage::Begin {
+    actor.handle(KvMessage::Commit { tx_id });
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -125,8 +137,13 @@ fn should_execute_identical_method_regardless_of_route_context() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let put_response_2 = actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "posts".to_string(),
         key: Bytes::from_static(b"key2"),
@@ -161,10 +178,14 @@ fn should_ignore_route_operation_segment_for_method_selection() {
 
     // Assert: Succeeded because method (Begin) is correct
     // Would fail if code tried to extract operation from route and match on it
-    assert!(matches!(response, KvResponse::BeginOk));
+    assert!(matches!(response, KvResponse::BeginOk { tx_id: _ }));
 
     // Clean up
-    actor.handle(KvMessage::Rollback);
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
+    actor.handle(KvMessage::Rollback { tx_id });
 }
 
 /// Invariant 5: Protocol enforces that methods are explicit,

@@ -30,7 +30,7 @@ fn bench_full_pipeline_put(c: &mut Criterion) {
             |(store, _temp_dir)| {
                 let mut actor = KvActor::new(store);
 
-                actor.handle(KvMessage::Begin {
+                let response = actor.handle(KvMessage::Begin {
                     route_family: RouteFamily::new(1),
                     realm: "integration".to_string(),
                     area: "kv".to_string(),
@@ -38,15 +38,20 @@ fn bench_full_pipeline_put(c: &mut Criterion) {
                     mode: TxMode::ReadWrite,
                     write_options: cntryl_midge::WriteOptions::buffered(),
                 });
+                let tx_id = match response {
+                    fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                    _ => return,
+                };
 
                 actor.handle(KvMessage::Put {
+                    tx_id,
                     route_family: RouteFamily::new(1),
                     resource: "full_pipeline".to_string(),
                     key: Bytes::from_static(b"integration_key"),
                     value: Bytes::from_static(b"integration_value_with_some_length"),
                 });
 
-                actor.handle(KvMessage::Rollback);
+                actor.handle(KvMessage::Rollback { tx_id });
             },
             criterion::BatchSize::SmallInput,
         )
@@ -61,7 +66,7 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
     let mut actor = KvActor::new(store);
 
     // Setup some initial data
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "integration".to_string(),
         area: "kv".to_string(),
@@ -69,15 +74,20 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id_setup = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => return,
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id: tx_id_setup,
         route_family: RouteFamily::new(1),
         resource: "initial".to_string(),
         key: Bytes::from_static(b"existing_key"),
         value: Bytes::from_static(b"existing_value"),
     });
 
-    actor.handle(KvMessage::Rollback);
+    actor.handle(KvMessage::Rollback { tx_id: tx_id_setup });
 
     let mut group = c.benchmark_group("kv_integration_full_pipeline_sequence");
     group.sample_size(10);
@@ -87,7 +97,7 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
 
     group.bench_function("begin_get_put_delete_rollback_full_cycle", |b| {
         b.iter(|| {
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "integration".to_string(),
                 area: "kv".to_string(),
@@ -95,9 +105,14 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             // Read existing
             actor.handle(KvMessage::Get {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "initial".to_string(),
                 key: Bytes::from_static(b"existing_key"),
@@ -105,6 +120,7 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
 
             // Add new
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "cycle".to_string(),
                 key: Bytes::from_static(b"new_key"),
@@ -113,13 +129,14 @@ fn bench_full_pipeline_transaction_sequence(c: &mut Criterion) {
 
             // Delete existing
             actor.handle(KvMessage::Delete {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "initial".to_string(),
                 key: Bytes::from_static(b"existing_key"),
             });
 
             // Cleanup
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id });
         })
     });
 
@@ -140,7 +157,7 @@ fn bench_multi_resource_transaction(c: &mut Criterion) {
     group.bench_function("single_tx_3_resources", |b| {
         b.iter(|| {
             // All resources use same family for simplicity
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "integration".to_string(),
                 area: "kv".to_string(),
@@ -148,9 +165,14 @@ fn bench_multi_resource_transaction(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             // Operations on resource 1
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "r1".to_string(),
                 key: Bytes::from_static(b"k1"),
@@ -159,6 +181,7 @@ fn bench_multi_resource_transaction(c: &mut Criterion) {
 
             // Operations on resource 2 (same transaction context)
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "r2".to_string(),
                 key: Bytes::from_static(b"k2"),
@@ -167,13 +190,14 @@ fn bench_multi_resource_transaction(c: &mut Criterion) {
 
             // Operations on resource 3
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "r3".to_string(),
                 key: Bytes::from_static(b"k3"),
                 value: Bytes::from_static(b"v3"),
             });
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id });
         })
     });
 
@@ -194,7 +218,7 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
     group.bench_function("3_separate_family_transactions", |b| {
         b.iter(|| {
             // Transaction on family 1
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "integration".to_string(),
                 area: "kv".to_string(),
@@ -202,18 +226,23 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "tx1".to_string(),
                 key: Bytes::from_static(b"k1"),
                 value: Bytes::from_static(b"v1"),
             });
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id });
 
             // Transaction on family 2
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(2),
                 realm: "integration".to_string(),
                 area: "kv".to_string(),
@@ -221,18 +250,23 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(2),
                 resource: "tx2".to_string(),
                 key: Bytes::from_static(b"k2"),
                 value: Bytes::from_static(b"v2"),
             });
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id });
 
             // Transaction on family 3
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(3),
                 realm: "integration".to_string(),
                 area: "kv".to_string(),
@@ -240,15 +274,20 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(3),
                 resource: "tx3".to_string(),
                 key: Bytes::from_static(b"k3"),
                 value: Bytes::from_static(b"v3"),
             });
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id });
         })
     });
 

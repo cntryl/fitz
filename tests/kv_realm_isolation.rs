@@ -32,7 +32,7 @@ fn should_reject_realm_switch_on_single_realm_token() {
     let mut actor = create_kv_actor();
 
     // Write to realm "acme"
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -40,15 +40,20 @@ fn should_reject_realm_switch_on_single_realm_token() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk, got {:?}", response),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"user:123"),
         value: Bytes::from_static(b"acme-data"),
     });
 
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id });
 
     // Try to read from realm "evil" (should not see "acme" data)
     let response = actor.handle(KvMessage::Begin {
@@ -60,9 +65,13 @@ fn should_reject_realm_switch_on_single_realm_token() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    assert!(matches!(response, KvResponse::BeginOk));
+    let tx_id_evil = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk, got {:?}", response),
+    };
 
     let response = actor.handle(KvMessage::Get {
+        tx_id: tx_id_evil,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"user:123"),
@@ -148,7 +157,7 @@ fn should_isolate_kv_data_across_realms() {
     let mut actor = create_kv_actor();
 
     // Realm 1: Write a key
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -156,15 +165,20 @@ fn should_isolate_kv_data_across_realms() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"user:secret"),
         value: Bytes::from_static(b"realm1-data"),
     });
 
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id });
 
     // Act - Try to read the same key from a different realm
     let response = actor.handle(KvMessage::Begin {
@@ -176,9 +190,13 @@ fn should_isolate_kv_data_across_realms() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    assert!(matches!(response, KvResponse::BeginOk));
+    let tx_id_evil = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let response = actor.handle(KvMessage::Get {
+        tx_id: tx_id_evil,
         route_family: RouteFamily::new(1),
         resource: "users".to_string(),
         key: Bytes::from_static(b"user:secret"),
@@ -213,7 +231,7 @@ fn should_enforce_realm_equality_strictly() {
     let mut actor = create_kv_actor();
 
     // Act - Write to "acme"
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
         area: "kv".to_string(),
@@ -221,15 +239,20 @@ fn should_enforce_realm_equality_strictly() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"key1"),
         value: Bytes::from_static(b"value1"),
     });
 
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id });
 
     // Try different realm variations that should NOT match:
     // - Different case (if realms are case-sensitive, which they must be)
@@ -246,9 +269,10 @@ fn should_enforce_realm_equality_strictly() {
         });
 
         match response {
-            KvResponse::BeginOk => {
+            KvResponse::BeginOk { tx_id: invalid_tx } => {
                 // If allowed to begin, data must still be isolated
                 let get_response = actor.handle(KvMessage::Get {
+                    tx_id: invalid_tx,
                     route_family: RouteFamily::new(1),
                     resource: "data".to_string(),
                     key: Bytes::from_static(b"key1"),
@@ -274,7 +298,7 @@ fn should_enforce_realm_equality_strictly() {
                     }
                 }
 
-                actor.handle(KvMessage::Rollback);
+                actor.handle(KvMessage::Rollback { tx_id: invalid_tx });
             }
             KvResponse::Error { .. } => {
                 // Acceptable: reject invalid realm
@@ -300,7 +324,7 @@ fn should_never_accept_client_supplied_realm_as_authority() {
     let mut actor = create_kv_actor();
 
     // Write to realm "authorized"
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "authorized".to_string(),
         area: "kv".to_string(),
@@ -308,15 +332,20 @@ fn should_never_accept_client_supplied_realm_as_authority() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"key"),
         value: Bytes::from_static(b"authorized-value"),
     });
 
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id });
 
     // Try realm "unauthorized" - should not see data
     let response = actor.handle(KvMessage::Begin {
@@ -328,9 +357,13 @@ fn should_never_accept_client_supplied_realm_as_authority() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    assert!(matches!(response, KvResponse::BeginOk));
+    let tx_id_unauth = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let response = actor.handle(KvMessage::Get {
+        tx_id: tx_id_unauth,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"key"),
@@ -398,7 +431,7 @@ fn should_treat_realm_as_opaque_identifier() {
     let realm2 = "ACME-CORP-123"; // Different case
 
     // Write to realm1
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: realm1.to_string(),
         area: "kv".to_string(),
@@ -406,18 +439,23 @@ fn should_treat_realm_as_opaque_identifier() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     actor.handle(KvMessage::Put {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"test"),
         value: Bytes::from_static(b"realm1_data"),
     });
 
-    actor.handle(KvMessage::Commit);
+    actor.handle(KvMessage::Commit { tx_id });
 
     // Try to read from realm2 (different case) - should NOT find data
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: realm2.to_string(),
         area: "kv".to_string(),
@@ -425,8 +463,13 @@ fn should_treat_realm_as_opaque_identifier() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
 
     let response = actor.handle(KvMessage::Get {
+        tx_id,
         route_family: RouteFamily::new(1),
         resource: "data".to_string(),
         key: Bytes::from_static(b"test"),
@@ -474,7 +517,7 @@ fn should_not_leak_realm_existence_in_errors() {
             response,
             KvResponse::Error {
                 error: KvError::InvalidRealm
-            } | KvResponse::BeginOk
+            } | KvResponse::BeginOk { tx_id: _ }
         ),
         "Response must not leak whether realm exists: {:?}",
         response

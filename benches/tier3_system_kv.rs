@@ -28,7 +28,7 @@ fn bench_single_family_intensive(c: &mut Criterion) {
 
     group.bench_function("10_puts_same_family", |b| {
         b.iter(|| {
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "system".to_string(),
                 area: "kv".to_string(),
@@ -36,9 +36,14 @@ fn bench_single_family_intensive(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             for i in 0..10 {
                 actor.handle(KvMessage::Put {
+                    tx_id,
                     route_family: RouteFamily::new(1),
                     resource: "intensive".to_string(),
                     key: Bytes::from(format!("key{}", i).into_bytes()),
@@ -46,7 +51,7 @@ fn bench_single_family_intensive(c: &mut Criterion) {
                 });
             }
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id });
         })
     });
 
@@ -67,7 +72,7 @@ fn bench_dual_family_concurrent(c: &mut Criterion) {
     group.bench_function("interleaved_puts_2_families", |b| {
         b.iter(|| {
             // Begin on family 1
-            actor.handle(KvMessage::Begin {
+            let response1 = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "system".to_string(),
                 area: "kv".to_string(),
@@ -75,9 +80,13 @@ fn bench_dual_family_concurrent(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id1 = match response1 {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             // Begin on family 2
-            actor.handle(KvMessage::Begin {
+            let response2 = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(2),
                 realm: "system".to_string(),
                 area: "kv".to_string(),
@@ -85,11 +94,16 @@ fn bench_dual_family_concurrent(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id2 = match response2 {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             // Interleaved puts
             for i in 0..10 {
                 // Put to family 1
                 actor.handle(KvMessage::Put {
+                    tx_id: tx_id1,
                     route_family: RouteFamily::new(1),
                     resource: "f1".to_string(),
                     key: Bytes::from(format!("k1_{}", i).into_bytes()),
@@ -98,6 +112,7 @@ fn bench_dual_family_concurrent(c: &mut Criterion) {
 
                 // Put to family 2
                 actor.handle(KvMessage::Put {
+                    tx_id: tx_id2,
                     route_family: RouteFamily::new(2),
                     resource: "f2".to_string(),
                     key: Bytes::from(format!("k2_{}", i).into_bytes()),
@@ -106,8 +121,8 @@ fn bench_dual_family_concurrent(c: &mut Criterion) {
             }
 
             // Rollback both
-            actor.handle(KvMessage::Rollback);
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id: tx_id1 });
+            actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
         })
     });
 
@@ -128,7 +143,7 @@ fn bench_triple_family_contention(c: &mut Criterion) {
     group.bench_function("10_puts_per_3_families", |b| {
         b.iter(|| {
             for family_id in 1..=3 {
-                actor.handle(KvMessage::Begin {
+                let response = actor.handle(KvMessage::Begin {
                     route_family: RouteFamily::new(family_id),
                     realm: "system".to_string(),
                     area: "kv".to_string(),
@@ -136,9 +151,14 @@ fn bench_triple_family_contention(c: &mut Criterion) {
                     mode: TxMode::ReadWrite,
                     write_options: cntryl_midge::WriteOptions::buffered(),
                 });
+                let tx_id = match response {
+                    fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                    _ => return,
+                };
 
                 for i in 0..10 {
                     actor.handle(KvMessage::Put {
+                        tx_id,
                         route_family: RouteFamily::new(family_id),
                         resource: format!("f{}", family_id),
                         key: Bytes::from(format!("k{}", i).into_bytes()),
@@ -146,7 +166,7 @@ fn bench_triple_family_contention(c: &mut Criterion) {
                     });
                 }
 
-                actor.handle(KvMessage::Rollback);
+                actor.handle(KvMessage::Rollback { tx_id });
             }
         })
     });
@@ -160,7 +180,7 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
     let mut actor = KvActor::new(store);
 
     // Populate some data first
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "system".to_string(),
         area: "kv".to_string(),
@@ -168,9 +188,14 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => return,
+    };
 
     for i in 0..5 {
         actor.handle(KvMessage::Put {
+            tx_id,
             route_family: RouteFamily::new(1),
             resource: "setup".to_string(),
             key: Bytes::from(format!("setup_k{}", i).into_bytes()),
@@ -178,7 +203,7 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
         });
     }
 
-    actor.handle(KvMessage::Rollback);
+    actor.handle(KvMessage::Rollback { tx_id });
 
     let mut group = c.benchmark_group("kv_system_mixed_read_write_families");
     group.sample_size(20);
@@ -189,7 +214,7 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
     group.bench_function("5_reads_on_f1_5_writes_on_f2", |b| {
         b.iter(|| {
             // Read-only transaction on family 1
-            actor.handle(KvMessage::Begin {
+            let response1 = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "system".to_string(),
                 area: "kv".to_string(),
@@ -197,19 +222,24 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
                 mode: TxMode::ReadOnly,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id1 = match response1 {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             for i in 0..5 {
                 actor.handle(KvMessage::Get {
+                    tx_id: tx_id1,
                     route_family: RouteFamily::new(1),
                     resource: "setup".to_string(),
                     key: Bytes::from(format!("setup_k{}", i).into_bytes()),
                 });
             }
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id: tx_id1 });
 
             // Write transaction on family 2
-            actor.handle(KvMessage::Begin {
+            let response2 = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(2),
                 realm: "system".to_string(),
                 area: "kv".to_string(),
@@ -217,9 +247,14 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
+            let tx_id2 = match response2 {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
 
             for i in 0..5 {
                 actor.handle(KvMessage::Put {
+                    tx_id: tx_id2,
                     route_family: RouteFamily::new(2),
                     resource: "write_f2".to_string(),
                     key: Bytes::from(format!("new_k{}", i).into_bytes()),
@@ -227,7 +262,7 @@ fn bench_mixed_read_write_families(c: &mut Criterion) {
                 });
             }
 
-            actor.handle(KvMessage::Rollback);
+            actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
         })
     });
 

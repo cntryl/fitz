@@ -19,7 +19,7 @@ fn bench_put_operation(c: &mut Criterion) {
     let mut actor = KvActor::new(store);
 
     // Begin transaction outside the loop
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "bench".to_string(),
         area: "kv".to_string(),
@@ -27,6 +27,10 @@ fn bench_put_operation(c: &mut Criterion) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => return,
+    };
 
     let key = Bytes::from_static(b"bench_key");
     let value = Bytes::from_static(b"bench_value_0123456789");
@@ -36,6 +40,7 @@ fn bench_put_operation(c: &mut Criterion) {
     group.bench_function("put_single_key", |b| {
         b.iter(|| {
             actor.handle(KvMessage::Put {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table".to_string(),
                 key: black_box(key.clone()),
@@ -52,7 +57,7 @@ fn bench_get_operation(c: &mut Criterion) {
     let mut actor = KvActor::new(store);
 
     // Begin transaction
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "bench".to_string(),
         area: "kv".to_string(),
@@ -60,6 +65,10 @@ fn bench_get_operation(c: &mut Criterion) {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => return,
+    };
 
     let key = Bytes::from_static(b"bench_key");
 
@@ -68,6 +77,7 @@ fn bench_get_operation(c: &mut Criterion) {
     group.bench_function("get_single_key", |b| {
         b.iter(|| {
             actor.handle(KvMessage::Get {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table".to_string(),
                 key: black_box(key.clone()),
@@ -83,7 +93,7 @@ fn bench_delete_operation(c: &mut Criterion) {
     let mut actor = KvActor::new(store);
 
     // Begin transaction
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "bench".to_string(),
         area: "kv".to_string(),
@@ -91,6 +101,10 @@ fn bench_delete_operation(c: &mut Criterion) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => return,
+    };
 
     let key = Bytes::from_static(b"bench_key");
 
@@ -99,6 +113,7 @@ fn bench_delete_operation(c: &mut Criterion) {
     group.bench_function("delete_single_key", |b| {
         b.iter(|| {
             actor.handle(KvMessage::Delete {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table".to_string(),
                 key: black_box(key.clone()),
@@ -114,7 +129,7 @@ fn bench_scan_operation(c: &mut Criterion) {
     let mut actor = KvActor::new(store);
 
     // Begin transaction
-    actor.handle(KvMessage::Begin {
+    let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "bench".to_string(),
         area: "kv".to_string(),
@@ -122,6 +137,10 @@ fn bench_scan_operation(c: &mut Criterion) {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
+    let tx_id = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        _ => return,
+    };
 
     let query = ScanQuery {
         start: None,
@@ -135,6 +154,7 @@ fn bench_scan_operation(c: &mut Criterion) {
     group.bench_function("scan_with_limit_10", |b| {
         b.iter(|| {
             actor.handle(KvMessage::Scan {
+                tx_id,
                 route_family: RouteFamily::new(1),
                 resource: "table".to_string(),
                 query: black_box(query.clone()),
@@ -167,20 +187,6 @@ fn bench_begin_operation(c: &mut Criterion) {
 }
 
 fn bench_rollback_operation(c: &mut Criterion) {
-    // Setup
-    let store = create_test_engine_with_cfs(vec![1, 2, 3]);
-    let mut actor = KvActor::new(store);
-
-    // Begin transaction
-    actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "bench".to_string(),
-        area: "kv".to_string(),
-        resource: "table".to_string(),
-        mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
-    });
-
     let mut group = c.benchmark_group("kv_hotpath_rollback");
     group.sampling_mode(SamplingMode::Flat);
     group.bench_function("rollback_transaction", |b| {
@@ -188,7 +194,7 @@ fn bench_rollback_operation(c: &mut Criterion) {
             // Create a fresh transaction for each rollback
             let store = create_test_engine_with_cfs(vec![1]);
             let mut actor = KvActor::new(store);
-            actor.handle(KvMessage::Begin {
+            let response = actor.handle(KvMessage::Begin {
                 route_family: RouteFamily::new(1),
                 realm: "bench".to_string(),
                 area: "kv".to_string(),
@@ -196,7 +202,11 @@ fn bench_rollback_operation(c: &mut Criterion) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
-            actor.handle(KvMessage::Rollback)
+            let tx_id = match response {
+                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+                _ => return,
+            };
+            actor.handle(KvMessage::Rollback { tx_id });
         })
     });
     group.finish();

@@ -13,8 +13,10 @@ mod tests {
         // Test the codec GET parser
         let resource = "test_resource";
         let key = "test_key";
+        let tx_id = 42u64;
 
         let mut payload = Vec::new();
+        payload.extend_from_slice(&tx_id.to_be_bytes());
         payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
         payload.extend_from_slice(resource.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
@@ -37,8 +39,10 @@ mod tests {
         let resource = "my_resource";
         let key = "my_key";
         let value = "my_value";
+        let tx_id = 42u64;
 
         let mut payload = Vec::new();
+        payload.extend_from_slice(&tx_id.to_be_bytes());
         payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
         payload.extend_from_slice(resource.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
@@ -127,8 +131,10 @@ mod tests {
         // Test parsing and the fact that it completes successfully
         let resource = "test_resource";
         let key = "test_key";
+        let tx_id = 42u64;
 
         let mut payload = Vec::new();
+        payload.extend_from_slice(&tx_id.to_be_bytes());
         payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
         payload.extend_from_slice(resource.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
