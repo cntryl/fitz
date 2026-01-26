@@ -365,7 +365,7 @@ dependencies = [
  "crossbeam",
  "crossbeam-channel",
  "crossbeam-epoch",
- "dashmap 6.1.0",
+ "dashmap",
  "hdrhistogram",
  "hex",
  "hmac",
@@ -619,19 +619,6 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "5.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
-dependencies = [
- "cfg-if",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core 0.9.12",
-]
-
-[[package]]
-name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
@@ -763,7 +750,7 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-queue",
  "crossbeam-skiplist",
- "dashmap 5.5.3",
+ "dashmap",
  "futures",
  "futures-util",
  "fxhash",
