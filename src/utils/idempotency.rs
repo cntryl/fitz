@@ -57,7 +57,6 @@ pub enum Domain {
 }
 
 use dashmap::DashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -207,11 +206,6 @@ fn classify_rpc(msg_type: u16) -> Idempotency {
         302 => Idempotency::ContextDependent { dedup_key: "correlation_id" },
         // CANCEL is non-idempotent
         303 => Idempotency::NonIdempotent,
-        _ => Idempotency::NonIdempotent,
-    }
-}
-        // SUBSCRIBE, UNSUBSCRIBE, RESPONSE, ACK are non-idempotent
-        300 | 301 | 303 | 304 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }

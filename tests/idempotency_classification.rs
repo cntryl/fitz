@@ -360,38 +360,46 @@ fn should_deduplicate_rpc_request_by_correlation_id() {
     // Assert
     assert_eq!(result.unwrap(), b"ACCEPTED");
 }
-    assert!(result2);
-    assert_eq!(retry1.unwrap().result, "accepted");
-    assert!(retry2.is_none());
-}
 
 #[test]
 fn should_store_deduplication_state_per_realm() {
     // Arrange
-    let store = DedupStore::new();
+    let store = DedupStore::new(Duration::from_secs(60));
+    let key_a = DedupKey {
+        realm: "realm_a".into(),
+        domain: Domain::Queue,
+        identifier: DedupIdentifier::QueueComplete(1, 12345),
+    };
+    let key_b = DedupKey {
+        realm: "realm_b".into(),
+        domain: Domain::Queue,
+        identifier: DedupIdentifier::QueueComplete(1, 12345),
+    };
 
     // Act
-    let realm_a_success = store.record("realm_a", "queue", "msg_1", "ok");
-    let realm_b_success = store.record("realm_b", "queue", "msg_1", "ok");
+    store.record(key_a.clone(), b"ok".to_vec());
+    store.record(key_b.clone(), b"ok".to_vec());
 
     // Assert
-    assert!(realm_a_success);
-    assert!(realm_b_success);
-    assert_eq!(store.get("realm_a", "queue", "msg_1").unwrap().result, "ok");
-    assert_eq!(store.get("realm_b", "queue", "msg_1").unwrap().result, "ok");
+    assert_eq!(store.get(&key_a).unwrap(), b"ok");
+    assert_eq!(store.get(&key_b).unwrap(), b"ok");
 }
 
 #[test]
 fn should_expire_deduplication_state_after_ttl() {
     // Arrange
-    let store = DedupStore::new();
+    let store = DedupStore::new(Duration::from_millis(10));
+    let key = DedupKey {
+        realm: "realm1".into(),
+        domain: Domain::Queue,
+        identifier: DedupIdentifier::QueueComplete(1, 12345),
+    };
     
     // Act
-    store.record("realm1", "queue", "msg_1", "ok");
+    store.record(key.clone(), b"ok".to_vec());
     
-    // In actual use, we'd wait, but for unit test of the struct:
-    // We can check if it exists now
-    assert!(store.get("realm1", "queue", "msg_1").is_some());
+    // Assert - should exist immediately
+    assert!(store.get(&key).is_some());
 
     // We don't have a manual 'expire' trigger in the public API yet, 
     // but the implementation uses TTL. For this test to be robust without 
