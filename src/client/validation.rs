@@ -225,7 +225,7 @@ impl IntegrityChecker {
             0x7C1C8B61, 0x0B034BF7, 0x9285B10D, 0xE5C0719B, 0x7BD7D238, 0x0CE51CAE, 0x95FA6454, 0xE2B444C2,
             0x7F5B0413, 0x0854C485, 0x917F7E7F, 0xE6C8E4E9, 0x78878E4A, 0x0F030EDC, 0x9605F426, 0xE1447CB0,
             0x537AE3A8, 0x2C24323E, 0xB54E28C4, 0xC2F8A852, 0x5C4A62F1, 0x2BFDA267, 0xB2FB889D, 0xC5DC48AB,
-            0x547FC5A0, 0x2304B236, 0xBAbA68CC, 0xCD4BA25A, 0x5762CAF9, 0x205A086F, 0xB9B81295, 0xCEDC9203,
+            0x547FC5A0, 0x2304B236, 0xBABA68CC, 0xCD4BA25A, 0x5762CAF9, 0x205A086F, 0xB9B81295, 0xCEDC9203,
             0x78BA4F61, 0x0F0F8FF7, 0x96C9850D, 0xE1D8459B, 0x7F2CD538, 0x0851DFA6, 0x9165F15C, 0xE6A771CA,
             0x7DBDD31B, 0x0A975F8D, 0x9366D577, 0xE4CF9E01, 0x7AE8D4A2, 0x0D57E634, 0x9437FC1E, 0xE3363688,
             0x1E93F22D, 0x6B64C2BB, 0xF2FB3841, 0x85ED683D, 0x1BBBFE9E, 0x6CBD3E08, 0xF51C24F2, 0x823EA464,
@@ -285,7 +285,7 @@ mod tests {
             NonZeroUsize::new(100).unwrap(),
         );
 
-        let result = limits.validate_key(&vec![0u8; 20]);
+        let result = limits.validate_key(&[0u8; 20]);
         assert!(matches!(result, Err(SizeError::KeyTooLarge { .. })));
     }
 
@@ -297,7 +297,7 @@ mod tests {
             NonZeroUsize::new(100).unwrap(),
         );
 
-        let result = limits.validate_value(&vec![0u8; 20]);
+        let result = limits.validate_value(&[0u8; 20]);
         assert!(matches!(result, Err(SizeError::ValueTooLarge { .. })));
     }
 

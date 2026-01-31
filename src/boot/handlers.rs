@@ -47,12 +47,14 @@ pub async fn spawn_http_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
+    runtime: crate::boot::Runtime,
 ) -> BootResult<()> {
     let http_addr = format!("{}:{}", config.bind_addr, config.http_port);
     let http_listener = TcpListener::bind(&http_addr).await?;
     info!("HTTP/WebSocket endpoint listening on {}", http_addr);
 
     let http_config = ingress_config.clone();
+    let runtime = Arc::new(runtime);
     tokio::spawn(async move {
         loop {
             match http_listener.accept().await {
@@ -60,8 +62,9 @@ pub async fn spawn_http_listener(
                     info!("HTTP connection from {}", peer_addr);
                     let ingress = ingress.clone();
                     let config = http_config.clone();
+                    let runtime = runtime.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_http_upgrade(stream, ingress, config).await {
+                        if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime).await {
                             tracing::error!("HTTP handler error: {}", e);
                         }
                     });
@@ -108,53 +111,74 @@ async fn handle_http_upgrade(
     stream: TcpStream,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
+    runtime: Arc<crate::boot::Runtime>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio_tungstenite::accept_async;
-
-    // Perform WebSocket handshake
-    let ws_stream = accept_async(stream).await?;
-    info!("WebSocket connection established");
-
-    // Create frame channel and session
-    let (frame_tx, _frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
-    let peer_addr = ws_stream.get_ref().peer_addr().ok();
-
-    // Create session info and register with ingress
-    let session = crate::session::Session::new(
-        generate_session_id(),
-        crate::session::TransportKind::WebSocket,
-        peer_addr,
-        crate::session::SessionPermissions::empty(),
-        crate::session::SessionMetadata::new(),
-        config.channel_capacity,
-        None,
-    );
-
-    let session_id = ingress.on_open(session.info()).await?;
-
-    // Create WebSocket handler
-    let handler = crate::api::ws::WebSocketHandler::new(ingress, config, frame_tx, session_id);
-
-    // Run WebSocket handler
-    use futures::stream::StreamExt;
-    let (_write, mut read) = ws_stream.split();
-
-    while let Some(msg_result) = read.next().await {
-        let msg = msg_result?;
-        match handler.handle_message(msg).await {
-            Ok(false) => break,
-            Ok(true) => continue,
-            Err(e) => {
-                tracing::error!("WebSocket handler error: {}", e);
-                break;
+    use hyper::server::conn::Http;
+    use hyper::service::service_fn;
+    
+    // Increment connection count
+    runtime.increment_connections();
+    
+    // Clone runtime for the service closure
+    let runtime_clone = runtime.clone();
+    
+    // Serve HTTP/WebSocket with Hyper
+    let service = service_fn(move |req| {
+        let ingress = ingress.clone();
+        let config = config.clone();
+        let runtime = runtime_clone.clone();
+        
+        async move {
+            // Check if this is a WebSocket upgrade
+            if is_websocket_upgrade(&req) {
+                // Handle WebSocket upgrade
+                handle_websocket(req, ingress, config, runtime).await
+            } else {
+                // Handle HTTP admin API
+                crate::api::admin::handlers::handle_request(req, runtime).await
             }
         }
+    });
+    
+    if let Err(e) = Http::new().serve_connection(stream, service).await {
+        tracing::debug!("HTTP connection error: {}", e);
     }
+    
+    // Decrement connection count
+    runtime.decrement_connections();
 
     Ok(())
 }
 
+/// Check if request is a WebSocket upgrade
+fn is_websocket_upgrade(req: &hyper::Request<hyper::Body>) -> bool {
+    req.headers()
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
+}
+
+/// Handle WebSocket upgrade
+async fn handle_websocket(
+    _req: hyper::Request<hyper::Body>,
+    _ingress: Arc<dyn Ingress>,
+    _config: IngressConfig,
+    runtime: Arc<crate::boot::Runtime>,
+) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
+    // Increment session count
+    runtime.increment_sessions();
+    
+    // TODO: Implement WebSocket upgrade using tungstenite
+    // For now, return 501 Not Implemented
+    Ok(hyper::Response::builder()
+        .status(501)
+        .body(hyper::Body::from("WebSocket upgrade not yet implemented"))
+        .unwrap())
+}
+
 /// Generate a unique session ID
+#[allow(dead_code)] // TODO: Remove or integrate with WebSocket upgrade
 fn generate_session_id() -> u64 {
     static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
     SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)

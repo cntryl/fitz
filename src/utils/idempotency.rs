@@ -133,6 +133,11 @@ impl DedupStore {
     pub fn len(&self) -> usize {
         self.records.len()
     }
+
+    /// Check if deduplication store is empty
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
 }
 
 /// Classify an operation by domain and message type ID
@@ -161,9 +166,9 @@ fn classify_kv(msg_type: u16) -> Idempotency {
 fn classify_stream(msg_type: u16) -> Idempotency {
     match msg_type {
         // READ, LAST, GET_METADATA are idempotent
-        204 | 205 | 206 => Idempotency::Idempotent,
+        204..=206 => Idempotency::Idempotent,
         // BEGIN, APPEND, COMMIT, ROLLBACK are non-idempotent
-        200 | 201 | 202 | 203 => Idempotency::NonIdempotent,
+        200..=203 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
@@ -173,7 +178,7 @@ fn classify_notice(msg_type: u16) -> Idempotency {
         // QUERY is idempotent
         105 => Idempotency::Idempotent,
         // PUBLISH, SUBSCRIBE, UNSUBSCRIBE, UNSUBSCRIBE_ALL, NOTIFY are non-idempotent
-        100 | 101 | 102 | 103 | 104 => Idempotency::NonIdempotent,
+        100..=104 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
@@ -195,7 +200,7 @@ fn classify_lease(msg_type: u16) -> Idempotency {
         // QUERY is idempotent
         403 => Idempotency::Idempotent,
         // ACQUIRE, RENEW, RELEASE are non-idempotent
-        400 | 401 | 402 => Idempotency::NonIdempotent,
+        400..=402 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }

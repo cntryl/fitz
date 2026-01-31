@@ -14,6 +14,7 @@
 //! - Inspect permissions
 //! - Contain domain logic
 
+pub mod admin;
 pub mod ingress;
 pub mod tcp;
 pub mod ws;

@@ -1,13 +1,18 @@
-version: "3.8"
-
-# Note: this runtime image doesn't include a shell or network utilities (wget/curl),
-# so the container's in-image shell-based healthcheck was removed. Alternatives:
-#  - Add a tiny probe binary (Go/Rust) into the image and use a `CMD` healthcheck
-#    that runs the probe (preferable for scratch images).
-#  - Run an external probe/sidecar service that queries the container over the
-#    network from the host or another container.
-#  - Rely on your orchestrator's readiness/liveness checks instead of docker
-#    healthchecks.
+# Fitz Message Broker - Docker Compose Configuration
+#
+# This runs a fully functional single-node Fitz broker with:
+# - HTTP/WebSocket on port 4090 (admin API + data plane)
+# - TCP on port 4091 (length-prefixed binary protocol)
+# - Persistent storage in Docker volume
+# - Health checks via Kubernetes probes
+#
+# Access:
+# - SPA:          http://localhost:4090/
+# - Health:       http://localhost:4090/healthz
+# - Metrics:      http://localhost:4090/metrics
+# - Admin API:    http://localhost:4090/api/v1/admin/stats
+# - WebSocket:    ws://localhost:4090/ws
+# - TCP:          tcp://localhost:4091
 
 services:
   fitz:
@@ -16,10 +21,38 @@ services:
       dockerfile: Dockerfile
     container_name: fitz-node
     ports:
-      - "4090:4090" # WebSocket / HTTP
-      - "4091:4091" # TCP
+      - "4090:4090" # HTTP/WebSocket (admin API + data plane)
+      - "4091:4091" # TCP (binary protocol)
     environment:
-      CONTROL_ROUTE: "self"
-      BROKER_ENFORCE_AUTHZ: "false"
+      # Storage configuration
+      FITZ_STORAGE_MODE: "local" # local, memory, s3, gcs, azure
+      FITZ_STORAGE_PATH: "/data" # Storage directory
+
+      # Logging
       RUST_LOG: "info,fitz=debug"
+
+      # Optional: Cloud storage (uncomment for S3/GCS/Azure)
+      # FITZ_STORAGE_MODE: "s3"
+      # FITZ_STORAGE_PROVIDER: "s3"
+      # FITZ_STORAGE_BUCKET: "my-fitz-bucket"
+      # FITZ_STORAGE_PREFIX: "prod"
+      # AWS_ACCESS_KEY_ID: "..."
+      # AWS_SECRET_ACCESS_KEY: "..."
+    volumes:
+      # Persist storage data
+      - fitz-data:/data
     restart: unless-stopped
+    healthcheck:
+      # Distroless has no shell, healthchecks must be external
+      # Use orchestrator's HTTP probes instead
+      disable: true
+    # Note: For production, add resource limits:
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 2G
+
+volumes:
+  fitz-data:
+    driver: local

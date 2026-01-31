@@ -12,9 +12,11 @@
 pub mod domains;
 pub mod handlers;
 pub mod runtime;
+pub mod stats;
 pub mod storage;
 
 pub use runtime::{BootConfig, BootResult};
+pub use stats::Runtime;
 
 /// Complete broker boot sequence
 ///
@@ -38,16 +40,25 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     tracing::info!("Storage initialized");
 
     // Step 3: Create runtime infrastructure
-    let (router, ingress, ingress_config, _scheduler) = runtime::init(&store)?;
+    let (router, ingress, ingress_config, _scheduler, runtime) = runtime::init(&store)?;
     tracing::info!("Runtime initialized");
+    
+    // Mark storage ready
+    runtime.mark_storage_ready();
 
     // Step 4: Register domain actors
     domains::setup(&router, &store)?;
     tracing::info!("Domain actors registered");
+    
+    // Mark domains ready
+    runtime.mark_domains_ready();
 
     // Step 5: Start transport listeners
     handlers::spawn_tcp_listener(&config, ingress.clone(), ingress_config.clone()).await?;
-    handlers::spawn_http_listener(&config, ingress.clone(), ingress_config.clone()).await?;
+    handlers::spawn_http_listener(&config, ingress.clone(), ingress_config.clone(), runtime.clone()).await?;
+    
+    // Mark startup complete
+    runtime.mark_startup_complete();
 
     tracing::info!("Fitz broker ready");
     tracing::info!("  TCP:  {}:{}", config.bind_addr, config.tcp_port);

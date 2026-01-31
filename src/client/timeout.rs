@@ -202,10 +202,10 @@ mod tests {
         let config = TimeoutConfig::default();
         let mut buffer = FrameBuffer::new(100, config);
 
-        let result = buffer.add(&vec![0u8; 50]);
+        let result = buffer.add(&[0u8; 50]);
         assert!(result.is_ok());
 
-        let result = buffer.add(&vec![0u8; 60]);
+        let result = buffer.add(&[0u8; 60]);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("overflow"));
     }

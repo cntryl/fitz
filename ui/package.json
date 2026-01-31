@@ -1,0 +1,36 @@
+{
+  "name": "test-app",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "fmt": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" \"*.md\"",
+    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated.ts"
+  },
+  "dependencies": {
+    "@askrjs/askr": "^0.0.21",
+    "@picocss/pico": "^2.1.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@fgrzl/fetch": "^1.4.0",
+    "@fgrzl/fetch-gen": "^1.2.0-alpha.7",
+    "@types/node": "^25.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.54.0",
+    "@typescript-eslint/parser": "^8.54.0",
+    "@vitest/ui": "^4.0.18",
+    "eslint": "^9.39.2",
+    "jiti": "^2.6.1",
+    "jsdom": "^27.4.0",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  }
+}

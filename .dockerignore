@@ -28,6 +28,13 @@ benches
 docs
 scripts
 
+# UI build artifacts
+ui/node_modules
+ui/dist
+ui/.vite
+ui/.vitest
+ui/coverage
+
 # Build artifacts and caches
 *.o
 *.a

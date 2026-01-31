@@ -494,14 +494,13 @@ fn should_require_user_confirmation_for_non_idempotent_retry() {
 fn should_support_custom_retry_policy_per_operation() {
     // Arrange
     let op = classify(Domain::Rpc, 302); // REQUEST
-    let mut attempts = 0;
 
     // Act
-    match op {
-        Idempotency::Idempotent => attempts = 3,
-        Idempotency::ContextDependent { .. } => attempts = 2,
-        Idempotency::NonIdempotent => attempts = 1,
-    }
+    let attempts = match op {
+        Idempotency::Idempotent => 3,
+        Idempotency::ContextDependent { .. } => 2,
+        Idempotency::NonIdempotent => 1,
+    };
 
     // Assert
     assert_eq!(attempts, 2);

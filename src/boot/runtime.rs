@@ -198,6 +198,7 @@ impl BootConfig {
 /// - RuntimeIngress for session management
 /// - IngressConfig for transport configuration
 /// - Scheduler for actor execution
+/// - Runtime stats tracker for observability
 pub fn init(
     _store: &Arc<cntryl_midge::Engine>,
 ) -> BootResult<(
@@ -205,6 +206,7 @@ pub fn init(
     Arc<RuntimeIngress>,
     IngressConfig,
     crate::runtime::Scheduler,
+    crate::boot::Runtime,
 )> {
     info!("Initializing runtime infrastructure");
 
@@ -219,9 +221,12 @@ pub fn init(
     let num_workers = num_cpus::get();
     let scheduler = crate::runtime::Scheduler::new(num_workers);
 
+    // Create runtime stats tracker
+    let runtime = crate::boot::Runtime::new(router.clone());
+
     info!("Runtime initialized with {} worker threads", num_workers);
 
-    Ok((router, ingress, ingress_config, scheduler))
+    Ok((router, ingress, ingress_config, scheduler, runtime))
 }
 
 #[cfg(test)]

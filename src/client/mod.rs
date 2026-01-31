@@ -14,20 +14,11 @@ pub use timeout::{TimeoutConfig, TimeoutTracker, FrameBuffer};
 pub use validation::{SizeLimits, SizeError, ResourceQuota, QuotaError, IntegrityChecker};
 
 /// Configuration for client behavior
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ClientConfig {
     /// Retry configuration
     pub retry: RetryConfig,
     
     /// Frame validation limits
     pub frame_limits: FrameLimits,
-}
-
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self {
-            retry: RetryConfig::default(),
-            frame_limits: FrameLimits::default(),
-        }
-    }
 }

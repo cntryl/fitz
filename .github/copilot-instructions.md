@@ -1,5 +1,8 @@
 # GitHub Copilot Instructions for Fitz Project
 
+- did you validate tests? `python ./scripts/validate_tests.py --summary`
+- did you fix all clippy warnings? `cargo clippy --all-targets`
+
 ## Terminology Rules - STRICTLY ENFORCE
 
 **CRITICAL: Use correct Fitz terminology in ALL code, tests, documentation, and comments.**

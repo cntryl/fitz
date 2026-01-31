@@ -1,0 +1,143 @@
+@import "@picocss/pico/css/pico.min.css";
+
+/* Custom overrides */
+header {
+  padding: 0;
+  margin-bottom: 2rem;
+}
+
+/* Hero Section */
+.hero {
+  text-align: center;
+  padding: 3rem 1rem 4rem;
+  margin-bottom: 3rem;
+}
+
+.hero hgroup {
+  margin-bottom: 2rem;
+}
+
+.hero h1 {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  line-height: 1.2;
+}
+
+.hero hgroup p {
+  font-size: 1.15rem;
+  color: var(--pico-muted-color);
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.hero-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 3rem;
+  flex-wrap: wrap;
+}
+
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2rem;
+  max-width: 600px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hero-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.hero-stats strong {
+  font-size: 1.25rem;
+  color: var(--pico-primary);
+}
+
+.hero-stats small {
+  color: var(--pico-muted-color);
+}
+
+/* Counter Hero */
+.hero-counter {
+  text-align: center;
+  padding: 3rem 2rem;
+  margin-bottom: 3rem;
+  background: var(--pico-card-background-color);
+  border-radius: var(--pico-border-radius);
+  border: 1px solid var(--pico-muted-border-color);
+}
+
+.hero-counter h2 {
+  margin-bottom: 0.5rem;
+}
+
+.hero-counter .count-display {
+  font-size: 5rem;
+  font-weight: 800;
+  color: var(--pico-primary);
+  margin: 1.5rem 0;
+  line-height: 1;
+}
+
+.hero-counter .button-group {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+/* Features Grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.grid article h3 {
+  font-size: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Code Blocks */
+pre {
+  background: var(--pico-code-background-color);
+  padding: 1.25rem;
+  border-radius: var(--pico-border-radius);
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+article h4 {
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+section {
+  margin-bottom: 2rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .hero h1 {
+    font-size: 2rem;
+  }
+
+  .hero-buttons {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
