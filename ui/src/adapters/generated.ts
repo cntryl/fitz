@@ -3,234 +3,288 @@ import type { FetchClient, FetchResponse } from '@fgrzl/fetch';
 import { buildQueryParams } from '@fgrzl/fetch';
 
 /**
- * Creates an API adapter with typed methods for all OpenAPI operations
- * @param client The FetchClient instance to use for HTTP requests
+ * Creates an API adapter with typed methods for all OpenAPI operations.
+ *
+ * @param client - The FetchClient instance to use for HTTP requests
  * @returns An object with typed methods for each API operation
+ *
+ * @example
+ * ```typescript
+ * import { createAdapter } from './generated';
+ * import client from '@fgrzl/fetch';
+ *
+ * client.setBaseUrl('https://api.example.com');
+ * const api = createAdapter(client);
+ *
+ * const response = await api.getUsers();
+ * if (response.ok) {
+ *   console.log(response.data);
+ * }
+ * ```
  */
 export function createAdapter(client: FetchClient): {
-	/**
-	 * KV domain statistics
-	 */
-	getKvStats: () => Promise<FetchResponse<KvStats>>;
-	/**
-	 * Lease domain statistics
-	 */
-	getLeaseStats: () => Promise<FetchResponse<LeaseStats>>;
-	/**
-	 * Notice domain statistics
-	 */
-	getNoticeStats: () => Promise<FetchResponse<NoticeStats>>;
-	/**
-	 * Queue domain statistics
-	 */
-	getQueueStats: () => Promise<FetchResponse<QueueStats>>;
-	/**
-	 * RPC domain statistics
-	 */
-	getRpcStats: () => Promise<FetchResponse<RpcStats>>;
-	/**
-	 * Schedule domain statistics
-	 */
-	getScheduleStats: () => Promise<FetchResponse<ScheduleStats>>;
-	/**
-	 * Global broker statistics
-	 */
-	getGlobalStats: () => Promise<FetchResponse<GlobalStats>>;
-	/**
-	 * Stream domain statistics
-	 */
-	getStreamStats: () => Promise<FetchResponse<StreamStats>>;
-	/**
-	 * Legacy health check
-	 */
-	getHealth: () => Promise<FetchResponse<HealthStatus>>;
-	/**
-	 * Liveness probe
-	 */
-	getLiveness: () => Promise<FetchResponse<HealthStatus>>;
-	/**
-	 * Prometheus metrics
-	 */
-	getMetrics: () => Promise<FetchResponse<any>>;
-	/**
-	 * Readiness probe
-	 */
-	getReadiness: () => Promise<FetchResponse<ReadyStatus>>;
-	/**
-	 * Startup probe
-	 */
-	getStartup: () => Promise<FetchResponse<StartupStatus>>;
+  /**
+   * KV domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<KvStats>
+   */
+  getKvStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<KvStats>>;
+  /**
+   * Lease domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<LeaseStats>
+   */
+  getLeaseStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<LeaseStats>>;
+  /**
+   * Notice domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<NoticeStats>
+   */
+  getNoticeStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<NoticeStats>>;
+  /**
+   * Queue domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<QueueStats>
+   */
+  getQueueStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<QueueStats>>;
+  /**
+   * RPC domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<RpcStats>
+   */
+  getRpcStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<RpcStats>>;
+  /**
+   * Schedule domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<ScheduleStats>
+   */
+  getScheduleStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<ScheduleStats>>;
+  /**
+   * Global broker statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<GlobalStats>
+   */
+  getGlobalStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<GlobalStats>>;
+  /**
+   * Stream domain statistics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<StreamStats>
+   */
+  getStreamStats: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<StreamStats>>;
+  /**
+   * Legacy health check
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<HealthStatus>
+   */
+  getHealth: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<HealthStatus>>;
+  /**
+   * Liveness probe
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<HealthStatus>
+   */
+  getLiveness: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<HealthStatus>>;
+  /**
+   * Prometheus metrics
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<any>
+   */
+  getMetrics: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<any>>;
+  /**
+   * Readiness probe
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<ReadyStatus>
+   */
+  getReadiness: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<ReadyStatus>>;
+  /**
+   * Startup probe
+   *
+	 * @param options - Request options (signal, timeout)
+   * @returns Promise resolving to FetchResponse<StartupStatus>
+   */
+  getStartup: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<StartupStatus>>;
 } {
-	return {
-		getKvStats: (): Promise<FetchResponse<KvStats>> => {
-			return client.get(`/api/v1/admin/kv/stats`);
-		},
-		getLeaseStats: (): Promise<FetchResponse<LeaseStats>> => {
-			return client.get(`/api/v1/admin/lease/stats`);
-		},
-		getNoticeStats: (): Promise<FetchResponse<NoticeStats>> => {
-			return client.get(`/api/v1/admin/notice/stats`);
-		},
-		getQueueStats: (): Promise<FetchResponse<QueueStats>> => {
-			return client.get(`/api/v1/admin/queue/stats`);
-		},
-		getRpcStats: (): Promise<FetchResponse<RpcStats>> => {
-			return client.get(`/api/v1/admin/rpc/stats`);
-		},
-		getScheduleStats: (): Promise<FetchResponse<ScheduleStats>> => {
-			return client.get(`/api/v1/admin/schedule/stats`);
-		},
-		getGlobalStats: (): Promise<FetchResponse<GlobalStats>> => {
-			return client.get(`/api/v1/admin/stats`);
-		},
-		getStreamStats: (): Promise<FetchResponse<StreamStats>> => {
-			return client.get(`/api/v1/admin/stream/stats`);
-		},
-		getHealth: (): Promise<FetchResponse<HealthStatus>> => {
-			return client.get(`/health`);
-		},
-		getLiveness: (): Promise<FetchResponse<HealthStatus>> => {
-			return client.get(`/healthz`);
-		},
-		getMetrics: (): Promise<FetchResponse<any>> => {
-			return client.get(`/metrics`);
-		},
-		getReadiness: (): Promise<FetchResponse<ReadyStatus>> => {
-			return client.get(`/readyz`);
-		},
-		getStartup: (): Promise<FetchResponse<StartupStatus>> => {
-			return client.get(`/startupz`);
-		}
-	};
+  return {
+    getKvStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<KvStats>> => {
+	return client.get(`/api/v1/admin/kv/stats`, undefined, options);
+    },
+    getLeaseStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<LeaseStats>> => {
+	return client.get(`/api/v1/admin/lease/stats`, undefined, options);
+    },
+    getNoticeStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<NoticeStats>> => {
+	return client.get(`/api/v1/admin/notice/stats`, undefined, options);
+    },
+    getQueueStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<QueueStats>> => {
+	return client.get(`/api/v1/admin/queue/stats`, undefined, options);
+    },
+    getRpcStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<RpcStats>> => {
+	return client.get(`/api/v1/admin/rpc/stats`, undefined, options);
+    },
+    getScheduleStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<ScheduleStats>> => {
+	return client.get(`/api/v1/admin/schedule/stats`, undefined, options);
+    },
+    getGlobalStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<GlobalStats>> => {
+	return client.get(`/api/v1/admin/stats`, undefined, options);
+    },
+    getStreamStats: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<StreamStats>> => {
+	return client.get(`/api/v1/admin/stream/stats`, undefined, options);
+    },
+    getHealth: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<HealthStatus>> => {
+	return client.get(`/health`, undefined, options);
+    },
+    getLiveness: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<HealthStatus>> => {
+	return client.get(`/healthz`, undefined, options);
+    },
+    getMetrics: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<any>> => {
+	return client.get(`/metrics`, undefined, options);
+    },
+    getReadiness: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<ReadyStatus>> => {
+	return client.get(`/readyz`, undefined, options);
+    },
+    getStartup: (options?: { signal?: AbortSignal; timeout?: number }): Promise<FetchResponse<StartupStatus>> => {
+	return client.get(`/startupz`, undefined, options);
+    }
+  };
 }
 
 /** BrokerStats schema */
 export interface BrokerStats {
-	/** Number of active connections */
-	connections: number;
-	/** Average messages per second (sent + received) */
-	messages_per_second: number;
-	/** List of active realm identifiers */
-	realms: Array<string>;
-	/** Number of active sessions */
-	sessions: number;
-	/** Broker uptime in seconds */
-	uptime_seconds: number;
+  /** Number of active connections */
+  connections: number;
+  /** Average messages per second (sent + received) */
+  messages_per_second: number;
+  /** List of active realm identifiers */
+  realms: Array<string>;
+  /** Number of active sessions */
+  sessions: number;
+  /** Broker uptime in seconds */
+  uptime_seconds: number;
 }
 
 /** CheckResults schema */
 export interface CheckResults {
-	/** Domain actor initialization status */
-	domains_initialized: "ok" | "not_ready";
-	/** Storage initialization status */
-	storage: "ok" | "not_ready";
+  /** Domain actor initialization status */
+  domains_initialized: "ok" | "not_ready";
+  /** Storage initialization status */
+  storage: "ok" | "not_ready";
 }
 
 /** DomainStats schema */
 export interface DomainStats {
-	kv: KvStats;
-	lease: LeaseStats;
-	notice: NoticeStats;
-	queue: QueueStats;
-	rpc: RpcStats;
-	schedule: ScheduleStats;
-	stream: StreamStats;
+  kv: KvStats;
+  lease: LeaseStats;
+  notice: NoticeStats;
+  queue: QueueStats;
+  rpc: RpcStats;
+  schedule: ScheduleStats;
+  stream: StreamStats;
 }
 
 /** Error schema */
 export interface Error {
-	/** Error message */
-	error: string;
+  /** Error message */
+  error: string;
 }
 
 /** GlobalStats schema */
 export interface GlobalStats {
-	broker: BrokerStats;
-	domains: DomainStats;
+  broker: BrokerStats;
+  domains: DomainStats;
 }
 
 /** HealthStatus schema */
 export interface HealthStatus {
-	/** Health status of the application */
-	status: "ok" | "unhealthy";
+  /** Health status of the application */
+  status: "ok" | "unhealthy";
 }
 
 /** KvStats schema */
 export interface KvStats {
-	/** Total number of keys in storage */
-	keys_total: number;
-	/** KV operations per second */
-	operations_per_second: number;
-	/** Number of active KV transactions */
-	transactions_active: number;
+  /** Total number of keys in storage */
+  keys_total: number;
+  /** KV operations per second */
+  operations_per_second: number;
+  /** Number of active KV transactions */
+  transactions_active: number;
 }
 
 /** LeaseStats schema */
 export interface LeaseStats {
-	/** Number of active leases */
-	leases_active: number;
-	/** Lease operations per second */
-	operations_per_second: number;
+  /** Number of active leases */
+  leases_active: number;
+  /** Lease operations per second */
+  operations_per_second: number;
 }
 
 /** NoticeStats schema */
 export interface NoticeStats {
-	/** Publish operations per second */
-	publishes_per_second: number;
-	/** Number of active subscriptions */
-	subscriptions_active: number;
+  /** Publish operations per second */
+  publishes_per_second: number;
+  /** Number of active subscriptions */
+  subscriptions_active: number;
 }
 
 /** QueueStats schema */
 export interface QueueStats {
-	/** Number of active queue message leases */
-	leases_active: number;
-	/** Number of messages pending in queues */
-	messages_pending: number;
-	/** Queue operations per second */
-	operations_per_second: number;
+  /** Number of active queue message leases */
+  leases_active: number;
+  /** Number of messages pending in queues */
+  messages_pending: number;
+  /** Queue operations per second */
+  operations_per_second: number;
 }
 
 /** ReadyStatus schema */
 export interface ReadyStatus {
-	checks: CheckResults;
-	/** Overall readiness status */
-	status: "ready" | "not_ready";
+  checks: CheckResults;
+  /** Overall readiness status */
+  status: "ready" | "not_ready";
 }
 
 /** RpcStats schema */
 export interface RpcStats {
-	/** RPC operations per second */
-	operations_per_second: number;
-	/** Number of pending RPC requests */
-	requests_pending: number;
-	/** Number of registered RPC workers */
-	workers_registered: number;
+  /** RPC operations per second */
+  operations_per_second: number;
+  /** Number of pending RPC requests */
+  requests_pending: number;
+  /** Number of registered RPC workers */
+  workers_registered: number;
 }
 
 /** ScheduleStats schema */
 export interface ScheduleStats {
-	/** Schedule executions per minute */
-	executions_per_minute: number;
-	/** Number of active schedules */
-	schedules_active: number;
+  /** Schedule executions per minute */
+  executions_per_minute: number;
+  /** Number of active schedules */
+  schedules_active: number;
 }
 
 /** StartupStatus schema */
 export interface StartupStatus {
-	/** Time elapsed since startup began (in seconds) */
-	startup_time_seconds: number;
-	/** Startup completion status */
-	status: "started" | "starting";
+  /** Time elapsed since startup began (in seconds) */
+  startup_time_seconds: number;
+  /** Startup completion status */
+  status: "started" | "starting";
 }
 
 /** StreamStats schema */
 export interface StreamStats {
-	/** Total number of events across all streams */
-	events_total: number;
-	/** Stream operations per second */
-	operations_per_second: number;
-	/** Number of active streams */
-	streams_active: number;
+  /** Total number of events across all streams */
+  events_total: number;
+  /** Stream operations per second */
+  operations_per_second: number;
+  /** Number of active streams */
+  streams_active: number;
 }
 

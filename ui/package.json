@@ -15,12 +15,11 @@
   },
   "dependencies": {
     "@askrjs/askr": "^0.0.21",
-    "@picocss/pico": "^2.1.1"
+    "@picocss/pico": "^2.1.1",
+    "@fgrzl/fetch": "^1.4.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@fgrzl/fetch": "^1.4.0",
-    "@fgrzl/fetch-gen": "^1.2.0-alpha.7",
     "@types/node": "^25.1.0",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
