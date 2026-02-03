@@ -1,5 +1,5 @@
-// LAYER: SESSION (Async → Sync Bridge)
-//! Ingress trait and reference implementation for the async → sync boundary
+﻿// LAYER: SESSION (Async â†’ Sync Bridge)
+//! Ingress trait and reference implementation for the async â†’ sync boundary
 //!
 //! # Purpose
 //!
@@ -74,15 +74,18 @@ pub struct RuntimeIngress {
     session_actors: Arc<DashMap<u64, crate::session::actor::SessionActor>>,
     /// Optional callback for session events (for routing to handlers)
     event_handler: Option<Arc<dyn Fn(SessionEvent) + Send + Sync>>,
+    /// Whether authentication is required (if false, JWT is ignored and full access granted)
+    auth_required: bool,
 }
 
 impl RuntimeIngress {
     /// Create a new ingress implementation
-    pub fn new() -> Self {
+    pub fn new(auth_required: bool) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
             session_actors: Arc::new(DashMap::new()),
             event_handler: None,
+            auth_required,
         }
     }
 
@@ -120,7 +123,7 @@ impl RuntimeIngress {
 
 impl Default for RuntimeIngress {
     fn default() -> Self {
-        Self::new()
+        Self::new(true) // Default: auth required
     }
 }
 
@@ -180,11 +183,32 @@ impl Ingress for RuntimeIngress {
                     return IngressDecision::Close("unauthenticated: connect required".to_string());
                 }
 
-                // Try to prefer verified tokens when an issuer is present.
-                let compact = std::str::from_utf8(&message_payload).unwrap_or("");
+                // If auth is not required, grant full anonymous access
+                if !self.auth_required {
+                    let snapshot = crate::auth::default_anonymous_permissions();
+                    entry.permissions_snapshot = snapshot.clone();
+                    entry.authenticated = true;
 
-                // First, parse the token without verification to inspect claims for `iss`.
-                match crate::auth::parse_jwt_noverify(compact) {
+                    self.session_actors.insert(
+                        session_id,
+                        crate::session::actor::SessionActor::new(
+                            crate::session::session::SessionId(session_id),
+                            snapshot,
+                        ),
+                    );
+
+                    notify_frame = Some(SessionFrame {
+                        session_id,
+                        channel_id,
+                        payload: message_payload.clone(),
+                    });
+                } else {
+                    // Auth is required - parse JWT
+                    // Try to prefer verified tokens when an issuer is present.
+                    let compact = std::str::from_utf8(&message_payload).unwrap_or("");
+
+                    // First, parse the token without verification to inspect claims for `iss`.
+                    match crate::auth::parse_jwt_noverify(compact) {
                     Ok(claims) => {
                         if !claims.iss.is_empty() {
                             // Derive JWKS URL and attempt to ensure we have cached keys.
@@ -371,6 +395,7 @@ impl Ingress for RuntimeIngress {
                         return IngressDecision::Close(format!("connect failed: {}", e));
                     }
                 }
+                } // Close else block for auth_required check
             }
         }
 
@@ -411,7 +436,9 @@ impl Ingress for RuntimeIngress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Access;
     use crate::protocol::frame::ChannelId;
+    use crate::runtime::routing::Route;
     use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
     use base64::Engine;
     use bytes::Bytes;
@@ -432,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_open_session() {
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(1, TransportKind::WebSocket);
 
         let result = ingress.on_open(session).await;
@@ -445,7 +472,7 @@ mod tests {
     #[test]
     fn should_process_frame() {
         // Arrange
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(2, TransportKind::WebSocket);
 
         // Act
@@ -482,7 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_unknown_session() {
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
 
         let decision = ingress
             .on_frame(
@@ -501,7 +528,7 @@ mod tests {
         // Arrange
         let event_count = Arc::new(AtomicUsize::new(0));
         let count_clone = event_count.clone();
-        let ingress = RuntimeIngress::new().with_event_handler(move |_event| {
+        let ingress = RuntimeIngress::new(true).with_event_handler(move |_event| {
             count_clone.fetch_add(1, Ordering::SeqCst);
         });
         let session = make_session_info(3, TransportKind::WebSocket);
@@ -540,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_non_connect_before_auth() {
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(4, TransportKind::WebSocket);
         ingress.on_open(session).await.unwrap();
 
@@ -558,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_control_non_connect_before_auth() {
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(5, TransportKind::WebSocket);
         ingress.on_open(session).await.unwrap();
 
@@ -578,7 +605,7 @@ mod tests {
     #[test]
     fn should_retrieve_session_info() {
         // Arrange
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(42, TransportKind::Tcp);
 
         // Act
@@ -597,7 +624,7 @@ mod tests {
     fn should_set_permissions_on_connect_with_valid_token() {
         // Arrange
         use base64::Engine;
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(50, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -640,7 +667,7 @@ mod tests {
     #[test]
     fn should_reject_connect_with_malformed_permissions() {
         // Arrange
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(51, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -679,7 +706,7 @@ mod tests {
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
 
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(80, TransportKind::Tcp);
 
         // Build a signed HS256 token and cache a matching oct key under the issuer's derived JWKS URL
@@ -741,7 +768,7 @@ mod tests {
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
 
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(81, TransportKind::Tcp);
 
         let iss = "https://idp.example";
@@ -789,7 +816,7 @@ mod tests {
     #[test]
     fn should_create_session_actor_on_open() {
         // Arrange
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(60, TransportKind::Tcp);
 
         // Act
@@ -812,7 +839,7 @@ mod tests {
     fn should_update_session_actor_on_connect() {
         // Arrange
         use base64::Engine;
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(61, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -864,7 +891,7 @@ mod tests {
         use base64::Engine;
         use bytes::Bytes;
 
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(70, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -932,7 +959,7 @@ mod tests {
         use base64::Engine;
         use bytes::Bytes;
 
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let session = make_session_info(71, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -993,7 +1020,7 @@ mod tests {
     #[test]
     fn should_list_sessions() {
         // Arrange
-        let ingress = RuntimeIngress::new();
+        let ingress = RuntimeIngress::new(true);
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         // Act
@@ -1007,4 +1034,52 @@ mod tests {
         // Assert
         assert_eq!(ingress.session_count(), 3);
     }
+
+    #[tokio::test]
+    async fn should_allow_anonymous_access_when_auth_not_required() {
+        // Arrange - Create ingress with auth_required=false
+        let ingress = RuntimeIngress::new(false);
+        let session = make_session_info(1, TransportKind::WebSocket);
+        ingress.on_open(session).await.unwrap();
+
+        // Build a CONNECT frame with empty JWT
+        let jwt = "eyJhbGciOiJub25lIn0.e30."; // header.payload.sig (all empty)
+
+        // Act - Send CONNECT frame without valid JWT
+        let result = ingress
+            .on_frame(
+                1,
+                ChannelId::Control,
+                crate::protocol::tlv::MessageType::CONNECT,
+                Bytes::from(jwt),
+            )
+            .await;
+
+        // Assert - Should accept (anonymous mode)
+        assert!(
+            matches!(result, IngressDecision::Accept),
+            "Expected Accept in anonymous mode, got {:?}",
+            result
+        );
+
+        // Verify session has full permissions
+        let session_actor = ingress.session_actors.get(&1).unwrap();
+        let perms = &session_actor.permissions;
+
+        // Should have access to all domains
+        assert!(perms.allows(
+            &Route::new("kv://test/area/resource"),
+            Access::Write
+        ));
+        assert!(perms.allows(
+            &Route::new("notice://test/area/resource"),
+            Access::Write
+        ));
+        assert!(perms.allows(
+            &Route::new("rpc://test/area/resource"),
+            Access::Write
+        ));
+    }
 }
+
+

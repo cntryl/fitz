@@ -161,3 +161,39 @@ pub async fn permissions_from_jwt_using_jwks(
     let perms = claims::normalized_permissions_from_value(&token_data.claims)?;
     Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
 }
+
+/// Create default anonymous permissions with full access across all domains.
+/// Used when FITZ_AUTH_REQUIRED=false for development/testing.
+pub fn default_anonymous_permissions() -> crate::session::permissions::SessionPermissions {
+    let perms = vec![
+        Permission {
+            raw: "kv://**#*".to_string(),
+            access: Access::All,
+        },
+        Permission {
+            raw: "stream://**#*".to_string(),
+            access: Access::All,
+        },
+        Permission {
+            raw: "queue://**#*".to_string(),
+            access: Access::All,
+        },
+        Permission {
+            raw: "notice://**#*".to_string(),
+            access: Access::All,
+        },
+        Permission {
+            raw: "rpc://**#*".to_string(),
+            access: Access::All,
+        },
+        Permission {
+            raw: "lease://**#*".to_string(),
+            access: Access::All,
+        },
+        Permission {
+            raw: "schedule://**#*".to_string(),
+            access: Access::All,
+        },
+    ];
+    crate::session::permissions::SessionPermissions::from_permissions(perms)
+}

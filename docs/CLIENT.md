@@ -201,17 +201,25 @@ Value: compact JWT string bytes (UTF-8), NO length prefix
 Length: JWT byte length
 ```
 
-**Example:**
+**Example (Authenticated Mode):**
 ```
 [0x01]                    (MessageType=1)
 [0x00 0x00 0x00 0x63]     (Length=99)
 [99 bytes of JWT...]
 ```
 
+**Example (Anonymous Mode - Empty JWT):**
+```
+[0x01]                    (MessageType=1)
+[0x00 0x00 0x00 0x00]     (Length=0)
+(no JWT bytes)
+```
+
 **Constraints:**
 - CONNECT MUST be first frame sent
-- If CONNECT is missing or malformed, broker closes connection
-- JWT payload MUST be valid UTF-8
+- **Authenticated mode (`FITZ_AUTH_REQUIRED=true`):** JWT required, invalid JWT causes connection close
+- **Anonymous mode (`FITZ_AUTH_REQUIRED=false`):** JWT optional, empty or placeholder accepted
+- JWT payload MUST be valid UTF-8 (if present)
 - Clients SHOULD implement CONNECT timeout (5–10 seconds)
 
 ### 3. Await Broker Confirmation
@@ -277,13 +285,34 @@ Clients MUST:
 
 ## Authentication & Security
 
+### Authentication Modes
+
+Fitz brokers support two authentication modes controlled by server configuration:
+
+**1. Authenticated Mode** (`FITZ_AUTH_REQUIRED=true`):
+- JWT authentication is **required** for all connections
+- CONNECT frame MUST include valid JWT
+- Broker validates JWT signature and claims
+- Missing or invalid JWT causes immediate connection close
+
+**2. Anonymous Mode** (`FITZ_AUTH_REQUIRED=false`):
+- JWT authentication is **optional**
+- CONNECT frame MAY include empty JWT or placeholder value
+- Broker assigns default permissions (typically full access to all realms/areas)
+- Useful for development, testing, or trusted internal networks
+
 ### JWT (Authentication Mechanism)
 
-Clients MUST:
+**When authentication is required,** clients MUST:
 1. Obtain a JWT from an external authentication service
 2. Pass the compact JWT string in the CONNECT record
 3. Treat JWT as opaque (do not parse or validate server-side)
 4. Resend JWT on reconnect
+
+**When authentication is optional (anonymous mode),** clients MAY:
+- Send empty JWT (zero-length payload)
+- Send placeholder JWT (e.g., "anonymous")
+- Omit JWT field (broker accepts connection without authentication)
 
 Clients MUST NOT:
 - Generate or sign JWTs
@@ -294,7 +323,8 @@ Clients MUST NOT:
 ### Authorization
 
 Authorization is **always server-side**:
-- Broker validates JWT claims against route permissions
+- **Authenticated mode:** Broker validates JWT claims against route permissions
+- **Anonymous mode:** Broker uses default permission set (no JWT validation)
 - If client sends unauthorized request, broker returns error
 - Clients MUST NOT attempt local permission checking
 
@@ -624,7 +654,9 @@ Wire codes **overlap across domains** (e.g., KV and Notice both use 100–104). 
 
 ### Permission Model (Server-Enforced)
 
-Authorization is **always server-side**:
+Authorization behavior depends on server authentication mode:
+
+**Authenticated Mode (`FITZ_AUTH_REQUIRED=true`):**
 - Broker MUST extract claims from JWT: `realm`, `areas` (array), `scopes` (array)
 - For each request, broker MUST check:
   1. **Realm match**: Route realm ∈ JWT realm (MUST be exact match)
@@ -632,7 +664,13 @@ Authorization is **always server-side**:
   3. **Scope match**: Request verb ∈ JWT scopes (e.g., `kv:read`, `notice:subscribe`, `queue:send`)
 - If any check fails, broker returns permission error (domain-specific error code)
 
-**Permission Check Order:**
+**Anonymous Mode (`FITZ_AUTH_REQUIRED=false`):**
+- Broker assigns default permissions (typically unrestricted access)
+- No JWT validation or permission checks
+- All routes and verbs allowed
+- Used for development/testing or trusted internal networks
+
+**Permission Check Order (Authenticated Mode):**
 
 Broker MUST enforce permissions in this order:
 1. **Route validation:** Scheme known, depth valid, shape matches method (if fails: protocol error)
@@ -640,7 +678,7 @@ Broker MUST enforce permissions in this order:
 3. **Permission enforcement:** Realm/area/scope match (if fails: domain error with code ERR_UNAUTHORIZED)
 4. **Domain dispatch:** Route to domain handler
 
-### Permission Error Codes
+### Permission Error Codes (Authenticated Mode Only)
 
 If permission check fails, broker returns error in domain error encoding with these standard codes:
 
@@ -674,12 +712,7 @@ Where `*` is domain prefix (1xxx for KV, 3xxx for Notice, etc.).
 
 ### Client-Side Guidance
 
-Clients MUST NOT:
-- Validate JWT signatures
-- Parse or check JWT claims
-- Attempt local permission checking
-- Cache JWT results
-- Infer permissions from routes
+**For Authenticated Mode:**
 
 Clients MUST:
 - Obtain JWT from external auth service
@@ -687,9 +720,39 @@ Clients MUST:
 - Pass JWT in CONNECT record
 - Handle ERR_UNAUTHORIZED gracefully (return to user, suggest re-authentication)
 
----
-
 Clients MUST NOT:
+- Validate JWT signatures
+- Parse or check JWT claims
+- Attempt local permission checking
+- Cache JWT results
+- Infer permissions from routes
+
+**For Anonymous Mode:**
+
+Clients MAY:
+- Pass empty JWT (zero-length)
+- Pass placeholder value (e.g., "anonymous")
+- Use configuration flag to indicate anonymous mode (e.g., `anonymous=true`)
+
+**Client Configuration Example:**
+
+```python
+# Authenticated mode
+client = FitzClient(
+    broker="wss://prod.example.com:4090",
+    jwt=get_jwt_from_auth_service(),
+    anonymous=False
+)
+
+# Anonymous mode (development/testing)
+client = FitzClient(
+    broker="ws://localhost:4090",
+    jwt="",  # Empty or omitted
+    anonymous=True
+)
+```
+
+---
 
 - Validate route against JWT claims (server does this)
 - Cache permission decisions

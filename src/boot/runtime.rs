@@ -100,6 +100,8 @@ pub struct BootConfig {
     pub bind_addr: String,
     /// Storage mode (memory, local disk, or cloud)
     pub storage_mode: StorageMode,
+    /// Whether authentication is required (default: true)
+    pub auth_required: bool,
     /// Maximum concurrent connections
     pub max_connections: usize,
     /// Frame size limit in bytes
@@ -130,11 +132,18 @@ impl BootConfig {
 
 impl Default for BootConfig {
     fn default() -> Self {
+        // Read FITZ_AUTH_REQUIRED from environment (default: true)
+        let auth_required = std::env::var("FITZ_AUTH_REQUIRED")
+            .ok()
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(true);
+
         Self {
             http_port: crate::prelude::DEFAULT_HTTP_PORT,
             tcp_port: crate::prelude::DEFAULT_TCP_PORT,
             bind_addr: "0.0.0.0".to_string(),
             storage_mode: StorageMode::from_env(),
+            auth_required,
             max_connections: 10_000,
             max_frame_size: 1024 * 1024, // 1 MB
             channel_capacity: 1000,
@@ -210,9 +219,12 @@ pub fn init(
 )> {
     info!("Initializing runtime infrastructure");
 
+    // Read auth configuration from BootConfig
+    let config = BootConfig::new();
+
     // Create runtime components
     let router = Arc::new(Router::new());
-    let ingress = Arc::new(RuntimeIngress::new());
+    let ingress = Arc::new(RuntimeIngress::new(config.auth_required));
     let ingress_config = IngressConfig::default()
         .with_frame_size(1024 * 1024) // 1 MB
         .with_channel_capacity(1000);
