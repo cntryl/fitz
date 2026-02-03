@@ -166,7 +166,7 @@ fn should_reject_invalid_message_type() {
         fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
         _ => panic!("Expected BeginOk"),
     };
-    
+
     let msg = KvMessage::Commit { tx_id }; // Not a Begin message
 
     let result = session_actor.begin(msg, &mut kv_actor);
@@ -197,7 +197,7 @@ fn should_allow_subsequent_operations_after_begin() {
 
     let result = session_actor.begin(begin_msg, &mut kv_actor);
     assert!(result.is_ok());
-    
+
     // Extract tx_id from successful Begin
     let tx_id = match kv_actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),

@@ -33,7 +33,7 @@ pub struct StartupStatus {
 /// Returns 503 only if deadlocked/panicked
 pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
     let response = HealthStatus { status: "ok" };
-    
+
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
@@ -45,7 +45,7 @@ pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
 pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let storage_ready = runtime.is_storage_ready();
     let domains_ready = runtime.are_domains_ready();
-    
+
     if !storage_ready || !domains_ready {
         let response = ReadyStatus {
             status: "not_ready",
@@ -54,14 +54,14 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
                 domains_initialized: if domains_ready { "ok" } else { "not_ready" },
             },
         };
-        
+
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&response).unwrap()))
             .unwrap());
     }
-    
+
     let response = ReadyStatus {
         status: "ready",
         checks: CheckResults {
@@ -69,7 +69,7 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
             domains_initialized: "ok",
         },
     };
-    
+
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
@@ -81,19 +81,19 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
 pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     if !runtime.is_startup_complete() {
         let response = HealthStatus { status: "starting" };
-        
+
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&response).unwrap()))
             .unwrap());
     }
-    
+
     let response = StartupStatus {
         status: "started",
         startup_time_seconds: runtime.startup_duration().as_secs_f64(),
     };
-    
+
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")

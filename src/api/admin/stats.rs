@@ -1,5 +1,5 @@
 //! Domain statistics endpoints
-//! 
+//!
 //! Routes:
 //! - GET /api/v1/admin/stats - Global broker and domain statistics
 //! - GET /api/v1/admin/kv/stats - KV domain statistics
@@ -132,7 +132,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             },
         },
     };
-    
+
     crate::api::admin::json_response(stats)
 }
 
@@ -217,14 +217,13 @@ async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, 
 #[allow(dead_code)] // TODO: Use for realm-filtered stats queries
 pub fn parse_realm_filter(query: Option<&str>) -> Option<String> {
     query.and_then(|q| {
-        q.split('&')
-            .find_map(|pair| {
-                let mut parts = pair.split('=');
-                if parts.next()? == "realm" {
-                    parts.next().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
+        q.split('&').find_map(|pair| {
+            let mut parts = pair.split('=');
+            if parts.next()? == "realm" {
+                parts.next().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
     })
 }

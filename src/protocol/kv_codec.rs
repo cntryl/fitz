@@ -102,13 +102,7 @@ fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
     }
 
     let tx_id = u64::from_be_bytes([
-        payload[0],
-        payload[1],
-        payload[2],
-        payload[3],
-        payload[4],
-        payload[5],
-        payload[6],
+        payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
         payload[7],
     ]);
 
@@ -121,13 +115,7 @@ fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
     }
 
     let tx_id = u64::from_be_bytes([
-        payload[0],
-        payload[1],
-        payload[2],
-        payload[3],
-        payload[4],
-        payload[5],
-        payload[6],
+        payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
         payload[7],
     ]);
 

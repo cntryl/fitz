@@ -42,21 +42,27 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 3: Create runtime infrastructure
     let (router, ingress, ingress_config, _scheduler, runtime) = runtime::init(&store)?;
     tracing::info!("Runtime initialized");
-    
+
     // Mark storage ready
     runtime.mark_storage_ready();
 
     // Step 4: Register domain actors
     domains::setup(&router, &store)?;
     tracing::info!("Domain actors registered");
-    
+
     // Mark domains ready
     runtime.mark_domains_ready();
 
     // Step 5: Start transport listeners
     handlers::spawn_tcp_listener(&config, ingress.clone(), ingress_config.clone()).await?;
-    handlers::spawn_http_listener(&config, ingress.clone(), ingress_config.clone(), runtime.clone()).await?;
-    
+    handlers::spawn_http_listener(
+        &config,
+        ingress.clone(),
+        ingress_config.clone(),
+        runtime.clone(),
+    )
+    .await?;
+
     // Mark startup complete
     runtime.mark_startup_complete();
 

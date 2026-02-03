@@ -116,7 +116,7 @@ fn should_document_rpc_error_code_range() {
 
     // Verify RPC error codes are defined
     use fitz::domains::rpc::RpcErrorCode;
-    
+
     // These error codes should be convertible to numeric codes
     let _timeout = RpcErrorCode::Timeout;
     let _backpressure = RpcErrorCode::Backpressure;
@@ -155,7 +155,7 @@ fn should_use_consistent_unauthorized_code_across_domains() {
     // Lease: 5001 = ERR_UNAUTHORIZED
     // RPC: 6001 = ERR_UNAUTHORIZED
     // Schedule: 7001 = ERR_UNAUTHORIZED
-    
+
     // Verify RPC error codes match pattern
     use fitz::domains::rpc::RpcErrorCode;
     assert_eq!(RpcErrorCode::Unauthorized.as_str(), "RPC_UNAUTHORIZED");
@@ -174,7 +174,7 @@ fn should_not_have_error_code_collisions_across_domains() {
     //
     // No domain should use error codes outside its range.
     // This ensures that error code → domain mapping is unique.
-    
+
     // This test documents the invariant.
     // Verify at implementation time that:
     // - No error in KvError maps to codes outside 1000-1099
@@ -193,7 +193,7 @@ fn should_allow_error_code_range_expansion_within_bounds() {
     // 2. Reserve codes 1050-1099 for future extensions
     // 3. Never use codes outside 1000-1099 range
     // 4. Never steal codes from other domains
-    
+
     // This test documents the expansion policy.
 }
 
@@ -249,18 +249,27 @@ fn should_document_domain_specific_error_codes() {
 fn should_map_rpc_error_codes_correctly() {
     // Verify RPC error codes follow the standard mapping:
     // RpcErrorCode enum → string representation → numeric code
-    
+
     use fitz::domains::rpc::RpcErrorCode;
-    
+
     // All RPC errors should have string representations
     let timeout_str = RpcErrorCode::Timeout.as_str();
-    assert!(timeout_str.starts_with("RPC_"), "RPC codes should be prefixed with RPC_");
-    
+    assert!(
+        timeout_str.starts_with("RPC_"),
+        "RPC codes should be prefixed with RPC_"
+    );
+
     let backpressure_str = RpcErrorCode::Backpressure.as_str();
-    assert!(!backpressure_str.is_empty(), "RPC error codes should not be empty");
-    
+    assert!(
+        !backpressure_str.is_empty(),
+        "RPC error codes should not be empty"
+    );
+
     let unauthorized_str = RpcErrorCode::Unauthorized.as_str();
-    assert!(!unauthorized_str.is_empty(), "RPC unauthorized should have string representation");
+    assert!(
+        !unauthorized_str.is_empty(),
+        "RPC unauthorized should have string representation"
+    );
 }
 
 #[test]
@@ -275,7 +284,7 @@ fn should_define_error_codes_with_numeric_identifiers() {
     // - Unique across all domains
     // - Consistent across protocol versions
     // - Documented in error enum
-    
+
     // This test documents the mapping requirement.
     // Implement as:
     // pub fn code(&self) -> u16 {
@@ -302,7 +311,7 @@ fn should_encode_error_codes_in_response_tlv() {
     // Example for KV unauthorized:
     //   [TAG_ERROR_CODE] [0x03, 0xe9] (1001 in big-endian)
     //   [TAG_ERROR_MESSAGE] "Realm mismatch"
-    
+
     // This test documents the TLV encoding requirement.
 }
 

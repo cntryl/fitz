@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 /// Exponential backoff calculator
-/// 
+///
 /// Formula: backoff = min(base * (2 ^ attempt), max_backoff)
 /// Example sequence (base=100ms, max=30s):
 ///   attempt 1: 100ms
@@ -37,10 +37,10 @@ impl ExponentialBackoff {
     }
 
     /// Calculate delay for attempt number (0-indexed)
-    /// 
+    ///
     /// # Arguments
     /// * `attempt` - Attempt number (0 for first retry, 1 for second, etc.)
-    /// 
+    ///
     /// # Returns
     /// Duration to wait before this attempt
     pub fn delay(&self, attempt: u32) -> Duration {
@@ -65,11 +65,11 @@ impl Default for ExponentialBackoff {
 pub struct RetryConfig {
     /// Backoff calculator
     pub backoff: ExponentialBackoff,
-    
+
     /// Maximum number of retry attempts
     /// (e.g., 10 means: 1 initial + 10 retries = 11 total attempts)
     pub max_retries: u32,
-    
+
     /// Classification function for determining if error is retryable
     pub classify: fn(&str) -> ErrorClassification,
 }
@@ -114,7 +114,7 @@ impl Default for RetryConfig {
 pub enum ErrorClassification {
     /// Should retry: connection refused, connection reset, timeout
     Retryable,
-    
+
     /// Should not retry: protocol violation, authorization failure
     Fatal,
 }
@@ -140,14 +140,14 @@ impl RetryableError {
 }
 
 /// Default error classification logic
-/// 
+///
 /// Retryable errors:
 /// - ECONNREFUSED: Connection refused
 /// - ECONNRESET: Connection reset
 /// - ETIMEDOUT: Operation timeout
 /// - EAGAIN: Resource temporarily unavailable
 /// - timeout: Application-level timeout
-/// 
+///
 /// Fatal errors:
 /// - ERR_FRAME_TOO_LARGE: Protocol violation
 /// - ERR_INVALID_UTF8: Protocol violation
@@ -155,7 +155,7 @@ impl RetryableError {
 /// - ERR_INVALID_OPERATION: Protocol violation
 pub fn default_error_classification(error_msg: &str) -> ErrorClassification {
     let msg_lower = error_msg.to_lowercase();
-    
+
     // Retryable patterns
     if msg_lower.contains("econnrefused")
         || msg_lower.contains("connection refused")
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn should_calculate_exponential_backoff_correctly() {
         let backoff = ExponentialBackoff::default();
-        
+
         assert_eq!(backoff.delay(0), Duration::from_millis(100));
         assert_eq!(backoff.delay(1), Duration::from_millis(200));
         assert_eq!(backoff.delay(2), Duration::from_millis(400));

@@ -158,8 +158,9 @@ use std::hash::{Hash, Hasher};
 /// # Alignment with Storage
 ///
 /// RouteFamilyId aligns 1:1 (by value) with Midge ColumnFamilyId:
-/// - Same underlying integer type (u64)
-/// - Same value represents the same isolation boundary
+/// - RouteFamily stores u64 (Midge API parameter type)
+/// - ColumnFamilyId stores u32 (Midge internal storage type)
+/// - Conversion happens at persistence layer with validation
 /// - Alignment is contractual, not enforced by storage code
 ///
 /// # Design
@@ -180,7 +181,7 @@ impl RouteFamily {
     ///
     /// # Arguments
     ///
-    /// - `id`: Unique numeric identifier for the family
+    /// - `id`: Unique numeric identifier for the family (u64 for Midge API compatibility)
     ///
     /// # Example
     ///

@@ -170,9 +170,7 @@ async fn should_serve_spa_for_unknown_paths() {
 
     // Assert - Unknown paths serve SPA (for client-side routing)
     // 404 is OK if public/index.html doesn't exist in test environment
-    assert!(
-        response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND
-    );
+    assert!(response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -194,7 +192,5 @@ async fn should_serve_spa_at_root() {
         .unwrap();
 
     // Assert - Should try to serve SPA (404 if file doesn't exist is OK for test)
-    assert!(
-        response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND
-    );
+    assert!(response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND);
 }

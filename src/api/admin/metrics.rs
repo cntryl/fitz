@@ -8,7 +8,7 @@ use std::sync::Arc;
 /// Handle /metrics endpoint (Prometheus format)
 pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let metrics = generate_prometheus_metrics(runtime);
-    
+
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/plain; version=0.0.4")
@@ -19,36 +19,51 @@ pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response<Body>, Inf
 /// Generate Prometheus-format metrics
 fn generate_prometheus_metrics(runtime: Arc<Runtime>) -> String {
     let mut output = String::new();
-    
+
     // Broker-level metrics
     output.push_str("# HELP fitz_uptime_seconds Broker uptime in seconds\n");
     output.push_str("# TYPE fitz_uptime_seconds gauge\n");
-    output.push_str(&format!("fitz_uptime_seconds {}\n", runtime.uptime().as_secs()));
+    output.push_str(&format!(
+        "fitz_uptime_seconds {}\n",
+        runtime.uptime().as_secs()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_connections_total Total number of active connections\n");
     output.push_str("# TYPE fitz_connections_total gauge\n");
-    output.push_str(&format!("fitz_connections_total {}\n", runtime.connection_count()));
+    output.push_str(&format!(
+        "fitz_connections_total {}\n",
+        runtime.connection_count()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_sessions_total Total number of active sessions\n");
     output.push_str("# TYPE fitz_sessions_total gauge\n");
-    output.push_str(&format!("fitz_sessions_total {}\n", runtime.session_count()));
+    output.push_str(&format!(
+        "fitz_sessions_total {}\n",
+        runtime.session_count()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_messages_received_total Total messages received\n");
     output.push_str("# TYPE fitz_messages_received_total counter\n");
-    output.push_str(&format!("fitz_messages_received_total {}\n", runtime.messages_received()));
+    output.push_str(&format!(
+        "fitz_messages_received_total {}\n",
+        runtime.messages_received()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_messages_sent_total Total messages sent\n");
     output.push_str("# TYPE fitz_messages_sent_total counter\n");
-    output.push_str(&format!("fitz_messages_sent_total {}\n", runtime.messages_sent()));
+    output.push_str(&format!(
+        "fitz_messages_sent_total {}\n",
+        runtime.messages_sent()
+    ));
     output.push('\n');
-    
+
     // Domain-specific metrics
     add_domain_metrics(&mut output, &runtime);
-    
+
     output
 }
 
@@ -56,57 +71,78 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     // KV domain
     output.push_str("# HELP fitz_kv_transactions_active Active KV transactions\n");
     output.push_str("# TYPE fitz_kv_transactions_active gauge\n");
-    output.push_str(&format!("fitz_kv_transactions_active {}\n", runtime.kv_transactions_active()));
+    output.push_str(&format!(
+        "fitz_kv_transactions_active {}\n",
+        runtime.kv_transactions_active()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_kv_keys_total Total number of keys\n");
     output.push_str("# TYPE fitz_kv_keys_total gauge\n");
     output.push_str(&format!("fitz_kv_keys_total {}\n", runtime.kv_keys_total()));
     output.push('\n');
-    
+
     // Notice domain
     output.push_str("# HELP fitz_notice_subscriptions_active Active subscriptions\n");
     output.push_str("# TYPE fitz_notice_subscriptions_active gauge\n");
-    output.push_str(&format!("fitz_notice_subscriptions_active {}\n", runtime.notice_subscriptions_active()));
+    output.push_str(&format!(
+        "fitz_notice_subscriptions_active {}\n",
+        runtime.notice_subscriptions_active()
+    ));
     output.push('\n');
-    
+
     // Queue domain
     output.push_str("# HELP fitz_queue_messages_pending Pending queue messages\n");
     output.push_str("# TYPE fitz_queue_messages_pending gauge\n");
-    output.push_str(&format!("fitz_queue_messages_pending {}\n", runtime.queue_messages_pending()));
+    output.push_str(&format!(
+        "fitz_queue_messages_pending {}\n",
+        runtime.queue_messages_pending()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_queue_leases_active Active queue leases\n");
     output.push_str("# TYPE fitz_queue_leases_active gauge\n");
-    output.push_str(&format!("fitz_queue_leases_active {}\n", runtime.queue_leases_active()));
+    output.push_str(&format!(
+        "fitz_queue_leases_active {}\n",
+        runtime.queue_leases_active()
+    ));
     output.push('\n');
-    
+
     // RPC domain
     output.push_str("# HELP fitz_rpc_workers_registered Registered RPC workers\n");
     output.push_str("# TYPE fitz_rpc_workers_registered gauge\n");
-    output.push_str(&format!("fitz_rpc_workers_registered {}\n", runtime.rpc_workers_registered()));
+    output.push_str(&format!(
+        "fitz_rpc_workers_registered {}\n",
+        runtime.rpc_workers_registered()
+    ));
     output.push('\n');
-    
+
     output.push_str("# HELP fitz_rpc_requests_pending Pending RPC requests\n");
     output.push_str("# TYPE fitz_rpc_requests_pending gauge\n");
-    output.push_str(&format!("fitz_rpc_requests_pending {}\n", runtime.rpc_requests_pending()));
+    output.push_str(&format!(
+        "fitz_rpc_requests_pending {}\n",
+        runtime.rpc_requests_pending()
+    ));
     output.push('\n');
-    
+
     // Lease domain
     output.push_str("# HELP fitz_lease_active Active leases\n");
     output.push_str("# TYPE fitz_lease_active gauge\n");
     output.push_str(&format!("fitz_lease_active {}\n", runtime.lease_active()));
     output.push('\n');
-    
+
     // Stream domain
     output.push_str("# HELP fitz_stream_active Active streams\n");
     output.push_str("# TYPE fitz_stream_active gauge\n");
     output.push_str(&format!("fitz_stream_active {}\n", runtime.stream_active()));
     output.push('\n');
-    
+
     // Schedule domain
     output.push_str("# HELP fitz_schedule_active Active schedules\n");
     output.push_str("# TYPE fitz_schedule_active gauge\n");
-    output.push_str(&format!("fitz_schedule_active {}\n", runtime.schedule_active()));
+    output.push_str(&format!(
+        "fitz_schedule_active {}\n",
+        runtime.schedule_active()
+    ));
     output.push('\n');
 }

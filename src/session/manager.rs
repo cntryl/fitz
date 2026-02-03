@@ -1,4 +1,4 @@
-﻿// LAYER: SESSION (Async â†’ Sync Bridge)
+// LAYER: SESSION (Async â†’ Sync Bridge)
 //! Ingress trait and reference implementation for the async â†’ sync boundary
 //!
 //! # Purpose
@@ -209,26 +209,27 @@ impl Ingress for RuntimeIngress {
 
                     // First, parse the token without verification to inspect claims for `iss`.
                     match crate::auth::parse_jwt_noverify(compact) {
-                    Ok(claims) => {
-                        if !claims.iss.is_empty() {
-                            // Derive JWKS URL and attempt to ensure we have cached keys.
-                            match crate::auth::derive_jwks_url_from_issuer(&claims.iss) {
-                                Ok(jwks_url) => {
-                                    // Try to fetch/cache JWKS; if this fails, fall back to no-verify parsing
-                                    match crate::auth::ensure_jwks_cached(&jwks_url).await {
-                                        Ok(_) => {
-                                            // Attempt verified permissions extraction. If verification fails, we may fall
-                                            // back to no-verify parsing in the case the JWT header is malformed.
-                                            match crate::auth::permissions_from_jwt_using_jwks(
-                                                compact, &jwks_url,
-                                            )
-                                            .await
-                                            {
-                                                Ok(snapshot) => {
-                                                    entry.permissions_snapshot = snapshot.clone();
-                                                    entry.authenticated = true;
+                        Ok(claims) => {
+                            if !claims.iss.is_empty() {
+                                // Derive JWKS URL and attempt to ensure we have cached keys.
+                                match crate::auth::derive_jwks_url_from_issuer(&claims.iss) {
+                                    Ok(jwks_url) => {
+                                        // Try to fetch/cache JWKS; if this fails, fall back to no-verify parsing
+                                        match crate::auth::ensure_jwks_cached(&jwks_url).await {
+                                            Ok(_) => {
+                                                // Attempt verified permissions extraction. If verification fails, we may fall
+                                                // back to no-verify parsing in the case the JWT header is malformed.
+                                                match crate::auth::permissions_from_jwt_using_jwks(
+                                                    compact, &jwks_url,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(snapshot) => {
+                                                        entry.permissions_snapshot =
+                                                            snapshot.clone();
+                                                        entry.authenticated = true;
 
-                                                    self.session_actors.insert(
+                                                        self.session_actors.insert(
                                                         session_id,
                                                         crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
@@ -238,18 +239,18 @@ impl Ingress for RuntimeIngress {
                                                         ),
                                                     );
 
-                                                    notify_frame = Some(SessionFrame {
-                                                        session_id,
-                                                        channel_id,
-                                                        payload: message_payload.clone(),
-                                                    });
-                                                }
-                                                Err(e) => {
-                                                    // If the header is simply malformed (e.g. missing `alg`), allow
-                                                    // a fallback to the no-verify path for this test-friendly flow.
-                                                    if e.starts_with("invalid jwt header:") {
-                                                        eprintln!("invalid jwt header (falling back to no-verify): {}", e);
-                                                        match crate::auth::permissions_from_compact_jwt(compact) {
+                                                        notify_frame = Some(SessionFrame {
+                                                            session_id,
+                                                            channel_id,
+                                                            payload: message_payload.clone(),
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        // If the header is simply malformed (e.g. missing `alg`), allow
+                                                        // a fallback to the no-verify path for this test-friendly flow.
+                                                        if e.starts_with("invalid jwt header:") {
+                                                            eprintln!("invalid jwt header (falling back to no-verify): {}", e);
+                                                            match crate::auth::permissions_from_compact_jwt(compact) {
                                                             Ok(snapshot) => {
                                                                 entry.permissions_snapshot = snapshot.clone();
                                                                 entry.authenticated = true;
@@ -273,32 +274,33 @@ impl Ingress for RuntimeIngress {
                                                                 return IngressDecision::Close(format!("connect failed: {}", e));
                                                             }
                                                         }
-                                                    } else {
-                                                        eprintln!(
-                                                            "connect failed (signature): {}",
-                                                            e
-                                                        );
-                                                        return IngressDecision::Close(format!(
-                                                            "connect failed: {}",
-                                                            e
-                                                        ));
+                                                        } else {
+                                                            eprintln!(
+                                                                "connect failed (signature): {}",
+                                                                e
+                                                            );
+                                                            return IngressDecision::Close(
+                                                                format!("connect failed: {}", e),
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }
-                                        }
-                                        Err(e) => {
-                                            eprintln!(
+                                            Err(e) => {
+                                                eprintln!(
                                                 "jwks fetch failed (falling back to no-verify): {}",
                                                 e
                                             );
-                                            // Fall back to no-verify parsing below
-                                            match crate::auth::permissions_from_compact_jwt(compact)
-                                            {
-                                                Ok(snapshot) => {
-                                                    entry.permissions_snapshot = snapshot.clone();
-                                                    entry.authenticated = true;
+                                                // Fall back to no-verify parsing below
+                                                match crate::auth::permissions_from_compact_jwt(
+                                                    compact,
+                                                ) {
+                                                    Ok(snapshot) => {
+                                                        entry.permissions_snapshot =
+                                                            snapshot.clone();
+                                                        entry.authenticated = true;
 
-                                                    self.session_actors.insert(
+                                                        self.session_actors.insert(
                                                         session_id,
                                                         crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
@@ -308,93 +310,95 @@ impl Ingress for RuntimeIngress {
                                                         ),
                                                     );
 
-                                                    notify_frame = Some(SessionFrame {
-                                                        session_id,
-                                                        channel_id,
-                                                        payload: message_payload.clone(),
-                                                    });
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("connect failed: {}", e);
-                                                    return IngressDecision::Close(format!(
-                                                        "connect failed: {}",
-                                                        e
-                                                    ));
+                                                        notify_frame = Some(SessionFrame {
+                                                            session_id,
+                                                            channel_id,
+                                                            payload: message_payload.clone(),
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("connect failed: {}", e);
+                                                        return IngressDecision::Close(format!(
+                                                            "connect failed: {}",
+                                                            e
+                                                        ));
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    eprintln!(
+                                    Err(e) => {
+                                        eprintln!(
                                         "jwks derivation failed (falling back to no-verify): {}",
                                         e
                                     );
-                                    match crate::auth::permissions_from_compact_jwt(compact) {
-                                        Ok(snapshot) => {
-                                            entry.permissions_snapshot = snapshot.clone();
-                                            entry.authenticated = true;
+                                        match crate::auth::permissions_from_compact_jwt(compact) {
+                                            Ok(snapshot) => {
+                                                entry.permissions_snapshot = snapshot.clone();
+                                                entry.authenticated = true;
 
-                                            self.session_actors.insert(
-                                                session_id,
-                                                crate::session::actor::SessionActor::new(
-                                                    crate::session::session::SessionId(session_id),
-                                                    snapshot,
-                                                ),
-                                            );
+                                                self.session_actors.insert(
+                                                    session_id,
+                                                    crate::session::actor::SessionActor::new(
+                                                        crate::session::session::SessionId(
+                                                            session_id,
+                                                        ),
+                                                        snapshot,
+                                                    ),
+                                                );
 
-                                            notify_frame = Some(SessionFrame {
-                                                session_id,
-                                                channel_id,
-                                                payload: message_payload.clone(),
-                                            });
-                                        }
-                                        Err(e) => {
-                                            eprintln!("connect failed: {}", e);
-                                            return IngressDecision::Close(format!(
-                                                "connect failed: {}",
-                                                e
-                                            ));
+                                                notify_frame = Some(SessionFrame {
+                                                    session_id,
+                                                    channel_id,
+                                                    payload: message_payload.clone(),
+                                                });
+                                            }
+                                            Err(e) => {
+                                                eprintln!("connect failed: {}", e);
+                                                return IngressDecision::Close(format!(
+                                                    "connect failed: {}",
+                                                    e
+                                                ));
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        } else {
-                            // No issuer present; use existing no-verify path
-                            match crate::auth::permissions_from_compact_jwt(compact) {
-                                Ok(snapshot) => {
-                                    entry.permissions_snapshot = snapshot.clone();
-                                    entry.authenticated = true;
+                            } else {
+                                // No issuer present; use existing no-verify path
+                                match crate::auth::permissions_from_compact_jwt(compact) {
+                                    Ok(snapshot) => {
+                                        entry.permissions_snapshot = snapshot.clone();
+                                        entry.authenticated = true;
 
-                                    self.session_actors.insert(
-                                        session_id,
-                                        crate::session::actor::SessionActor::new(
-                                            crate::session::session::SessionId(session_id),
-                                            snapshot,
-                                        ),
-                                    );
+                                        self.session_actors.insert(
+                                            session_id,
+                                            crate::session::actor::SessionActor::new(
+                                                crate::session::session::SessionId(session_id),
+                                                snapshot,
+                                            ),
+                                        );
 
-                                    notify_frame = Some(SessionFrame {
-                                        session_id,
-                                        channel_id,
-                                        payload: message_payload.clone(),
-                                    });
-                                }
-                                Err(e) => {
-                                    eprintln!("connect failed: {}", e);
-                                    return IngressDecision::Close(format!(
-                                        "connect failed: {}",
-                                        e
-                                    ));
+                                        notify_frame = Some(SessionFrame {
+                                            session_id,
+                                            channel_id,
+                                            payload: message_payload.clone(),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        eprintln!("connect failed: {}", e);
+                                        return IngressDecision::Close(format!(
+                                            "connect failed: {}",
+                                            e
+                                        ));
+                                    }
                                 }
                             }
                         }
+                        Err(e) => {
+                            eprintln!("connect failed: {}", e);
+                            return IngressDecision::Close(format!("connect failed: {}", e));
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("connect failed: {}", e);
-                        return IngressDecision::Close(format!("connect failed: {}", e));
-                    }
-                }
                 } // Close else block for auth_required check
             }
         }
@@ -454,6 +458,7 @@ mod tests {
             permissions_snapshot: SessionPermissions::empty(),
             claims: None,
             authenticated: false,
+            route_family: crate::runtime::routing::RouteFamily::new(0), // Test mode = family 0
         }
     }
 
@@ -1067,19 +1072,8 @@ mod tests {
         let perms = &session_actor.permissions;
 
         // Should have access to all domains
-        assert!(perms.allows(
-            &Route::new("kv://test/area/resource"),
-            Access::Write
-        ));
-        assert!(perms.allows(
-            &Route::new("notice://test/area/resource"),
-            Access::Write
-        ));
-        assert!(perms.allows(
-            &Route::new("rpc://test/area/resource"),
-            Access::Write
-        ));
+        assert!(perms.allows(&Route::new("kv://test/area/resource"), Access::Write));
+        assert!(perms.allows(&Route::new("notice://test/area/resource"), Access::Write));
+        assert!(perms.allows(&Route::new("rpc://test/area/resource"), Access::Write));
     }
 }
-
-

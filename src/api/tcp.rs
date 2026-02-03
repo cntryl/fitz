@@ -165,15 +165,16 @@ pub async fn create_session(
     let peer_addr = stream.peer_addr().ok();
 
     // Create transport-level session
-    let session = Session::new(
-        generate_session_id(),
+    let session_config = crate::session::NewSessionConfig::unauthenticated(
         TransportKind::Tcp,
         peer_addr,
         SessionPermissions::empty(),
         SessionMetadata::new(),
         config.channel_capacity,
         None,
+        crate::runtime::routing::RouteFamily::new(0), // No auth = family 0
     );
+    let session = Session::new(generate_session_id(), session_config);
 
     // Let ingress validate and accept the session
     let session_id = ingress.on_open(session.info()).await?;

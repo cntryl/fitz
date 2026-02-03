@@ -126,6 +126,36 @@ Used generic function signature to handle version mismatch between:
 - ✅ Error handling and cleanup
 - ✅ Logging for debugging
 
+### Issues Resolved (2026-02-03 Update)
+
+**Problem:** WebSocket upgrade was failing with "Handshake not finished" errors.
+
+**Root Cause:** The Hyper HTTP connection handler was not configured to support protocol upgrades. Without `.with_upgrades()`, Hyper closes the connection after sending the response, preventing the WebSocket handshake from completing.
+
+**Fix:** 
+1. Added `.with_upgrades()` to the Hyper connection configuration
+2. Configured HTTP/1.1 only mode with keep-alive (WebSocket requires HTTP/1.1)
+3. Simplified WebSocket handler to let `hyper_tungstenite::upgrade()` handle all validation
+
+**Technical Details:**
+- Hyper's `serve_connection()` needs `.with_upgrades()` to handle HTTP 101 Switching Protocols
+- Without this, the TCP connection is closed after the HTTP response, breaking WebSocket
+- HTTP/1.1 is required for upgrades (HTTP/2 uses different mechanisms)
+
+**Changes:**
+```rust
+// Before (BROKEN):
+Http::new().serve_connection(stream, service).await
+
+// After (FIXED):
+Http::new()
+    .http1_only(true)
+    .http1_keep_alive(true)
+    .serve_connection(stream, service)
+    .with_upgrades()  // ← Critical for WebSocket!
+    .await
+```
+
 ### Remaining Work
 - [ ] Outbound frame routing (session → WebSocket sender)
 - [ ] Backpressure handling for slow clients

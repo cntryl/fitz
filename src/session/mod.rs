@@ -17,12 +17,14 @@ pub mod actor;
 pub mod manager;
 pub mod permissions;
 pub mod session;
+pub mod tenant;
 
 pub use actor::SessionActor;
 
 pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
 pub use permissions::SessionPermissions;
 pub use session::{
-    next_session_id, CloseReason, Session, SessionError, SessionId, SessionInfo, SessionMetadata,
-    TransportKind,
+    next_session_id, CloseReason, NewSessionConfig, Session, SessionError, SessionId, SessionInfo,
+    SessionMetadata, TransportKind,
 };
+pub use tenant::{resolve_route_family, ControlPlaneStub};

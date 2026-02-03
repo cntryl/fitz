@@ -17,14 +17,14 @@ pub async fn handle_request(
 ) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path();
     let method = req.method();
-    
+
     match (method, path) {
         // Kubernetes probes - no auth required
         (&Method::GET, "/healthz") => probes::handle_liveness().await,
         (&Method::GET, "/readyz") => probes::handle_readiness(runtime).await,
         (&Method::GET, "/startupz") => probes::handle_startup(runtime).await,
         (&Method::GET, "/health") => probes::handle_health().await,
-        
+
         // Metrics - requires auth
         (&Method::GET, "/metrics") => {
             if !check_auth(&req).await {
@@ -32,7 +32,7 @@ pub async fn handle_request(
             }
             metrics::handle_metrics(runtime).await
         }
-        
+
         // Admin API - requires auth + admin permission
         (&Method::GET, "/api/v1/admin/stats") => {
             if !check_admin_auth(&req).await {
@@ -40,20 +40,21 @@ pub async fn handle_request(
             }
             stats::handle_global_stats(runtime).await
         }
-        
+
         // Domain-specific stats
         (&Method::GET, path) if path.starts_with("/api/v1/admin/") && path.ends_with("/stats") => {
             if !check_admin_auth(&req).await {
                 return Ok(super::unauthorized());
             }
-            
+
             // Extract domain from path: /api/v1/admin/kv/stats -> kv
-            let domain = path.trim_start_matches("/api/v1/admin/")
-                            .trim_end_matches("/stats");
-            
+            let domain = path
+                .trim_start_matches("/api/v1/admin/")
+                .trim_end_matches("/stats");
+
             stats::handle_domain_stats(runtime, domain).await
         }
-        
+
         // List endpoints - KV domain
         (&Method::GET, "/api/v1/admin/kv/transactions") => {
             if !check_admin_auth(&req).await {
@@ -63,7 +64,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_kv_transactions(runtime, realm).await
         }
-        
+
         // List endpoints - Stream domain
         (&Method::GET, "/api/v1/admin/stream/streams") => {
             if !check_admin_auth(&req).await {
@@ -73,7 +74,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_streams(runtime, realm).await
         }
-        
+
         // List endpoints - Notice domain
         (&Method::GET, "/api/v1/admin/notice/subscriptions") => {
             if !check_admin_auth(&req).await {
@@ -84,7 +85,7 @@ pub async fn handle_request(
             let route_pattern = params.get("route_pattern").map(|s| s.as_str());
             list::handle_list_notice_subscriptions(runtime, realm, route_pattern).await
         }
-        
+
         (&Method::GET, "/api/v1/admin/notice/routes") => {
             if !check_admin_auth(&req).await {
                 return Ok(super::unauthorized());
@@ -93,7 +94,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_notice_routes(runtime, realm).await
         }
-        
+
         // List endpoints - Queue domain
         (&Method::GET, "/api/v1/admin/queue/queues") => {
             if !check_admin_auth(&req).await {
@@ -103,7 +104,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_queues(runtime, realm).await
         }
-        
+
         (&Method::GET, "/api/v1/admin/queue/leases") => {
             if !check_admin_auth(&req).await {
                 return Ok(super::unauthorized());
@@ -112,7 +113,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_queue_leases(runtime, realm).await
         }
-        
+
         // List endpoints - RPC domain
         (&Method::GET, "/api/v1/admin/rpc/workers") => {
             if !check_admin_auth(&req).await {
@@ -122,7 +123,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_rpc_workers(runtime, realm).await
         }
-        
+
         (&Method::GET, "/api/v1/admin/rpc/pending") => {
             if !check_admin_auth(&req).await {
                 return Ok(super::unauthorized());
@@ -131,7 +132,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_rpc_pending(runtime, realm).await
         }
-        
+
         // List endpoints - Lease domain
         (&Method::GET, "/api/v1/admin/lease/leases") => {
             if !check_admin_auth(&req).await {
@@ -141,7 +142,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_leases(runtime, realm).await
         }
-        
+
         // List endpoints - Schedule domain
         (&Method::GET, "/api/v1/admin/schedule/schedules") => {
             if !check_admin_auth(&req).await {
@@ -151,7 +152,7 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_schedules(runtime, realm).await
         }
-        
+
         // List endpoints - Sessions
         (&Method::GET, "/api/v1/admin/sessions") => {
             if !check_admin_auth(&req).await {
@@ -161,18 +162,16 @@ pub async fn handle_request(
             let realm = params.get("realm").map(|s| s.as_str());
             list::handle_list_sessions(runtime, realm).await
         }
-        
+
         // WebSocket upgrade for data plane
         (&Method::GET, "/ws") => {
             // TODO: Implement WebSocket upgrade
             Ok(super::not_found())
         }
-        
+
         // SPA static files - serve from root
-        (&Method::GET, _) => {
-            serve_spa(path).await
-        }
-        
+        (&Method::GET, _) => serve_spa(path).await,
+
         // 404 for everything else
         _ => Ok(super::not_found()),
     }
@@ -189,7 +188,7 @@ async fn check_auth(req: &Request<Body>) -> bool {
             }
         }
     }
-    
+
     // For development/testing, allow if no auth configured
     // TODO: Make this configurable
     true
@@ -201,7 +200,7 @@ async fn check_admin_auth(req: &Request<Body>) -> bool {
     if !check_auth(req).await {
         return false;
     }
-    
+
     // TODO: Check for admin permissions in JWT claims
     // For now, if auth passes, allow admin access
     true
@@ -211,11 +210,11 @@ async fn check_admin_auth(req: &Request<Body>) -> bool {
 async fn serve_spa(path: &str) -> Result<Response<Body>, Infallible> {
     use std::path::PathBuf;
     use tokio::fs;
-    
+
     // Normalize path and prevent directory traversal
     let safe_path = path.trim_start_matches('/');
     let mut file_path = PathBuf::from("public");
-    
+
     // For root or empty path, serve index.html
     if safe_path.is_empty() || safe_path == "/" {
         file_path.push("index.html");
@@ -227,13 +226,13 @@ async fn serve_spa(path: &str) -> Result<Response<Body>, Infallible> {
             }
             file_path.push(component);
         }
-        
+
         // If path is a directory or doesn't exist, try index.html for SPA routing
         if !file_path.exists() || file_path.is_dir() {
             file_path = PathBuf::from("public/index.html");
         }
     }
-    
+
     // Read file
     match fs::read(&file_path).await {
         Ok(contents) => {
@@ -252,7 +251,7 @@ async fn serve_spa(path: &str) -> Result<Response<Body>, Infallible> {
                 Some("ttf") => "font/ttf",
                 _ => "application/octet-stream",
             };
-            
+
             Response::builder()
                 .status(200)
                 .header("Content-Type", content_type)
@@ -279,14 +278,14 @@ async fn serve_spa(path: &str) -> Result<Response<Body>, Infallible> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn should_parse_bearer_token() {
         let req = Request::builder()
             .header("Authorization", "Bearer test-token-123")
             .body(Body::empty())
             .unwrap();
-        
+
         if let Some(auth_header) = req.headers().get("Authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
                 assert!(auth_str.starts_with("Bearer "));

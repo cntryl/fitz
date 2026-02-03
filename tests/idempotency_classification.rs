@@ -8,7 +8,9 @@
 //! - Non-idempotent ops: PUT, INSERT, DELETE, APPEND, BEGIN, COMMIT, ENQUEUE (unsafe)
 //! - Context-dependent: COMPLETE, REQUEST (need deduplication by message_id/correlation_id)
 
-use fitz::utils::idempotency::{classify, Domain, Idempotency, DedupKey, DedupIdentifier, DedupStore};
+use fitz::utils::idempotency::{
+    classify, DedupIdentifier, DedupKey, DedupStore, Domain, Idempotency,
+};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -266,7 +268,7 @@ fn should_implement_queue_complete_deduplication_by_message_id() {
     // - Track (message_id, token) pair
     // - If seen before, return previous result
     // - Safe to retry with same parameters
-    
+
     panic!("Queue COMPLETE message_id + token deduplication not implemented");
 }
 
@@ -395,15 +397,15 @@ fn should_expire_deduplication_state_after_ttl() {
         domain: Domain::Queue,
         identifier: DedupIdentifier::QueueComplete(1, 12345),
     };
-    
+
     // Act
     store.record(key.clone(), b"ok".to_vec());
-    
+
     // Assert - should exist immediately
     assert!(store.get(&key).is_some());
 
-    // We don't have a manual 'expire' trigger in the public API yet, 
-    // but the implementation uses TTL. For this test to be robust without 
+    // We don't have a manual 'expire' trigger in the public API yet,
+    // but the implementation uses TTL. For this test to be robust without
     // sleeping, we'd need to mock time or have an internal cleanup method.
     // Given the constraints, we'll verify it persists for now.
 }
@@ -421,7 +423,7 @@ fn should_log_deduplicated_requests_for_debugging() {
     // Purpose:
     // - Operators can debug retry behavior
     // - Verify deduplication is working
-    
+
     panic!("Deduplication logging not implemented");
 }
 
@@ -440,7 +442,10 @@ fn should_communicate_idempotency_in_operation_metadata() {
     // Assert
     assert_eq!(kv_get, Idempotency::Idempotent);
     assert_eq!(kv_put, Idempotency::NonIdempotent);
-    assert!(matches!(queue_complete, Idempotency::ContextDependent { .. }));
+    assert!(matches!(
+        queue_complete,
+        Idempotency::ContextDependent { .. }
+    ));
     assert!(matches!(rpc_request, Idempotency::ContextDependent { .. }));
 }
 

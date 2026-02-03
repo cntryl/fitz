@@ -217,9 +217,7 @@ type RuntimeComponents = (
 /// - IngressConfig for transport configuration
 /// - Scheduler for actor execution
 /// - Runtime stats tracker for observability
-pub fn init(
-    _store: &Arc<cntryl_midge::Engine>,
-) -> BootResult<RuntimeComponents> {
+pub fn init(_store: &Arc<cntryl_midge::Engine>) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
 
     // Read auth configuration from BootConfig

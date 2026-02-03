@@ -1,5 +1,5 @@
 //! List endpoints for admin API
-//! 
+//!
 //! Routes:
 //! - GET /api/v1/admin/kv/transactions - List active KV transactions
 //! - GET /api/v1/admin/stream/streams - List active streams
@@ -315,7 +315,7 @@ pub async fn handle_list_sessions(
 /// Parse query parameters from request URI
 pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
     let mut params = HashMap::new();
-    
+
     if let Some(query) = uri.query() {
         for pair in query.split('&') {
             if let Some((key, value)) = pair.split_once('=') {
@@ -326,6 +326,6 @@ pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
             }
         }
     }
-    
+
     params
 }

@@ -2,12 +2,14 @@
 
 use crate::boot::runtime::BootResult;
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
+
+#[cfg(test)]
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 /// Generic domain sink: Forwards envelopes to domain actors
 ///
@@ -271,70 +273,75 @@ impl MailboxSink for QueueDomainSink {
 
 /// Set up all 7 domain actors and register them with the router
 ///
-/// # Domains Registered
-/// - KV (family 1): Key-value transactions
-/// - Queue (family 2): Durable message queues
-/// - Notice (family 3): Pub/Sub with fanout
-/// - Stream (family 4): Append-only event streams
-/// - RPC (family 5): Request-reply with workers
-/// - Lease (family 6): Distributed locking
-/// - Schedule (family 7): Cron and delayed execution
+/// Register all domain handlers with the router
+///
+/// # Architecture
+///
+/// Domains are registered **globally** with route pattern matching, NOT per route family.
+///
+/// - **Route Family** = Tenant/isolation boundary (e.g., tenant_acme = family 100)
+/// - **Domain** = Handler identified by route scheme (e.g., "kv://", "queue://", "notice://")
+/// - **Realm** = Logical boundary within the route string (part of the path)
+///
+/// # Example
+///
+/// ```text
+/// // Tenant ACME (family 100) sends KV request
+/// RouteAddress::new(RouteFamily::new(100), Route::new("kv://acme/app/users/get"))
+/// → Routes to KV domain, isolated to family 100
+///
+/// // Tenant XYZ (family 200) sends KV request  
+/// RouteAddress::new(RouteFamily::new(200), Route::new("kv://xyz/app/users/get"))
+/// → Routes to same KV domain, isolated to family 200
+/// ```
+///
+/// The router matches on the route pattern (domain scheme) and enforces isolation
+/// via the route family. Domains operate on all families but see isolated state.
+///
+/// # Route Family Assignment
+///
+/// Route families are **NOT assigned by this function**. They are:
+/// - Dynamically allocated by the control plane per tenant
+/// - Passed in client requests (part of the RouteAddress)
+/// - Enforced by the storage layer (aligned with Midge ColumnFamilyId)
 pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> BootResult<()> {
-    // KV domain: family 1 (REAL ACTOR)
+    // Register domain handlers globally using wildcard route family (matches all)
+    // Each domain matches its route scheme pattern across ALL route families
+
+    // KV domain: Handles all "kv://*" routes across all families
     let kv_sink = Arc::new(KvDomainSink::new(store.clone(), router.clone()));
-    router.register(
-        RouteAddress::new(RouteFamily::new(1), Route::new("kv")),
-        kv_sink.clone() as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered KV domain (family 1)");
+    router.register_domain_pattern("kv", kv_sink.clone() as Arc<dyn MailboxSink>);
+    tracing::info!("Registered KV domain (handles kv://* across all route families)");
 
-    // Queue domain: family 2 (REAL ACTOR)
+    // Queue domain: Handles all "queue://*" routes across all families
     let queue_sink = Arc::new(QueueDomainSink::new(store.clone(), router.clone()));
-    router.register(
-        RouteAddress::new(RouteFamily::new(2), Route::new("queue")),
-        queue_sink as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered Queue domain (family 2)");
+    router.register_domain_pattern("queue", queue_sink as Arc<dyn MailboxSink>);
+    tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
-    // Notice domain: family 3
+    // Notice domain: Handles all "notice://*" routes across all families
     let notice_sink = Arc::new(DomainSink::new("notice"));
-    router.register(
-        RouteAddress::new(RouteFamily::new(3), Route::new("notice")),
-        notice_sink as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered Notice domain (family 3)");
+    router.register_domain_pattern("notice", notice_sink as Arc<dyn MailboxSink>);
+    tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
-    // Stream domain: family 4
+    // Stream domain: Handles all "stream://*" routes across all families
     let stream_sink = Arc::new(DomainSink::new("stream"));
-    router.register(
-        RouteAddress::new(RouteFamily::new(4), Route::new("stream")),
-        stream_sink as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered Stream domain (family 4)");
+    router.register_domain_pattern("stream", stream_sink as Arc<dyn MailboxSink>);
+    tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
-    // RPC domain: family 5
+    // RPC domain: Handles all "rpc://*" routes across all families
     let rpc_sink = Arc::new(DomainSink::new("rpc"));
-    router.register(
-        RouteAddress::new(RouteFamily::new(5), Route::new("rpc")),
-        rpc_sink as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered RPC domain (family 5)");
+    router.register_domain_pattern("rpc", rpc_sink as Arc<dyn MailboxSink>);
+    tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
-    // Lease domain: family 6
+    // Lease domain: Handles all "lease://*" routes across all families
     let lease_sink = Arc::new(DomainSink::new("lease"));
-    router.register(
-        RouteAddress::new(RouteFamily::new(6), Route::new("lease")),
-        lease_sink as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered Lease domain (family 6)");
+    router.register_domain_pattern("lease", lease_sink as Arc<dyn MailboxSink>);
+    tracing::info!("Registered Lease domain (handles lease://* across all route families)");
 
-    // Schedule domain: family 7
+    // Schedule domain: Handles all "schedule://*" routes across all families
     let schedule_sink = Arc::new(DomainSink::new("schedule"));
-    router.register(
-        RouteAddress::new(RouteFamily::new(7), Route::new("schedule")),
-        schedule_sink as Arc<dyn MailboxSink>,
-    );
-    tracing::info!("Registered Schedule domain (family 7)");
+    router.register_domain_pattern("schedule", schedule_sink as Arc<dyn MailboxSink>);
+    tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
     tracing::info!("All 7 domain sinks registered with router");
 

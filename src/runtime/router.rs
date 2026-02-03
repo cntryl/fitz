@@ -161,12 +161,16 @@ impl std::error::Error for RouteError {}
 /// never conflict even if they have the same path string.
 struct RouteRegistry {
     sinks: DashMap<RouteAddress, Arc<dyn MailboxSink>>,
+    /// Domain pattern registry: Maps domain prefix (e.g., "kv", "queue") to sink
+    /// Used as fallback when exact RouteAddress lookup fails
+    domain_patterns: DashMap<String, Arc<dyn MailboxSink>>,
 }
 
 impl RouteRegistry {
     fn new() -> Self {
         Self {
             sinks: DashMap::new(),
+            domain_patterns: DashMap::new(),
         }
     }
 
@@ -174,12 +178,22 @@ impl RouteRegistry {
         self.sinks.insert(address, sink);
     }
 
+    fn register_domain_pattern(&self, domain: String, sink: Arc<dyn MailboxSink>) {
+        self.domain_patterns.insert(domain, sink);
+    }
+
     fn unregister(&self, address: &RouteAddress) {
         self.sinks.remove(address);
     }
 
     fn get(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
-        self.sinks.get(address).map(|r| r.clone())
+        self.sinks.get(address).map(|entry| Arc::clone(&*entry))
+    }
+
+    fn get_by_domain(&self, domain: &str) -> Option<Arc<dyn MailboxSink>> {
+        self.domain_patterns
+            .get(domain)
+            .map(|entry| Arc::clone(&*entry))
     }
 
     fn len(&self) -> usize {
@@ -232,6 +246,33 @@ impl Router {
         self.registry.register(address, sink);
     }
 
+    /// Register a domain pattern (e.g., "kv", "queue", "notice")
+    ///
+    /// Domain patterns are used as a fallback when exact RouteAddress lookup fails.
+    /// This allows domains to handle all routes matching a prefix across ALL route families.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// router.register_domain_pattern("kv", kv_domain_sink);
+    ///
+    /// // Any envelope with route starting with "kv://" will be delivered to kv_domain_sink
+    /// // if there's no exact RouteAddress match, regardless of route family
+    /// ```
+    ///
+    /// # Multi-Tenant Support
+    ///
+    /// Domain patterns enable multi-tenant routing:
+    /// - Tenant "acme" (family 1) sends `kv://acme/app/users/get` → kv_domain_sink
+    /// - Tenant "xyz" (family 2) sends `kv://xyz/app/users/get` → same kv_domain_sink
+    ///
+    /// The domain sink receives the full RouteAddress (family + route) and can
+    /// enforce tenant isolation internally.
+    pub fn register_domain_pattern(&self, domain: &str, sink: Arc<dyn MailboxSink>) {
+        self.registry
+            .register_domain_pattern(domain.to_string(), sink);
+    }
+
     /// Unregister a route
     ///
     /// After unregistration, envelopes addressed to this route will
@@ -244,6 +285,11 @@ impl Router {
     ///
     /// Extracts the destination from the envelope, looks up the registered
     /// sink, and attempts delivery.
+    ///
+    /// # Routing Strategy
+    ///
+    /// 1. **Exact Match**: First tries exact RouteAddress lookup
+    /// 2. **Domain Pattern**: Falls back to domain prefix matching (e.g., "kv://" → kv domain)
     ///
     /// # Route Family Isolation
     ///
@@ -265,10 +311,19 @@ impl Router {
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
 
-        let sink = self
-            .registry
-            .get(&dest)
-            .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
+        // Try exact RouteAddress lookup first
+        let sink = if let Some(sink) = self.registry.get(&dest) {
+            sink
+        } else {
+            // Fall back to domain pattern matching
+            // Extract domain prefix from route (e.g., "kv://..." → "kv")
+            let route_str = dest.route().as_str();
+            let domain = route_str.split("://").next().unwrap_or("");
+
+            self.registry
+                .get_by_domain(domain)
+                .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?
+        };
 
         sink.deliver(envelope)
             .map_err(|e| RouteError::DeliveryFailed(dest, e))
@@ -380,6 +435,60 @@ mod tests {
             // For tests, just use normal delivery
             self.deliver(envelope)
         }
+    }
+
+    #[test]
+    fn should_route_to_domain_pattern_across_families() {
+        // Arrange
+        let router = Router::new();
+        let sink = Arc::new(MockSink::new());
+
+        // Register "kv" domain pattern (NOT specific to any family)
+        router.register_domain_pattern("kv", sink.clone());
+
+        // Act - Send messages from different tenants (route families)
+        let tenant_acme = test_address(1, "kv://acme/app/users/get");
+        let tenant_xyz = test_address(2, "kv://xyz/app/users/get");
+
+        router.route(Envelope::new(tenant_acme, "msg1")).unwrap();
+        router.route(Envelope::new(tenant_xyz, "msg2")).unwrap();
+
+        // Assert - Both messages delivered to same domain sink
+        assert_eq!(sink.delivered.lock().len(), 2);
+    }
+
+    #[test]
+    fn should_prefer_exact_match_over_domain_pattern() {
+        // Arrange
+        let router = Router::new();
+        let exact_sink = Arc::new(MockSink::new());
+        let pattern_sink = Arc::new(MockSink::new());
+
+        let address = test_address(1, "kv://acme/app/users/get");
+
+        // Register both exact and pattern
+        router.register(address.clone(), exact_sink.clone());
+        router.register_domain_pattern("kv", pattern_sink.clone());
+
+        // Act
+        router.route(Envelope::new(address, "msg")).unwrap();
+
+        // Assert - Exact match wins
+        assert_eq!(exact_sink.delivered.lock().len(), 1);
+        assert_eq!(pattern_sink.delivered.lock().len(), 0);
+    }
+
+    #[test]
+    fn should_return_error_for_unknown_domain() {
+        // Arrange
+        let router = Router::new();
+        let address = test_address(1, "unknown://acme/app/users/get");
+
+        // Act
+        let result = router.route(Envelope::new(address.clone(), "msg"));
+
+        // Assert
+        assert!(matches!(result, Err(RouteError::RouteNotFound(_))));
     }
 
     #[test]

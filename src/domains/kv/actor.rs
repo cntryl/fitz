@@ -482,13 +482,12 @@ impl KvActor {
     }
 
     /// Get active transaction or return error
-    fn get_transaction_or_err(
-        &mut self,
-        tx_id: u64,
-    ) -> Result<&mut ActiveKvTx, KvResponse> {
-        self.transactions.get_mut(&tx_id).ok_or_else(|| KvResponse::Error {
-            error: KvError::InvalidTxId,
-        })
+    fn get_transaction_or_err(&mut self, tx_id: u64) -> Result<&mut ActiveKvTx, KvResponse> {
+        self.transactions
+            .get_mut(&tx_id)
+            .ok_or_else(|| KvResponse::Error {
+                error: KvError::InvalidTxId,
+            })
     }
 
     fn realm_resource_prefix(realm: &str, resource: &str) -> Vec<u8> {

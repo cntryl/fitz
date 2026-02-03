@@ -44,7 +44,8 @@ fn should_create_unique_session_id_on_connect() {
 
     // Assert
     assert_ne!(
-        SessionId(1), SessionId(2),
+        SessionId(1),
+        SessionId(2),
         "sessions should have unique IDs"
     );
 }
@@ -211,7 +212,10 @@ fn should_cleanup_permissions_on_disconnect() {
 
     // Act - Verify session is active
     let before_disconnect = actor.authorize(&Route::new("kv://acme/users/put"), Access::Write);
-    assert!(before_disconnect, "session should be active before disconnect");
+    assert!(
+        before_disconnect,
+        "session should be active before disconnect"
+    );
 
     // When session closes (not directly testable in unit test, but documented):
     // - SessionActor is dropped

@@ -12,7 +12,7 @@ use std::str;
 pub struct FrameLimits {
     /// Maximum frame size in bytes (default 100 MB)
     pub max_frame_size: usize,
-    
+
     /// Maximum buffer size for frame assembly (default 500 MB)
     pub max_buffer_size: usize,
 }
@@ -40,13 +40,13 @@ impl Default for FrameLimits {
 pub enum FrameValidation {
     /// Frame is valid
     Valid,
-    
+
     /// Frame exceeds size limit
     TooLarge { size: usize, limit: usize },
-    
+
     /// Invalid UTF-8 in string field
     InvalidUtf8,
-    
+
     /// Malformed TLV encoding
     MalformedTlv(String),
 }
@@ -92,7 +92,7 @@ mod tests {
             max_buffer_size: 500,
         };
         let data = vec![0u8; 200];
-        
+
         match validate_frame(&data, &limits) {
             FrameValidation::TooLarge { size, limit } => {
                 assert_eq!(size, 200);
@@ -106,7 +106,7 @@ mod tests {
     fn should_validate_utf8() {
         let valid = b"hello";
         assert!(validate_utf8(valid).is_ok());
-        
+
         let invalid = b"\xFF\xFE";
         assert_eq!(validate_utf8(invalid), Err(FrameValidation::InvalidUtf8));
     }
@@ -115,8 +115,11 @@ mod tests {
     fn should_validate_utf8_owned() {
         let valid = "hello".as_bytes().to_vec();
         assert!(validate_utf8_owned(valid).is_ok());
-        
+
         let invalid = vec![0xFF, 0xFE];
-        assert_eq!(validate_utf8_owned(invalid), Err(FrameValidation::InvalidUtf8));
+        assert_eq!(
+            validate_utf8_owned(invalid),
+            Err(FrameValidation::InvalidUtf8)
+        );
     }
 }

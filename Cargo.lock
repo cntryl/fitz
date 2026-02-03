@@ -776,6 +776,7 @@ dependencies = [
  "once_cell",
  "parking_lot 0.12.5",
  "quinn",
+ "rand 0.8.5",
  "rcgen",
  "regex",
  "reqwest 0.11.27",

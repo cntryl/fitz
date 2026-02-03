@@ -3,7 +3,7 @@
 use std::fmt;
 
 /// Idempotency classification of an operation
-/// 
+///
 /// Defined per CLIENT.md lines 892–950.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Idempotency {
@@ -188,7 +188,9 @@ fn classify_queue(msg_type: u16) -> Idempotency {
         // RESERVE is idempotent
         202 => Idempotency::Idempotent,
         // COMPLETE is context-dependent
-        204 => Idempotency::ContextDependent { dedup_key: "message_id+token" },
+        204 => Idempotency::ContextDependent {
+            dedup_key: "message_id+token",
+        },
         // ENQUEUE, ENQUEUE_BATCH, EXTEND are non-idempotent
         200 | 201 | 203 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
@@ -208,7 +210,9 @@ fn classify_lease(msg_type: u16) -> Idempotency {
 fn classify_rpc(msg_type: u16) -> Idempotency {
     match msg_type {
         // REQUEST is context-dependent
-        302 => Idempotency::ContextDependent { dedup_key: "correlation_id" },
+        302 => Idempotency::ContextDependent {
+            dedup_key: "correlation_id",
+        },
         // CANCEL is non-idempotent
         303 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,

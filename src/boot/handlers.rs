@@ -66,7 +66,8 @@ pub async fn spawn_http_listener(
                     let config = http_config.clone();
                     let runtime = runtime.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime).await {
+                        if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime).await
+                        {
                             tracing::error!("HTTP handler error: {}", e);
                         }
                     });
@@ -117,19 +118,19 @@ async fn handle_http_upgrade(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use hyper::server::conn::Http;
     use hyper::service::service_fn;
-    
+
     // Increment connection count
     runtime.increment_connections();
-    
+
     // Clone runtime for the service closure
     let runtime_clone = runtime.clone();
-    
+
     // Serve HTTP/WebSocket with Hyper
     let service = service_fn(move |req| {
         let ingress = ingress.clone();
         let config = config.clone();
         let runtime = runtime_clone.clone();
-        
+
         async move {
             // Check if this is a WebSocket upgrade
             if is_websocket_upgrade(&req) {
@@ -141,11 +142,18 @@ async fn handle_http_upgrade(
             }
         }
     });
-    
-    if let Err(e) = Http::new().serve_connection(stream, service).await {
+
+    // Configure HTTP/1.1 with upgrade support
+    let conn = Http::new()
+        .http1_only(true)
+        .http1_keep_alive(true)
+        .serve_connection(stream, service)
+        .with_upgrades();
+
+    if let Err(e) = conn.await {
         tracing::debug!("HTTP connection error: {}", e);
     }
-    
+
     // Decrement connection count
     runtime.decrement_connections();
 
@@ -170,42 +178,16 @@ async fn handle_websocket(
 ) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
     // Increment session count
     runtime.increment_sessions();
-    
-    // Check for proper WebSocket upgrade headers
-    let has_upgrade = req.headers()
-        .get("upgrade")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("websocket"))
-        .unwrap_or(false);
-    
-    let has_connection = req.headers()
-        .get("connection")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_lowercase().contains("upgrade"))
-        .unwrap_or(false);
-    
-    let has_ws_version = req.headers()
-        .get("sec-websocket-version")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "13")
-        .unwrap_or(false);
-    
-    let has_ws_key = req.headers().get("sec-websocket-key").is_some();
-    
-    if !has_upgrade || !has_connection || !has_ws_version || !has_ws_key {
-        return Ok(hyper::Response::builder()
-            .status(400)
-            .body(hyper::Body::from("Bad WebSocket upgrade request"))
-            .unwrap());
-    }
-    
-    // Perform WebSocket handshake
+
+    // Attempt WebSocket upgrade - hyper_tungstenite handles all validation
     match hyper_tungstenite::upgrade(req, None) {
         Ok((response, websocket_fut)) => {
-            // Spawn task to handle WebSocket connection
+            // Spawn task to handle WebSocket connection after response is sent
+            let runtime_clone = runtime.clone();
             tokio::spawn(async move {
                 match websocket_fut.await {
                     Ok(ws_stream) => {
+                        tracing::info!("WebSocket upgrade completed");
                         if let Err(e) = run_websocket_session(ws_stream, ingress, config).await {
                             tracing::error!("WebSocket session error: {}", e);
                         }
@@ -215,17 +197,19 @@ async fn handle_websocket(
                     }
                 }
                 // Decrement session count when done
-                runtime.decrement_sessions();
+                runtime_clone.decrement_sessions();
             });
-            
+
+            // Return the 101 Switching Protocols response immediately
             Ok(response)
         }
         Err(e) => {
-            tracing::error!("WebSocket handshake failed: {}", e);
+            // Not a valid WebSocket upgrade request
+            tracing::debug!("WebSocket upgrade rejected: {}", e);
             runtime.decrement_sessions();
             Ok(hyper::Response::builder()
-                .status(500)
-                .body(hyper::Body::from(format!("WebSocket upgrade failed: {}", e)))
+                .status(400)
+                .body(hyper::Body::from("Bad WebSocket upgrade request"))
                 .unwrap())
         }
     }
@@ -240,35 +224,37 @@ async fn run_websocket_session<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    use futures_util::StreamExt;
     use futures_util::SinkExt;
+    use futures_util::StreamExt;
     use hyper_tungstenite::tungstenite::Message;
-    
+
     // Generate session ID
     let session_id = generate_session_id();
-    
+
     // Create transport-level session
-    let mut session = Session::new(
-        session_id,
+    let session_config = crate::session::NewSessionConfig::unauthenticated(
         TransportKind::WebSocket,
         None, // No peer address for upgraded connection
         SessionPermissions::empty(),
         SessionMetadata::new(),
         config.channel_capacity,
         None,
+        crate::runtime::routing::RouteFamily::new(0), // No auth = family 0
     );
-    
+    let mut session = Session::new(session_id, session_config);
+
     // Let ingress validate and accept the session
     let session_id = ingress.on_open(session.info()).await?;
-    
+
     info!("WebSocket connection established, session {}", session_id);
-    
+
     // Split WebSocket stream
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    
+
     // Create channel for outbound frames (from session to WebSocket)
-    let (_outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
-    
+    let (_outbound_tx, mut outbound_rx) =
+        tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
+
     // Spawn task to send outbound frames
     tokio::spawn(async move {
         while let Some(frame) = outbound_rx.recv().await {
@@ -278,13 +264,13 @@ where
             }
         }
     });
-    
+
     // Process inbound frames
     while let Some(msg_result) = ws_receiver.next().await {
         match msg_result {
             Ok(Message::Binary(data)) => {
                 let frame = Bytes::from(data);
-                
+
                 // Check frame size
                 if frame.len() > config.max_frame_size {
                     let reason = format!(
@@ -297,7 +283,7 @@ where
                         .await;
                     return Err(reason);
                 }
-                
+
                 // Forward frame to session for processing (decoding + routing)
                 if let Err(e) = session.on_frame(frame, ingress.as_ref()).await {
                     let reason = format!("session frame error: {:?}", e);
@@ -308,9 +294,7 @@ where
                 }
             }
             Ok(Message::Close(_)) => {
-                ingress
-                    .on_close(session_id, CloseReason::ClientClose)
-                    .await;
+                ingress.on_close(session_id, CloseReason::ClientClose).await;
                 break;
             }
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Text(_)) => {
@@ -327,12 +311,10 @@ where
             }
         }
     }
-    
+
     // Clean shutdown
-    ingress
-        .on_close(session_id, CloseReason::ClientClose)
-        .await;
-    
+    ingress.on_close(session_id, CloseReason::ClientClose).await;
+
     info!("WebSocket connection closed, session {}", session_id);
     Ok(())
 }

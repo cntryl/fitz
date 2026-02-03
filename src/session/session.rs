@@ -8,6 +8,7 @@
 use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
 use crate::protocol::tlv::{TlvDecoder, TlvError};
+use crate::runtime::routing::RouteFamily;
 use crate::session::manager::{Ingress, IngressDecision};
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
@@ -90,6 +91,9 @@ pub struct SessionInfo {
     pub claims: Option<Arc<crate::auth::Claims>>,
     /// Whether the session has completed the connect/auth handshake
     pub authenticated: bool,
+    /// Route family for this session (tenant isolation boundary)
+    /// Resolved from tenant_id at authentication time
+    pub route_family: RouteFamily,
 }
 
 /// Errors that can occur while handling a frame
@@ -132,9 +136,11 @@ pub struct NewSessionConfig {
     pub metadata: SessionMetadata,
     pub channel_capacity: usize,
     pub type_mapping: Option<TypeMapping>,
+    pub route_family: RouteFamily,
 }
 
 impl NewSessionConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn authenticated(
         transport_kind: TransportKind,
         peer_addr: Option<SocketAddr>,
@@ -143,6 +149,7 @@ impl NewSessionConfig {
         metadata: SessionMetadata,
         channel_capacity: usize,
         type_mapping: Option<TypeMapping>,
+        route_family: RouteFamily,
     ) -> Self {
         Self {
             transport_kind,
@@ -152,6 +159,7 @@ impl NewSessionConfig {
             metadata,
             channel_capacity,
             type_mapping,
+            route_family,
         }
     }
 
@@ -162,6 +170,7 @@ impl NewSessionConfig {
         metadata: SessionMetadata,
         channel_capacity: usize,
         type_mapping: Option<TypeMapping>,
+        route_family: RouteFamily,
     ) -> Self {
         Self {
             transport_kind,
@@ -171,6 +180,7 @@ impl NewSessionConfig {
             metadata,
             channel_capacity,
             type_mapping,
+            route_family,
         }
     }
 }
@@ -195,6 +205,7 @@ impl Session {
             permissions_snapshot: cfg.permissions.clone(),
             claims,
             authenticated,
+            route_family: cfg.route_family,
         };
 
         Self {
@@ -205,29 +216,23 @@ impl Session {
     }
 
     /// Create a new unauthenticated session (pre-auth)
-    pub fn new(
-        session_id: u64,
-        transport_kind: TransportKind,
-        peer_addr: Option<SocketAddr>,
-        permissions: SessionPermissions,
-        metadata: SessionMetadata,
-        channel_capacity: usize,
-        type_mapping: Option<TypeMapping>,
-    ) -> Self {
-        let mux = if let Some(mapping) = type_mapping {
-            Mux::with_mapping(channel_capacity, mapping)
+    pub fn new(session_id: u64, config: NewSessionConfig) -> Self {
+        let mux = if let Some(mapping) = config.type_mapping {
+            Mux::with_mapping(config.channel_capacity, mapping)
         } else {
-            Mux::new(channel_capacity)
+            Mux::new(config.channel_capacity)
         };
 
+        let authenticated = config.claims.is_some();
         let info = SessionInfo {
             session_id,
-            transport_kind,
-            peer_addr,
-            metadata: Arc::new(metadata),
-            permissions_snapshot: permissions.clone(),
-            claims: None,
-            authenticated: false,
+            transport_kind: config.transport_kind,
+            peer_addr: config.peer_addr,
+            metadata: Arc::new(config.metadata),
+            permissions_snapshot: config.permissions.clone(),
+            claims: config.claims.map(Arc::new),
+            authenticated,
+            route_family: config.route_family,
         };
 
         Self {

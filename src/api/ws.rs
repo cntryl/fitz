@@ -159,6 +159,7 @@ mod tests {
             permissions_snapshot: SessionPermissions::empty(),
             claims: None,
             authenticated: false,
+            route_family: crate::runtime::routing::RouteFamily::new(0), // No auth = family 0
         };
 
         // Act

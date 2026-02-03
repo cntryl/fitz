@@ -13,13 +13,13 @@ use std::time::{Duration, Instant};
 pub struct TimeoutConfig {
     /// Default timeout for individual operations (default 30s)
     pub operation_timeout: Duration,
-    
+
     /// Timeout for partial frame assembly (default 5s idle)
     pub partial_frame_timeout: Duration,
-    
+
     /// Transaction idle timeout (default 1 hour)
     pub transaction_timeout: Duration,
-    
+
     /// Session idle timeout (default 1 hour)
     pub session_timeout: Duration,
 }
@@ -97,13 +97,13 @@ impl TimeoutTracker {
 pub struct FrameBuffer {
     /// Accumulated data
     data: Vec<u8>,
-    
+
     /// Last activity time
     last_activity: Instant,
-    
+
     /// Maximum buffer size (DoS protection)
     max_size: usize,
-    
+
     /// Timeout configuration
     timeout_config: TimeoutConfig,
 }
@@ -177,8 +177,7 @@ mod tests {
     #[test]
     fn should_detect_operation_timeout() {
         let config = TimeoutConfig::default();
-        let tracker =
-            TimeoutTracker::with_timeout(config, Duration::from_millis(10));
+        let tracker = TimeoutTracker::with_timeout(config, Duration::from_millis(10));
 
         assert!(!tracker.is_expired());
         thread::sleep(Duration::from_millis(20));
@@ -188,8 +187,7 @@ mod tests {
     #[test]
     fn should_report_remaining_time() {
         let config = TimeoutConfig::default();
-        let tracker =
-            TimeoutTracker::with_timeout(config, Duration::from_secs(10));
+        let tracker = TimeoutTracker::with_timeout(config, Duration::from_secs(10));
 
         let remaining = tracker.remaining();
         assert!(remaining.is_some());

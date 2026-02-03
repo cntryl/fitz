@@ -40,8 +40,7 @@ fn should_check_realm_match_first_in_pipeline() {
     actor.authenticate(claims, perms);
 
     // Act - Request for different realm (should fail immediately)
-    let authorized =
-        actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
+    let authorized = actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
 
     // Assert
     assert!(
@@ -68,8 +67,7 @@ fn should_check_area_match_after_realm_in_pipeline() {
     actor.authenticate(claims, perms);
 
     // Act - Realm matches, but area doesn't
-    let authorized =
-        actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
+    let authorized = actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
 
     // Assert
     assert!(
@@ -152,8 +150,7 @@ fn should_check_realm_per_request_not_cached() {
 
     // Act - First request to correct realm, then to wrong realm
     let first_ok = actor.authorize(&Route::new("kv://prod/users/put"), Access::Write);
-    let second_unauthorized =
-        actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
+    let second_unauthorized = actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
 
     // Assert
     assert!(first_ok, "first request should succeed");
@@ -220,7 +217,10 @@ fn should_check_scope_per_request_not_cached() {
     // Assert
     assert!(first_read_ok, "read request should succeed");
     assert!(write_ok, "write request should succeed");
-    assert!(second_read_ok, "read request again should succeed independently");
+    assert!(
+        second_read_ok,
+        "read request again should succeed independently"
+    );
 }
 
 // ============================================================================
@@ -245,8 +245,7 @@ fn should_use_consistent_error_for_realm_mismatch() {
     actor.authenticate(claims, perms);
 
     // Act
-    let authorized =
-        actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
+    let authorized = actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
 
     // Assert
     // The error should be consistent (unauthorized)
@@ -274,8 +273,7 @@ fn should_use_consistent_error_for_area_mismatch() {
     actor.authenticate(claims, perms);
 
     // Act
-    let authorized =
-        actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
+    let authorized = actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
 
     // Assert
     assert!(
@@ -362,13 +360,14 @@ fn should_reject_when_no_permission_matches() {
 
     // Act - Request should fail when NO permission matches
     let write_denied = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
-    let system_denied =
-        actor.authorize(&Route::new("kv://acme/system/config/get"), Access::Read);
-    let staging_denied =
-        actor.authorize(&Route::new("kv://staging/app/users/get"), Access::Read);
+    let system_denied = actor.authorize(&Route::new("kv://acme/system/config/get"), Access::Read);
+    let staging_denied = actor.authorize(&Route::new("kv://staging/app/users/get"), Access::Read);
 
     // Assert
-    assert!(!write_denied, "write should be denied (only read permitted)");
+    assert!(
+        !write_denied,
+        "write should be denied (only read permitted)"
+    );
     assert!(!system_denied, "system area should be denied");
     assert!(!staging_denied, "staging realm should be denied");
 }
@@ -396,9 +395,11 @@ fn should_apply_permission_checks_to_wildcard_patterns() {
 
     // Act - Wildcard should match various nested paths
     let shallow = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
-    let nested = actor.authorize(&Route::new("kv://acme/app/users/profile/put"), Access::Write);
-    let out_of_scope =
-        actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
+    let nested = actor.authorize(
+        &Route::new("kv://acme/app/users/profile/put"),
+        Access::Write,
+    );
+    let out_of_scope = actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
 
     // Assert
     assert!(shallow, "shallow path should match app/**");
@@ -425,8 +426,10 @@ fn should_apply_permission_checks_to_single_star_patterns() {
 
     // Act - Single star should match one level only
     let one_level = actor.authorize(&Route::new("notice://acme/orders/created"), Access::Read);
-    let two_levels =
-        actor.authorize(&Route::new("notice://acme/orders/created/update"), Access::Read);
+    let two_levels = actor.authorize(
+        &Route::new("notice://acme/orders/created/update"),
+        Access::Read,
+    );
 
     // Assert
     assert!(one_level, "one-level path should match orders/*");
@@ -464,10 +467,8 @@ fn should_apply_full_permission_pipeline_to_complex_scenario() {
     // Act - Various requests to verify pipeline
     let user_read = actor.authorize(&Route::new("kv://acme/app/users/get"), Access::Read);
     let user_write = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
-    let settings_read =
-        actor.authorize(&Route::new("kv://acme/app/settings/get"), Access::Read);
-    let settings_write =
-        actor.authorize(&Route::new("kv://acme/app/settings/put"), Access::Write);
+    let settings_read = actor.authorize(&Route::new("kv://acme/app/settings/get"), Access::Read);
+    let settings_write = actor.authorize(&Route::new("kv://acme/app/settings/put"), Access::Write);
     let wrong_realm = actor.authorize(&Route::new("kv://staging/app/users/get"), Access::Read);
     let wrong_area = actor.authorize(&Route::new("kv://acme/system/config/get"), Access::Read);
 
@@ -475,7 +476,10 @@ fn should_apply_full_permission_pipeline_to_complex_scenario() {
     assert!(user_read, "user read should succeed");
     assert!(user_write, "user write should succeed");
     assert!(settings_read, "settings read should succeed");
-    assert!(!settings_write, "settings write should fail (not in permissions)");
+    assert!(
+        !settings_write,
+        "settings write should fail (not in permissions)"
+    );
     assert!(!wrong_realm, "wrong realm should fail");
     assert!(!wrong_area, "wrong area should fail");
 }

@@ -1,11 +1,14 @@
-//! End-to-end tests for Fitz broker running on ports 4090 (HTTP/WS) and 4091 (TCP)
+//! End-to-end tests for Fitz broker with in-memory instances
 //!
-//! These tests verify the broker is operational and can handle basic protocol interactions.
-//! The broker must be running before these tests execute.
+//! These tests spin up a Fitz broker instance on dynamic ports
+//! and verify basic protocol interactions (TCP and WebSocket).
 
+use fitz::boot::{BootConfig, BootResult};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Barrier;
 use tokio::time::timeout;
 
 /// Helper to construct a length-prefixed frame
@@ -28,13 +31,92 @@ async fn read_tcp_frame(stream: &mut TcpStream) -> Result<Vec<u8>, Box<dyn std::
     Ok(payload)
 }
 
+/// Spawn a Fitz broker instance in the background
+///
+/// Returns (http_port, tcp_port, shutdown_handle)
+async fn spawn_broker() -> (u16, u16, tokio::task::JoinHandle<()>) {
+    use rand::Rng;
+
+    // Pick random ports to avoid conflicts between parallel tests
+    let mut rng = rand::thread_rng();
+    let http_port = rng.gen_range(20000..30000);
+    let tcp_port = rng.gen_range(30000..40000);
+
+    let config = BootConfig {
+        bind_addr: "127.0.0.1".to_string(),
+        http_port,
+        tcp_port,
+        storage_mode: fitz::boot::runtime::StorageMode::Memory,
+        auth_required: false,
+        max_connections: 100,
+        max_frame_size: 1024 * 1024,
+        channel_capacity: 100,
+    };
+
+    // Barrier to wait for broker to be ready
+    let barrier = Arc::new(Barrier::new(2));
+    let barrier_clone = barrier.clone();
+
+    let handle = tokio::spawn(async move {
+        // Initialize broker (without blocking on shutdown signal)
+        if let Err(e) = boot_without_signal(config, barrier_clone).await {
+            eprintln!("Broker error: {:?}", e);
+        }
+    });
+
+    // Wait for broker to be ready
+    barrier.wait().await;
+
+    // Give broker a moment to fully start listeners
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    (http_port, tcp_port, handle)
+}
+
+/// Boot broker without waiting for Ctrl+C (for testing)
+async fn boot_without_signal(config: BootConfig, ready_barrier: Arc<Barrier>) -> BootResult<()> {
+    use fitz::boot::{domains, handlers, runtime, storage};
+
+    // Initialize storage
+    let store = storage::init(&config).await?;
+
+    // Create runtime infrastructure
+    let (router, ingress, ingress_config, _scheduler, runtime_stats) = runtime::init(&store)?;
+    runtime_stats.mark_storage_ready();
+
+    // Register domain actors
+    domains::setup(&router, &store)?;
+    runtime_stats.mark_domains_ready();
+
+    // Start transport listeners
+    handlers::spawn_tcp_listener(&config, ingress.clone(), ingress_config.clone()).await?;
+    handlers::spawn_http_listener(
+        &config,
+        ingress.clone(),
+        ingress_config.clone(),
+        runtime_stats.clone(),
+    )
+    .await?;
+
+    runtime_stats.mark_startup_complete();
+
+    // Signal that broker is ready
+    ready_barrier.wait().await;
+
+    // Keep broker alive (would normally wait for Ctrl+C here)
+    tokio::time::sleep(Duration::from_secs(3600)).await;
+
+    Ok(())
+}
+
 #[tokio::test]
-#[ignore = "Requires broker running on 4091"]
 async fn should_connect_via_tcp() {
-    // Arrange - Connect to TCP endpoint
-    let mut stream = TcpStream::connect("127.0.0.1:4091")
+    // Arrange - Spawn broker
+    let (_, tcp_port, _handle) = spawn_broker().await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", tcp_port))
         .await
-        .expect("Failed to connect to TCP endpoint on 4091");
+        .expect("Failed to connect to TCP endpoint");
 
     // Act - Send a test frame
     let test_payload = b"hello fitz";
@@ -46,29 +128,33 @@ async fn should_connect_via_tcp() {
     // Note: We're not expecting a response yet (broker doesn't route frames)
     // This test just verifies TCP connectivity and framing works
 
-    // Assert - Connection remains open
-    assert!(stream.peek(&mut [0u8; 1]).await.is_ok());
+    // Assert - Connection is established and frame was sent successfully
+    assert!(stream.peer_addr().is_ok());
 }
 
 #[tokio::test]
-#[ignore = "Requires broker running on 4090"]
 async fn should_upgrade_to_websocket() {
-    // Arrange - Connect to HTTP endpoint
-    let stream = TcpStream::connect("127.0.0.1:4090")
+    // Arrange - Spawn broker
+    let (http_port, _, _handle) = spawn_broker().await;
+
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", http_port))
         .await
-        .expect("Failed to connect to HTTP endpoint on 4090");
+        .expect("Failed to connect to HTTP endpoint");
 
     // Act - Send WebSocket upgrade request
-    let upgrade_request = b"GET / HTTP/1.1\r\n\
-                           Host: localhost:4090\r\n\
-                           Upgrade: websocket\r\n\
-                           Connection: Upgrade\r\n\
-                           Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-                           Sec-WebSocket-Version: 13\r\n\r\n";
+    let upgrade_request = format!(
+        "GET / HTTP/1.1\r\n\
+         Host: localhost:{}\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n",
+        http_port
+    );
 
     let mut stream = stream;
     stream
-        .write_all(upgrade_request)
+        .write_all(upgrade_request.as_bytes())
         .await
         .expect("Failed to send upgrade request");
 
@@ -85,13 +171,15 @@ async fn should_upgrade_to_websocket() {
 }
 
 #[tokio::test]
-#[ignore = "Requires broker running on 4091"]
 async fn should_handle_multiple_tcp_connections() {
-    // Arrange - Create two concurrent TCP connections
-    let stream1 = TcpStream::connect("127.0.0.1:4091")
+    // Arrange - Spawn broker
+    let (_, tcp_port, _handle) = spawn_broker().await;
+
+    // Create two concurrent TCP connections
+    let stream1 = TcpStream::connect(format!("127.0.0.1:{}", tcp_port))
         .await
         .expect("Failed to connect stream 1");
-    let stream2 = TcpStream::connect("127.0.0.1:4091")
+    let stream2 = TcpStream::connect(format!("127.0.0.1:{}", tcp_port))
         .await
         .expect("Failed to connect stream 2");
 

@@ -65,6 +65,7 @@ regex = "1"
 criterion = { version = "0.4", features = ["async_futures"] }
 serial_test = "0.5"
 tempfile = "3"
+rand = "0.8"
 
 # Note: Benchmarks will be added as persona actors are implemented
 # Benchmark framework set up, but implementations need API updates for current context/actor design

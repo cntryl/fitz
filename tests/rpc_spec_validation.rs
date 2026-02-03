@@ -11,9 +11,9 @@
 //! - Request timeout
 //! - Multiple workers
 
+use bytes::Bytes;
 use fitz::domains::rpc::{RpcError, RpcErrorCode, RpcRequest, RpcResponse};
 use fitz::runtime::routing::{Route, RouteFamily};
-use bytes::Bytes;
 use uuid::Uuid;
 
 // ============================================================================
@@ -107,10 +107,7 @@ fn should_have_stream_end_flag_for_final_chunk() {
     let response = RpcResponse::chunk(correlation_id, seq, body, stream_end);
 
     // Assert
-    assert!(
-        response.stream_end,
-        "final chunk must set stream_end=true"
-    );
+    assert!(response.stream_end, "final chunk must set stream_end=true");
 }
 
 #[test]
@@ -128,11 +125,13 @@ fn should_have_payload_in_request_and_response() {
 
     // Assert
     assert_eq!(
-        request.body, Bytes::from("create user request"),
+        request.body,
+        Bytes::from("create user request"),
         "request body preserved"
     );
     assert_eq!(
-        response.body, Bytes::from("user created"),
+        response.body,
+        Bytes::from("user created"),
         "response body preserved"
     );
 }
@@ -150,10 +149,7 @@ fn should_define_error_code_6001_rpc_timeout() {
     let error = RpcError::timeout(correlation_id);
 
     // Assert
-    assert_eq!(
-        error.code, RpcErrorCode::Timeout,
-        "6001 = RPC_TIMEOUT"
-    );
+    assert_eq!(error.code, RpcErrorCode::Timeout, "6001 = RPC_TIMEOUT");
     assert_eq!(error.correlation_id, correlation_id);
 }
 
@@ -163,7 +159,10 @@ fn should_define_error_code_6002_worker_not_found() {
     // Returned when: No worker registered for the requested route
 
     let error_code = RpcErrorCode::InvalidRoute;
-    assert!(!error_code.as_str().is_empty(), "error codes must have string representation");
+    assert!(
+        !error_code.as_str().is_empty(),
+        "error codes must have string representation"
+    );
 }
 
 #[test]
@@ -176,7 +175,8 @@ fn should_define_error_code_6003_rpc_backpressure() {
 
     // Assert
     assert_eq!(
-        error.code, RpcErrorCode::Backpressure,
+        error.code,
+        RpcErrorCode::Backpressure,
         "6003 = RPC_BACKPRESSURE"
     );
 }
@@ -191,7 +191,8 @@ fn should_define_error_code_6004_route_not_registered() {
 
     // Assert
     assert_eq!(
-        error.code, RpcErrorCode::InvalidRoute,
+        error.code,
+        RpcErrorCode::InvalidRoute,
         "6004 = ROUTE_NOT_REGISTERED/INVALID_ROUTE"
     );
 }
@@ -206,7 +207,8 @@ fn should_define_error_code_6001_unauthorized() {
 
     // Assert
     assert_eq!(
-        error.code, RpcErrorCode::Unauthorized,
+        error.code,
+        RpcErrorCode::Unauthorized,
         "6001 variant = ERR_UNAUTHORIZED"
     );
 }
@@ -230,9 +232,18 @@ fn should_have_all_rpc_error_codes_in_range_6000_6099() {
     let unauthorized_str = RpcErrorCode::Unauthorized.as_str();
 
     // All should be prefixed with RPC_
-    assert!(timeout_str.starts_with("RPC_"), "error codes should use RPC_ prefix");
-    assert!(backpressure_str.starts_with("RPC_"), "error codes should use RPC_ prefix");
-    assert!(unauthorized_str.starts_with("RPC_"), "error codes should use RPC_ prefix");
+    assert!(
+        timeout_str.starts_with("RPC_"),
+        "error codes should use RPC_ prefix"
+    );
+    assert!(
+        backpressure_str.starts_with("RPC_"),
+        "error codes should use RPC_ prefix"
+    );
+    assert!(
+        unauthorized_str.starts_with("RPC_"),
+        "error codes should use RPC_ prefix"
+    );
 }
 
 // ============================================================================
@@ -257,13 +268,13 @@ fn should_complete_single_request_response_cycle() {
     );
 
     // Act - Response phase (single chunk)
-    let response = RpcResponse::single(
-        correlation_id,
-        Bytes::from("user created"),
-    );
+    let response = RpcResponse::single(correlation_id, Bytes::from("user created"));
 
     // Assert
-    assert_eq!(request.correlation_id, response.correlation_id, "correlation IDs match");
+    assert_eq!(
+        request.correlation_id, response.correlation_id,
+        "correlation IDs match"
+    );
     assert_eq!(response.seq, 0, "single response has seq=0");
     assert!(response.stream_end, "single response has stream_end=true");
 }
@@ -328,7 +339,10 @@ fn should_detect_out_of_order_streaming_chunks() {
     // Assert - Client should detect gap
     assert_eq!(chunk0.seq, 0);
     assert_eq!(chunk2.seq, 2);
-    assert!(chunk2.seq != chunk0.seq + 1, "out of order detected by seq gap");
+    assert!(
+        chunk2.seq != chunk0.seq + 1,
+        "out of order detected by seq gap"
+    );
 }
 
 #[test]
@@ -337,14 +351,14 @@ fn should_handle_single_chunk_as_complete_response() {
     let correlation_id = Uuid::new_v4();
 
     // Act
-    let single_response = RpcResponse::single(
-        correlation_id,
-        Bytes::from("complete response"),
-    );
+    let single_response = RpcResponse::single(correlation_id, Bytes::from("complete response"));
 
     // Assert
     assert_eq!(single_response.seq, 0, "single-chunk response has seq=0");
-    assert!(single_response.stream_end, "single-chunk response has stream_end=true");
+    assert!(
+        single_response.stream_end,
+        "single-chunk response has stream_end=true"
+    );
 }
 
 // ============================================================================
@@ -359,13 +373,7 @@ fn should_include_route_family_in_request() {
     let reply_route = Route::new("inbox://session/123");
 
     // Act
-    let request = RpcRequest::new(
-        family,
-        Uuid::new_v4(),
-        route,
-        reply_route,
-        Bytes::from(""),
-    );
+    let request = RpcRequest::new(family, Uuid::new_v4(), route, reply_route, Bytes::from(""));
 
     // Assert
     assert_eq!(request.family_id, family, "route family preserved");
@@ -398,7 +406,13 @@ fn should_include_target_route_in_request() {
     let reply_route = Route::new("inbox://session/123");
 
     // Act
-    let request = RpcRequest::new(family, Uuid::new_v4(), target_route, reply_route, Bytes::from(""));
+    let request = RpcRequest::new(
+        family,
+        Uuid::new_v4(),
+        target_route,
+        reply_route,
+        Bytes::from(""),
+    );
 
     // Assert
     assert_eq!(
@@ -486,4 +500,3 @@ fn should_return_invalid_route_when_no_worker_registered() {
 
 // RPC codec should implement CodecTrait for encoding/decoding
 // See: src/protocol/ for codec implementations
-

@@ -209,7 +209,7 @@ fn should_handle_many_keys_in_single_transaction() {
     for i in 0..10 {
         let key = format!("key{}", i);
         let value = format!("value{}", i);
-        
+
         let response = actor.handle(KvMessage::Put {
             tx_id,
             route_family,
