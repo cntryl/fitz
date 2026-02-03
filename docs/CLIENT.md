@@ -410,6 +410,8 @@ A request is valid **only if**:
 | `COMMIT` | `{realm}/{area}/{resource}` |
 | `ROLLBACK` | `{realm}/{area}/{resource}` |
 
+**Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, SCAN, COMMIT, ROLLBACK.
+
 ---
 
 ### Stream Domain
@@ -432,6 +434,8 @@ A request is valid **only if**:
 | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
 | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 | `COMMIT` | `{realm}/{area}/{resource}` |
+**Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on stream operations: BEGIN, APPEND, READ, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
+
 | `ROLLBACK` | `{realm}/{area}/{resource}` |
 
 ---
@@ -449,11 +453,12 @@ A request is valid **only if**:
 | Method | Accepted Route Shapes |
 |--------|--------|
 | `LIST` | `{realm}/{area}`, `{realm}/*/*` |
-| `CREATE` | `{realm}/{area}` |
-| `DELETE` (admin) | `{realm}/{area}` |
-| `SEND` | `{realm}/{area}/{resource}` |
-| `RECEIVE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
-| `DELETE` (message) | `{realm}/{area}/{resource}` |
+| `ENQUEUE` | `{realm}/{area}/{resource}` |
+| `RESERVE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
+| `COMPLETE` | `{realm}/{area}/{resource}` |
+| `EXTEND` | `{realm}/{area}/{resource}` |
+
+**Note:** `LIST`, `CREATE`, `DELETE` (admin), and `SEND`/`RECEIVE`/`RELEASE` operations are either broker-internal or legacy verbs. Clients should use: ENQUEUE, RESERVE, COMPLETE, EXTEND as documented in the wire format section.source}` |
 | `RELEASE` | `{realm}/{area}/{resource}` |
 | `EXTEND` | `{realm}/{area}/{resource}` |
 
@@ -468,11 +473,10 @@ A request is valid **only if**:
 
 **Method Acceptance:**
 
-| Method | Accepted Route Shapes |
-|--------|--------|
-| `LIST` | `{realm}/{area}` |
-| `CREATE` | `{realm}/{area}` |
-| `DELETE` (admin) | `{realm}/{area}` |
+| Method | Accepted Route Sh/{resource}` |
+| `CANCEL` | `{realm}/{area}/{resource}` |
+
+**Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST as documented in the wire format section. LIST is fully documented with streaming protocol.
 | `PUT` | `{realm}/{area}/{resource}` |
 | `DELETE` (data) | `{realm}/{area}/{resource}` |
 | `TRIGGER` | `{realm}/{area}/{resource}` |
@@ -1050,6 +1054,29 @@ Response: status byte + error (if status=1)
 - `**` matches zero or more segments (e.g., `notice://realm/**` matches all routes in realm)
 - Exact routes (no wildcards) also supported
 
+#### Usage Example
+
+```python
+# Subscriber
+sub_id = client.notice_subscribe(
+    pattern="notice://prod/app/orders/*",
+    subscriber_route="notice://prod/app/listener"
+)
+
+# Receive notifications
+while notification = client.receive_notification():
+    print(f"Received: {notification.route} => {notification.payload}")
+
+# Publisher
+client.notice_publish(
+    route="notice://prod/app/orders/created",
+    payload=b'{"order_id": 123}'
+)
+
+# Cleanup
+client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
+```
+
 #### Semantics
 - **Delivery**: Best-effort; under backpressure, notifications may be dropped
 - **Ordering**: Delivered in publish order per subscription
@@ -1172,6 +1199,27 @@ Response: status byte + data
 Response: status byte + data
 ```
 
+#### Usage Example
+
+```python
+# Append to stream
+session_id = client.stream_begin(
+    route="stream://prod/app/events",
+    expected_offset=100  # Optimistic concurrency
+)
+
+client.stream_append(session_id, b"event_data_1")
+client.stream_append(session_id, b"event_data_2")
+client.stream_commit(session_id, mode="Sync")  # Durably committed
+
+# Read from stream
+records = client.stream_read(
+    route="stream://prod/app/events",
+    from_offset=100,
+    limit=10
+)
+```
+
 #### Semantics
 - **Atomicity**: Appends are atomic; partial writes never visible
 - **Ordering**: Records strictly ordered by offset within resource
@@ -1216,8 +1264,14 @@ Response: status byte + data
 [u8]      has_delay
 [u64 BE]  delay_seconds (if present)
 
-Response:
+Response (status=0):
+  [u8]     0
   [u64 BE] message_id
+
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### RESERVE Request
@@ -1228,13 +1282,19 @@ Response:
 [u8]      has_wait_seconds
 [u64 BE]  wait_seconds (if present)
 
-Response:
+Response (status=0):
+  [u8]     0
   [u32 BE] lease_count
   [repeat for each lease]
     [u64 BE] message_id
     [u64 BE] lease_token
     [u32 BE] body_len
     [bytes]  body
+
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### EXTEND Request
@@ -1243,7 +1303,13 @@ Response:
 [u64 BE]  lease_token
 [u64 BE]  lease_seconds
 
-Response: (empty on success)
+Response (status=0):
+  [u8]     0
+
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### COMPLETE Request
@@ -1251,16 +1317,47 @@ Response: (empty on success)
 [u64 BE]  message_id
 [u64 BE]  lease_token
 
-Response: (empty on success)
+Response (status=0):
+  [u8]     0
+
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
-#### Error Codes (Encoded as single bytes)
-- 0x01 = INVALID_TOKEN
-- 0x02 = LEASE_EXPIRED
-- 0x03 = NOT_FOUND
-- 0x04 = QUEUE_NOT_FOUND
+#### Error Codes (4xxx range)
+- 4001 = ERR_INVALID_TOKEN
+- 4002 = ERR_LEASE_EXPIRED
+- 4003 = ERR_MESSAGE_NOT_FOUND
+- 4004 = ERR_QUEUE_NOT_FOUND
+- 4005 = ERR_QUEUE_FULL
 
-**Note:** Queue responses do NOT include a unified status byte. Interpret errors based on expected response shape.
+#### Usage Example
+
+```python
+# Producer: Enqueue messages
+msg_id = client.queue_enqueue(
+    route="queue://prod/app/tasks",
+    body=b"task_payload",
+    delay_seconds=0
+)
+
+# Consumer: Reserve, process, complete
+leases = client.queue_reserve(
+    route="queue://prod/app/tasks",
+    lease_seconds=30,
+    batch_size=5
+)
+
+for lease in leases:
+    try:
+        process_task(lease.body)
+        client.queue_complete(lease.message_id, lease.lease_token)
+    except ProcessingError:
+        # Let lease expire, message returns to queue
+        pass
+```
 
 #### Semantics
 - **At-Least-Once**: Messages delivered until completed; expired leases requeue them
@@ -1361,6 +1458,38 @@ Response: status + data
 
 **Important:** `correlation_id_len` MUST be exactly 16. Any other value is a protocol error.
 
+#### Usage Example
+
+```python
+# Worker: Register to handle requests
+client.rpc_subscribe_worker(
+    worker_route="rpc://prod/app/compute"
+)
+
+# Worker: Handle incoming requests
+while request = client.receive_rpc_request():
+    result = process_request(request.body)
+    client.rpc_response(
+        correlation_id=request.correlation_id,
+        sequence=0,
+        body=result,
+        stream_end=True
+    )
+
+# Caller: Send request and wait for response
+correlation_id = generate_uuid()
+responses = client.rpc_request(
+    route="rpc://prod/app/compute",
+    reply_route="rpc://prod/app/caller",
+    correlation_id=correlation_id,
+    body=b"request_payload"
+)
+
+for response in responses:
+    if response.stream_end:
+        break
+```
+
 #### Semantics
 - **Correlation**: UUID links request to responses (client-generated)
 - **Streaming**: Multi-frame responses have incrementing `sequence` and `stream_end` flag
@@ -1368,11 +1497,12 @@ Response: status + data
 - **Ordering**: Responses delivered in sequence order
 - **Exactly-Once**: Each request reaches worker once
 
-#### Error Codes (3xxx, disambiguated from Notice)
-- 3001 = ERR_RPC_TIMEOUT
-- 3002 = ERR_WORKER_NOT_FOUND
-- 3003 = ERR_RPC_BACKPRESSURE
-- 3004 = ERR_ROUTE_NOT_REGISTERED
+#### Error Codes (6xxx range)
+- 6001 = ERR_RPC_TIMEOUT
+- 6002 = ERR_WORKER_NOT_FOUND
+- 6003 = ERR_RPC_BACKPRESSURE
+- 6004 = ERR_ROUTE_NOT_REGISTERED
+- 6005 = ERR_CORRELATION_NOT_FOUND
 
 #### Acceptance Tests
 - single request/response cycle
@@ -1537,6 +1667,11 @@ Response: (empty on success)
 - 1003 = ERR_KEY_NOT_FOUND
 - 1004 = ERR_ISOLATION_CONFLICT
 - 1005 = ERR_WRITE_IN_READONLY
+- 1006 = ERR_KEY_EXISTS (INSERT on existing key)
+- 1007 = ERR_INVALID_ROUTE
+- 1008 = ERR_REALM_MISMATCH
+- 1009 = ERR_BACKEND_ERROR
+- 1010 = ERR_TRANSACTION_ABORTED
 
 #### Acceptance Tests
 - begin/put/commit cycle
@@ -1615,6 +1750,39 @@ Response: status + optional token
 Response: status + optional token
 ```
 
+#### Usage Example
+
+```python
+# Acquire lease
+token = client.lease_acquire(
+    route="lease://prod/app/leader",
+    owner_id="node-1",
+    ttl_secs=30
+)
+
+if token:
+    try:
+        # Do work as leader
+        perform_leader_duties()
+        
+        # Renew before expiry
+        client.lease_renew(
+            route="lease://prod/app/leader",
+            owner_id="node-1",
+            fencing_token=token,
+            ttl_secs=30
+        )
+    finally:
+        # Release when done
+        client.lease_release(
+            route="lease://prod/app/leader",
+            owner_id="node-1",
+            fencing_token=token
+        )
+else:
+    print("Lease held by another owner")
+```
+
 #### Semantics
 - **Mutual Exclusion**: Only one owner holds a lease at a time
 - **Fencing Token**: Prevents stale commands from releasing new holder's lease
@@ -1622,7 +1790,7 @@ Response: status + optional token
 - **Route Partitioned**: Different routes have independent leases
 - **In-Memory**: Lost on broker restart (use for coordination, not durability)
 
-#### Error Codes (4xxx)
+#### Error Codes (5xxx)
 - 4001 = ERR_LEASE_HELD
 - 4002 = ERR_INVALID_FENCE
 - 4003 = ERR_LEASE_EXPIRED
@@ -1690,6 +1858,97 @@ Type 2: target_resource (UTF-8 string)
 Type 3: target_operation (UTF-8 string)
 ```
 
+Total payload = concatenated TLV records, no outer length prefix.
+
+#### Cron Syntax (Broker-Enforced)
+
+Brokers MUST support standard 5-field cron format:
+```
+* * * * *
+| | | | |
+| | | | +---- Day of week (0-6, Sunday is 0)
+| | | +------ Month (1-12)
+| | +-------- Day of month (1-31)
+| +---------- Hour (0-23)
++------------ Minute (0-59)
+```
+
+**Supported patterns:**
+- `*` = every unit (e.g., `* * * * *` = every minute)
+- Numeric values = exact match (e.g., `0 9 * * 1` = 9:00 AM every Monday)
+- Ranges = `start-end` (e.g., `0 9-17 * * *` = every hour from 9 AM to 5 PM)
+- Lists = `value,value,value` (e.g., `0 9,12,15 * * *` = 9 AM, 12 PM, 3 PM)
+- Steps = `*/step` or `range/step` (e.g., `*/15 * * * *` = every 15 minutes)
+- Combined = (e.g., `0 9-17/2 * * 1-5` = every 2 hours from 9 AM-5 PM on weekdays)
+
+**Examples:**
+- `0 9 * * 1` = 9:00 AM every Monday
+- `*/5 * * * *` = Every 5 minutes
+- `0 */2 * * *` = Every 2 hours
+- `0 9-17 * * 1-5` = Every hour from 9 AM-5 PM on weekdays
+- `30 2 1 * *` = 2:30 AM on the 1st of every month
+
+#### Persistence & Recovery
+
+Schedules are durable (persisted to storage):
+- Survive broker restart
+- Execution resumes at next scheduled time
+- Missed schedules (broker down at scheduled time) are skipped
+- No catch-up or backfill for missed executions
+
+#### LIST Streaming
+
+LIST returns multiple responses (one schedule per response):
+```
+Response 1:
+  [u8]     0 (status)
+  [u8]     1 (has_schedule_id)
+  [u32 BE] schedule_id_len
+  [bytes]  schedule_id
+  [schedule data...]
+
+Response 2:
+  [u8]     0 (status)
+  [u8]     1 (has_schedule_id)
+  [u32 BE] schedule_id_len
+  [bytes]  schedule_id
+  [schedule data...]
+
+Response N (final):
+  [u8]     0 (status)
+  [u8]     0 (has_schedule_id = empty, no more)
+```
+
+Client MUST continue reading until `has_schedule_id=0`.
+
+#### Usage Example
+
+```python
+# Create one-time delayed task
+schedule_id = client.schedule_create(
+    route="schedule://prod/app/reminders",
+    cron="0 9 * * 1",  # Every Monday at 9 AM
+    target_resource="notice://prod/app/notifications",
+    target_operation="PUBLISH"
+)
+
+# Create recurring task
+recurring_id = client.schedule_create(
+    route="schedule://prod/app/cleanup",
+    cron="0 2 * * *",  # Daily at 2 AM
+    target_resource="kv://prod/app/cache",
+    target_operation="DELETE_RANGE"
+)
+
+# List schedules
+schedules = client.schedule_list(
+    route="schedule://prod/app/reminders"
+)
+
+# Cancel schedule
+client.schedule_cancel(schedule_id)
+```
+
 #### Semantics
 - **Durability**: Schedules persist across broker restarts
 - **Strict Timing**: Tasks execute at designated times (best-effort)
@@ -1697,11 +1956,12 @@ Type 3: target_operation (UTF-8 string)
 - **Cancellation**: Cancels future runs; already-running tasks may not abort
 - **Route Scoped**: Independent schedules per route
 
-#### Error Codes (5xxx)
-- 5001 = ERR_SCHEDULE_NOT_FOUND
-- 5002 = ERR_INVALID_TIME
-- 5003 = ERR_SCHEDULE_LIMIT
-- 5004 = ERR_PARSE_ERROR
+#### Error Codes (7xxx)
+- 7001 = ERR_SCHEDULE_NOT_FOUND
+- 7002 = ERR_INVALID_CRON
+- 7003 = ERR_SCHEDULE_LIMIT
+- 7004 = ERR_PARSE_ERROR
+- 7005 = ERR_INVALID_TARGET
 
 #### Acceptance Tests
 - create_once schedules task and executes at delay
@@ -1947,11 +2207,82 @@ Client implementations MUST pass the following test suite against a reference br
 - Cancel prevents future runs
 - List returns created schedules
 
+### Interoperability Tests
+
+Client implementations MUST pass these cross-cutting tests:
+
+**Multi-Realm Isolation:**
+- Create two clients with different JWT realms
+- One client publishes to realm A, other subscribes in realm B
+- Verify no cross-realm delivery (subscriber receives nothing)
+
+**Permission Enforcement:**
+- Client with `kv:read` scope sends PUT request
+- Broker returns ERR_UNAUTHORIZED (1001 domain error)
+- Verify client surfaces error correctly to caller
+
+**Reconnect State:**
+- Client subscribes to pattern, closes connection
+- Reconnects with same JWT, old subscription is lost
+- Verify client must re-subscribe explicitly (no auto-recovery)
+
+**Fanout Scale:**
+- Single PUBLISH to 1000 SUBSCRIBE clients
+- All clients receive NOTIFY within 100ms (broker-dependent)
+- Verify no message loss
+
+**Concurrent Request Handling (Pipelining Rejection):**
+- Client sends REQUEST 1 without waiting for response
+- Client sends REQUEST 2 while REQUEST 1 pending
+- Broker behavior is implementation-defined (MAY close connection, MAY serialize)
+- Clients MUST NOT rely on pipelining support
+
 ---
 
 ## Known Broker-Specific Behaviors
 
-These items are **not standardized** and may require broker-specific implementation notes:
+### Implementation Notes
+
+These items are **not standardized** and may require broker-specific implementation notes.
+
+#### Session IDs and State Tracking
+
+**When broker tracks session state:**
+- Notice subscriptions: Broker maintains per-session subscription list
+- Stream sessions: Broker maintains per-session stream offset and metadata
+- RPC workers: Broker maintains per-session worker registration
+
+**Session ID lifetime:**
+- Issued on CONNECT, unique per connection
+- Lost on disconnect (previous session ID becomes invalid)
+- NOT returned to client in standard response (internal only, except where specified per domain)
+
+#### Resource Disambiguation (KV/Queue)
+
+Some domains derive resource from context rather than explicit payload:
+- **KV transactions:** First TLV field after BEGIN is resource name (implicit in transaction context)
+- **Queue operations:** Route scheme disambiguates (vs. Stream or RPC)
+
+Clients MUST be aware that breaking connection mid-transaction loses context (transaction auto-rollback).
+
+#### Serialization Formats (Domain-Specific)
+
+- **Stream data:** Binary-safe; format broker-defined (client treats as opaque payload)
+- **RPC response:** Binary-safe; serialization app-dependent
+- **Lease tokens:** Opaque binary; do not parse or modify
+
+#### Version Negotiation (Future)
+
+No version negotiation in current protocol. If new verbs are added:
+1. New verb codes use next available in range (e.g., 109 for KV)
+2. Old clients reject unknown verbs with ERR_UNKNOWN_VERB (domain error)
+3. Clients MUST gracefully handle unknown verbs (close connection or error)
+
+Recommended: Brokers should document supported verbs and wire codes in deployment docs.
+
+---
+
+### Broker-Specific Behaviors Summary
 
 1. **Session ID exposure**: Notice/Stream payloads include session IDs, but no standard server-to-client notification mechanism yet
 2. **KV/Queue routing**: KV/Queue payloads do not include route; broker derives from envelope/connection context
