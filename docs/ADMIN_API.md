@@ -769,6 +769,71 @@ POST /admin/sessions/{session_id}/close
 
 ---
 
+## Implementation Status
+
+### ✅ Implemented Endpoints
+
+**Health Probes (No Auth)**:
+- `GET /healthz` - Liveness probe
+- `GET /readyz` - Readiness probe
+- `GET /startupz` - Startup probe
+- `GET /health` - Legacy health check
+
+**Metrics (Auth Required)**:
+- `GET /metrics` - Prometheus metrics
+
+**Global Stats (Admin Auth)**:
+- `GET /api/v1/admin/stats` - Global broker and domain statistics
+
+**Domain Stats (Admin Auth)**:
+- `GET /api/v1/admin/kv/stats` - KV domain statistics
+- `GET /api/v1/admin/stream/stats` - Stream domain statistics
+- `GET /api/v1/admin/notice/stats` - Notice domain statistics
+- `GET /api/v1/admin/queue/stats` - Queue domain statistics
+- `GET /api/v1/admin/rpc/stats` - RPC domain statistics
+- `GET /api/v1/admin/lease/stats` - Lease domain statistics
+- `GET /api/v1/admin/schedule/stats` - Schedule domain statistics
+
+**List Endpoints (Admin Auth)** - Infrastructure added, domain implementation pending:
+- `GET /api/v1/admin/kv/transactions?realm={realm}` - List active KV transactions
+- `GET /api/v1/admin/stream/streams?realm={realm}` - List active streams
+- `GET /api/v1/admin/notice/subscriptions?realm={realm}&route_pattern={pattern}` - List subscriptions
+- `GET /api/v1/admin/notice/routes?realm={realm}` - List routes with subscriber counts
+- `GET /api/v1/admin/queue/queues?realm={realm}` - List queues with depths
+- `GET /api/v1/admin/queue/leases?realm={realm}` - List active queue leases
+- `GET /api/v1/admin/rpc/workers?realm={realm}` - List registered RPC workers
+- `GET /api/v1/admin/rpc/pending?realm={realm}` - List pending RPC requests
+- `GET /api/v1/admin/lease/leases?realm={realm}` - List active leases
+- `GET /api/v1/admin/schedule/schedules?realm={realm}` - List schedules
+- `GET /api/v1/admin/sessions?realm={realm}` - List active sessions
+
+### 🚧 To Be Implemented
+
+**Admin Commands (Admin Auth + X-Confirm Header)**:
+- `POST /api/v1/admin/kv/transactions/{tx_id}/rollback` - Force rollback transaction
+- `POST /api/v1/admin/notice/subscriptions/{subscription_id}/cancel` - Cancel subscription
+- `POST /api/v1/admin/queue/leases/{lease_id}/expire` - Force expire lease
+- `POST /api/v1/admin/rpc/requests/{correlation_id}/cancel` - Cancel RPC request
+- `POST /api/v1/admin/lease/leases/{lease_id}/release` - Force release lease
+- `POST /api/v1/admin/schedule/schedules/{schedule_id}/trigger` - Trigger schedule manually
+- `POST /api/v1/admin/sessions/{session_id}/close` - Close session
+
+**Pagination Support**:
+- Add `?limit=` and `?offset=` query parameters to list endpoints
+
+**Domain Integration**:
+- Each domain needs to implement methods to provide list data
+- KV: Track active transactions, expose via admin query
+- Stream: Track active streams, expose via admin query
+- Notice: Track subscriptions and routes, expose via admin query
+- Queue: Track queue depths and leases, expose via admin query
+- RPC: Track workers and pending requests, expose via admin query
+- Lease: Track active leases, expose via admin query
+- Schedule: Track schedules, expose via admin query
+- Sessions: Track active sessions, expose via admin query
+
+---
+
 ## Implementation Notes
 
 ### Metrics Collection

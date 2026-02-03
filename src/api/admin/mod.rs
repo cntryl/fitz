@@ -4,11 +4,13 @@
 //! All endpoints coexist with data plane on same port (path-based routing).
 
 pub mod handlers;
+mod list;
 mod metrics;
 mod probes;
 mod stats;
 
 pub use handlers::handle_request;
+pub use list::*;
 pub use probes::{HealthStatus, ReadyStatus, StartupStatus};
 pub use stats::{DomainStats, GlobalStats};
 

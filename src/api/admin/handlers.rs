@@ -5,6 +5,7 @@ use hyper::{Body, Method, Request, Response};
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use super::list;
 use super::metrics;
 use super::probes;
 use super::stats;
@@ -51,6 +52,114 @@ pub async fn handle_request(
                             .trim_end_matches("/stats");
             
             stats::handle_domain_stats(runtime, domain).await
+        }
+        
+        // List endpoints - KV domain
+        (&Method::GET, "/api/v1/admin/kv/transactions") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_kv_transactions(runtime, realm).await
+        }
+        
+        // List endpoints - Stream domain
+        (&Method::GET, "/api/v1/admin/stream/streams") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_streams(runtime, realm).await
+        }
+        
+        // List endpoints - Notice domain
+        (&Method::GET, "/api/v1/admin/notice/subscriptions") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            let route_pattern = params.get("route_pattern").map(|s| s.as_str());
+            list::handle_list_notice_subscriptions(runtime, realm, route_pattern).await
+        }
+        
+        (&Method::GET, "/api/v1/admin/notice/routes") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_notice_routes(runtime, realm).await
+        }
+        
+        // List endpoints - Queue domain
+        (&Method::GET, "/api/v1/admin/queue/queues") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_queues(runtime, realm).await
+        }
+        
+        (&Method::GET, "/api/v1/admin/queue/leases") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_queue_leases(runtime, realm).await
+        }
+        
+        // List endpoints - RPC domain
+        (&Method::GET, "/api/v1/admin/rpc/workers") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_rpc_workers(runtime, realm).await
+        }
+        
+        (&Method::GET, "/api/v1/admin/rpc/pending") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_rpc_pending(runtime, realm).await
+        }
+        
+        // List endpoints - Lease domain
+        (&Method::GET, "/api/v1/admin/lease/leases") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_leases(runtime, realm).await
+        }
+        
+        // List endpoints - Schedule domain
+        (&Method::GET, "/api/v1/admin/schedule/schedules") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_schedules(runtime, realm).await
+        }
+        
+        // List endpoints - Sessions
+        (&Method::GET, "/api/v1/admin/sessions") => {
+            if !check_admin_auth(&req).await {
+                return Ok(super::unauthorized());
+            }
+            let params = list::parse_query_params(req.uri());
+            let realm = params.get("realm").map(|s| s.as_str());
+            list::handle_list_sessions(runtime, realm).await
         }
         
         // WebSocket upgrade for data plane

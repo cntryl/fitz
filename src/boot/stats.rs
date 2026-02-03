@@ -255,6 +255,63 @@ impl Runtime {
         // TODO: Calculate from domain metrics
         0.0
     }
+    
+    // List methods for admin API
+    
+    pub fn kv_list_transactions(&self, _realm: Option<&str>) -> Vec<crate::api::admin::KvTransaction> {
+        // TODO: Query KV domain for active transactions
+        vec![]
+    }
+    
+    pub fn stream_list_streams(&self, _realm: Option<&str>) -> Vec<crate::api::admin::StreamInfo> {
+        // TODO: Query Stream domain for active streams
+        vec![]
+    }
+    
+    pub fn notice_list_subscriptions(&self, _realm: Option<&str>, _route_pattern: Option<&str>) -> Vec<crate::api::admin::NoticeSubscription> {
+        // TODO: Query Notice domain for subscriptions
+        vec![]
+    }
+    
+    pub fn notice_list_routes(&self, _realm: Option<&str>) -> Vec<crate::api::admin::NoticeRouteInfo> {
+        // TODO: Query Notice domain for routes with subscriber counts
+        vec![]
+    }
+    
+    pub fn queue_list_queues(&self, _realm: Option<&str>) -> Vec<crate::api::admin::QueueInfo> {
+        // TODO: Query Queue domain for queue depths
+        vec![]
+    }
+    
+    pub fn queue_list_leases(&self, _realm: Option<&str>) -> Vec<crate::api::admin::QueueLease> {
+        // TODO: Query Queue domain for active leases
+        vec![]
+    }
+    
+    pub fn rpc_list_workers(&self, _realm: Option<&str>) -> Vec<crate::api::admin::RpcWorker> {
+        // TODO: Query RPC domain for registered workers
+        vec![]
+    }
+    
+    pub fn rpc_list_pending(&self, _realm: Option<&str>) -> Vec<crate::api::admin::RpcPendingRequest> {
+        // TODO: Query RPC domain for pending requests
+        vec![]
+    }
+    
+    pub fn lease_list_leases(&self, _realm: Option<&str>) -> Vec<crate::api::admin::LeaseInfo> {
+        // TODO: Query Lease domain for active leases
+        vec![]
+    }
+    
+    pub fn schedule_list_schedules(&self, _realm: Option<&str>) -> Vec<crate::api::admin::ScheduleInfo> {
+        // TODO: Query Schedule domain for schedules
+        vec![]
+    }
+    
+    pub fn list_sessions(&self, _realm: Option<&str>) -> Vec<crate::api::admin::SessionInfo> {
+        // TODO: Query session manager for active sessions
+        vec![]
+    }
 }
 
 #[cfg(test)]
@@ -356,6 +413,7 @@ mod tests {
         
         let uptime = runtime.uptime();
         assert!(uptime.as_millis() >= 50);
-        assert!(runtime.uptime_seconds() >= 0);
+        // Uptime seconds is always valid, no assertion needed
+        let _uptime_secs = runtime.uptime_seconds();
     }
 }
