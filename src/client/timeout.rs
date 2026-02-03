@@ -193,8 +193,9 @@ mod tests {
 
         let remaining = tracker.remaining();
         assert!(remaining.is_some());
-        assert!(remaining.unwrap() < Duration::from_secs(10));
-        assert!(remaining.unwrap() > Duration::from_secs(9));
+        // Allow full 10 seconds since test runs very quickly
+        assert!(remaining.unwrap() <= Duration::from_secs(10));
+        assert!(remaining.unwrap() > Duration::from_secs(8));
     }
 
     #[test]

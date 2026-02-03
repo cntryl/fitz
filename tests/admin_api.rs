@@ -1,6 +1,6 @@
 //! Integration test for admin REST API
 
-use fitz::boot::{BootConfig, Runtime};
+use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use hyper::{Body, Method, Request, StatusCode};
 use std::sync::Arc;

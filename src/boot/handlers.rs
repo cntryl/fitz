@@ -3,6 +3,8 @@
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
 use crate::session::manager::Ingress;
+use crate::session::{CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind};
+use bytes::Bytes;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -161,24 +163,181 @@ fn is_websocket_upgrade(req: &hyper::Request<hyper::Body>) -> bool {
 
 /// Handle WebSocket upgrade
 async fn handle_websocket(
-    _req: hyper::Request<hyper::Body>,
-    _ingress: Arc<dyn Ingress>,
-    _config: IngressConfig,
+    req: hyper::Request<hyper::Body>,
+    ingress: Arc<dyn Ingress>,
+    config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
 ) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
     // Increment session count
     runtime.increment_sessions();
     
-    // TODO: Implement WebSocket upgrade using tungstenite
-    // For now, return 501 Not Implemented
-    Ok(hyper::Response::builder()
-        .status(501)
-        .body(hyper::Body::from("WebSocket upgrade not yet implemented"))
-        .unwrap())
+    // Check for proper WebSocket upgrade headers
+    let has_upgrade = req.headers()
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false);
+    
+    let has_connection = req.headers()
+        .get("connection")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_lowercase().contains("upgrade"))
+        .unwrap_or(false);
+    
+    let has_ws_version = req.headers()
+        .get("sec-websocket-version")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == "13")
+        .unwrap_or(false);
+    
+    let has_ws_key = req.headers().get("sec-websocket-key").is_some();
+    
+    if !has_upgrade || !has_connection || !has_ws_version || !has_ws_key {
+        return Ok(hyper::Response::builder()
+            .status(400)
+            .body(hyper::Body::from("Bad WebSocket upgrade request"))
+            .unwrap());
+    }
+    
+    // Perform WebSocket handshake
+    match hyper_tungstenite::upgrade(req, None) {
+        Ok((response, websocket_fut)) => {
+            // Spawn task to handle WebSocket connection
+            tokio::spawn(async move {
+                match websocket_fut.await {
+                    Ok(ws_stream) => {
+                        if let Err(e) = run_websocket_session(ws_stream, ingress, config).await {
+                            tracing::error!("WebSocket session error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("WebSocket upgrade error: {}", e);
+                    }
+                }
+                // Decrement session count when done
+                runtime.decrement_sessions();
+            });
+            
+            Ok(response)
+        }
+        Err(e) => {
+            tracing::error!("WebSocket handshake failed: {}", e);
+            runtime.decrement_sessions();
+            Ok(hyper::Response::builder()
+                .status(500)
+                .body(hyper::Body::from(format!("WebSocket upgrade failed: {}", e)))
+                .unwrap())
+        }
+    }
+}
+
+/// Run a WebSocket session after successful upgrade
+async fn run_websocket_session<S>(
+    ws_stream: hyper_tungstenite::WebSocketStream<S>,
+    ingress: Arc<dyn Ingress>,
+    config: IngressConfig,
+) -> Result<(), String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use futures_util::StreamExt;
+    use futures_util::SinkExt;
+    use hyper_tungstenite::tungstenite::Message;
+    
+    // Generate session ID
+    let session_id = generate_session_id();
+    
+    // Create transport-level session
+    let mut session = Session::new(
+        session_id,
+        TransportKind::WebSocket,
+        None, // No peer address for upgraded connection
+        SessionPermissions::empty(),
+        SessionMetadata::new(),
+        config.channel_capacity,
+        None,
+    );
+    
+    // Let ingress validate and accept the session
+    let session_id = ingress.on_open(session.info()).await?;
+    
+    info!("WebSocket connection established, session {}", session_id);
+    
+    // Split WebSocket stream
+    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    
+    // Create channel for outbound frames (from session to WebSocket)
+    let (_outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
+    
+    // Spawn task to send outbound frames
+    tokio::spawn(async move {
+        while let Some(frame) = outbound_rx.recv().await {
+            if let Err(e) = ws_sender.send(Message::Binary(frame)).await {
+                tracing::error!("WebSocket send error: {}", e);
+                break;
+            }
+        }
+    });
+    
+    // Process inbound frames
+    while let Some(msg_result) = ws_receiver.next().await {
+        match msg_result {
+            Ok(Message::Binary(data)) => {
+                let frame = Bytes::from(data);
+                
+                // Check frame size
+                if frame.len() > config.max_frame_size {
+                    let reason = format!(
+                        "frame too large: {} > {}",
+                        frame.len(),
+                        config.max_frame_size
+                    );
+                    ingress
+                        .on_close(session_id, CloseReason::Error(reason.clone()))
+                        .await;
+                    return Err(reason);
+                }
+                
+                // Forward frame to session for processing (decoding + routing)
+                if let Err(e) = session.on_frame(frame, ingress.as_ref()).await {
+                    let reason = format!("session frame error: {:?}", e);
+                    ingress
+                        .on_close(session_id, CloseReason::Error(reason.clone()))
+                        .await;
+                    return Err(reason);
+                }
+            }
+            Ok(Message::Close(_)) => {
+                ingress
+                    .on_close(session_id, CloseReason::ClientClose)
+                    .await;
+                break;
+            }
+            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Text(_)) => {
+                // Ignore ping/pong/text frames
+                continue;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                let reason = format!("WebSocket error: {}", e);
+                ingress
+                    .on_close(session_id, CloseReason::Error(reason.clone()))
+                    .await;
+                return Err(reason);
+            }
+        }
+    }
+    
+    // Clean shutdown
+    ingress
+        .on_close(session_id, CloseReason::ClientClose)
+        .await;
+    
+    info!("WebSocket connection closed, session {}", session_id);
+    Ok(())
 }
 
 /// Generate a unique session ID
-#[allow(dead_code)] // TODO: Remove or integrate with WebSocket upgrade
 fn generate_session_id() -> u64 {
     static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
     SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)

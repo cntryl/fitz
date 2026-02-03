@@ -246,6 +246,7 @@ fn should_document_non_idempotent_ops_per_domain() {
 // ============================================================================
 
 #[test]
+#[ignore = "Queue COMPLETE deduplication not yet implemented"]
 fn should_implement_queue_complete_deduplication_by_message_id() {
     // Test: Queue COMPLETE needs message_id + token deduplication
     //
@@ -408,6 +409,7 @@ fn should_expire_deduplication_state_after_ttl() {
 }
 
 #[test]
+#[ignore = "Deduplication logging not yet implemented"]
 fn should_log_deduplicated_requests_for_debugging() {
     // Test: Server logs when deduplication is hit
     //

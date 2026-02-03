@@ -200,6 +200,15 @@ impl BootConfig {
     }
 }
 
+/// Type alias for the complex runtime initialization return type
+type RuntimeComponents = (
+    Arc<Router>,
+    Arc<RuntimeIngress>,
+    IngressConfig,
+    crate::runtime::Scheduler,
+    crate::boot::Runtime,
+);
+
 /// Initialize runtime infrastructure
 ///
 /// Creates:
@@ -210,13 +219,7 @@ impl BootConfig {
 /// - Runtime stats tracker for observability
 pub fn init(
     _store: &Arc<cntryl_midge::Engine>,
-) -> BootResult<(
-    Arc<Router>,
-    Arc<RuntimeIngress>,
-    IngressConfig,
-    crate::runtime::Scheduler,
-    crate::boot::Runtime,
-)> {
+) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
 
     // Read auth configuration from BootConfig

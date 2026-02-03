@@ -183,8 +183,7 @@ async fn check_auth(req: &Request<Body>) -> bool {
     // Extract Authorization header
     if let Some(auth_header) = req.headers().get("Authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
-            if auth_str.starts_with("Bearer ") {
-                let token = &auth_str[7..];
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 // TODO: Validate JWT token
                 return !token.is_empty();
             }
