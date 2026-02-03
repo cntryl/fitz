@@ -125,6 +125,8 @@ pub struct Session {
     info: SessionInfo,
     decoder: TlvDecoder,
     mux: Mux,
+    /// Buffer for streaming frames across transport messages
+    buffer: bytes::BytesMut,
 }
 
 /// Configuration used to create sessions. Grouped to avoid long parameter lists.
@@ -212,6 +214,7 @@ impl Session {
             info,
             decoder: TlvDecoder::new(),
             mux,
+            buffer: bytes::BytesMut::with_capacity(4096),
         }
     }
 
@@ -239,6 +242,7 @@ impl Session {
             info,
             decoder: TlvDecoder::new(),
             mux,
+            buffer: bytes::BytesMut::with_capacity(4096),
         }
     }
 
@@ -253,32 +257,51 @@ impl Session {
         frame: Bytes,
         ingress: &dyn Ingress,
     ) -> Result<(), SessionError> {
-        let records = self
-            .decoder
-            .decode_all(&frame)
-            .map_err(SessionError::Decode)?;
+        // Append incoming bytes to per-session buffer and decode as many records
+        self.buffer.extend_from_slice(&frame);
 
-        for record in records {
-            let message = self.mux.route(record).map_err(SessionError::Mux)?;
-            let decision = ingress
-                .on_frame(
-                    self.info.session_id,
-                    message.channel,
-                    message.msg_type,
-                    message.payload,
-                )
-                .await;
+        loop {
+            // Attempt to decode one record from buffer
+            match self.decoder.decode_one_ref(&self.buffer) {
+                Ok((msg_type, slice, consumed)) => {
+                    // Build owned record and route it
+                    let record = crate::protocol::tlv::TlvRecord::new(msg_type, Bytes::copy_from_slice(slice));
+                    let message = self.mux.route(record).map_err(SessionError::Mux)?;
 
-            self.mux.release(message.channel);
+                    let decision = ingress
+                        .on_frame(
+                            self.info.session_id,
+                            message.channel,
+                            message.msg_type,
+                            message.payload,
+                        )
+                        .await;
 
-            match decision {
-                IngressDecision::Accept => continue,
-                IngressDecision::Backpressure => {
-                    return Err(SessionError::Backpressure(message.channel));
+                    self.mux.release(message.channel);
+
+                    match decision {
+                        IngressDecision::Accept => {
+                            // consume bytes and continue
+                            let _ = self.buffer.split_to(consumed);
+                            continue;
+                        }
+                        IngressDecision::Backpressure => {
+                            // leave buffer intact (message held by mux) and propagate backpressure
+                            return Err(SessionError::Backpressure(message.channel));
+                        }
+                        IngressDecision::Close(reason) => {
+                            return Err(SessionError::IngressClose(reason));
+                        }
+                    }
                 }
-                IngressDecision::Close(reason) => {
-                    return Err(SessionError::IngressClose(reason));
+                Err(crate::protocol::tlv::TlvError::IncompleteType)
+                | Err(crate::protocol::tlv::TlvError::IncompleteLength)
+                | Err(crate::protocol::tlv::TlvError::IncompleteValue { .. })
+                | Err(crate::protocol::tlv::TlvError::EmptyFrame) => {
+                    // Incomplete frame or empty buffer: wait for more bytes
+                    break;
                 }
+                Err(e) => return Err(SessionError::Decode(e)),
             }
         }
 
@@ -321,6 +344,88 @@ impl Session {
         } else {
             Err("not authenticated".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::runtime::Runtime;
+    use crate::session::manager::{Ingress, IngressDecision, SessionFrame};
+    use crate::protocol::tlv::{TlvEncoder, MessageType};
+
+    struct DummyIngress {
+        frames: Arc<Mutex<Vec<SessionFrame>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Ingress for DummyIngress {
+        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
+            Ok(1)
+        }
+
+        async fn on_frame(
+            &self,
+            session_id: u64,
+            channel_id: crate::protocol::frame::ChannelId,
+            _msg_type: crate::protocol::tlv::MessageType,
+            message_payload: bytes::Bytes,
+        ) -> IngressDecision {
+            let mut vec = self.frames.lock().unwrap();
+            vec.push(SessionFrame { session_id, channel_id, payload: message_payload });
+            IngressDecision::Accept
+        }
+
+        async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
+    }
+
+    #[test]
+    fn should_buffer_partial_frames() {
+        // Arrange
+        let rt = Runtime::new().unwrap();
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let ingress = DummyIngress { frames: frames.clone() };
+
+        let config = NewSessionConfig::unauthenticated(
+            TransportKind::Tcp,
+            None,
+            SessionPermissions::empty(),
+            SessionMetadata::new(),
+            10,
+            None,
+            crate::runtime::routing::RouteFamily::new(0),
+        );
+
+        let mut session = Session::new(42, config);
+
+        // Build a TLV message and split it into two parts
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(1), b"abcdefgh");
+        let data = encoder.finish();
+        let split = data.len() / 2;
+        let part1 = data.slice(0..split);
+        let part2 = data.slice(split..);
+
+        // Act - send first partial part (should not error)
+        let ingress_ref: &dyn Ingress = &ingress;
+        rt.block_on(async {
+            session.on_frame(part1, ingress_ref).await.unwrap();
+        });
+
+        // No frames processed yet
+        assert_eq!(frames.lock().unwrap().len(), 0);
+
+        // Act - send second part (completes message)
+        rt.block_on(async {
+            session.on_frame(part2, ingress_ref).await.unwrap();
+        });
+
+        // Assert - now one frame processed
+        assert_eq!(frames.lock().unwrap().len(), 1);
+        let f = &frames.lock().unwrap()[0];
+        assert_eq!(f.session_id, 42);
+        assert_eq!(f.payload, b"abcdefgh".as_ref());
     }
 }
 
