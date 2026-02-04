@@ -36,7 +36,7 @@ impl MessageType {
     }
 
     pub fn encoded_size(&self, value_len: usize) -> usize {
-        self.encoded_type_len() + 4 + value_len
+        self.encoded_type_len() + 2 + value_len
     }
 }
 
@@ -94,6 +94,8 @@ pub enum TlvError {
     InvalidTypeEncoding,
     /// Value length too large
     LengthTooLarge(u32),
+    /// Duplicate tag within a single frame
+    DuplicateTag(u16),
     /// Buffer empty
     EmptyFrame,
 }
@@ -110,6 +112,7 @@ impl fmt::Display for TlvError {
             ),
             Self::InvalidTypeEncoding => write!(f, "invalid type encoding"),
             Self::LengthTooLarge(len) => write!(f, "value length too large: {}", len),
+            Self::DuplicateTag(tag) => write!(f, "duplicate tag in frame: {}", tag),
             Self::EmptyFrame => write!(f, "empty frame"),
         }
     }
@@ -126,7 +129,8 @@ pub struct TlvDecoder {
 impl TlvDecoder {
     pub fn new() -> Self {
         Self {
-            max_value_len: 256 * 1024 * 1024,
+            // Default to u16 maximum to match TLV value size invariant (<= 65535 bytes)
+            max_value_len: u16::MAX as u32,
         }
     }
 
@@ -168,17 +172,12 @@ impl TlvDecoder {
             MessageType(value)
         };
 
-        // Read length (4 bytes BE)
-        if input.len() < offset + 4 {
+        // Read length (2 bytes BE)
+        if input.len() < offset + 2 {
             return Err(TlvError::IncompleteLength);
         }
-        let len = u32::from_be_bytes([
-            input[offset],
-            input[offset + 1],
-            input[offset + 2],
-            input[offset + 3],
-        ]) as usize;
-        offset += 4;
+        let len = u16::from_be_bytes([input[offset], input[offset + 1]]) as usize;
+        offset += 2;
 
         if (len as u32) > self.max_value_len {
             return Err(TlvError::LengthTooLarge(len as u32));
@@ -211,8 +210,12 @@ impl TlvDecoder {
     pub fn decode_into(&self, input: &[u8], out: &mut Vec<TlvRecord>) -> Result<usize, TlvError> {
         let mut offset = 0usize;
         let mut count = 0usize;
+        let mut seen = std::collections::HashSet::new();
         while offset < input.len() {
             let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
+            if !seen.insert(msg_type.as_u16()) {
+                return Err(TlvError::DuplicateTag(msg_type.as_u16()));
+            }
             out.push(TlvRecord::new(msg_type, Bytes::copy_from_slice(slice)));
             offset += consumed;
             count += 1;
@@ -228,8 +231,12 @@ impl TlvDecoder {
     ) -> Result<usize, TlvError> {
         let mut offset = 0usize;
         let mut count = 0usize;
+        let mut seen = std::collections::HashSet::new();
         while offset < input.len() {
             let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
+            if !seen.insert(msg_type.as_u16()) {
+                return Err(TlvError::DuplicateTag(msg_type.as_u16()));
+            }
             out.push(TlvRef {
                 ty: msg_type,
                 value: slice,
@@ -253,6 +260,7 @@ impl TlvDecoder {
             decoder: self,
             buf: input,
             offset: 0,
+            seen: std::collections::HashSet::new(),
         }
     }
 }
@@ -262,6 +270,7 @@ pub struct TlvDecoderIter<'a> {
     decoder: &'a TlvDecoder,
     buf: &'a [u8],
     offset: usize,
+    seen: std::collections::HashSet<u16>,
 }
 
 impl<'a> Iterator for TlvDecoderIter<'a> {
@@ -274,6 +283,10 @@ impl<'a> Iterator for TlvDecoderIter<'a> {
 
         match self.decoder.decode_one_ref(&self.buf[self.offset..]) {
             Ok((t, slice, consumed)) => {
+                // Duplicate tag check for iterator mode
+                if !self.seen.insert(t.as_u16()) {
+                    return Some(Err(TlvError::DuplicateTag(t.as_u16())));
+                }
                 self.offset += consumed;
                 Some(Ok((t, slice)))
             }
@@ -322,7 +335,13 @@ impl TlvEncoder {
             self.buffer.extend_from_slice(&msg_type.0.to_be_bytes());
         }
 
-        let len_bytes = (value.len() as u32).to_be_bytes();
+        let len = value.len();
+        // enforce u16 limit at encode time for safety
+        if len > u16::MAX as usize {
+            // For encoder (tests/debug), panic; production callers should chunk before encoding
+            panic!("TLV value too large: {} bytes (max {})", len, u16::MAX);
+        }
+        let len_bytes = (len as u16).to_be_bytes();
         self.buffer.extend_from_slice(&len_bytes);
         self.buffer.extend_from_slice(value);
     }
@@ -360,7 +379,7 @@ mod tests {
         // Assert
         assert_eq!(record.msg_type().as_u16(), 42);
         assert_eq!(record.value(), b"hello");
-        assert_eq!(consumed, 1 + 4 + 5);
+        assert_eq!(consumed, 1 + 2 + 5);
 
         // zero-copy variant
         let (mt, slice, cons) = decoder.decode_one_ref(&data).unwrap();
@@ -395,6 +414,23 @@ mod tests {
         assert_eq!(b.0.as_u16(), 2);
         assert_eq!(b.1, b"second");
         assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn should_reject_duplicate_tags() {
+        // Arrange
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(1), b"a");
+        encoder.encode(MessageType::new(1), b"b");
+        let data = encoder.finish();
+
+        // Act
+        let decoder = TlvDecoder::new();
+        let res = decoder.decode_all(&data);
+        println!("duplicate test res = {:?}", res);
+
+        // Assert
+        assert!(matches!(res, Err(TlvError::DuplicateTag(1))));
     }
 
     #[test]
@@ -476,7 +512,8 @@ mod tests {
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::new(1), b"data");
         let mut data = encoder.finish().to_vec();
-        data[1..5].copy_from_slice(&1_000_000_000u32.to_be_bytes());
+        // set length to 2000 (u16) which is > decoder max 1024
+        data[1..3].copy_from_slice(&2000u16.to_be_bytes());
 
         // Act
         let decoder = TlvDecoder::with_max_len(1024);
@@ -494,7 +531,7 @@ mod tests {
         // encode 42 as two-byte BE => invalid, should be rejected
         data.extend_from_slice(&42u16.to_be_bytes());
         // write length 0
-        data.extend_from_slice(&(0u32.to_be_bytes()));
+        data.extend_from_slice(&(0u16.to_be_bytes()));
 
         // Act
         let decoder = TlvDecoder::new();
