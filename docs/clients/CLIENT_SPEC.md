@@ -154,7 +154,7 @@ Each record is:
 - **Type** (u16, big-endian):
   - If `type <= 0xFE`: single byte
   - If `type > 0xFE`: escape byte `0xFF` followed by 2-byte big-endian u16
-- **Length** (u32, big-endian): byte count of value
+- **Length** (u16, big-endian): byte count of value (0..=65535)
 - **Value**: exactly `length` bytes
 
 ### Primitive Encodings
@@ -179,6 +179,8 @@ Clients MUST:
 2. Consume all bytes in request payloads; error if trailing data remains
 3. Encode responses with exact length prefixes
 4. Handle both single-byte and escape-byte MessageTypes identically
+5. **Duplicate TLV tags are NOT permitted.** If a TLV tag appears more than once in a frame the frame **MUST** be treated as malformed and the receiver **MUST** close the connection with a TLV parse error. **Rationale:** Fitz TLV disallows duplicate tags to keep decoding deterministic and to simplify client implementations and conformance testing.
+6. **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads MUST be chunked across multiple TLV records or multiple frames/operations.
 
 ---
 
@@ -190,6 +192,34 @@ Clients MUST:
 - **WebSocket:** `wss://broker:port/` (TLS recommended)
 - **TCP:** `tcp://broker:port` (TLS recommended)
 - Broker address and credentials must be configured before opening
+
+### Client State Machine
+
+Clients SHOULD implement a simple connection state machine to keep behavior predictable and testable.
+
+States:
+- DISCONNECTED → CONNECTING → AUTHENTICATED → CLOSED
+
+Transitions:
+- DISCONNECTED: initial state
+- CONNECTING: transport open; send CONNECT
+- AUTHENTICATED: CONNECT accepted (no close); ready for domain requests
+- CLOSED: transport closed or unrecoverable error
+
+ASCII diagram:
+
+```
+DISCONNECTED --(open transport)--> CONNECTING --(CONNECT & accepted)--> AUTHENTICATED
+     ^                                            |
+     |                                            v
+     +---------(close / unrecoverable)----------- CLOSED
+```
+
+Notes:
+- Clients MUST handle transport failures and implement exponential backoff on reconnect.
+- Clients MUST follow the single in-flight request rule in AUTHENTICATED state.
+
+---
 
 ### 2. Send CONNECT Record (FIRST MESSAGE)
 
@@ -265,6 +295,9 @@ On reconnect with new CONNECT:
 ### 4. Send Domain Requests
 
 After successful CONNECT, client may send domain-specific requests.
+
+Important client model constraint:
+- **Clients MUST NOT have more than one in-flight request per connection.** The Fitz protocol is synchronous (request → response). Sending a second request before receiving the response to the first request is undefined behavior and the broker MAY close the connection. Asynchronous deliveries (e.g., `NOTIFY`, RPC worker invocations) are out-of-band and do not count as request responses; clients MUST handle them separately.
 
 ### 5. Receive Responses
 
@@ -362,6 +395,7 @@ Clients SHOULD implement queueing and backoff:
 - Implement configurable write queue with maximum size
 - On queue full, return error to caller (do NOT silently drop)
 - Implement exponential backoff for retries
+- **Server backpressure:** Brokers MAY signal backpressure via rate-limit or backpressure error codes (or an explicit backpressure frame). Clients MUST respect such signals and apply backoff and queue-management strategies.
 
 ---
 
@@ -401,7 +435,7 @@ A request is valid **only if**:
 3. The method permits those wildcards
 4. The route depth matches the method's plane
 
-**Violations are protocol errors.** Broker MUST reject; client MUST validate before dispatch.
+**Violations are protocol errors.** Broker MUST reject; clients **MAY** perform local route shape validation for ergonomics, but the broker is authoritative. Clients **MUST** accept broker rejection as the source of truth and MUST NOT rely on local validation as a substitute for server-side checks.
 
 ---
 
@@ -854,7 +888,7 @@ client.on("app.events", handler);  // Magic pattern; unclear when subscribed
 Clients MUST:
 
 1. **Track subscriptions per connection** (session-scoped)
-2. **NOT automatically re-subscribe after reconnect** (client chooses)
+2. **NOT assume subscriptions persist across reconnect**; subscriptions are session-scoped and lost on disconnect. Clients **MUST** be able to re-subscribe after reconnect if desired.
 3. **Surface subscription errors** (invalid pattern, limit exceeded)
 4. **Handle duplicate notifications** (at-least-once delivery)
 5. **Provide backoff for subscription errors**
@@ -863,8 +897,9 @@ Clients MUST:
 
 On disconnect:
 - Subscriptions are **lost server-side**
-- Client MUST re-subscribe after reconnect if desired
-- Clients SHOULD implement transparent re-subscription **with exponential backoff**
+- Clients **MUST** re-subscribe explicitly after reconnect if they need subscriptions restored
+- Clients **MAY** implement transparent auto-resubscribe helpers; such helpers SHOULD use exponential backoff and be opt-in
+- **Servers MUST** treat duplicate subscribe requests as idempotent to make client-side resubscribe helpers robust (duplicate subscriptions SHOULD NOT create duplicate deliveries)
 
 ---
 
@@ -917,7 +952,7 @@ raise DomainError(error_msg)
 - Client sends one request, blocks waiting for response
 - Broker processes request, sends exactly one response
 - Client receives response, unblocks
-- **Pipelining:** NOT supported (no request IDs, no response tagging)
+- **Pipelining:** NOT supported (no request IDs, no response tagging). **Clients MUST NOT have more than one in-flight request per connection.** Sending another request before the response to the previous request is received is undefined behavior and the broker MAY close the connection.
 
 **Exception: Streaming and Fanout**
 
@@ -1145,6 +1180,9 @@ client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
 - **Ordering**: Delivered in publish order per subscription
 - **Fanout**: Single publish reaches all matching subscriptions
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
+- **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
+- **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use RPC or Queue for guaranteed delivery or acknowledgement-based workflows.**
 
 #### Error Codes (3xxx range)
 - 3001 = ERR_INVALID_ROUTE
@@ -2211,27 +2249,6 @@ Client implementations MUST pass the following test suite against a reference br
 - Cancel prevents future runs
 - List returns created schedules
 
----
-
-## Acceptance Criteria
-
-Client implementations MUST pass the following test suite against a reference broker:
-
-### Transport-Level Tests
-1. **WebSocket connect** - Establish WebSocket, send CONNECT, verify session opens
-2. **TCP connect** - Establish TCP, send length-prefixed CONNECT, verify session opens
-3. **Frame size enforcement** - Send frame > `max_frame_size`, broker closes connection
-4. **Reconnect** - Drop connection, reconnect, re-send CONNECT, verify session re-established
-
-### Domain-Level Tests (per domain)
-
-**Notice:**
-- Subscribe to pattern, receive matching publications
-- Multiple subscriptions on same pattern both receive
-- Publish with no subscribers returns ok
-- Unsubscribe stops delivery
-- Wildcard patterns match correctly
-
 **Stream:**
 - Begin/append/commit cycle succeeds
 - Read returns records in offset order
@@ -2323,8 +2340,12 @@ These items are **not standardized** and may require broker-specific implementat
 #### Resource Disambiguation (KV/Queue)
 
 Some domains derive resource from context rather than explicit payload:
-- **KV transactions:** First TLV field after BEGIN is resource name (implicit in transaction context)
-- **Queue operations:** Route scheme disambiguates (vs. Stream or RPC)
+- **KV transactions:** The resource is established at `BEGIN` and subsequent KV operations omit a route; resource identity is implicit in the transaction context (this keeps transaction operations compact and bound to the transaction's resource).
+- **Queue operations:** Queue requests usually include route or are derived from the producer/consumer context; the queue name is typically explicit in the operation payload.
+
+Why this matters:
+- Domains that derive resource from context (KV transactions) are **session-scoped**: breaking the connection mid-transaction loses context and triggers rollback.
+- Domains that require explicit routes (Notice, RPC) do so to enable fanout and correct addressing across many subscribers or workers.
 
 Clients MUST be aware that breaking connection mid-transaction loses context (transaction auto-rollback).
 

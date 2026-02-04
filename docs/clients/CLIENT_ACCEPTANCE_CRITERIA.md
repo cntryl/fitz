@@ -75,16 +75,16 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Connection terminates with "unauthenticated: connect required"
 
 ### AC-CONN-006: Re-subscribe on reconnect
-**MUST** re-subscribe to previously active subscriptions after reconnect
+**MUST** be able to re-subscribe to previously active subscriptions after reconnect; clients **MUST NOT** assume subscriptions persist across reconnects
 
 **Given:** Client had active subscriptions or registrations (for example: Notice subscriptions, RPC worker registrations, Stream/subscriber registrations) and was authenticated before a disconnect
 **When:** Connection is lost and the client reconnects and successfully re-authenticates
 **Then:**
-- Client automatically re-sends `Subscribe` (or equivalent) frames for previously active subscriptions
-- Server responds with `SubscribeOk` (or equivalent) for each re-subscription
-- Client resumes receiving new notifications, RPC requests, or stream deliveries for those subscriptions
-- Client handles duplicate deliveries or idempotent subscribe responses gracefully (no resource leaks or duplicate registration side-effects)
-- Reconnect is a new session: clients **MUST** treat a reconnect as a new session and **MUST** re-authenticate and re-register all subscriptions. Servers **MUST** treat duplicate subscriptions as idempotent.
+- Client **MUST** be able to re-send `Subscribe` (or equivalent) frames for previously active subscriptions; subscription state is **not** preserved by the broker on disconnect
+- Client **MAY** implement automatic re-subscribe helpers (opt-in); such helpers **SHOULD** use exponential backoff and handle partial failures
+- Server **MUST** treat duplicate subscribe requests as idempotent (duplicate subscriptions SHOULD NOT create duplicate deliveries)
+- Client resumes receiving new notifications, RPC requests, or stream deliveries only after explicit re-subscription and server confirmation
+- Reconnect is a new session: clients **MUST** re-authenticate and re-register subscriptions when needed.
 
 ---
 
@@ -473,6 +473,8 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 **Notes:**
 - Fitz notices are **best-effort, non-durable signals**. Clients **MUST NOT** assume guaranteed delivery, ordering across reconnects, or replay after disconnect.
+- **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
+- **Usage constraint:** Notices **MUST NOT** be used for workflow coordination, acknowledgement, or durability guarantees; use RPC or Queue for those needs.
 
 ---
 
@@ -801,7 +803,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **Then:**
 - Server closes connection with parse error
 - Client logs error and does NOT retry same malformed data
-- **Duplicate TLV tags are NOT permitted.** If a TLV tag appears more than once the frame **MUST** be treated as malformed and the server **MUST** close the connection with a parse error. Clients **MUST NOT** send duplicate tags.
+- **Duplicate TLV tags are NOT permitted.** If a TLV tag appears more than once the frame **MUST** be treated as malformed and the server **MUST** close the connection with a parse error. **Rationale:** Disallowing duplicate tags keeps decoding deterministic and simplifies client implementations. Clients **MUST NOT** send duplicate tags.
 
 ### AC-ERROR-002: Domain Error Codes
 **MUST** correctly parse domain-specific error codes
@@ -876,6 +878,11 @@ Clients **MUST** interpret error codes using this mapping.
   - Server rejects with frame size error
 - Client chunks large data across multiple frames/operations
 - **A single TLV value MUST NOT exceed 64 KiB.** Large payloads **MUST** be chunked across multiple frames or operations; clients and servers **MUST NOT** rely on a single TLV value larger than 64 KiB even when the frame size permits it.
+
+**Chunking notes:**
+- **RPC** supports explicit chunked responses (see AC-RPC-005).
+- **Stream** responses MAY be split across multiple frames or partial records.
+- Other domains (e.g., KV, Queue) should use multiple logical operations or application-level chunking; clients MUST NOT rely on implicit TLV chunk reassembly in those domains.
 
 ### AC-PERF-002: Connection Pooling
 **SHOULD** reuse connections efficiently
