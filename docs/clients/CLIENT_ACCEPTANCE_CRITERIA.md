@@ -74,6 +74,18 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Server closes connection immediately
 - Connection terminates with "unauthenticated: connect required"
 
+### AC-CONN-006: Re-subscribe on reconnect
+**MUST** re-subscribe to previously active subscriptions after reconnect
+
+**Given:** Client had active subscriptions or registrations (for example: Notice subscriptions, RPC worker registrations, Stream/subscriber registrations) and was authenticated before a disconnect
+**When:** Connection is lost and the client reconnects and successfully re-authenticates
+**Then:**
+- Client automatically re-sends `Subscribe` (or equivalent) frames for previously active subscriptions
+- Server responds with `SubscribeOk` (or equivalent) for each re-subscription
+- Client resumes receiving new notifications, RPC requests, or stream deliveries for those subscriptions
+- Client handles duplicate deliveries or idempotent subscribe responses gracefully (no resource leaks or duplicate registration side-effects)
+- Reconnect is a new session: clients **MUST** treat a reconnect as a new session and **MUST** re-authenticate and re-register all subscriptions. Servers **MUST** treat duplicate subscriptions as idempotent.
+
 ---
 
 ## KV Domain
@@ -459,6 +471,9 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Server returns error code `3009` (Unauthorized)
 - No notifications delivered
 
+**Notes:**
+- Fitz notices are **best-effort, non-durable signals**. Clients **MUST NOT** assume guaranteed delivery, ordering across reconnects, or replay after disconnect.
+
 ---
 
 ## RPC Domain
@@ -786,6 +801,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **Then:**
 - Server closes connection with parse error
 - Client logs error and does NOT retry same malformed data
+- **Duplicate TLV tags are NOT permitted.** If a TLV tag appears more than once the frame **MUST** be treated as malformed and the server **MUST** close the connection with a parse error. Clients **MUST NOT** send duplicate tags.
 
 ### AC-ERROR-002: Domain Error Codes
 **MUST** correctly parse domain-specific error codes
@@ -796,6 +812,19 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Client recognizes error code format: `XXYY` where `XX` = domain, `YY` = error
 - Client maps to appropriate error type (Unauthorized)
 - Client does NOT misinterpret as different error
+
+### Error Code Ranges (Normative)
+| Domain | Code range |
+|--------|------------|
+| KV     | 1000-1999  |
+| Stream | 2000-2999  |
+| Notice | 3000-3999  |
+| Queue  | 4000-4999  |
+| Lease  | 5000-5999  |
+| RPC    | 6000-6999  |
+| Schedule | 7000-7999 |
+
+Clients **MUST** interpret error codes using this mapping.
 
 ### AC-ERROR-003: Retryable vs Fatal Errors
 **MUST** distinguish retryable from fatal errors
@@ -846,6 +875,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
   - Rejects operation before sending, OR
   - Server rejects with frame size error
 - Client chunks large data across multiple frames/operations
+- **A single TLV value MUST NOT exceed 64 KiB.** Large payloads **MUST** be chunked across multiple frames or operations; clients and servers **MUST NOT** rely on a single TLV value larger than 64 KiB even when the frame size permits it.
 
 ### AC-PERF-002: Connection Pooling
 **SHOULD** reuse connections efficiently
@@ -861,7 +891,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **MUST** handle backpressure signals
 
 **Given:** Server experiencing high load  
-**When:** Server sends backpressure signal (queue full, rate limit)  
+**When:** Server responds with rate-limit or backpressure error codes (or an explicit backpressure frame)  
 **Then:**
 - Client pauses sending
 - Client applies exponential backoff
@@ -899,6 +929,7 @@ Use this checklist to verify client implementation completeness:
 - [ ] AC-CONN-003: Auth rejection handling
 - [ ] AC-CONN-004: Anonymous mode
 - [ ] AC-CONN-005: Pre-auth frame rejection
+- [ ] AC-CONN-006: Resubscribe on reconnect
 
 ### KV Domain (11 criteria)
 - [ ] AC-KV-001 through AC-KV-011
