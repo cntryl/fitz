@@ -234,14 +234,14 @@ Length: JWT byte length
 **Example (Authenticated Mode):**
 ```
 [0x01]                    (MessageType=1)
-[0x00 0x00 0x00 0x63]     (Length=99)
+[0x00 0x63]               (Length=99, u16)
 [99 bytes of JWT...]
 ```
 
 **Example (Anonymous Mode - Empty JWT):**
 ```
 [0x01]                    (MessageType=1)
-[0x00 0x00 0x00 0x00]     (Length=0)
+[0x00 0x00]               (Length=0, u16)
 (no JWT bytes)
 ```
 

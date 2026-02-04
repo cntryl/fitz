@@ -877,7 +877,7 @@ Clients **MUST** interpret error codes using this mapping.
   - Rejects operation before sending, OR
   - Server rejects with frame size error
 - Client chunks large data across multiple frames/operations
-- **A single TLV value MUST NOT exceed 64 KiB.** Large payloads **MUST** be chunked across multiple frames or operations; clients and servers **MUST NOT** rely on a single TLV value larger than 64 KiB even when the frame size permits it.
+- **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads **MUST** be chunked across multiple frames or operations; clients and servers **MUST NOT** rely on a single TLV value larger than 65535 bytes even when the frame size permits it.
 
 **Chunking notes:**
 - **RPC** supports explicit chunked responses (see AC-RPC-005).
