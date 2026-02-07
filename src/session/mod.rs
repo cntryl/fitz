@@ -15,6 +15,7 @@
 
 pub mod actor;
 pub mod manager;
+pub mod outbound;
 pub mod permissions;
 pub mod session;
 pub mod tenant;
@@ -22,6 +23,7 @@ pub mod tenant;
 pub use actor::SessionActor;
 
 pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
+pub use outbound::SessionOutboundSink;
 pub use permissions::SessionPermissions;
 pub use session::{
     next_session_id, CloseReason, NewSessionConfig, Session, SessionError, SessionId, SessionInfo,

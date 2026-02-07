@@ -135,7 +135,9 @@ async fn handle_http_upgrade(
             // Check if this is a WebSocket upgrade
             if is_websocket_upgrade(&req) {
                 // Handle WebSocket upgrade
-                handle_websocket(req, ingress, config, runtime).await
+                // Pass router to the handler so it can register session outbound sinks
+                let router = runtime.router.clone();
+                handle_websocket(req, ingress, config, runtime, router).await
             } else {
                 // Handle HTTP admin API
                 crate::api::admin::handlers::handle_request(req, runtime).await
@@ -175,6 +177,7 @@ async fn handle_websocket(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
+    router: Arc<crate::runtime::Router>,
 ) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
     // Increment session count
     runtime.increment_sessions();
@@ -184,11 +187,12 @@ async fn handle_websocket(
         Ok((response, websocket_fut)) => {
             // Spawn task to handle WebSocket connection after response is sent
             let runtime_clone = runtime.clone();
+            let router_clone = router.clone();
             tokio::spawn(async move {
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");
-                        if let Err(e) = run_websocket_session(ws_stream, ingress, config).await {
+                        if let Err(e) = run_websocket_session(ws_stream, ingress, config, router_clone).await {
                             tracing::error!("WebSocket session error: {}", e);
                         }
                     }
@@ -220,6 +224,7 @@ async fn run_websocket_session<S>(
     ws_stream: hyper_tungstenite::WebSocketStream<S>,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
+    router: Arc<crate::runtime::Router>,
 ) -> Result<(), String>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -252,8 +257,16 @@ where
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     // Create channel for outbound frames (from session to WebSocket)
-    let (_outbound_tx, mut outbound_rx) =
+    let (outbound_tx, mut outbound_rx) =
         tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
+
+    // Register outbound sink with router under inbox route
+    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(outbound_tx.clone()));
+    let inbox_route = crate::runtime::routing::RouteAddress::new(
+        session.info().route_family.clone(),
+        crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
+    );
+    router.register(inbox_route.clone(), sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>);
 
     // Spawn task to send outbound frames
     tokio::spawn(async move {
@@ -314,6 +327,9 @@ where
 
     // Clean shutdown
     ingress.on_close(session_id, CloseReason::ClientClose).await;
+
+    // Unregister outbound sink
+    let _ = router.unregister(&inbox_route);
 
     info!("WebSocket connection closed, session {}", session_id);
     Ok(())

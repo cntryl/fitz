@@ -25,13 +25,13 @@ pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<StreamMessage
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        200 => parse_begin(&mut dec),
-        201 => parse_append(&mut dec),
-        202 => parse_commit(&mut dec),
-        203 => parse_rollback(&mut dec),
-        204 => parse_read(&mut dec),
-        205 => parse_last(&mut dec),
-        206 => parse_get_metadata(&mut dec),
+        600 => parse_begin(&mut dec),
+        601 => parse_append(&mut dec),
+        602 => parse_commit(&mut dec),
+        603 => parse_rollback(&mut dec),
+        604 => parse_read(&mut dec),
+        605 => parse_last(&mut dec),
+        606 => parse_get_metadata(&mut dec),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }

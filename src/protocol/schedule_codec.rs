@@ -32,9 +32,9 @@ pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<ScheduleMessa
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        500 => parse_create(&mut dec),
-        501 => parse_cancel(&mut dec),
-        502 => parse_list(&mut dec),
+        700 => parse_create(&mut dec),
+        701 => parse_cancel(&mut dec),
+        702 => parse_list(&mut dec),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }

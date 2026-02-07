@@ -197,3 +197,43 @@ pub fn default_anonymous_permissions() -> crate::session::permissions::SessionPe
     ];
     crate::session::permissions::SessionPermissions::from_permissions(perms)
 }
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use base64::Engine;
+    use jsonwebtoken::{Header, EncodingKey, Algorithm};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn should_verify_permissions_using_inline_jwks_for_hmac_token() {
+        // Arrange
+        let secret = b"test_secret";
+        let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret);
+        let jwks_json = json!({
+            "keys": [{ "kty": "oct", "kid": "", "k": k_b64 }]
+        })
+        .to_string();
+
+        cache_jwks_from_json_with_ttl("inline://local", &jwks_json, 3600).unwrap();
+
+        let claims = json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:1",
+            "exp": 9999999999u64,
+            "tid": "realm1",
+            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+        });
+
+        let header = Header::new(Algorithm::HS256);
+        let token = jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
+
+        // Act
+        let perms = permissions_from_jwt_using_jwks(&token, "inline://local").await.unwrap();
+
+        // Assert
+        let route = crate::runtime::routing::Route::new("stream://realm1/area1/orders/1".to_string());
+        assert!(perms.allows(&route, Access::Write));
+    }
+}

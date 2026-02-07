@@ -225,7 +225,9 @@ pub fn init(_store: &Arc<cntryl_midge::Engine>) -> BootResult<RuntimeComponents>
 
     // Create runtime components
     let router = Arc::new(Router::new());
-    let ingress = Arc::new(RuntimeIngress::new(config.auth_required));
+    // Attach router to ingress so frames can be dispatched into domains
+    let ingress = Arc::new(RuntimeIngress::new(config.auth_required).with_router(router.clone()));
+
     let ingress_config = IngressConfig::default()
         .with_frame_size(1024 * 1024) // 1 MB
         .with_channel_capacity(1000);

@@ -26,11 +26,11 @@ pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<NotificationM
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        100 => parse_publish(&mut dec).map(NotificationMessage::Publish),
-        101 => parse_subscribe(&mut dec).map(NotificationMessage::Subscribe),
-        102 => parse_unsubscribe(&mut dec).map(NotificationMessage::Unsubscribe),
-        103 => parse_unsubscribe_all(&mut dec).map(NotificationMessage::UnsubscribeAll),
-        104 => parse_notify(&mut dec).map(NotificationMessage::Notify),
+        500 => parse_publish(&mut dec).map(NotificationMessage::Publish),
+        501 => parse_subscribe(&mut dec).map(NotificationMessage::Subscribe),
+        502 => parse_unsubscribe(&mut dec).map(NotificationMessage::Unsubscribe),
+        503 => parse_unsubscribe_all(&mut dec).map(NotificationMessage::UnsubscribeAll),
+        504 => parse_notify(&mut dec).map(NotificationMessage::Notify),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
