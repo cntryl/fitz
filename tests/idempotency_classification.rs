@@ -48,7 +48,7 @@ fn should_classify_kv_scan_as_idempotent() {
 fn should_classify_stream_read_as_idempotent() {
     // Arrange
     let domain = Domain::Stream;
-    let msg_type = 204; // Stream READ per src/protocol/stream_codec.rs
+    let msg_type = 604; // Stream READ per src/protocol/stream_codec.rs
 
     // Act
     let result = classify(domain, msg_type);
@@ -61,7 +61,7 @@ fn should_classify_stream_read_as_idempotent() {
 fn should_classify_stream_last_as_idempotent() {
     // Arrange
     let domain = Domain::Stream;
-    let msg_type = 205; // Stream LAST
+    let msg_type = 605; // Stream LAST
 
     // Act
     let result = classify(domain, msg_type);
@@ -84,16 +84,17 @@ fn should_classify_queue_reserve_as_idempotent() {
 }
 
 #[test]
-fn should_classify_notice_query_as_idempotent() {
+fn should_classify_notice_unknown_as_non_idempotent() {
     // Arrange
     let domain = Domain::Notice;
-    let msg_type = 105; // Future QUERY op
+    let msg_type = 505; // Unknown notice msg_type
 
     // Act
     let result = classify(domain, msg_type);
 
     // Assert
-    assert_eq!(result, Idempotency::Idempotent);
+    // Notice has no idempotent operations; unknown types default to non-idempotent
+    assert_eq!(result, Idempotency::NonIdempotent);
 }
 
 #[test]
@@ -118,7 +119,7 @@ fn should_allow_retry_of_idempotent_operations() {
 fn should_track_idempotent_classification_per_domain() {
     // Assert
     assert_eq!(classify(Domain::Kv, 103), Idempotency::Idempotent); // GET
-    assert_eq!(classify(Domain::Stream, 204), Idempotency::Idempotent); // READ
+    assert_eq!(classify(Domain::Stream, 604), Idempotency::Idempotent); // READ
     assert_eq!(classify(Domain::Queue, 202), Idempotency::Idempotent); // RESERVE
 }
 
@@ -156,7 +157,7 @@ fn should_classify_kv_insert_as_non_idempotent() {
 fn should_classify_stream_append_as_non_idempotent() {
     // Arrange
     let domain = Domain::Stream;
-    let msg_type = 201; // Stream APPEND
+    let msg_type = 601; // Stream APPEND
 
     // Act
     let result = classify(domain, msg_type);
@@ -182,7 +183,7 @@ fn should_classify_queue_enqueue_as_non_idempotent() {
 fn should_classify_notice_publish_as_non_idempotent() {
     // Arrange
     let domain = Domain::Notice;
-    let msg_type = 100; // Notice PUBLISH
+    let msg_type = 500; // Notice PUBLISH
 
     // Act
     let result = classify(domain, msg_type);
@@ -239,8 +240,8 @@ fn should_prevent_retry_of_non_idempotent_operations() {
 fn should_document_non_idempotent_ops_per_domain() {
     // Assert
     assert_eq!(classify(Domain::Kv, 104), Idempotency::NonIdempotent); // PUT
-    assert_eq!(classify(Domain::Stream, 201), Idempotency::NonIdempotent); // APPEND
-    assert_eq!(classify(Domain::Notice, 100), Idempotency::NonIdempotent); // PUBLISH
+    assert_eq!(classify(Domain::Stream, 601), Idempotency::NonIdempotent); // APPEND
+    assert_eq!(classify(Domain::Notice, 500), Idempotency::NonIdempotent); // PUBLISH
 }
 
 // ============================================================================

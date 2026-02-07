@@ -166,19 +166,17 @@ fn classify_kv(msg_type: u16) -> Idempotency {
 fn classify_stream(msg_type: u16) -> Idempotency {
     match msg_type {
         // READ, LAST, GET_METADATA are idempotent
-        204..=206 => Idempotency::Idempotent,
+        604..=606 => Idempotency::Idempotent,
         // BEGIN, APPEND, COMMIT, ROLLBACK are non-idempotent
-        200..=203 => Idempotency::NonIdempotent,
+        600..=603 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
 
 fn classify_notice(msg_type: u16) -> Idempotency {
     match msg_type {
-        // QUERY is idempotent
-        105 => Idempotency::Idempotent,
-        // PUBLISH, SUBSCRIBE, UNSUBSCRIBE, UNSUBSCRIBE_ALL, NOTIFY are non-idempotent
-        100..=104 => Idempotency::NonIdempotent,
+        // PUBLISH, SUBSCRIBE, UNSUBSCRIBE, UNSUBSCRIBE_ALL, NOTIFY are all non-idempotent
+        500..=504 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
@@ -222,9 +220,9 @@ fn classify_rpc(msg_type: u16) -> Idempotency {
 fn classify_schedule(msg_type: u16) -> Idempotency {
     match msg_type {
         // LIST is idempotent
-        502 => Idempotency::Idempotent,
+        702 => Idempotency::Idempotent,
         // CREATE, CANCEL are non-idempotent
-        500 | 501 => Idempotency::NonIdempotent,
+        700 | 701 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }

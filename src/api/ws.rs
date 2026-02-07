@@ -12,7 +12,7 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, trace, warn, error};
+use tracing::{debug, error, trace, warn};
 
 /// WebSocket connection handler
 ///
@@ -82,7 +82,12 @@ impl WebSocketHandler {
                         frame.len(),
                         self.config.max_frame_size
                     );
-                    warn!(session_id = self.session_id, frame_len = frame.len(), max = self.config.max_frame_size, "WS frame too large");
+                    warn!(
+                        session_id = self.session_id,
+                        frame_len = frame.len(),
+                        max = self.config.max_frame_size,
+                        "WS frame too large"
+                    );
                     self.ingress
                         .on_close(self.session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -100,7 +105,10 @@ impl WebSocketHandler {
                         .await;
                     return Err(reason);
                 }
-                trace!(session_id = self.session_id, "WS frame forwarded to channel");
+                trace!(
+                    session_id = self.session_id,
+                    "WS frame forwarded to channel"
+                );
 
                 Ok(true)
             }
@@ -116,13 +124,19 @@ impl WebSocketHandler {
                 Ok(true)
             }
             Message::Text(_) => {
-                debug!(session_id = self.session_id, "WS received text frame (ignored)");
+                debug!(
+                    session_id = self.session_id,
+                    "WS received text frame (ignored)"
+                );
                 Ok(true)
             }
             _ => {
-                trace!(session_id = self.session_id, "WS received unknown frame type");
+                trace!(
+                    session_id = self.session_id,
+                    "WS received unknown frame type"
+                );
                 Ok(true)
-            },
+            }
         }
     }
 }

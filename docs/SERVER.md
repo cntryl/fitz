@@ -1,11 +1,6 @@
 # Fitz Server Implementation Guide
-
 **Authoritative guide for implementing a Fitz server broker.**
-
----
-
 ## Table of Contents
-
 1. [Overview](#overview)
 2. [System Architecture](#system-architecture)
 3. [Layer Responsibilities](#layer-responsibilities)
@@ -15,46 +10,33 @@
 7. [Boot & Initialization](#boot--initialization)
 8. [Testing & Validation](#testing--validation)
 9. [Performance & Tuning](#performance--tuning)
-
----
-
 ## Overview
-
 Fitz is a **layered, synchronous-core broker** designed for:
 - **Low-latency domain operations** (KV, queues, pub/sub, streams, RPC, leases, scheduling)
 - **Isolation via realms** (multi-tenant resource partitioning)
 - **Deterministic message routing** (no async jitter in hot paths)
 - **High fanout** (pub/sub with wildcard patterns)
-
 The server is implemented in **async I/O boundaries** (transport) with a **100% synchronous core** (routing, domains). This separation ensures:
 - Clean transport abstraction (WebSocket, TCP, HTTP)
 - Predictable domain latency (no async scheduling variability)
 - Efficient multi-tenant isolation
-
----
-
 ## System Architecture
-
 ### Layered Design
-
 ```
 Layer 1: TRANSPORT (Async)
 ├─ WebSocket (tokio-tungstenite)
 ├─ TCP (length-prefixed frames)
 └─ HTTP (upgrade path to WebSocket)
-
 Layer 2: SESSION (Sync but Transport-Driven)
 ├─ JWT authentication (CONNECT handshake)
 ├─ Frame parsing
 ├─ Permission enforcement
 └─ Route disambiguation
-
 Layer 3: RUNTIME (100% Sync, Deterministic)
 ├─ Router (message delivery, subscription matching)
 ├─ Scheduler (actor execution, priority lanes)
 ├─ Ingress (session management)
 └─ Mux (frame multiplexing across channels)
-
 Layer 4: DOMAINS (100% Sync Business Logic)
 ├─ KV (transactions, isolation, durability)
 ├─ Queue (FIFO, leasing, visibility)
@@ -63,13 +45,10 @@ Layer 4: DOMAINS (100% Sync Business Logic)
 ├─ RPC (request/response, correlation)
 ├─ Lease (distributed locking)
 └─ Schedule (delayed/recurring tasks)
-
 Layer 5: STORAGE (Persistent Backend)
 └─ Midge LSM (key-value durability)
 ```
-
 ### Critical Invariant: Async ↔ Sync Boundary
-
 **Transport (Layer 1) is async.** For each connection:
 1. Async task reads frames
 2. Parses frame bytes
@@ -77,9 +56,7 @@ Layer 5: STORAGE (Persistent Backend)
 4. Waits for synchronous response
 5. Encodes response
 6. Writes frame back
-
 **The domain handler NEVER blocks on async.** It returns immediately with a typed response.
-
 ```
 Async WebSocket Reader
     ↓ (frame bytes)
@@ -93,42 +70,28 @@ Sync TLV Encoder
     ↓ (response bytes)
 Async WebSocket Writer
 ```
-
 This design eliminates async scheduling jitter from the hot path.
-
----
-
 ## Layer Responsibilities
-
 ### Layer 1: Transport
-
 **Files:** `src/api/tcp.rs`, `src/api/ws.rs`
-
 **Responsibility:** Socket I/O and framing.
-
 **Behavior:**
 - Accept connections (TCP: port 4091, WebSocket: port 4090)
 - Read frames with configurable max size
 - Write frames back to client
 - Handle connection lifecycle (close, timeout, error)
 - Per-connection async task (long-lived)
-
 **Constraints:**
 - Do NOT parse domain payloads
 - Do NOT call domain logic
 - Do NOT hold locks across frame boundaries
 - Pass raw frame bytes + metadata (connection ID, frame size) downstream
-
 **Frame Format:**
 - **TCP:** `[u32 BE length][payload bytes]`
 - **WebSocket:** Each binary message is a complete frame
-
 ### Layer 2: Session
-
 **Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/session/manager.rs`
-
 **Responsibility:** Connection authentication, permission enforcement, frame routing.
-
 **Behavior:**
 - Receive raw frame from transport
 - **First frame MUST be CONNECT** with JWT payload
@@ -143,14 +106,11 @@ This design eliminates async scheduling jitter from the hot path.
   - If permission check fails: return domain error with code ERR_UNAUTHORIZED
   - Route to appropriate domain via Router
 - Return response bytes to transport
-
 **Session Lifecycle:**
-
 On successful CONNECT:
 - Create session with extracted JWT claims
 - Track subscriptions, transactions, worker registrations per session
 - Ready to accept domain requests
-
 On disconnect (graceful or abrupt):
 - Immediately clean up:
   - All active subscriptions → drop
@@ -160,79 +120,61 @@ On disconnect (graceful or abrupt):
   - All RPC worker registrations → unregister
   - Queued notifications → discard
 - Session ID becomes invalid (no recovery on reconnect)
-
 On reconnect with new CONNECT:
 - Create new session (new session ID)
 - Old session ID is discarded
 - Client MUST explicitly re-subscribe, re-begin, re-register if needed
-
 **Constraints:**
 - Do NOT implement domain business logic
 - Do NOT block on external async operations
 - Minimal parsing: enough to route, nothing more
 - MUST validate JWT signature (use external JWT library; do NOT implement JWT validation manually)
 - MUST reject expired JWTs (check `exp` claim)
-
 ### Layer 3: Runtime
-
 **Files:** `src/runtime/router.rs`, `src/runtime/actor.rs`, `src/runtime/scheduler.rs`, `src/runtime/routing.rs`, `src/runtime/subscriptions.rs`
-
 **Responsibility:** Message routing, subscription indexing, actor scheduling.
-
 **Components:**
-
 #### Router
 Lock-free pub/sub with DashMap:
 - **Subscriptions:** `{realm} → {area} → {resource} → [subscribers]`
 - **Pattern matching:** Wildcard `*` (one segment) and `**` (any depth)
 - **Fanout:** Single publish reaches all matched subscriptions
 - **Ordering:** Delivered in subscription order per path
-
 #### Actor Mailbox
 Per-domain inbox (MPSC channel):
 - Receives incoming messages
 - Queued by scheduler
 - Domain handler processes one message at a time
-
 #### Scheduler
 Thread pool with priority lanes:
 - Multiple worker threads
 - Executes domain handlers in sequence
 - Respects priorities (control > data > background)
 - No jitter from tokio scheduling
-
 #### Ingress
 Session management:
 - Maintains per-connection session state
 - Tracks active transactions (KV), stream sessions, subscriptions
 - Cleans up resources on disconnect
-
 **Constraints:**
 - ALL functions are synchronous (no `.await`)
 - No async primitives (no tokio locks, channels, timers)
 - Use parking_lot or DashMap for concurrency
 - Return responses immediately; never queue for later
-
 ### Layer 4: Domains
-
 **Files:** `src/domains/kv/`, `src/domains/queue/`, `src/domains/notice/`, etc.
-
 **Responsibility:** Domain-specific business logic.
-
 **Pattern (Synchronous Actor Model):**
 ```rust
 pub struct DomainActor { /* state */ }
-
 pub enum DomainMessage {
     Operation1 { fields... },
     Operation2 { fields... },
 }
-
 pub enum DomainResponse {
     Ok { result_fields... },
     Error(String),
 }
-
 impl DomainActor {
     pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
         match msg {
@@ -242,26 +184,20 @@ impl DomainActor {
     }
 }
 ```
-
 **Per-domain files:**
 - `src/domains/{domain}/mod.rs` - Actor, message/response enums
 - `src/protocol/{domain}_codec.rs` - TLV encode/decode
 - `src/domains/{domain}/handlers.rs` - Business logic (transactions, leases, etc.)
-
 **Constraints:**
 - NEVER call `.await`
 - NEVER use tokio types (tokio::spawn, tokio::sync, etc.)
 - NEVER perform blocking I/O (use storage API synchronously)
 - Return typed `DomainResponse` immediately
-
 ### Layer 5: Storage
-
 **File:** Midge LSM (external crate)
-
 **API:**
 ```rust
 pub struct Engine { /* LSM state */ }
-
 impl Engine {
     pub fn get(&self, key: &[u8]) -> Result<Vec<u8>>;
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
@@ -270,34 +206,24 @@ impl Engine {
     pub fn transaction<F>(&mut self, f: F) -> Result<()> where F: FnOnce(&mut Txn);
 }
 ```
-
 **Key-value schema for each domain:**
 - **KV:** `{realm}/{area}/{resource}/{key}` → `{value}`
 - **Stream:** `{realm}/{area}/{resource}/offset:{offset}` → `{record}`
 - **Queue:** `{realm}/{area}/{resource}/msg:{message_id}` → `{body}`
 - **Lease:** `{realm}/{area}/{resource}` → `{owner, ttl, token}`
-
----
-
 ## Wire Protocol Implementation
-
 ### TLV Encoding/Decoding
-
 **Location:** `src/protocol/tlv.rs`
-
 TLV format (already defined in [CLIENT.md](CLIENT.md)):
 - Type: u16 (single byte if ≤0xFE, else 0xFF escape + 2-byte BE)
 - Length: u32 BE
 - Value: exactly `length` bytes
-
 **Implementation pattern:**
-
 ```rust
 pub struct TlvDecoder<'a> {
     bytes: &'a [u8],
     offset: usize,
 }
-
 impl TlvDecoder {
     pub fn new(bytes: &[u8]) -> Self { /* ... */ }
     
@@ -309,11 +235,9 @@ impl TlvDecoder {
     pub fn get_bytes(&mut self) -> Result<Vec<u8>> { /* ... */ }
     pub fn is_complete(&self) -> bool { /* ... */ }
 }
-
 pub struct TlvEncoder {
     bytes: Vec<u8>,
 }
-
 impl TlvEncoder {
     pub fn new() -> Self { /* ... */ }
     
@@ -326,17 +250,13 @@ impl TlvEncoder {
     pub fn finish(self) -> Vec<u8> { /* ... */ }
 }
 ```
-
 **Rules:**
 - All integers are big-endian
 - Strings and bytes are `[u32 len][data]`
 - Consume all bytes in request; error if trailing data
 - Encode response deterministically
-
 ### Frame Format Handling
-
 **TCP (Length-Prefixed):**
-
 ```rust
 pub async fn create_session(
     stream: TcpStream,
@@ -366,9 +286,7 @@ pub async fn create_session(
     }
 }
 ```
-
 **WebSocket (Binary Messages):**
-
 ```rust
 pub async fn handle_websocket(
     socket: WebSocketStream,
@@ -392,15 +310,9 @@ pub async fn handle_websocket(
     }
 }
 ```
-
----
-
 ## Domain Implementation
-
 ### Codec Pattern (All Domains)
-
 Every domain has two core functions:
-
 ```rust
 /// Parse TLV bytes → typed message
 pub fn parse_request(
@@ -415,7 +327,6 @@ pub fn parse_request(
         _ => Err(format!("Unknown message type: {}", ctx.msg_type)),
     }
 }
-
 /// Encode response → TLV bytes
 pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
     let mut enc = TlvEncoder::new();
@@ -432,11 +343,8 @@ pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
     enc.finish()
 }
 ```
-
 ### KV Domain Example
-
 **File:** `src/domains/kv/mod.rs`
-
 ```rust
 pub enum KvMessage {
     Begin { resource: String, mode: TxMode },
@@ -445,19 +353,16 @@ pub enum KvMessage {
     Commit { tx_id: u64 },
     Rollback { tx_id: u64 },
 }
-
 pub enum KvResponse {
     BeginOk { tx_id: u64 },
     GetOk { found: bool, value: Vec<u8> },
     Ok,
     Error(String),
 }
-
 pub struct KvActor {
     transactions: HashMap<u64, KvTransaction>,
     store: Arc<Storage>,
 }
-
 impl KvActor {
     pub fn handle(&mut self, msg: KvMessage) -> KvResponse {
         match msg {
@@ -480,9 +385,7 @@ impl KvActor {
     }
 }
 ```
-
 **Codec** (`src/protocol/kv_codec.rs`):
-
 ```rust
 pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<KvMessage, String> {
     let mut dec = TlvDecoder::new(payload);
@@ -505,7 +408,6 @@ pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<KvMessage, St
         _ => Err(format!("Unknown KV message type: {}", ctx.msg_type)),
     }
 }
-
 pub fn encode_response(response: &KvResponse) -> Vec<u8> {
     let mut enc = TlvEncoder::new();
     
@@ -528,27 +430,21 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
     enc.finish()
 }
 ```
-
 ### Notice Domain (Pub/Sub) Example
-
 **File:** `src/domains/notice/mod.rs`
-
 ```rust
 pub struct NoticeActor {
     subscriptions: Vec<Subscription>, // Pattern → Subscribers
 }
-
 pub enum NoticeMessage {
     Publish { route: String, payload: Vec<u8> },
     Subscribe { pattern: String, subscriber_route: String },
     Unsubscribe { pattern: String, subscriber_route: String },
 }
-
 pub enum NoticeResponse {
     Ok { subscription_id: u64 },
     Error(String),
 }
-
 impl NoticeActor {
     pub fn handle(&mut self, msg: NoticeMessage) -> NoticeResponse {
         match msg {
@@ -577,11 +473,8 @@ impl NoticeActor {
     }
 }
 ```
-
 ### Pattern Matching
-
 For Notice (pub/sub) and Stream subscriptions, implement wildcard matching:
-
 ```rust
 /// Match a route against a pattern.
 /// `*` = one segment, `**` = zero or more segments
@@ -591,7 +484,6 @@ pub fn matches_pattern(route: &str, pattern: &str) -> bool {
     
     match_parts(&route_parts, &pattern_parts)
 }
-
 fn match_parts(route: &[&str], pattern: &[&str]) -> bool {
     if pattern.is_empty() {
         return route.is_empty();
@@ -621,15 +513,9 @@ fn match_parts(route: &[&str], pattern: &[&str]) -> bool {
     }
 }
 ```
-
----
-
 ## Authentication & TLS
-
 ### JWT Validation (Layer 2: Session)
-
 Brokers MUST validate JWT in CONNECT handshake:
-
 1. **Signature Validation:** Use external JWT library (e.g., `jsonwebtoken` in Rust)
    - Extract public key from configured issuer
    - Validate signature using `HS256`, `RS256`, or configured algorithm
@@ -644,51 +530,36 @@ Brokers MUST validate JWT in CONNECT handshake:
    - Route realm ∈ JWT realm (exact match)
    - Route area ∈ JWT areas
    - Request verb ∈ JWT scopes
-
 If any check fails:
 - Reject with domain error code `*001` (ERR_UNAUTHORIZED)
 - Log rejection for audit
 - Continue accepting subsequent requests from same session
-
 ### TLS Configuration
-
 Brokers SHOULD support TLS for both WebSocket and TCP:
-
 1. **WebSocket TLS:**
    - Listen on port 4090 (default) with TLS
    - Use `wss://` scheme
    - Configure certificate and private key
-
 2. **TCP TLS:**
    - Listen on port 4091 (default) with TLS
    - Upgrade connection after handshake
    - Configure certificate and private key
-
 3. **Certificate Management:**
    - Load from file on startup
    - Support certificate rotation without restart (future enhancement)
    - Log certificate expiry warnings
-
 4. **Cipher Suites:**
    - Use strong modern cipher suites (TLS 1.2+)
    - Disable weak ciphers (RC4, DES, NULL)
-
 ### Session Identification
-
 Brokers SHOULD NOT expose session IDs to clients in standard responses. Session IDs are internal implementation detail. However, for debugging and logs:
 - Generate unique session ID per connection
 - Track in logs for audit trail
 - Use for internal state management (transactions, subscriptions)
 - Discard on disconnect
-
----
-
 ## Boot & Initialization
-
 ### Boot Flow
-
 **File:** `src/boot/mod.rs`
-
 ```rust
 pub async fn boot(config: BootConfig) -> Result<()> {
     // 1. Initialize logging
@@ -723,11 +594,8 @@ pub async fn boot(config: BootConfig) -> Result<()> {
     Ok(())
 }
 ```
-
 ### Configuration
-
 **Type:** `BootConfig`
-
 ```rust
 pub struct BootConfig {
     pub http_port: u16,              // WebSocket listener (default: 4090)
@@ -738,7 +606,6 @@ pub struct BootConfig {
     pub max_frame_size: usize,       // Max frame bytes (default: 1MB)
     pub channel_capacity: usize,     // Queue depth (default: 1000)
 }
-
 impl BootConfig {
     pub fn new() -> Self { /* ... */ }
     
@@ -747,20 +614,13 @@ impl BootConfig {
     pub fn with_storage_path(mut self, path: String) -> Self { self.storage_path = path; self }
 }
 ```
-
----
-
 ## Testing & Validation
-
 ### Unit Tests (Per Domain)
-
 Each domain should have comprehensive unit tests for:
-
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn should_parse_operation_from_tlv() {
         // Arrange
@@ -768,53 +628,41 @@ mod tests {
         enc.put_u64(123);
         enc.put_string("test");
         let bytes = enc.finish();
-
         // Act
         let ctx = FrameContext { msg_type: 100, /* ... */ };
         let result = parse_request(&ctx, &bytes);
-
         // Assert
         assert!(result.is_ok());
     }
-
     #[test]
     fn should_encode_response() {
         // Arrange
         let response = DomainResponse::Ok { /* ... */ };
-
         // Act
         let bytes = encode_response(&response);
-
         // Assert
         assert!(!bytes.is_empty());
     }
 }
 ```
-
 ### Integration Tests
-
 **File:** `tests/*.rs`
-
 ```rust
 #[tokio::test]
 async fn test_kv_begin_get_commit() {
     // Arrange
     let broker = start_broker(Default::default()).await;
     let client = connect_client(&broker).await;
-
     // Act
     client.send_connect_frame().await;
     let tx_id = client.send_begin_frame("resource", TxMode::ReadWrite).await;
     client.send_put_frame(tx_id, "key", "value").await;
     client.send_commit_frame(tx_id).await;
-
     // Assert
     // Verify transaction committed and value persisted
 }
 ```
-
 ### Test Checklist
-
 - [ ] All domain operations parse correctly
 - [ ] All domain operations encode correctly
 - [ ] Error responses encode correctly
@@ -823,26 +671,18 @@ async fn test_kv_begin_get_commit() {
 - [ ] Permissions enforced (JWT claims)
 - [ ] Backpressure handled (queue limits)
 - [ ] Reconnection restores state (subscriptions, etc.)
-
----
-
 ## Performance & Tuning
-
 ### Sync-Core Benefits
-
 1. **Predictable latency** - No async scheduling jitter
 2. **CPU efficiency** - No context switches in hot path
 3. **Deterministic behavior** - Reproducible test results
 4. **Easier debugging** - Stack traces are meaningful
-
 ### Optimization Strategies
-
 #### 1. Lock-Free Data Structures
 Use DashMap for subscriptions and routing:
 ```rust
 pub type SubscriptionMap = DashMap<String, Vec<Subscription>>;
 ```
-
 #### 2. Pre-allocation
 Allocate response buffers once:
 ```rust
@@ -851,7 +691,6 @@ pub fn encode_response_into(response: &Response, buf: &mut Vec<u8>) {
     // ... encode into pre-allocated buffer
 }
 ```
-
 #### 3. Zero-Copy Patterns
 Pass `&[u8]` slices instead of cloning:
 ```rust
@@ -859,7 +698,6 @@ pub fn handle(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
     // Store references, not copies
 }
 ```
-
 #### 4. Batch Operations
 For fanout (Notice publish), batch notifications:
 ```rust
@@ -869,14 +707,10 @@ for subscriber in matched_subscribers {
 }
 router.deliver_batch(batch);
 ```
-
 ### Monitoring
-
 Add tracing for performance insights:
-
 ```rust
 use tracing::{instrument, span, Level};
-
 #[instrument(skip(msg))]
 pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
     let span = span!(Level::DEBUG, "domain_handler");
@@ -887,53 +721,40 @@ pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
     tracing::debug!("response ready");
 }
 ```
-
 ### Tuning Parameters
-
 | Parameter | Default | Use Case |
 |---|---:|---|
 | `max_frame_size` | 1 MB | Limit large uploads |
 | `channel_capacity` | 1000 | Backpressure threshold |
 | `max_connections` | 10000 | Resource limits |
 | `scheduler_threads` | num_cpus | CPU-bound work |
-
----
-
 ## Error Handling
-
 ### Transport-Level Errors
-
 Connection is **closed** on:
 - Frame size exceeded
 - Invalid TLV encoding (unrecoverable)
 - CONNECT missing or invalid
 - Protocol violation
-
 ```rust
 if payload.len() > max_frame_size {
     // Close connection
     return Err(Error::FrameTooLarge);
 }
 ```
-
 ### Domain-Level Errors
-
 Errors are **returned** in response payload (per-domain encoding):
-
 ```rust
 pub enum DomainResponse {
     Ok { /* result */ },
     Error(String), // Encoded per domain
 }
 ```
-
 **KV example** (error as string):
 ```
 Response (error):
   [u32 BE error_len]
   [bytes error_msg]
 ```
-
 **Notice example** (error with status byte):
 ```
 Response (error):
@@ -941,21 +762,14 @@ Response (error):
   [u32 BE] error_len
   [bytes]  error_msg
 ```
-
 ### Idempotency
-
 - **Idempotent ops** (GET, READ, SCAN): safe to retry
 - **Non-idempotent ops** (PUT, PUBLISH, APPEND): clients must not retry (or must deduplicate)
-
 Some operations use **correlation IDs** (RPC):
 - Client-generated UUID (16 bytes)
 - Broker tracks to prevent duplicates
 - Allows safe replay
-
----
-
 ## References
-
 - Protocol specification: [CLIENT.md](CLIENT.md)
 - Transport implementation: `src/api/`
 - Domain implementations: `src/domains/`
@@ -963,4 +777,3 @@ Some operations use **correlation IDs** (RPC):
 - Codecs: `src/protocol/*_codec.rs`
 - Boot: `src/boot/mod.rs`
 - Tests: `tests/`, `benches/`
-

@@ -253,7 +253,10 @@ where
     // Let ingress validate and accept the session
     let session_id = ingress.on_open(session.info()).await?;
 
-    info!(session_id = session_id, "WebSocket session accepted by ingress");
+    info!(
+        session_id = session_id,
+        "WebSocket session accepted by ingress"
+    );
 
     // Split WebSocket stream
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -283,7 +286,10 @@ where
     // Spawn task to send outbound frames
     let ws_session_id = session_id;
     tokio::spawn(async move {
-        tracing::debug!(session_id = ws_session_id, "WS outbound writer task started");
+        tracing::debug!(
+            session_id = ws_session_id,
+            "WS outbound writer task started"
+        );
         while let Some(frame) = outbound_rx.recv().await {
             tracing::debug!(
                 session_id = ws_session_id,
@@ -316,7 +322,12 @@ where
                         frame.len(),
                         config.max_frame_size
                     );
-                    tracing::warn!(session_id = session_id, frame_len = frame.len(), max = config.max_frame_size, "WS frame too large");
+                    tracing::warn!(
+                        session_id = session_id,
+                        frame_len = frame.len(),
+                        max = config.max_frame_size,
+                        "WS frame too large"
+                    );
                     ingress
                         .on_close(session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -332,7 +343,10 @@ where
                         .await;
                     return Err(reason);
                 }
-                tracing::trace!(session_id = session_id, "WS inbound frame processed successfully");
+                tracing::trace!(
+                    session_id = session_id,
+                    "WS inbound frame processed successfully"
+                );
             }
             Ok(Message::Close(_)) => {
                 tracing::debug!(session_id = session_id, "WS received Close frame");
@@ -340,7 +354,10 @@ where
                 break;
             }
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Text(_)) => {
-                tracing::trace!(session_id = session_id, "WS received non-binary frame (ignored)");
+                tracing::trace!(
+                    session_id = session_id,
+                    "WS received non-binary frame (ignored)"
+                );
                 continue;
             }
             Ok(_) => continue,

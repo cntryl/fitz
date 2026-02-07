@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::{debug, trace, warn, error, info};
+use tracing::{debug, error, info, trace, warn};
 
 /// TCP connection handler
 ///
@@ -74,24 +74,28 @@ impl TcpHandler {
 
         loop {
             // Read more data
-            let n = self
-                .stream
-                .read_buf(&mut buffer)
-                .await
-                .map_err(|e| {
-                    error!(session_id = self.session_id, error = %e, "TCP read error");
-                    format!("read error: {}", e)
-                })?;
+            let n = self.stream.read_buf(&mut buffer).await.map_err(|e| {
+                error!(session_id = self.session_id, error = %e, "TCP read error");
+                format!("read error: {}", e)
+            })?;
 
             // 0 bytes means EOF
             if n == 0 {
-                info!(session_id = self.session_id, "TCP connection EOF (client closed)");
+                info!(
+                    session_id = self.session_id,
+                    "TCP connection EOF (client closed)"
+                );
                 self.ingress
                     .on_close(self.session_id, CloseReason::ClientClose)
                     .await;
                 return Ok(());
             }
-            trace!(session_id = self.session_id, bytes_read = n, buffer_len = buffer.len(), "TCP read data");
+            trace!(
+                session_id = self.session_id,
+                bytes_read = n,
+                buffer_len = buffer.len(),
+                "TCP read data"
+            );
 
             // Try to extract complete frames from buffer
             while buffer.len() >= 4 {
@@ -105,7 +109,12 @@ impl TcpHandler {
                 if len > self.config.max_frame_size {
                     let reason =
                         format!("frame too large: {} > {}", len, self.config.max_frame_size);
-                    warn!(session_id = self.session_id, frame_len = len, max = self.config.max_frame_size, "TCP frame too large, closing");
+                    warn!(
+                        session_id = self.session_id,
+                        frame_len = len,
+                        max = self.config.max_frame_size,
+                        "TCP frame too large, closing"
+                    );
                     self.ingress
                         .on_close(self.session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -135,18 +144,30 @@ impl TcpHandler {
                 // Forward to runtime with backpressure handling
                 match self.tx.try_send((self.session_id, frame.clone())) {
                     Ok(()) => {
-                        trace!(session_id = self.session_id, "TCP frame forwarded to channel successfully");
+                        trace!(
+                            session_id = self.session_id,
+                            "TCP frame forwarded to channel successfully"
+                        );
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        warn!(session_id = self.session_id, "TCP channel full, backpressure - retrying after timeout");
+                        warn!(
+                            session_id = self.session_id,
+                            "TCP channel full, backpressure - retrying after timeout"
+                        );
                         tokio::time::sleep(self.config.backpressure_timeout).await;
                         match self.tx.try_send((self.session_id, frame)) {
                             Ok(()) => {
-                                debug!(session_id = self.session_id, "TCP frame forwarded after backpressure retry");
+                                debug!(
+                                    session_id = self.session_id,
+                                    "TCP frame forwarded after backpressure retry"
+                                );
                             }
                             Err(_) => {
                                 let reason = "channel full: backpressure exceeded".to_string();
-                                error!(session_id = self.session_id, "TCP backpressure exceeded, closing session");
+                                error!(
+                                    session_id = self.session_id,
+                                    "TCP backpressure exceeded, closing session"
+                                );
                                 self.ingress
                                     .on_close(self.session_id, CloseReason::Error(reason.clone()))
                                     .await;

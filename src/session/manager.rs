@@ -19,7 +19,7 @@ use crate::session::{CloseReason, SessionInfo};
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{debug, trace, warn, error, info};
+use tracing::{debug, error, info, trace, warn};
 
 /// Outcome from the runtime for a single protocol message
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,7 +193,10 @@ impl Ingress for RuntimeIngress {
         );
         // Verify session exists
         if !self.sessions.contains_key(&session_id) {
-            warn!(session_id = session_id, "Ingress: frame for unknown session");
+            warn!(
+                session_id = session_id,
+                "Ingress: frame for unknown session"
+            );
             return IngressDecision::Close(format!("unknown session: {}", session_id));
         }
 
@@ -203,7 +206,10 @@ impl Ingress for RuntimeIngress {
         let mut notify_frame: Option<SessionFrame> = None;
         {
             let Some(mut entry) = self.sessions.get_mut(&session_id) else {
-                warn!(session_id = session_id, "Ingress: session vanished during frame processing");
+                warn!(
+                    session_id = session_id,
+                    "Ingress: session vanished during frame processing"
+                );
                 return IngressDecision::Close(format!("session vanished: {}", session_id));
             };
             if !entry.authenticated {
@@ -220,7 +226,11 @@ impl Ingress for RuntimeIngress {
                     // Auth is required - parse JWT
                     // Try to prefer verified tokens when an issuer is present.
                     let compact = std::str::from_utf8(&message_payload).unwrap_or("");
-                    debug!(session_id = session_id, jwt_len = compact.len(), "Ingress: parsing CONNECT JWT");
+                    debug!(
+                        session_id = session_id,
+                        jwt_len = compact.len(),
+                        "Ingress: parsing CONNECT JWT"
+                    );
 
                     // First, parse the token without verification to inspect claims for `iss`.
                     match crate::auth::parse_jwt_noverify(compact) {
@@ -441,7 +451,10 @@ impl Ingress for RuntimeIngress {
         }
 
         if let Some(frame) = &notify_frame {
-            debug!(session_id = session_id, "Ingress: auth completed, notifying frame handler");
+            debug!(
+                session_id = session_id,
+                "Ingress: auth completed, notifying frame handler"
+            );
             if let Some(handler) = &self.event_handler {
                 handler(SessionEvent::Frame(frame.clone()));
             }
@@ -526,7 +539,10 @@ impl Ingress for RuntimeIngress {
                             );
                         }
                     } else {
-                        warn!(session_id = session_id, "Ingress: missing session actor for authorization");
+                        warn!(
+                            session_id = session_id,
+                            "Ingress: missing session actor for authorization"
+                        );
                         return IngressDecision::Close(
                             "unauthorized: session actor missing".to_string(),
                         );
@@ -580,7 +596,11 @@ impl Ingress for RuntimeIngress {
             }
         }
 
-        trace!(session_id = session_id, msg_type = msg_type.as_u16(), "Ingress: returning Accept");
+        trace!(
+            session_id = session_id,
+            msg_type = msg_type.as_u16(),
+            "Ingress: returning Accept"
+        );
         IngressDecision::Accept
     }
 

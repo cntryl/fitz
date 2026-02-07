@@ -1,7 +1,5 @@
 # Fitz Admin API Specification
-
 **Purpose**: Runtime visibility, metrics, and operational control for Fitz broker.
-
 **Protocol**: HTTP REST API (coexists with WebSocket data plane on same port)  
 **Port**: Same as data plane (default: 8080)  
 **Route Structure**:  
@@ -16,22 +14,14 @@
   - `/healthz`, `/readyz`, `/startupz` - No authentication (for load balancer health checks)  
   - `/metrics` - **Requires authentication** (JWT or API key)  
   - `/api/v1/admin/*` - **Requires authentication** (JWT or API key with admin permissions)
-
----
-
 ## Design Principles
-
 1. **Read-heavy**: Most operations are queries for visibility
 2. **Safe by default**: Dangerous operations (force rollback, cancel) require explicit confirmation
 3. **Realm-scoped**: All queries can be filtered by realm for multi-tenancy
 4. **Prometheus-compatible**: Metrics endpoint follows Prometheus format
 5. **Minimal dependencies**: No external monitoring system required for basic visibility
 6. **SPA-first**: Web interface served at root, all API routes namespaced
-
----
-
 ## Route Structure
-
 ```
 /                          → SPA (index.html)
 /assets/*                  → SPA static assets (JS, CSS, images)
@@ -48,60 +38,40 @@
 /api/v1/admin/rpc/stats    → RPC domain statistics (auth required)
 /api/v1/admin/lease/stats  → Lease domain statistics (auth required)
 ```
-
 **Authentication Rules**:
 - SPA (`/`, `/assets/*`) - Public access
 - Health probes (`/healthz`, `/readyz`, `/startupz`) - Public access (for K8s/load balancers)
 - Metrics (`/metrics`) - Requires JWT Bearer token
 - Admin API (`/api/v1/admin/*`) - Requires JWT Bearer token with admin scope
-
----
-
 ## Global Endpoints
-
 ### Kubernetes Probes
-
 #### Liveness Probe
-
 ```
 GET /healthz
 ```
-
 **Authentication**: None (public endpoint for kubelet)
-
 **Purpose**: Indicates if the application is alive and should be restarted if unhealthy.
-
 **Response**: 
 - `200 OK` - Application is alive
 - `503 Service Unavailable` - Application is stuck/deadlocked, should be restarted
-
 ```json
 {
   "status": "ok"
 }
 ```
-
 **Criteria**: 
 - Runtime is responsive
 - No critical failures (panics, deadlocks)
 - Does NOT check downstream dependencies
-
----
-
 #### Readiness Probe
-
 ```
 GET /readyz
 ```
-
 **Authentication**: None (public endpoint for kubelet)
-
 **Purpose**: Indicates if the application is ready to accept traffic.
-
 **Response**: 
 - `200 OK` - Ready to accept traffic
 - `503 Service Unavailable` - Not ready, remove from load balancer
-
 ```json
 {
   "status": "ready",
@@ -111,55 +81,37 @@ GET /readyz
   }
 }
 ```
-
 **Criteria**: 
 - Storage engine initialized
 - All domain actors started
 - TCP/WebSocket listeners bound
 - Ready to process requests
-
----
-
 #### Startup Probe
-
 ```
 GET /startupz
 ```
-
 **Authentication**: None (public endpoint for kubelet)
-
 **Purpose**: Indicates if the application has completed startup. Prevents premature liveness checks during slow startup.
-
 **Response**: 
 - `200 OK` - Startup complete
 - `503 Service Unavailable` - Still starting up
-
 ```json
 {
   "status": "started",
   "startup_time_seconds": 2.5
 }
 ```
-
 **Criteria**: 
 - All initialization complete
 - Domain actors ready
 - Listeners bound
-
----
-
 ### Health Check (Legacy)
-
 ```
 GET /health
 ```
-
 **Authentication**: None (public endpoint for load balancers)
-
 **Purpose**: General health check for non-Kubernetes environments.
-
 **Response**: 200 OK if healthy, 503 Service Unavailable if degraded
-
 ```json
 {
   "status": "healthy",
@@ -167,32 +119,22 @@ GET /health
   "version": "0.1.0"
 }
 ```
-
----
-
 ### Metrics (Prometheus Format)
-
 ```
 GET /metrics
 ```
-
 **Authentication**: Required (JWT or API key)
-
 **Response**: Prometheus text format
-
 ```
 # HELP fitz_connections_total Total number of active connections
 # TYPE fitz_connections_total gauge
 fitz_connections_total 142
-
 # HELP fitz_messages_received_total Total messages received
 # TYPE fitz_messages_received_total counter
 fitz_messages_received_total 1847392
-
 # HELP fitz_messages_sent_total Total messages sent
 # TYPE fitz_messages_sent_total counter
 fitz_messages_sent_total 1847390
-
 # HELP fitz_message_latency_seconds Message processing latency
 # TYPE fitz_message_latency_seconds histogram
 fitz_message_latency_seconds_bucket{le="0.001"} 1500000
@@ -200,17 +142,11 @@ fitz_message_latency_seconds_bucket{le="0.01"} 1800000
 fitz_message_latency_seconds_bucket{le="0.1"} 1847000
 ...
 ```
-
----
-
 ### Runtime Stats (Human-Readable)
-
 ```
 GET /admin/stats
 ```
-
 **Response**:
-
 ```json
 {
   "broker": {
@@ -256,21 +192,13 @@ GET /admin/stats
   }
 }
 ```
-
----
-
 ## Domain-Specific Endpoints
-
 ### KV Domain
-
 #### List Active Transactions
-
 ```
 GET /admin/kv/transactions?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "transactions": [
@@ -287,15 +215,11 @@ GET /admin/kv/transactions?realm={realm}
   ]
 }
 ```
-
 #### KV Statistics
-
 ```
 GET /admin/kv/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "transactions_active": 23,
@@ -314,29 +238,18 @@ GET /admin/kv/stats?realm={realm}
   }
 }
 ```
-
 #### Force Rollback Transaction (Admin)
-
 ```
 POST /admin/kv/transactions/{tx_id}/rollback
 ```
-
 **Headers**: `X-Confirm: true` (required for safety)
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ### Stream Domain
-
 #### List Active Streams
-
 ```
 GET /admin/stream/streams?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "streams": [
@@ -352,15 +265,11 @@ GET /admin/stream/streams?realm={realm}
   ]
 }
 ```
-
 #### Stream Statistics
-
 ```
 GET /admin/stream/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "streams_active": 45,
@@ -376,19 +285,12 @@ GET /admin/stream/stats?realm={realm}
   }
 }
 ```
-
----
-
 ### Notice Domain
-
 #### List Active Subscriptions
-
 ```
 GET /admin/notice/subscriptions?realm={realm}&route_pattern={pattern}
 ```
-
 **Response**:
-
 ```json
 {
   "subscriptions": [
@@ -403,15 +305,11 @@ GET /admin/notice/subscriptions?realm={realm}&route_pattern={pattern}
   ]
 }
 ```
-
 #### List Routes with Subscriber Counts
-
 ```
 GET /admin/notice/routes?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "routes": [
@@ -424,15 +322,11 @@ GET /admin/notice/routes?realm={realm}
   ]
 }
 ```
-
 #### Notice Statistics
-
 ```
 GET /admin/notice/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "subscriptions_active": 312,
@@ -442,29 +336,18 @@ GET /admin/notice/stats?realm={realm}
   "fanout_ratio": 4.2
 }
 ```
-
 #### Force Cancel Subscription (Admin)
-
 ```
 POST /admin/notice/subscriptions/{subscription_id}/cancel
 ```
-
 **Headers**: `X-Confirm: true`
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ### Queue Domain
-
 #### List Queues with Depths
-
 ```
 GET /admin/queue/queues?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "queues": [
@@ -480,15 +363,11 @@ GET /admin/queue/queues?realm={realm}
   ]
 }
 ```
-
 #### List Active Leases
-
 ```
 GET /admin/queue/leases?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "leases": [
@@ -505,15 +384,11 @@ GET /admin/queue/leases?realm={realm}
   ]
 }
 ```
-
 #### Queue Statistics
-
 ```
 GET /admin/queue/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "messages_pending": 1847,
@@ -526,29 +401,18 @@ GET /admin/queue/stats?realm={realm}
   }
 }
 ```
-
 #### Force Expire Lease (Admin)
-
 ```
 POST /admin/queue/leases/{lease_id}/expire
 ```
-
 **Headers**: `X-Confirm: true`
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ### RPC Domain
-
 #### List Registered Workers
-
 ```
 GET /admin/rpc/workers?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "workers": [
@@ -563,15 +427,11 @@ GET /admin/rpc/workers?realm={realm}
   ]
 }
 ```
-
 #### List Pending Requests
-
 ```
 GET /admin/rpc/pending?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "requests": [
@@ -585,15 +445,11 @@ GET /admin/rpc/pending?realm={realm}
   ]
 }
 ```
-
 #### RPC Statistics
-
 ```
 GET /admin/rpc/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "workers_registered": 34,
@@ -604,29 +460,18 @@ GET /admin/rpc/stats?realm={realm}
   "average_latency_ms": 125
 }
 ```
-
 #### Cancel Request (Admin)
-
 ```
 POST /admin/rpc/requests/{correlation_id}/cancel
 ```
-
 **Headers**: `X-Confirm: true`
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ### Lease Domain
-
 #### List Active Leases
-
 ```
 GET /admin/lease/leases?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "leases": [
@@ -643,15 +488,11 @@ GET /admin/lease/leases?realm={realm}
   ]
 }
 ```
-
 #### Lease Statistics
-
 ```
 GET /admin/lease/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "leases_active": 18,
@@ -660,29 +501,18 @@ GET /admin/lease/stats?realm={realm}
   "operations_per_second": 5
 }
 ```
-
 #### Force Release Lease (Admin)
-
 ```
 POST /admin/lease/leases/{lease_id}/release
 ```
-
 **Headers**: `X-Confirm: true`
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ### Schedule Domain
-
 #### List Schedules
-
 ```
 GET /admin/schedule/schedules?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "schedules": [
@@ -699,15 +529,11 @@ GET /admin/schedule/schedules?realm={realm}
   ]
 }
 ```
-
 #### Schedule Statistics
-
 ```
 GET /admin/schedule/stats?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "schedules_active": 56,
@@ -717,29 +543,18 @@ GET /admin/schedule/stats?realm={realm}
   "executions_total": 1847392
 }
 ```
-
 #### Trigger Schedule Manually (Admin)
-
 ```
 POST /admin/schedule/schedules/{schedule_id}/trigger
 ```
-
 **Headers**: `X-Confirm: true`
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ## Sessions & Connections
-
 ### List Active Sessions
-
 ```
 GET /admin/sessions?realm={realm}
 ```
-
 **Response**:
-
 ```json
 {
   "sessions": [
@@ -756,35 +571,23 @@ GET /admin/sessions?realm={realm}
   ]
 }
 ```
-
 ### Close Session (Admin)
-
 ```
 POST /admin/sessions/{session_id}/close
 ```
-
 **Headers**: `X-Confirm: true`
-
 **Response**: 200 OK or 404 Not Found
-
----
-
 ## Implementation Status
-
 ### ✅ Implemented Endpoints
-
 **Health Probes (No Auth)**:
 - `GET /healthz` - Liveness probe
 - `GET /readyz` - Readiness probe
 - `GET /startupz` - Startup probe
 - `GET /health` - Legacy health check
-
 **Metrics (Auth Required)**:
 - `GET /metrics` - Prometheus metrics
-
 **Global Stats (Admin Auth)**:
 - `GET /api/v1/admin/stats` - Global broker and domain statistics
-
 **Domain Stats (Admin Auth)**:
 - `GET /api/v1/admin/kv/stats` - KV domain statistics
 - `GET /api/v1/admin/stream/stats` - Stream domain statistics
@@ -793,7 +596,6 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/rpc/stats` - RPC domain statistics
 - `GET /api/v1/admin/lease/stats` - Lease domain statistics
 - `GET /api/v1/admin/schedule/stats` - Schedule domain statistics
-
 **List Endpoints (Admin Auth)** - Infrastructure added, domain implementation pending:
 - `GET /api/v1/admin/kv/transactions?realm={realm}` - List active KV transactions
 - `GET /api/v1/admin/stream/streams?realm={realm}` - List active streams
@@ -806,9 +608,7 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/lease/leases?realm={realm}` - List active leases
 - `GET /api/v1/admin/schedule/schedules?realm={realm}` - List schedules
 - `GET /api/v1/admin/sessions?realm={realm}` - List active sessions
-
 ### 🚧 To Be Implemented
-
 **Admin Commands (Admin Auth + X-Confirm Header)**:
 - `POST /api/v1/admin/kv/transactions/{tx_id}/rollback` - Force rollback transaction
 - `POST /api/v1/admin/notice/subscriptions/{subscription_id}/cancel` - Cancel subscription
@@ -817,10 +617,8 @@ POST /admin/sessions/{session_id}/close
 - `POST /api/v1/admin/lease/leases/{lease_id}/release` - Force release lease
 - `POST /api/v1/admin/schedule/schedules/{schedule_id}/trigger` - Trigger schedule manually
 - `POST /api/v1/admin/sessions/{session_id}/close` - Close session
-
 **Pagination Support**:
 - Add `?limit=` and `?offset=` query parameters to list endpoints
-
 **Domain Integration**:
 - Each domain needs to implement methods to provide list data
 - KV: Track active transactions, expose via admin query
@@ -831,15 +629,9 @@ POST /admin/sessions/{session_id}/close
 - Lease: Track active leases, expose via admin query
 - Schedule: Track schedules, expose via admin query
 - Sessions: Track active sessions, expose via admin query
-
----
-
 ## Implementation Notes
-
 ### Metrics Collection
-
 Each domain should maintain lightweight counters:
-
 ```rust
 pub struct DomainMetrics {
     // Counters (monotonic)
@@ -853,15 +645,12 @@ pub struct DomainMetrics {
     latency_histogram: HistogramVec,
 }
 ```
-
 ### Admin Actor Pattern
-
 Create a dedicated `AdminActor` that:
 1. Receives HTTP requests from admin REST handler
 2. Queries domain actors for stats (via internal message passing)
 3. Aggregates responses
 4. Returns JSON
-
 ```rust
 pub enum AdminQuery {
     KvStats { realm: Option<String> },
@@ -869,7 +658,6 @@ pub enum AdminQuery {
     NoticeSubscriptions { realm: Option<String>, pattern: Option<String> },
     // ... etc
 }
-
 pub enum AdminCommand {
     RollbackTransaction { tx_id: u64 },
     CancelSubscription { subscription_id: u64 },
@@ -877,9 +665,7 @@ pub enum AdminCommand {
     // ... etc
 }
 ```
-
 ### Safety Considerations
-
 1. **Authentication**: 
    - `/healthz`, `/readyz`, `/startupz`, `/health` - No auth (for kubelet/load balancers)
    - `/metrics` - Requires JWT or API key (prevents information disclosure)
@@ -890,13 +676,10 @@ pub enum AdminCommand {
 3. **Confirmation Header**: Dangerous operations require `X-Confirm: true` header
 4. **Audit Logging**: All admin commands should be logged with timestamp, user, and action
 5. **Rate Limiting**: Prevent abuse of admin queries (especially metrics scraping)
-
 ### Probe Implementation
-
 ```rust
 use hyper::{Body, Response, StatusCode};
 use serde_json::json;
-
 pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
     // Check if runtime is responsive
     // Return 503 only if deadlocked/panicked
@@ -907,7 +690,6 @@ pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
         .body(Body::from(serde_json::to_string(&response).unwrap()))
         .unwrap())
 }
-
 pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     // Check if ready to accept traffic
     if !runtime.storage_initialized() || !runtime.domains_ready() {
@@ -938,7 +720,6 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
         .body(Body::from(serde_json::to_string(&response).unwrap()))
         .unwrap())
 }
-
 pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     // Check if startup complete
     if !runtime.startup_complete() {
@@ -961,24 +742,16 @@ pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Inf
         .unwrap())
 }
 ```
-
 ### Performance Considerations
-
 1. **Caching**: Cache stats with 1-second TTL to avoid overwhelming domain actors
 2. **Pagination**: List endpoints should support `?limit=` and `?offset=`
 3. **Filtering**: All list endpoints should support realm filtering
 4. **Async**: Admin queries should not block domain actors
-
----
-
 ## Example Implementation
-
 ### Admin HTTP Handler
-
 ```rust
 use hyper::{Body, Request, Response, StatusCode};
 use serde_json::json;
-
 async fn handle_admin(
     req: Request<Body>,
     runtime: Arc<Runtime>,
@@ -1009,7 +782,6 @@ async fn handle_admin(
         _ => Ok(not_found()),
     }
 }
-
 fn json_response<T: Serialize>(data: T) -> Result<Response<Body>, Infallible> {
     let json = serde_json::to_string(&data).unwrap();
     Ok(Response::builder()
@@ -1018,14 +790,12 @@ fn json_response<T: Serialize>(data: T) -> Result<Response<Body>, Infallible> {
         .body(Body::from(json))
         .unwrap())
 }
-
 fn unauthorized() -> Response<Body> {
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .body(Body::from("Unauthorized"))
         .unwrap()
 }
-
 fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
@@ -1034,26 +804,19 @@ fn not_found() -> Response<Body> {
 }
 ```
 ```
-
 ### Domain Stats Trait
-
 ```rust
 pub trait DomainStats {
     fn get_stats(&self, realm: Option<&str>) -> DomainStatsSnapshot;
     fn get_active_items(&self, realm: Option<&str>) -> Vec<ActiveItem>;
 }
-
 impl DomainStats for KvActor {
     fn get_stats(&self, realm: Option<&str>) -> DomainStatsSnapshot {
         // Return current transaction count, key count, etc.
     }
 }
 ```
-
----
-
 ## Recommended Deployment
-
 1. **Admin API on same port** as data plane (e.g., 8080) for cloud platform compatibility
 2. **Path-based routing**:
    - `/healthz` - Kubernetes liveness probe (no auth)
@@ -1067,18 +830,14 @@ impl DomainStats for KvActor {
 4. **Enable Prometheus scraping** at `/metrics`
 5. **Dashboard**: Use Grafana to visualize metrics
 6. **Alerting**: Set up alerts on key metrics (high latency, error rates)
-
 ### Cloud Platform Compatibility
-
 Works with single-port constraints:
 - ✅ **Azure Container Apps** - Single port with HTTP/WebSocket
 - ✅ **Google Cloud Run** - Single port (HTTP/WebSocket)
 - ✅ **AWS App Runner** - Single port
 - ✅ **Kubernetes** - Single service port with proper probes
 - ✅ **Docker Compose** - Simple port mapping
-
 ### Kubernetes Deployment Example
-
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -1142,7 +901,6 @@ spec:
           limits:
             cpu: 2000m
             memory: 2Gi
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -1156,14 +914,11 @@ spec:
     targetPort: 8080
     name: http
 ```
-
 ### Example Hyper Router
-
 ```rust
 use hyper::{Body, Request, Response, StatusCode, Method};
 use hyper::service::{make_service_fn, service_fn};
 use std::convert::Infallible;
-
 pub async fn handle_request(
     req: Request<Body>,
     runtime: Arc<Runtime>,
@@ -1200,7 +955,6 @@ pub async fn handle_request(
         _ => Ok(not_found()),
     }
 }
-
 pub async fn serve(addr: SocketAddr, runtime: Arc<Runtime>) {
     let runtime = Arc::clone(&runtime);
     
@@ -1220,7 +974,6 @@ pub async fn serve(addr: SocketAddr, runtime: Arc<Runtime>) {
     }
 }
 ```
-
 fn admin_router() -> Router {
     Router::new()
         .route("/stats", get(stats))
@@ -1231,9 +984,7 @@ fn admin_router() -> Router {
         .layer(AuthLayer::new()) // Require JWT auth
 }
 ```
-
 ### Protocol Detection
-
 On port 8080:
 1. **HTTP GET/POST** → Check path:
    - `/healthz`, `/readyz`, `/startupz`, `/health` → Health probes (no auth)
@@ -1241,13 +992,8 @@ On port 8080:
    - `/admin/*` → Admin API (check JWT/API key + admin permission)
    - `/ws` with Upgrade header → WebSocket handler
 2. **Raw TCP** (binary data, no HTTP headers) → TCP frame handler
-
----
-
 ## Minimal Initial Implementation
-
 Start with these essential endpoints:
-
 ### Phase 1: Health & Observability
 1. `GET /healthz` - Kubernetes liveness probe
 2. `GET /readyz` - Kubernetes readiness probe  
@@ -1255,12 +1001,10 @@ Start with these essential endpoints:
 4. `GET /health` - Legacy health check
 5. `GET /metrics` - Prometheus metrics (with auth)
 6. `GET /admin/stats` - Human-readable overview
-
 ### Phase 2: Domain Visibility
 7. `GET /admin/kv/stats` - KV visibility
 8. `GET /admin/notice/subscriptions` - Notice visibility
 9. `GET /admin/queue/queues` - Queue depths
 10. `GET /admin/sessions` - Active connections
-
 ### Phase 3: Admin Commands
 11. Domain-specific commands (rollback, cancel, expire) with `X-Confirm: true`

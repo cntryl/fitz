@@ -17,7 +17,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{debug, trace, warn, error};
+use tracing::{debug, error, trace, warn};
 
 /// Unique session identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
