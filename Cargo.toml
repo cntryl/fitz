@@ -10,7 +10,7 @@ categories = ["message-broker"]
  
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-hyper = { version = "0.14", features = ["full"] }
+hyper = { version = "1.8", features = ["full"] }
 tokio-tungstenite = "0.20"
 tungstenite = "0.20"
 futures = "0.3"
