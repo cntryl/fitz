@@ -33,7 +33,7 @@
 ///
 /// Returns an error if `cf_id` is 0 (the default column family)
 pub fn validate_cf_not_default(cf_id: cntryl_midge::ColumnFamilyId) -> Result<(), String> {
-    if cf_id.0 == 0 {
+    if cf_id == 0 {
         Err("Attempted to use default column family (CF=0). \
              All Fitz domains MUST use explicit RouteFamily → ColumnFamily mapping."
             .to_string())
@@ -69,7 +69,7 @@ pub fn route_family_to_cf(
     family: crate::runtime::routing::RouteFamily,
 ) -> Result<cntryl_midge::ColumnFamilyId, String> {
     validate_route_family(family)?;
-    Ok(cntryl_midge::ColumnFamilyId(family.id()))
+    Ok(family.id())
 }
 
 #[cfg(test)]
@@ -79,14 +79,14 @@ mod tests {
     #[test]
     fn should_accept_valid_cf_id() {
         // Arrange & Act & Assert
-        assert!(validate_cf_not_default(cntryl_midge::ColumnFamilyId(1)).is_ok());
-        assert!(validate_cf_not_default(cntryl_midge::ColumnFamilyId(999)).is_ok());
+        assert!(validate_cf_not_default(1).is_ok());
+        assert!(validate_cf_not_default(999).is_ok());
     }
 
     #[test]
     fn should_reject_default_cf() {
         // Arrange & Act & Assert
-        assert!(validate_cf_not_default(cntryl_midge::ColumnFamilyId(0)).is_err());
+        assert!(validate_cf_not_default(0).is_err());
     }
 
     #[test]
@@ -112,7 +112,7 @@ mod tests {
 
         // Assert
         assert!(cf_id.is_ok());
-        assert_eq!(cf_id.unwrap().0, 42);
+        assert_eq!(cf_id.unwrap(), 42);
     }
 
     #[test]

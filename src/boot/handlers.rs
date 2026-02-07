@@ -267,7 +267,7 @@ where
         outbound_tx.clone(),
     ));
     let inbox_route = crate::runtime::routing::RouteAddress::new(
-        session.info().route_family.clone(),
+        session.info().route_family,
         crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
     );
     router.register(
@@ -336,7 +336,7 @@ where
     ingress.on_close(session_id, CloseReason::ClientClose).await;
 
     // Unregister outbound sink
-    let _ = router.unregister(&inbox_route);
+    router.unregister(&inbox_route);
 
     info!("WebSocket connection closed, session {}", session_id);
     Ok(())

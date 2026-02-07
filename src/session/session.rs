@@ -350,6 +350,13 @@ impl Session {
     }
 }
 
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Generate a unique session ID across transports
+pub fn next_session_id() -> u64 {
+    SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,11 +443,4 @@ mod tests {
         assert_eq!(f.session_id, 42);
         assert_eq!(f.payload, b"abcdefgh".as_ref());
     }
-}
-
-static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-/// Generate a unique session ID across transports
-pub fn next_session_id() -> u64 {
-    SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)
 }

@@ -249,7 +249,7 @@ impl QueueActor {
     /// Recover next message ID from durable storage
     fn recover_next_id(store: &cntryl_midge::Engine, queue_key: &QueueKey) -> u64 {
         let key = Self::meta_key(queue_key);
-        let cf_id = cntryl_midge::ColumnFamilyId(queue_key.family.id());
+        let cf_id = queue_key.family.id();
 
         match store.begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly) {
             Ok(txn) => match txn.get(&key) {
@@ -386,7 +386,7 @@ impl QueueActor {
         let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
 
         // Start transaction (ID allocation will happen inside)
-        let cf_id = cntryl_midge::ColumnFamilyId(self.queue_key.family.id());
+        let cf_id = self.queue_key.family.id();
         let mut txn = match self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
@@ -508,7 +508,7 @@ impl QueueActor {
             };
 
             // Load from Midge
-            let cf_id = cntryl_midge::ColumnFamilyId(self.queue_key.family.id());
+            let cf_id = self.queue_key.family.id();
             let key = Self::message_key(&self.queue_key, id);
 
             // Use a ReadWrite transaction to see buffered writes from enqueue.
@@ -649,7 +649,7 @@ impl QueueActor {
         // opts.set_sync(sync);
         // opts.set_disable_wal(disable_wal);
         // self.store.commit_transaction_boxed(txn, &opts).ok();
-        let cf_id = cntryl_midge::ColumnFamilyId(self.queue_key.family.id());
+        let cf_id = self.queue_key.family.id();
         let key = Self::message_key(&self.queue_key, id);
 
         match self
@@ -697,7 +697,7 @@ impl QueueActor {
         self.inflight.remove(&id);
 
         // Increment attempts in storage and check DLQ threshold
-        let cf_id = cntryl_midge::ColumnFamilyId(self.queue_key.family.id());
+        let cf_id = self.queue_key.family.id();
         let key = Self::message_key(&self.queue_key, id);
 
         match self
@@ -931,7 +931,7 @@ impl QueueActor {
     /// Messages are guaranteed to survive if:
     /// - Batch commit returned successfully (sync())
     fn recover_ready_and_delayed_from_store(&mut self) {
-        let cf_id = cntryl_midge::ColumnFamilyId(self.queue_key.family.id());
+        let cf_id = self.queue_key.family.id();
         let txn = match self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
@@ -1580,7 +1580,7 @@ pub mod tests {
         assert_eq!(actor.inflight.len(), 0);
 
         // Verify message deleted from storage
-        let cf_id = cntryl_midge::ColumnFamilyId(queue_key.family.id());
+        let cf_id = queue_key.family.id();
         let key = QueueActor::message_key(&queue_key, msg_id);
         let txn = store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)

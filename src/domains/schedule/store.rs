@@ -45,10 +45,7 @@ impl ScheduleStore {
     ) -> Result<(), String> {
         let mut txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         // Encode and store definition
@@ -75,10 +72,7 @@ impl ScheduleStore {
     pub fn delete(&self, family: u64, id: u64, write_options: WriteOptions) -> Result<(), String> {
         let mut txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
         txn.delete(Self::encode_def_key(family, id))
             .map_err(|e| format!("delete def failed: {:?}", e))?;
@@ -103,10 +97,7 @@ impl ScheduleStore {
     ) -> Result<Vec<u64>, String> {
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let start_bucket = Self::time_to_bucket(window_start);
@@ -155,10 +146,7 @@ impl ScheduleStore {
 
         let mut txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("batch begin_tx failed: {:?}", e))?;
 
         for (id, old_fire, new_fire) in updates {
@@ -185,10 +173,7 @@ impl ScheduleStore {
     pub fn list(&self, family: u64) -> Result<Vec<(u64, Bytes, Bytes)>, String> {
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let prefix = format!("family:{}:def:", family);

@@ -128,10 +128,7 @@ impl StreamStore {
         // Use RouteFamily id as column family id to provide family isolation
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin transaction: {:?}", e))?;
 
         let session = AppendSession {
@@ -222,10 +219,7 @@ impl StreamStore {
 
         let mut txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         // Read events from staging transaction and add to transaction
@@ -360,10 +354,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let value_bytes = match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
             Some(bytes) => bytes.to_vec(),
@@ -426,7 +417,7 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(
-                cntryl_midge::ColumnFamilyId(params.family as u32),
+                params.family as u32,
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
@@ -532,10 +523,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn.get(key).map_err(|e| format!("get error: {:?}", e))? {
             Some(value_bytes) => {
@@ -598,10 +586,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -685,10 +670,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -753,10 +735,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn
             .get(&key)
@@ -782,10 +761,7 @@ impl StreamStore {
 
         let mut txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
@@ -800,10 +776,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn
             .get(&key)
@@ -828,10 +801,7 @@ impl StreamStore {
 
         let mut txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadWrite,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
@@ -890,10 +860,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
@@ -928,10 +895,7 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(
-                cntryl_midge::ColumnFamilyId(family as u32),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         match txn.get(&counter_key) {
             Ok(Some(value_bytes)) => {

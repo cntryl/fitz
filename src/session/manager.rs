@@ -462,13 +462,13 @@ impl Ingress for RuntimeIngress {
                         // RPC (300s) - writes (request/register)
                         300..=304 => crate::auth::Access::Write,
                         // Lease (400s)
-                        400 | 401 | 402 => crate::auth::Access::Write,
+                        400..=402 => crate::auth::Access::Write,
                         403 => crate::auth::Access::Read,
                         // Notice (500s)
-                        500 | 501 | 502 | 503 | 504 => crate::auth::Access::Write,
+                        500..=504 => crate::auth::Access::Write,
                         // Stream (600s)
-                        600 | 601 | 602 | 603 => crate::auth::Access::Write,
-                        604 | 605 | 606 => crate::auth::Access::Read,
+                        600..=603 => crate::auth::Access::Write,
+                        604..=606 => crate::auth::Access::Read,
                         // Schedule (700s)
                         700 | 701 => crate::auth::Access::Write,
                         702 => crate::auth::Access::Read,
@@ -598,7 +598,7 @@ impl RuntimeIngress {
             100..=108 => {
                 match crate::protocol::kv::parse_request(
                     mt,
-                    session_info.route_family.clone(),
+                    session_info.route_family,
                     realm.clone(),
                     String::new(),
                     payload.as_ref(),

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use fitz::boot::domains;
 use fitz::protocol::tlv::TlvEncoder;
 use fitz::runtime::Router;
@@ -7,7 +8,6 @@ use fitz::session::{
 };
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
-use bytes::Bytes;
 
 #[tokio::test]
 async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
@@ -71,5 +71,5 @@ async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
     assert_eq!(record.msg_type().as_u16(), 103);
     // Response body begins with a found byte (0/1)
     let body = record.value();
-    assert!(body.len() >= 1);
+    assert!(!body.is_empty());
 }

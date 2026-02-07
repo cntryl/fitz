@@ -523,7 +523,7 @@ impl KvActor {
 
         // Map RouteFamily → ColumnFamily (1:1 by value)
         // Resource is enforced via key prefixing within the column family.
-        Ok(ColumnFamilyId(route_family.id()))
+        Ok(route_family.id())
     }
 
     fn encode_scoped_key(realm: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
