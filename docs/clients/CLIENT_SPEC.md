@@ -578,19 +578,8 @@ Clients MUST:
 | KV       | DELETE             |       106 | Data          | Delete key              |
 | KV       | DELETE_RANGE       |       107 | Data          | Delete key range        |
 | KV       | SCAN               |       108 | Data          | Scan keys in range      |
-| Stream   | BEGIN              |       200 | Data          | Start session           |
-| Stream   | APPEND             |       201 | Data          | Append record           |
-| Stream   | COMMIT             |       202 | Data          | Finalize session        |
-| Stream   | ROLLBACK           |       203 | Data          | Abort session           |
-| Stream   | READ               |       204 | Data          | Read range              |
-| Stream   | LAST               |       205 | Data          | Get last record         |
-| Stream   | GET_METADATA       |       206 | Data          | Get metadata            |
-| Notice   | PUBLISH            |       100 | Data          | Publish message         |
-| Notice   | SUBSCRIBE          |       101 | Data          | Subscribe to pattern    |
-| Notice   | UNSUBSCRIBE        |       102 | Data          | Unsubscribe             |
-| Notice   | UNSUBSCRIBE_ALL    |       103 | Data          | Clear all subscriptions |
-| Notice   | NOTIFY             |       104 | Server→Client | Delivery                |
 | Queue    | ENQUEUE            |       200 | Data          | Add message             |
+| Queue    | ENQUEUE_BATCH      |       201 | Data          | Batch add messages      |
 | Queue    | RESERVE            |       202 | Data          | Lease message(s)        |
 | Queue    | EXTEND             |       203 | Data          | Extend lease            |
 | Queue    | COMPLETE           |       204 | Data          | Mark complete           |
@@ -603,14 +592,26 @@ Clients MUST:
 | Lease    | RENEW              |       401 | Data          | Extend lease            |
 | Lease    | RELEASE            |       402 | Data          | Release lease           |
 | Lease    | QUERY              |       403 | Data          | Query lease status      |
-| Schedule | CREATE             |       500 | Data          | Create schedule         |
-| Schedule | CANCEL             |       501 | Data          | Cancel schedule         |
-| Schedule | LIST               |       502 | Data          | List schedules          |
+| Notice   | PUBLISH            |       500 | Data          | Publish message         |
+| Notice   | SUBSCRIBE          |       501 | Data          | Subscribe to pattern    |
+| Notice   | UNSUBSCRIBE        |       502 | Data          | Unsubscribe             |
+| Notice   | UNSUBSCRIBE_ALL    |       503 | Data          | Clear all subscriptions |
+| Notice   | NOTIFY             |       504 | Server→Client | Delivery                |
+| Stream   | BEGIN              |       600 | Data          | Start session           |
+| Stream   | APPEND             |       601 | Data          | Append record           |
+| Stream   | COMMIT             |       602 | Data          | Finalize session        |
+| Stream   | ROLLBACK           |       603 | Data          | Abort session           |
+| Stream   | READ               |       604 | Data          | Read range              |
+| Stream   | LAST               |       605 | Data          | Get last record         |
+| Stream   | GET_METADATA       |       606 | Data          | Get metadata            |
+| Schedule | CREATE             |       700 | Data          | Create schedule         |
+| Schedule | CANCEL             |       701 | Data          | Cancel schedule         |
+| Schedule | LIST               |       702 | Data          | List schedules          |
 
-### MessageType Overlap
+### MessageType Ranges Are Non-Overlapping
 
-Wire codes **overlap across domains** (e.g., KV and Notice both use 100–104). The domain is disambiguated by **route scheme** (broker-side routing).
-**Clients MUST NOT assume MessageType alone identifies a domain.**
+Each domain occupies an exclusive 100-code block. The broker's mux layer routes by numeric range — **no overlap, no disambiguation needed**.
+**Clients MUST use the wire codes from the Constants & TLV Registry section.**
 
 ## Permissions
 
