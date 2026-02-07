@@ -202,7 +202,7 @@ pub fn default_anonymous_permissions() -> crate::session::permissions::SessionPe
 mod auth_tests {
     use super::*;
     use base64::Engine;
-    use jsonwebtoken::{Header, EncodingKey, Algorithm};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header};
     use serde_json::json;
 
     #[tokio::test]
@@ -227,13 +227,17 @@ mod auth_tests {
         });
 
         let header = Header::new(Algorithm::HS256);
-        let token = jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
+        let token =
+            jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
 
         // Act
-        let perms = permissions_from_jwt_using_jwks(&token, "inline://local").await.unwrap();
+        let perms = permissions_from_jwt_using_jwks(&token, "inline://local")
+            .await
+            .unwrap();
 
         // Assert
-        let route = crate::runtime::routing::Route::new("stream://realm1/area1/orders/1".to_string());
+        let route =
+            crate::runtime::routing::Route::new("stream://realm1/area1/orders/1".to_string());
         assert!(perms.allows(&route, Access::Write));
     }
 }

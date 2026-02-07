@@ -192,7 +192,9 @@ async fn handle_websocket(
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");
-                        if let Err(e) = run_websocket_session(ws_stream, ingress, config, router_clone).await {
+                        if let Err(e) =
+                            run_websocket_session(ws_stream, ingress, config, router_clone).await
+                        {
                             tracing::error!("WebSocket session error: {}", e);
                         }
                     }
@@ -261,12 +263,17 @@ where
         tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
 
     // Register outbound sink with router under inbox route
-    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(outbound_tx.clone()));
+    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
+        outbound_tx.clone(),
+    ));
     let inbox_route = crate::runtime::routing::RouteAddress::new(
         session.info().route_family.clone(),
         crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
     );
-    router.register(inbox_route.clone(), sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>);
+    router.register(
+        inbox_route.clone(),
+        sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+    );
 
     // Spawn task to send outbound frames
     tokio::spawn(async move {

@@ -4,12 +4,17 @@ use crate::boot::runtime::BootResult;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
 
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GENERIC DOMAIN SINK (FALLBACK)
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Generic domain sink: Forwards envelopes to domain actors
 ///
@@ -44,13 +49,6 @@ impl MailboxSink for DomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
-        // Domain-specific message handling happens here in real implementation:
-        // 1. Parse envelope payload (TLV) to domain message
-        // 2. Call domain handler (e.g., kv_actor.handle(session_id, message))
-        // 3. Collect response
-        // 4. Route response back through ingress via reply_to channel
-        //
-        // For now, we log the delivery and drop the message (best-effort)
         tracing::debug!(
             domain = self.name,
             destination = ?envelope.destination(),
@@ -61,11 +59,13 @@ impl MailboxSink for DomainSink {
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        // High-priority lane reserved for control-plane operations
-        // Domains typically use normal-priority delivery
         self.deliver(envelope)
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KV DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Real KV domain sink with actual KvActor
 ///
@@ -78,7 +78,7 @@ pub struct KvDomainSink {
     /// Midge storage engine
     store: Arc<cntryl_midge::Engine>,
     /// Per-session actors (keyed by session_id)
-    actors: Arc<Mutex<std::collections::HashMap<u64, crate::domains::kv::KvActor>>>,
+    actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
     /// Router for routing response envelopes back
     router: Arc<Router>,
     active: AtomicBool,
@@ -88,7 +88,7 @@ impl KvDomainSink {
     pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
         Self {
             store,
-            actors: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            actors: Arc::new(Mutex::new(HashMap::new())),
             router,
             active: AtomicBool::new(true),
         }
@@ -181,14 +181,25 @@ impl MailboxSink for KvDomainSink {
         // Encode the response
         let response_bytes = crate::protocol::kv::encode_response(&response);
 
-        // Build response envelope using reply_to
+        // Build response envelope using try_reply_to (non-panicking)
         // This swaps source/destination and sets causation
-        let response_envelope = envelope.reply_to(FrameContext::new(
+        let response_ctx = FrameContext::new(
             frame_ctx.session_id,
             frame_ctx.channel_id,
-            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()), // TODO: map to response type
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
             bytes::Bytes::from(response_bytes),
-        ));
+        );
+        let response_envelope = match envelope.try_reply_to(response_ctx) {
+            Some(env) => env,
+            None => {
+                tracing::warn!(
+                    domain = "kv",
+                    session = frame_ctx.session_id,
+                    "Cannot route response: envelope has no source address"
+                );
+                return Ok(());
+            }
+        };
 
         // Route response back through the router
         // This will deliver to the ingress/session layer which handles sending to transport
@@ -218,28 +229,450 @@ impl MailboxSink for KvDomainSink {
     }
 }
 
-/// Real Queue domain sink with actual QueueActor
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTICE DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Subscription entry for notice pub/sub
+struct NoticeSubscription {
+    /// Pattern to match against published routes
+    pattern: crate::runtime::matcher::Pattern,
+    /// Session ID of the subscriber
+    session_id: u64,
+    /// Unique subscription ID
+    subscription_id: u64,
+    /// Inbox route address to send notifications to
+    subscriber: crate::runtime::routing::RouteAddress,
+}
+
+/// Per-family subscription state
+struct NoticeFamilyState {
+    subscriptions: Vec<NoticeSubscription>,
+}
+
+/// Notice domain sink: pub/sub notification routing
+///
+/// Manages subscriptions per route family and matches published
+/// routes against subscriber patterns for fan-out delivery.
+pub struct NoticeDomainSink {
+    /// Per-family subscription state
+    families: Mutex<HashMap<u64, NoticeFamilyState>>,
+    /// Monotonic subscription ID counter
+    next_sub_id: AtomicU64,
+    /// Router for routing notification envelopes
+    router: Arc<Router>,
+    active: AtomicBool,
+}
+
+impl NoticeDomainSink {
+    pub fn new(router: Arc<Router>) -> Self {
+        Self {
+            families: Mutex::new(HashMap::new()),
+            next_sub_id: AtomicU64::new(1),
+            router,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+}
+
+impl MailboxSink for NoticeDomainSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "notice", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        let notice_msg =
+            match crate::protocol::notice_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
+                    return Err(DeliveryError::ActorStopped);
+                }
+            };
+
+        use crate::domains::notice::protocol::NotificationMessage;
+        use crate::protocol::notice_codec::NoticeResponse;
+
+        let response = match notice_msg {
+            NotificationMessage::Publish(pub_msg) => {
+                let family_id = pub_msg.family_id.as_u64();
+                let families = self.families.lock();
+                if let Some(state) = families.get(&family_id) {
+                    let route = pub_msg.route.clone();
+                    let payload_arc = std::sync::Arc::new(pub_msg.payload.clone());
+                    let route_arc = std::sync::Arc::new(route.clone());
+
+                    for sub in &state.subscriptions {
+                        if sub.pattern.matches(&route) {
+                            // Build notification envelope for subscriber
+                            let _notify_msg =
+                                crate::domains::notice::protocol::NotifyMessage::new_shared(
+                                    route_arc.clone(),
+                                    payload_arc.clone(),
+                                );
+                            let notify_ctx = FrameContext::new(
+                                sub.session_id,
+                                frame_ctx.channel_id,
+                                crate::protocol::tlv::MessageType::new(504), // Notify msg_type
+                                bytes::Bytes::from(crate::protocol::notice_codec::encode_response(
+                                    &NoticeResponse::Ok {
+                                        subscription_id: Some(sub.subscription_id),
+                                    },
+                                )),
+                            );
+                            let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                            let _ = self.router.route(notify_envelope);
+                        }
+                    }
+                }
+                NoticeResponse::Ok {
+                    subscription_id: None,
+                }
+            }
+            NotificationMessage::Subscribe(sub_msg) => {
+                let family_id = sub_msg.family_id.as_u64();
+                let sub_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
+
+                let mut families = self.families.lock();
+                let state = families
+                    .entry(family_id)
+                    .or_insert_with(|| NoticeFamilyState {
+                        subscriptions: Vec::new(),
+                    });
+
+                state.subscriptions.push(NoticeSubscription {
+                    pattern,
+                    session_id: sub_msg.session_id.0,
+                    subscription_id: sub_id,
+                    subscriber: sub_msg.subscriber.clone(),
+                });
+
+                tracing::debug!(
+                    domain = "notice",
+                    session = sub_msg.session_id.0,
+                    subscription_id = sub_id,
+                    pattern = sub_msg.pattern.as_str(),
+                    "Subscription added"
+                );
+
+                NoticeResponse::Ok {
+                    subscription_id: Some(sub_id),
+                }
+            }
+            NotificationMessage::Unsubscribe(unsub_msg) => {
+                let family_id = unsub_msg.family_id.as_u64();
+                let mut families = self.families.lock();
+                if let Some(state) = families.get_mut(&family_id) {
+                    state.subscriptions.retain(|s| {
+                        !(s.session_id == unsub_msg.session_id.0
+                            && s.pattern.route() == unsub_msg.pattern.as_str())
+                    });
+                }
+                NoticeResponse::Ok {
+                    subscription_id: None,
+                }
+            }
+            NotificationMessage::UnsubscribeAll(unsub_all) => {
+                let session_id = unsub_all.session_id.0;
+                let mut families = self.families.lock();
+                for state in families.values_mut() {
+                    state.subscriptions.retain(|s| s.session_id != session_id);
+                }
+                tracing::debug!(
+                    domain = "notice",
+                    session = session_id,
+                    "All subscriptions removed for session"
+                );
+                NoticeResponse::Ok {
+                    subscription_id: None,
+                }
+            }
+            NotificationMessage::Notify(_) => {
+                // Notify is internal delivery, no response needed
+                NoticeResponse::Ok {
+                    subscription_id: None,
+                }
+            }
+        };
+
+        // Encode and route response back
+        let response_bytes = crate::protocol::notice_codec::encode_response(&response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RPC DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Worker entry for RPC routing
+struct RpcWorker {
+    addr: crate::runtime::routing::RouteAddress,
+}
+
+/// RPC domain state
+struct RpcState {
+    /// Registered workers keyed by route pattern string
+    workers: HashMap<String, Vec<RpcWorker>>,
+    /// Round-robin index per route pattern
+    rr_index: HashMap<String, usize>,
+    /// Pending requests: correlation_id -> (requester reply route, family_id)
+    pending: HashMap<
+        uuid::Uuid,
+        (
+            crate::runtime::routing::Route,
+            crate::runtime::routing::RouteFamily,
+        ),
+    >,
+}
+
+/// RPC domain sink: request/response worker pool routing
+///
+/// Manages worker registration, request dispatching (round-robin),
+/// and response forwarding via correlation IDs.
+pub struct RpcDomainSink {
+    state: Mutex<RpcState>,
+    router: Arc<Router>,
+    active: AtomicBool,
+}
+
+impl RpcDomainSink {
+    pub fn new(router: Arc<Router>) -> Self {
+        Self {
+            state: Mutex::new(RpcState {
+                workers: HashMap::new(),
+                rr_index: HashMap::new(),
+                pending: HashMap::new(),
+            }),
+            router,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+}
+
+impl MailboxSink for RpcDomainSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "rpc", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        let rpc_msg =
+            match crate::protocol::rpc_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
+                    return Err(DeliveryError::ActorStopped);
+                }
+            };
+
+        use crate::domains::rpc::protocol::RpcMessage;
+        use crate::protocol::rpc_codec::RpcResponseMsg;
+
+        let response = match rpc_msg {
+            RpcMessage::Subscribe { worker_addr } => {
+                let route_key = worker_addr.route().as_str().to_string();
+                let mut state = self.state.lock();
+                let workers = state.workers.entry(route_key).or_default();
+                workers.push(RpcWorker {
+                    addr: worker_addr.clone(),
+                });
+                tracing::debug!(
+                    domain = "rpc",
+                    worker = worker_addr.route().as_str(),
+                    "Worker registered"
+                );
+                RpcResponseMsg::Ok { data: vec![] }
+            }
+            RpcMessage::Unsubscribe { worker_addr } => {
+                let route_key = worker_addr.route().as_str().to_string();
+                let mut state = self.state.lock();
+                if let Some(workers) = state.workers.get_mut(&route_key) {
+                    workers.retain(|w| w.addr != worker_addr);
+                }
+                tracing::debug!(
+                    domain = "rpc",
+                    worker = worker_addr.route().as_str(),
+                    "Worker unregistered"
+                );
+                RpcResponseMsg::Ok { data: vec![] }
+            }
+            RpcMessage::Request(req) => {
+                let route_key = req.route.as_str().to_string();
+                let mut state = self.state.lock();
+
+                // Find a worker via round-robin — clone the addr to avoid borrow conflict
+                let worker_addr = state.workers.get(&route_key).and_then(|workers| {
+                    if workers.is_empty() {
+                        None
+                    } else {
+                        let idx = workers.len(); // used below after we get rr_index
+                        Some((workers.len(), idx))
+                    }
+                });
+
+                if let Some((worker_count, _)) = worker_addr {
+                    let idx = state.rr_index.entry(route_key.clone()).or_insert(0);
+                    let pick = *idx % worker_count;
+                    *idx = idx.wrapping_add(1);
+
+                    let target_addr = state.workers[&route_key][pick].addr.clone();
+
+                    // Store pending request for response correlation
+                    state
+                        .pending
+                        .insert(req.correlation_id, (req.reply_route.clone(), req.family_id));
+
+                    // Drop state lock before routing
+                    drop(state);
+
+                    // Forward request to worker's inbox
+                    let forward_ctx = FrameContext::new(
+                        frame_ctx.session_id,
+                        frame_ctx.channel_id,
+                        crate::protocol::tlv::MessageType::new(302), // Request msg_type
+                        frame_ctx.payload.clone(),
+                    );
+                    let forward_envelope = Envelope::new(target_addr, forward_ctx);
+                    let _ = self.router.route(forward_envelope);
+
+                    tracing::debug!(
+                        domain = "rpc",
+                        correlation_id = %req.correlation_id,
+                        route = route_key,
+                        "Request forwarded to worker"
+                    );
+                    RpcResponseMsg::Ok { data: vec![] }
+                } else {
+                    RpcResponseMsg::Error("No workers registered for route".to_string())
+                }
+            }
+            RpcMessage::Response(resp) => {
+                let mut state = self.state.lock();
+                if let Some((reply_route, family_id)) = state.pending.remove(&resp.correlation_id) {
+                    // Forward response to requester's reply route
+                    let reply_addr =
+                        crate::runtime::routing::RouteAddress::new(family_id, reply_route);
+                    let forward_ctx = FrameContext::new(
+                        frame_ctx.session_id,
+                        frame_ctx.channel_id,
+                        crate::protocol::tlv::MessageType::new(303), // Response msg_type
+                        frame_ctx.payload.clone(),
+                    );
+                    let forward_envelope = Envelope::new(reply_addr, forward_ctx);
+                    let _ = self.router.route(forward_envelope);
+
+                    tracing::debug!(
+                        domain = "rpc",
+                        correlation_id = %resp.correlation_id,
+                        "Response forwarded to requester"
+                    );
+                } else {
+                    tracing::warn!(
+                        domain = "rpc",
+                        correlation_id = %resp.correlation_id,
+                        "No pending request for response"
+                    );
+                }
+                RpcResponseMsg::Ok { data: vec![] }
+            }
+            RpcMessage::Ack { correlation_id } => {
+                let mut state = self.state.lock();
+                state.pending.remove(&correlation_id);
+                tracing::debug!(
+                    domain = "rpc",
+                    correlation_id = %correlation_id,
+                    "Request acknowledged and cleaned up"
+                );
+                RpcResponseMsg::Ok { data: vec![] }
+            }
+        };
+
+        // Encode and route response back
+        let response_bytes = crate::protocol::rpc_codec::encode_response(&response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUEUE DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Queue domain sink with per-queue QueueActor instances
 ///
 /// This sink:
-/// - Maintains per-session QueueActor instances
+/// - Maintains per-queue QueueActor instances keyed by QueueKey
 /// - Parses TLV frames to QueueMessage
-/// - Dispatches to actor
+/// - Dispatches to the correct actor based on route
 /// - Returns responses
-///
-/// NOTE: QueueActor requires family, queue_key, store, and clock.
-/// For now, we use the stub implementation and return to this after the
-/// domain-specific constructors are refactored.
 pub struct QueueDomainSink {
     /// Midge storage engine
-    #[allow(dead_code)]
     store: Arc<cntryl_midge::Engine>,
+    /// Per-queue actors keyed by QueueKey
+    actors: Mutex<HashMap<crate::domains::queue::QueueKey, crate::domains::queue::QueueActor>>,
+    /// Router for routing response envelopes back
+    router: Arc<Router>,
     active: AtomicBool,
 }
 
 impl QueueDomainSink {
-    pub fn new(store: Arc<cntryl_midge::Engine>, _router: Arc<Router>) -> Self {
+    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
         Self {
             store,
+            actors: Mutex::new(HashMap::new()),
+            router,
             active: AtomicBool::new(true),
         }
     }
@@ -255,13 +688,181 @@ impl MailboxSink for QueueDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
-        // TODO: Full implementation of QueueDomainSink
-        // For now, log and drop like the stub
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "queue", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        let route_addr = envelope.destination();
+        let route_family = *route_addr.family();
+
+        // Parse queue message using codec
+        let queue_msg = match crate::protocol::queue_codec::parse_request(
+            frame_ctx.msg_type.as_u16(),
+            route_family,
+            String::new(), // TODO: extract realm from route
+            String::new(), // TODO: extract area from route
+            route_addr.route().as_str().to_string(),
+            &frame_ctx.payload,
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!(
+                    domain = "queue",
+                    session = frame_ctx.session_id,
+                    msg_type = frame_ctx.msg_type.as_u16(),
+                    error = %e,
+                    "Failed to parse Queue message"
+                );
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
         tracing::debug!(
             domain = "queue",
-            destination = ?envelope.destination(),
-            "Queue frame received (stub - not yet implemented)"
+            session = frame_ctx.session_id,
+            msg_type = frame_ctx.msg_type.as_u16(),
+            "Parsed Queue message successfully"
         );
+
+        // Dispatch to per-queue actor
+        use crate::domains::queue::protocol::{QueueKey, QueueMessage};
+
+        let response = {
+            let mut actors = self.actors.lock();
+
+            match queue_msg {
+                QueueMessage::Enqueue {
+                    family_id,
+                    route,
+                    body,
+                    delay_seconds,
+                } => {
+                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
+                        family: family_id,
+                        realm: String::new(),
+                        area: String::new(),
+                        resource: "default".to_string(),
+                    });
+                    let store = self.store.clone();
+                    let actor = actors.entry(key.clone()).or_insert_with(|| {
+                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                    });
+                    actor.handle_enqueue(body, delay_seconds)
+                }
+                QueueMessage::EnqueueBatch {
+                    family_id,
+                    route,
+                    messages,
+                    delay_seconds,
+                } => {
+                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
+                        family: family_id,
+                        realm: String::new(),
+                        area: String::new(),
+                        resource: "default".to_string(),
+                    });
+                    let store = self.store.clone();
+                    let actor = actors.entry(key.clone()).or_insert_with(|| {
+                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                    });
+                    actor.handle_enqueue_batch(messages, delay_seconds)
+                }
+                QueueMessage::Reserve {
+                    family_id,
+                    route,
+                    lease_seconds,
+                    batch_size,
+                    ..
+                } => {
+                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
+                        family: family_id,
+                        realm: String::new(),
+                        area: String::new(),
+                        resource: "default".to_string(),
+                    });
+                    let store = self.store.clone();
+                    let actor = actors.entry(key.clone()).or_insert_with(|| {
+                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                    });
+                    actor.handle_reserve(lease_seconds, batch_size)
+                }
+                QueueMessage::Extend {
+                    family_id,
+                    route,
+                    id,
+                    token,
+                    lease_seconds,
+                } => {
+                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
+                        family: family_id,
+                        realm: String::new(),
+                        area: String::new(),
+                        resource: "default".to_string(),
+                    });
+                    let store = self.store.clone();
+                    let actor = actors.entry(key.clone()).or_insert_with(|| {
+                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                    });
+                    actor.handle_extend(id, token, lease_seconds)
+                }
+                QueueMessage::Complete {
+                    family_id,
+                    route,
+                    id,
+                    token,
+                } => {
+                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
+                        family: family_id,
+                        realm: String::new(),
+                        area: String::new(),
+                        resource: "default".to_string(),
+                    });
+                    let store = self.store.clone();
+                    let actor = actors.entry(key.clone()).or_insert_with(|| {
+                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                    });
+                    actor.handle_complete(id, token)
+                }
+                QueueMessage::LeaseExpired { .. } => {
+                    // Internal message, not dispatched via sink
+                    crate::domains::queue::QueueResponse::Error {
+                        message: "LeaseExpired is an internal message".to_string(),
+                    }
+                }
+            }
+        };
+
+        // Encode and route response back
+        let response_bytes = crate::protocol::queue_codec::encode_response(&response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            match self.router.route(response_envelope) {
+                Ok(_) => {
+                    tracing::debug!(
+                        domain = "queue",
+                        session = frame_ctx.session_id,
+                        "Queue message handled and response routed"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        domain = "queue",
+                        session = frame_ctx.session_id,
+                        error = ?e,
+                        "Failed to route queue response"
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -271,6 +872,616 @@ impl MailboxSink for QueueDomainSink {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// STREAM DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stream domain sink: append-only streaming operations
+///
+/// TODO: Full implementation with StreamActor per resource.
+/// Currently a placeholder that parses messages and returns stub responses.
+pub struct StreamDomainSink {
+    /// Midge storage engine (for future StreamStore usage)
+    #[allow(dead_code)]
+    store: Arc<cntryl_midge::Engine>,
+    /// Session ID counter for Begin operations
+    next_session_id: AtomicU64,
+    /// Router for routing response envelopes back
+    router: Arc<Router>,
+    active: AtomicBool,
+}
+
+impl StreamDomainSink {
+    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
+        Self {
+            store,
+            next_session_id: AtomicU64::new(1),
+            router,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+}
+
+impl MailboxSink for StreamDomainSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "stream", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        let stream_msg =
+            match crate::protocol::stream_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::warn!(domain = "stream", error = %e, "Failed to parse stream message");
+                    return Err(DeliveryError::ActorStopped);
+                }
+            };
+
+        use crate::domains::stream::protocol::StreamMessage;
+        use crate::protocol::stream_codec::StreamResponse;
+
+        // TODO: Implement full StreamActor dispatch with per-resource actors.
+        // Currently returns stub responses for all operations.
+        let response = match stream_msg {
+            StreamMessage::Begin { .. } => {
+                let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+                StreamResponse::Ok {
+                    session_id: Some(session_id),
+                    data: vec![],
+                }
+            }
+            StreamMessage::Append { .. } => {
+                // TODO: buffer append in session state
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::Commit { .. } => {
+                // TODO: commit buffered appends to storage
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::Rollback { .. } => {
+                // TODO: discard buffered appends
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::Read { .. } => {
+                // TODO: read from StreamStore
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::Last { .. } => {
+                // TODO: get last entry from StreamStore
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::GetMetadata { .. } => {
+                // TODO: get stream metadata
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            _ => {
+                // Internal messages (RequestLease, LeaseGranted, etc.)
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+        };
+
+        // Encode and route response back
+        let response_bytes = crate::protocol::stream_codec::encode_response(&response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEASE DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Internal lease state for LeaseDomainSink
+/// Replicates LeaseActor logic since handle methods are private
+struct SinkLeaseState {
+    owner_id: String,
+    fencing_token: u64,
+    expiry: std::time::Instant,
+}
+
+/// Lease domain sink: distributed lock operations
+///
+/// Manages lease state directly (replicating LeaseActor logic) since
+/// LeaseActor handle methods are crate-private. Uses per-key state
+/// with parking_lot::Mutex for synchronization.
+pub struct LeaseDomainSink {
+    /// Lease state keyed by LeaseKey
+    leases: Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
+    /// Next fencing token counter (monotonic)
+    next_token: AtomicU64,
+    /// Router for routing response envelopes back
+    router: Arc<Router>,
+    active: AtomicBool,
+}
+
+impl LeaseDomainSink {
+    pub fn new(router: Arc<Router>) -> Self {
+        Self {
+            leases: Mutex::new(HashMap::new()),
+            next_token: AtomicU64::new(1),
+            router,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn next_fencing_token(&self) -> u64 {
+        self.next_token.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn handle_acquire(
+        &self,
+        key: crate::domains::lease::protocol::LeaseKey,
+        owner_id: String,
+        ttl_secs: u64,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        use crate::domains::lease::protocol::LeaseResponse;
+        use std::time::{Duration, Instant};
+
+        let now = Instant::now();
+        let ttl = Duration::from_secs(ttl_secs);
+        let mut leases = self.leases.lock();
+
+        match leases.get(&key) {
+            None => {
+                let token = self.next_fencing_token();
+                leases.insert(
+                    key,
+                    SinkLeaseState {
+                        owner_id,
+                        fencing_token: token,
+                        expiry: now + ttl,
+                    },
+                );
+                LeaseResponse::Acquired {
+                    fencing_token: token,
+                }
+            }
+            Some(state) => {
+                if state.expiry <= now {
+                    let token = self.next_fencing_token();
+                    leases.insert(
+                        key,
+                        SinkLeaseState {
+                            owner_id,
+                            fencing_token: token,
+                            expiry: now + ttl,
+                        },
+                    );
+                    LeaseResponse::Acquired {
+                        fencing_token: token,
+                    }
+                } else if state.owner_id == owner_id {
+                    LeaseResponse::AlreadyHeld {
+                        fencing_token: state.fencing_token,
+                    }
+                } else {
+                    LeaseResponse::HeldByOther {
+                        current_owner: state.owner_id.clone(),
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_renew(
+        &self,
+        key: crate::domains::lease::protocol::LeaseKey,
+        owner_id: String,
+        fencing_token: u64,
+        ttl_secs: u64,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        use crate::domains::lease::protocol::LeaseResponse;
+        use std::time::{Duration, Instant};
+
+        let now = Instant::now();
+        let ttl = Duration::from_secs(ttl_secs);
+        let mut leases = self.leases.lock();
+
+        match leases.get_mut(&key) {
+            None => LeaseResponse::NotHeld,
+            Some(state) => {
+                if state.expiry <= now {
+                    LeaseResponse::Expired
+                } else if state.owner_id != owner_id {
+                    LeaseResponse::NotHeld
+                } else if state.fencing_token != fencing_token {
+                    LeaseResponse::Fenced {
+                        current_token: state.fencing_token,
+                    }
+                } else {
+                    state.expiry = now + ttl;
+                    LeaseResponse::Renewed { fencing_token }
+                }
+            }
+        }
+    }
+
+    fn handle_release(
+        &self,
+        key: crate::domains::lease::protocol::LeaseKey,
+        owner_id: String,
+        fencing_token: u64,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        use crate::domains::lease::protocol::LeaseResponse;
+        use std::time::Instant;
+
+        let now = Instant::now();
+        let mut leases = self.leases.lock();
+
+        match leases.get(&key) {
+            None => LeaseResponse::NotHeld,
+            Some(state) => {
+                if state.expiry <= now {
+                    LeaseResponse::Expired
+                } else if state.owner_id != owner_id {
+                    LeaseResponse::NotHeld
+                } else if state.fencing_token != fencing_token {
+                    LeaseResponse::Fenced {
+                        current_token: state.fencing_token,
+                    }
+                } else {
+                    leases.remove(&key);
+                    LeaseResponse::Released
+                }
+            }
+        }
+    }
+
+    fn handle_query(
+        &self,
+        key: crate::domains::lease::protocol::LeaseKey,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        use crate::domains::lease::protocol::LeaseResponse;
+        use std::time::Instant;
+
+        let now = Instant::now();
+        let leases = self.leases.lock();
+
+        match leases.get(&key) {
+            None => LeaseResponse::NotFound,
+            Some(state) => {
+                if state.expiry <= now {
+                    LeaseResponse::Expired
+                } else {
+                    let expires_in = state.expiry.duration_since(now);
+                    LeaseResponse::Status {
+                        owner_id: state.owner_id.clone(),
+                        fencing_token: state.fencing_token,
+                        expires_in_secs: expires_in.as_secs(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl MailboxSink for LeaseDomainSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "lease", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        let lease_msg =
+            match crate::protocol::lease_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
+                    return Err(DeliveryError::ActorStopped);
+                }
+            };
+
+        use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
+
+        // Dispatch to lease handlers and get domain response
+        let domain_response = match lease_msg {
+            LeaseMessage::Acquire {
+                family_id,
+                route,
+                owner_id,
+                ttl_secs,
+            } => match LeaseKey::from_route(family_id, &route) {
+                Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
+                None => LeaseResponse::NotFound,
+            },
+            LeaseMessage::Renew {
+                family_id,
+                route,
+                owner_id,
+                fencing_token,
+                ttl_secs,
+            } => match LeaseKey::from_route(family_id, &route) {
+                Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
+                None => LeaseResponse::NotFound,
+            },
+            LeaseMessage::Release {
+                family_id,
+                route,
+                owner_id,
+                fencing_token,
+            } => match LeaseKey::from_route(family_id, &route) {
+                Some(key) => self.handle_release(key, owner_id, fencing_token),
+                None => LeaseResponse::NotFound,
+            },
+            LeaseMessage::Query { family_id, route } => {
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_query(key),
+                    None => LeaseResponse::NotFound,
+                }
+            }
+            LeaseMessage::Tick => {
+                // Proactively expire old leases
+                let now = std::time::Instant::now();
+                let mut leases = self.leases.lock();
+                leases.retain(|_, state| state.expiry > now);
+                return Ok(());
+            }
+        };
+
+        // Convert domain LeaseResponse to codec LeaseResponse for encoding
+        let codec_response = match domain_response {
+            LeaseResponse::Acquired { fencing_token } => {
+                crate::protocol::lease_codec::LeaseResponse::Ok {
+                    token: Some(fencing_token.to_string()),
+                }
+            }
+            LeaseResponse::AlreadyHeld { fencing_token } => {
+                crate::protocol::lease_codec::LeaseResponse::Ok {
+                    token: Some(fencing_token.to_string()),
+                }
+            }
+            LeaseResponse::Renewed { fencing_token } => {
+                crate::protocol::lease_codec::LeaseResponse::Ok {
+                    token: Some(fencing_token.to_string()),
+                }
+            }
+            LeaseResponse::Released => {
+                crate::protocol::lease_codec::LeaseResponse::Ok { token: None }
+            }
+            LeaseResponse::HeldByOther { current_owner } => {
+                crate::protocol::lease_codec::LeaseResponse::Error(format!(
+                    "Held by: {}",
+                    current_owner
+                ))
+            }
+            LeaseResponse::NotHeld => {
+                crate::protocol::lease_codec::LeaseResponse::Error("Not held".to_string())
+            }
+            LeaseResponse::Fenced { current_token } => {
+                crate::protocol::lease_codec::LeaseResponse::Error(format!(
+                    "Fenced: current token {}",
+                    current_token
+                ))
+            }
+            LeaseResponse::Expired => {
+                crate::protocol::lease_codec::LeaseResponse::Error("Expired".to_string())
+            }
+            LeaseResponse::NotFound => {
+                crate::protocol::lease_codec::LeaseResponse::Error("Not found".to_string())
+            }
+            LeaseResponse::Status {
+                owner_id,
+                fencing_token,
+                expires_in_secs,
+            } => crate::protocol::lease_codec::LeaseResponse::Ok {
+                token: Some(format!(
+                    "owner={} token={} expires_in={}s",
+                    owner_id, fencing_token, expires_in_secs
+                )),
+            },
+        };
+
+        let response_bytes = crate::protocol::lease_codec::encode_response(&codec_response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SCHEDULE DOMAIN SINK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Schedule domain sink: delayed/recurring task management
+///
+/// Manages per-family ScheduleActor instances. Each actor handles
+/// schedule creation, cancellation, and listing for its route family.
+pub struct ScheduleDomainSink {
+    /// Midge storage engine (for ScheduleStore)
+    store: Arc<cntryl_midge::Engine>,
+    /// Per-family schedule actors
+    actors: Mutex<
+        HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
+    >,
+    /// Router for routing response envelopes back
+    router: Arc<Router>,
+    active: AtomicBool,
+}
+
+impl ScheduleDomainSink {
+    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
+        Self {
+            store,
+            actors: Mutex::new(HashMap::new()),
+            router,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+}
+
+impl MailboxSink for ScheduleDomainSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "schedule", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        let schedule_msg =
+            match crate::protocol::schedule_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::warn!(
+                        domain = "schedule",
+                        error = %e,
+                        "Failed to parse schedule message"
+                    );
+                    return Err(DeliveryError::ActorStopped);
+                }
+            };
+
+        let route_addr = envelope.destination();
+        let route_family = *route_addr.family();
+
+        use crate::protocol::schedule_codec::{ScheduleMessage, ScheduleResponse};
+
+        let response = {
+            let store = self.store.clone();
+            let mut actors = self.actors.lock();
+            let actor = actors.entry(route_family).or_insert_with(|| {
+                crate::domains::schedule::ScheduleActor::new(
+                    route_family,
+                    store,
+                    cntryl_midge::WriteOptions::buffered(),
+                )
+            });
+
+            match schedule_msg {
+                ScheduleMessage::Create { payload } => {
+                    // Build route from payload's target resource and operation
+                    let route_str = format!(
+                        "schedule://default/default/{}/{}",
+                        payload.target_resource, payload.target_operation
+                    );
+                    let route = crate::runtime::routing::Route::new(route_str);
+                    let payload_bytes = payload.encode();
+
+                    match actor.create_schedule(route, payload_bytes) {
+                        Ok(id) => ScheduleResponse::Ok {
+                            schedule_id: Some(id.to_string()),
+                        },
+                        Err(e) => ScheduleResponse::Error(e),
+                    }
+                }
+                ScheduleMessage::Cancel { schedule_id } => match schedule_id.parse::<u64>() {
+                    Ok(id) => match actor.delete_schedule(id) {
+                        Ok(()) => ScheduleResponse::Ok { schedule_id: None },
+                        Err(e) => ScheduleResponse::Error(e),
+                    },
+                    Err(_) => {
+                        ScheduleResponse::Error(format!("Invalid schedule ID: {}", schedule_id))
+                    }
+                },
+                ScheduleMessage::List => {
+                    // TODO: Implement schedule listing via store.list()
+                    ScheduleResponse::Ok { schedule_id: None }
+                }
+            }
+        };
+
+        // Encode and route response back
+        let response_bytes = crate::protocol::schedule_codec::encode_response(&response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DOMAIN SETUP
+// ═══════════════════════════════════════════════════════════════════════════
+
 /// Set up all 7 domain actors and register them with the router
 ///
 /// Register all domain handlers with the router
@@ -279,18 +1490,18 @@ impl MailboxSink for QueueDomainSink {
 ///
 /// Domains are registered **globally** with route pattern matching, NOT per route family.
 ///
-/// - **Route Family** = Tenant/isolation boundary (e.g., tenant_acme = family 100)
+/// - **Route Family** = Realm/isolation boundary (e.g., realm_acme = family 100)
 /// - **Domain** = Handler identified by route scheme (e.g., "kv://", "queue://", "notice://")
 /// - **Realm** = Logical boundary within the route string (part of the path)
 ///
 /// # Example
 ///
 /// ```text
-/// // Tenant ACME (family 100) sends KV request
+/// // Realm ACME (family 100) sends KV request
 /// RouteAddress::new(RouteFamily::new(100), Route::new("kv://acme/app/users/get"))
 /// → Routes to KV domain, isolated to family 100
 ///
-/// // Tenant XYZ (family 200) sends KV request  
+/// // Realm XYZ (family 200) sends KV request
 /// RouteAddress::new(RouteFamily::new(200), Route::new("kv://xyz/app/users/get"))
 /// → Routes to same KV domain, isolated to family 200
 /// ```
@@ -301,7 +1512,7 @@ impl MailboxSink for QueueDomainSink {
 /// # Route Family Assignment
 ///
 /// Route families are **NOT assigned by this function**. They are:
-/// - Dynamically allocated by the control plane per tenant
+/// - Dynamically allocated by the control plane per realm
 /// - Passed in client requests (part of the RouteAddress)
 /// - Enforced by the storage layer (aligned with Midge ColumnFamilyId)
 pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> BootResult<()> {
@@ -319,27 +1530,27 @@ pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> B
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
     // Notice domain: Handles all "notice://*" routes across all families
-    let notice_sink = Arc::new(DomainSink::new("notice"));
+    let notice_sink = Arc::new(NoticeDomainSink::new(router.clone()));
     router.register_domain_pattern("notice", notice_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     // Stream domain: Handles all "stream://*" routes across all families
-    let stream_sink = Arc::new(DomainSink::new("stream"));
+    let stream_sink = Arc::new(StreamDomainSink::new(store.clone(), router.clone()));
     router.register_domain_pattern("stream", stream_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     // RPC domain: Handles all "rpc://*" routes across all families
-    let rpc_sink = Arc::new(DomainSink::new("rpc"));
+    let rpc_sink = Arc::new(RpcDomainSink::new(router.clone()));
     router.register_domain_pattern("rpc", rpc_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
     // Lease domain: Handles all "lease://*" routes across all families
-    let lease_sink = Arc::new(DomainSink::new("lease"));
+    let lease_sink = Arc::new(LeaseDomainSink::new(router.clone()));
     router.register_domain_pattern("lease", lease_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Lease domain (handles lease://* across all route families)");
 
     // Schedule domain: Handles all "schedule://*" routes across all families
-    let schedule_sink = Arc::new(DomainSink::new("schedule"));
+    let schedule_sink = Arc::new(ScheduleDomainSink::new(store.clone(), router.clone()));
     router.register_domain_pattern("schedule", schedule_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
@@ -439,10 +1650,80 @@ mod tests {
 
         // Assert
         assert!(result.is_ok());
+    }
 
-        // Verify all 7 domains are registered
-        // In production, the transport layer would register sinks for response routing,
-        // but for this test we just verify the domains were set up successfully.
-        // Note: Actually routing messages requires the full transport layer to be in place.
+    #[test]
+    fn should_create_notice_domain_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = NoticeDomainSink::new(router);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_create_rpc_domain_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = RpcDomainSink::new(router);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_create_lease_domain_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = LeaseDomainSink::new(router);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_create_stream_domain_sink() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = StreamDomainSink::new(store, router);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_create_schedule_domain_sink() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = ScheduleDomainSink::new(store, router);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_create_queue_domain_sink() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = QueueDomainSink::new(store, router);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
     }
 }

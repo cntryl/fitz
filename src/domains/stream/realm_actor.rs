@@ -107,9 +107,9 @@ impl RealmActor {
         // Emit realm watermark notification ONLY if watermark advanced
         if new_watermark > old_watermark {
             // Persist realm watermark to storage
-            let _ = self
-                .store
-                .set_realm_watermark(self.family_id.id(), &self.realm, new_watermark);
+            let _ =
+                self.store
+                    .set_realm_watermark(self.family_id.as_u64(), &self.realm, new_watermark);
 
             let route_str = format!("notice://{}/*/*/watermark", self.realm);
             let route = Route::new(route_str);

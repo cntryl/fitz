@@ -75,7 +75,7 @@ impl StreamActor {
         // **CRITICAL: Recover next_resource_offset from metadata counter**
         // This prevents offset reuse after TTL expiry and process restart
         let next_resource_offset =
-            match store.get_next_resource_offset(family_id.id(), &realm, &area, &resource) {
+            match store.get_next_resource_offset(family_id.as_u64(), &realm, &area, &resource) {
                 Ok(offset) => offset,
                 Err(e) => {
                     eprintln!(
@@ -130,7 +130,7 @@ impl StreamActor {
         let session_id = self
             .store
             .begin_session(
-                self.family_id.id(),
+                self.family_id.as_u64(),
                 &self.realm,
                 &self.area,
                 &self.resource,
@@ -157,7 +157,7 @@ impl StreamActor {
         let event = EventPayload { body, metadata };
 
         self.store
-            .append_to_session(self.family_id.id(), session_id, event)
+            .append_to_session(self.family_id.as_u64(), session_id, event)
             .map_err(|_| StreamError::EventTooLarge)?;
 
         Ok(AppendResponse { success: true })
@@ -221,7 +221,7 @@ impl StreamActor {
         let response = self
             .store
             .commit_session(
-                self.family_id.id(),
+                self.family_id.as_u64(),
                 session_id,
                 first_resource_offset,
                 first_area_offset,
@@ -304,7 +304,7 @@ impl StreamActor {
     ) -> Result<ReadResponse, StreamError> {
         // Read from Midge storage (NOT from memory!) with cursor
         let params = crate::domains::stream::store::ReadResourceParams {
-            family: self.family_id.id(),
+            family: self.family_id.as_u64(),
             realm: &self.realm,
             area: &self.area,
             resource: &self.resource,
@@ -324,7 +324,12 @@ impl StreamActor {
         // Get the last visible entry in the stream (tail operation)
         let record = self
             .store
-            .peek_resource(self.family_id.id(), &self.realm, &self.area, &self.resource)
+            .peek_resource(
+                self.family_id.as_u64(),
+                &self.realm,
+                &self.area,
+                &self.resource,
+            )
             .map_err(|_| StreamError::InvalidReadBound)?;
 
         Ok(PeekResponse { record })
@@ -334,7 +339,12 @@ impl StreamActor {
         // Get stream metadata (limits, TTL, offsets, watermarks)
         let metadata = self
             .store
-            .get_metadata(self.family_id.id(), &self.realm, &self.area, &self.resource)
+            .get_metadata(
+                self.family_id.as_u64(),
+                &self.realm,
+                &self.area,
+                &self.resource,
+            )
             .map_err(|_| StreamError::InvalidReadBound)?;
 
         Ok(super::protocol::GetMetadataResponse { metadata })

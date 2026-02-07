@@ -140,7 +140,14 @@ impl KvActor {
         }
 
         // Resolve column family from RouteFamily + resource
-        let cf = Self::resolve_column_family(route_family, &resource);
+        let cf = match Self::resolve_column_family(route_family, &resource) {
+            Ok(cf) => cf,
+            Err(_) => {
+                return KvResponse::Error {
+                    error: KvError::InvalidRouteFamily,
+                };
+            }
+        };
 
         // Create Midge transaction
         let tx_mode = match mode {
@@ -501,15 +508,22 @@ impl KvActor {
 
     /// Resolve column family from RouteFamily and resource
     ///
-    /// Uses explicit mapping: ColumnFamilyId = RouteFamily.id (cast to u32)
+    /// Uses explicit mapping: ColumnFamilyId = RouteFamily.id
     /// This ensures data isolation per route family.
-    fn resolve_column_family(route_family: RouteFamily, _resource: &str) -> ColumnFamilyId {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if RouteFamily is 0 (would map to default CF).
+    fn resolve_column_family(
+        route_family: RouteFamily,
+        _resource: &str,
+    ) -> Result<ColumnFamilyId, String> {
         // Validate RouteFamily is not zero (would map to default CF)
-        crate::runtime::cf_validation::validate_route_family(route_family);
+        crate::runtime::cf_validation::validate_route_family(route_family)?;
 
         // Map RouteFamily → ColumnFamily (1:1 by value)
         // Resource is enforced via key prefixing within the column family.
-        ColumnFamilyId(route_family.id() as u32)
+        Ok(ColumnFamilyId(route_family.id()))
     }
 
     fn encode_scoped_key(realm: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
@@ -801,13 +815,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "RouteFamily with id=0")]
-    fn should_panic_on_route_family_zero() {
+    fn should_reject_route_family_zero() {
         // Arrange
         let mut actor = test_actor();
 
-        // Act - Should panic
-        actor.handle(KvMessage::Begin {
+        // Act
+        let result = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(0),
             realm: "test".to_string(),
             area: "kv".to_string(),
@@ -815,6 +828,14 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
+
+        // Assert
+        assert!(matches!(
+            result,
+            KvResponse::Error {
+                error: KvError::InvalidRouteFamily,
+            }
+        ));
     }
 
     #[test]

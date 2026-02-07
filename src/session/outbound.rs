@@ -29,7 +29,10 @@ impl MailboxSink for SessionOutboundSink {
             match self.tx.try_send(bytes) {
                 Ok(()) => Ok(()),
                 Err(e) => match e {
-                    mpsc::error::TrySendError::Full(_) => Err(DeliveryError::MailboxFull { capacity: 0, current_len: 0 }),
+                    mpsc::error::TrySendError::Full(_) => Err(DeliveryError::MailboxFull {
+                        capacity: 0,
+                        current_len: 0,
+                    }),
                     mpsc::error::TrySendError::Closed(_) => Err(DeliveryError::ActorStopped),
                 },
             }

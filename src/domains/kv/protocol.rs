@@ -155,6 +155,9 @@ pub enum KvError {
     /// Realm validation failed
     InvalidRealm,
 
+    /// RouteFamily is invalid (e.g., id=0 maps to default CF)
+    InvalidRouteFamily,
+
     /// Realm mismatch (transaction bound to different realm)
     RealmMismatch,
 
@@ -192,6 +195,9 @@ impl std::fmt::Display for KvError {
             KvError::InvalidRoute(msg) => write!(f, "Invalid route: {}", msg),
             KvError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
             KvError::InvalidRealm => write!(f, "Invalid realm"),
+            KvError::InvalidRouteFamily => {
+                write!(f, "Invalid route family (cannot be zero)")
+            }
             KvError::RealmMismatch => write!(f, "Realm mismatch"),
             KvError::UnknownResource(res) => write!(f, "Unknown resource: {}", res),
             KvError::InvalidTxId => write!(f, "Invalid or unknown transaction ID"),

@@ -184,6 +184,23 @@ impl Envelope {
         }
     }
 
+    /// Create a reply envelope to the source of this message (non-panicking)
+    ///
+    /// Returns `None` if this envelope has no source address.
+    /// Prefer this over `reply_to()` in production paths.
+    pub fn try_reply_to<M: Any + Send + Sync>(&self, payload: M) -> Option<Envelope> {
+        let source = self.source.as_ref()?;
+
+        Some(Envelope {
+            id: MessageId::new(),
+            source: Some(self.destination.clone()),
+            destination: source.clone(),
+            causation: Some(self.id),
+            deadline: self.deadline,
+            payload: Box::new(payload),
+        })
+    }
+
     /// Get the message ID
     pub fn id(&self) -> MessageId {
         self.id

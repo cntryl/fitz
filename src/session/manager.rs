@@ -110,7 +110,10 @@ impl RuntimeIngress {
     }
 
     /// Get a clone of the session actor for authorization checks
-    pub fn get_session_actor(&self, session_id: u64) -> Option<crate::session::actor::SessionActor> {
+    pub fn get_session_actor(
+        &self,
+        session_id: u64,
+    ) -> Option<crate::session::actor::SessionActor> {
         self.session_actors
             .get(&session_id)
             .map(|entry| entry.value().clone())
@@ -190,14 +193,19 @@ impl Ingress for RuntimeIngress {
         // perform handler notification after dropping the guard to avoid lock reentrancy.
         let mut notify_frame: Option<SessionFrame> = None;
         {
-            let mut entry = self.sessions.get_mut(&session_id).unwrap();
+            let Some(mut entry) = self.sessions.get_mut(&session_id) else {
+                eprintln!("Session vanished during frame processing: {}", session_id);
+                return IngressDecision::Close(format!("session vanished: {}", session_id));
+            };
             if !entry.authenticated {
                 if self.auth_required {
                     if channel_id != ChannelId::Control
                         || msg_type != crate::protocol::tlv::MessageType::CONNECT
                     {
                         eprintln!("forcing close for unauthenticated session {}", session_id);
-                        return IngressDecision::Close("unauthenticated: connect required".to_string());
+                        return IngressDecision::Close(
+                            "unauthenticated: connect required".to_string(),
+                        );
                     }
 
                     // Auth is required - parse JWT
@@ -468,30 +476,64 @@ impl Ingress for RuntimeIngress {
                     };
 
                     // Attempt to derive a fine-grained route from the payload for better authorization.
-                    let auth_route = match self.derive_route_for_frame(&session_info, msg_type, &message_payload) {
+                    let auth_route = match self.derive_route_for_frame(
+                        &session_info,
+                        msg_type,
+                        &message_payload,
+                    ) {
                         Ok(Some(r)) => r,
                         Ok(None) => crate::runtime::routing::Route::new(format!("{}://**", domain)),
                         Err(e) => {
                             eprintln!("failed to derive route for auth: {}", e);
-                            return IngressDecision::Close(format!("authorization parse failed: {}", e));
+                            return IngressDecision::Close(format!(
+                                "authorization parse failed: {}",
+                                e
+                            ));
                         }
                     };
 
                     // Check session actor's authorization
                     if let Some(actor_ref) = self.get_session_actor(session_id) {
                         if !actor_ref.authorize(&auth_route, access) {
-                            eprintln!("authorization failed for session {} msg_type {} route {}", session_id, msg_type.as_u16(), auth_route.as_str());
-                            return IngressDecision::Close("unauthorized: permission denied".to_string());
+                            eprintln!(
+                                "authorization failed for session {} msg_type {} route {}",
+                                session_id,
+                                msg_type.as_u16(),
+                                auth_route.as_str()
+                            );
+                            return IngressDecision::Close(
+                                "unauthorized: permission denied".to_string(),
+                            );
                         }
                     } else {
                         eprintln!("missing session actor for {}", session_id);
-                        return IngressDecision::Close("unauthorized: session actor missing".to_string());
+                        return IngressDecision::Close(
+                            "unauthorized: session actor missing".to_string(),
+                        );
                     }
 
-                    let route = crate::runtime::routing::Route::new(format!("{}://inbound", domain));
-                    let addr = crate::runtime::routing::RouteAddress::new(session_info.route_family.clone(), route);
-                    let ctx = crate::protocol::frame_context::FrameContext::new(session_id, channel_id, msg_type, message_payload.clone());
-                    let envelope = crate::runtime::envelope::Envelope::new(addr, ctx);
+                    let route =
+                        crate::runtime::routing::Route::new(format!("{}://inbound", domain));
+                    let addr = crate::runtime::routing::RouteAddress::new(
+                        session_info.route_family,
+                        route,
+                    );
+                    let ctx = crate::protocol::frame_context::FrameContext::new(
+                        session_id,
+                        channel_id,
+                        msg_type,
+                        message_payload.clone(),
+                    );
+                    // Set source to the session's inbox so domain sinks can route responses back
+                    let source = crate::runtime::routing::RouteAddress::new(
+                        session_info.route_family,
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            session_id
+                        )),
+                    );
+                    let envelope =
+                        crate::runtime::envelope::Envelope::from_route(source, addr, ctx);
                     if let Err(e) = router.route(envelope) {
                         eprintln!("router.route failed: {}", e);
                     }
@@ -513,8 +555,6 @@ impl Ingress for RuntimeIngress {
         eprintln!("returning Accept for regular frame");
         IngressDecision::Accept
     }
-
-
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
         // Remove session and associated actor
@@ -564,59 +604,106 @@ impl RuntimeIngress {
                     payload.as_ref(),
                 ) {
                     Ok(kmsg) => match kmsg {
-                        crate::domains::kv::KvMessage::Begin { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
-                        crate::domains::kv::KvMessage::Get { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
-                        crate::domains::kv::KvMessage::Put { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
-                        crate::domains::kv::KvMessage::Insert { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
-                        crate::domains::kv::KvMessage::Delete { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
-                        crate::domains::kv::KvMessage::DeleteRange { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
-                        crate::domains::kv::KvMessage::Scan { resource, .. } => Ok(Some(Route::new(format!("kv://{}/{}", realm, resource)))),
-                        
+                        crate::domains::kv::KvMessage::Begin { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
+                        crate::domains::kv::KvMessage::Get { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
+                        crate::domains::kv::KvMessage::Put { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
+                        crate::domains::kv::KvMessage::Insert { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
+                        crate::domains::kv::KvMessage::Delete { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
+                        crate::domains::kv::KvMessage::DeleteRange { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
+                        crate::domains::kv::KvMessage::Scan { resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        }
+
                         _ => Ok(None),
                     },
                     Err(e) => Err(e),
                 }
             }
-            500..=599 => match crate::protocol::notice_codec::parse_request(&ctx, payload.as_ref()) {
-                Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => Ok(Some(p.route.clone())),
-                Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => Ok(Some(s.pattern.clone())),
+            500..=599 => match crate::protocol::notice_codec::parse_request(&ctx, payload.as_ref())
+            {
+                Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => {
+                    Ok(Some(p.route.clone()))
+                }
+                Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => {
+                    Ok(Some(s.pattern.clone()))
+                }
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
             300..=399 => match crate::protocol::rpc_codec::parse_request(&ctx, payload.as_ref()) {
-                Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => Ok(Some(r.route.clone())),
+                Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => {
+                    Ok(Some(r.route.clone()))
+                }
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
             200..=299 => Ok(None),
-            400..=499 => match crate::protocol::lease_codec::parse_request(&ctx, payload.as_ref()) {
-                Ok(crate::domains::lease::protocol::LeaseMessage::Acquire { route, .. }) => Ok(Some(route.clone())),
-                Ok(crate::domains::lease::protocol::LeaseMessage::Renew { route, .. }) => Ok(Some(route.clone())),
-                Ok(crate::domains::lease::protocol::LeaseMessage::Release { route, .. }) => Ok(Some(route.clone())),
-                Ok(crate::domains::lease::protocol::LeaseMessage::Query { route, .. }) => Ok(Some(route.clone())),
+            400..=499 => {
+                match crate::protocol::lease_codec::parse_request(&ctx, payload.as_ref()) {
+                    Ok(crate::domains::lease::protocol::LeaseMessage::Acquire {
+                        route, ..
+                    }) => Ok(Some(route.clone())),
+                    Ok(crate::domains::lease::protocol::LeaseMessage::Renew { route, .. }) => {
+                        Ok(Some(route.clone()))
+                    }
+                    Ok(crate::domains::lease::protocol::LeaseMessage::Release {
+                        route, ..
+                    }) => Ok(Some(route.clone())),
+                    Ok(crate::domains::lease::protocol::LeaseMessage::Query { route, .. }) => {
+                        Ok(Some(route.clone()))
+                    }
+                    Ok(_) => Ok(None),
+                    Err(e) => Err(e),
+                }
+            }
+            600..=699 => match crate::protocol::stream_codec::parse_request(&ctx, payload.as_ref())
+            {
+                Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(crate::domains::stream::protocol::StreamMessage::Read { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(crate::domains::stream::protocol::StreamMessage::Last { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(crate::domains::stream::protocol::StreamMessage::GetMetadata {
+                    route, ..
+                }) => Ok(Some(route.clone())),
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
-            600..=699 => match crate::protocol::stream_codec::parse_request(&ctx, payload.as_ref()) {
-                Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => Ok(Some(route.clone())),
-                Ok(crate::domains::stream::protocol::StreamMessage::Read { route, .. }) => Ok(Some(route.clone())),
-                Ok(crate::domains::stream::protocol::StreamMessage::Last { route, .. }) => Ok(Some(route.clone())),
-                Ok(crate::domains::stream::protocol::StreamMessage::GetMetadata { route, .. }) => Ok(Some(route.clone())),
-                Ok(_) => Ok(None),
-                Err(e) => Err(e),
-            },
-            700..=799 => match crate::protocol::schedule_codec::parse_request(&ctx, payload.as_ref()) {
-                Ok(crate::protocol::schedule_codec::ScheduleMessage::Create { payload: pay }) => Ok(Some(Route::new(format!("schedule://{}/{}", realm, pay.target_resource)))),
+            700..=799 => {
+                match crate::protocol::schedule_codec::parse_request(&ctx, payload.as_ref()) {
+                    Ok(crate::protocol::schedule_codec::ScheduleMessage::Create {
+                        payload: pay,
+                    }) => Ok(Some(Route::new(format!(
+                        "schedule://{}/{}",
+                        realm, pay.target_resource
+                    )))),
 
-                Ok(_) => Ok(None),
-                Err(e) => Err(e),
-            },
+                    Ok(_) => Ok(None),
+                    Err(e) => Err(e),
+                }
+            }
             _ => Ok(None),
         }
     }

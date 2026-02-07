@@ -162,7 +162,7 @@ impl ScheduleActor {
             write_options,
         };
         // Load persisted schedules
-        if let Ok(entries) = actor.store.list(family.id()) {
+        if let Ok(entries) = actor.store.list(family.as_u64()) {
             let now = actor.clock.now();
             for (id, route_bytes, payload) in entries {
                 if let Ok(sp) = SchedulePayload::decode(&payload) {
@@ -215,7 +215,7 @@ impl ScheduleActor {
 
         // persist with index
         self.store.insert(
-            self.family.id(),
+            self.family.as_u64(),
             id,
             route.as_str().as_bytes(),
             payload.clone(),
@@ -227,7 +227,7 @@ impl ScheduleActor {
         info!(
             "created schedule {} for family {} (next_fire: {})",
             id,
-            self.family.id(),
+            self.family.as_u64(),
             next_fire
         );
         Ok(id)
@@ -235,7 +235,8 @@ impl ScheduleActor {
 
     pub fn delete_schedule(&mut self, id: u64) -> Result<(), String> {
         self.schedules.remove(&id);
-        self.store.delete(self.family.id(), id, self.write_options)
+        self.store
+            .delete(self.family.as_u64(), id, self.write_options)
     }
 
     fn extract_realm_and_area(route: &Route) -> Option<(String, String)> {
@@ -266,7 +267,7 @@ impl ScheduleActor {
         // This is O(due_count), not O(total_count)
         let due_ids = match self
             .store
-            .scan_window(self.family.id(), window_start, window_end)
+            .scan_window(self.family.as_u64(), window_start, window_end)
         {
             Ok(ids) => ids,
             Err(e) => {
@@ -342,10 +343,11 @@ impl ScheduleActor {
         // Crash after dispatch but before this commit = duplicate notice (acceptable)
         // Crash before dispatch = missed notice (would happen next matching time)
         if !index_updates.is_empty() {
-            if let Err(e) =
-                self.store
-                    .batch_update_index(self.family.id(), index_updates, self.write_options)
-            {
+            if let Err(e) = self.store.batch_update_index(
+                self.family.as_u64(),
+                index_updates,
+                self.write_options,
+            ) {
                 warn!("failed to batch update schedule index: {}", e);
             }
         }

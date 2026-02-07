@@ -265,7 +265,10 @@ impl Session {
             match self.decoder.decode_one_ref(&self.buffer) {
                 Ok((msg_type, slice, consumed)) => {
                     // Build owned record and route it
-                    let record = crate::protocol::tlv::TlvRecord::new(msg_type, Bytes::copy_from_slice(slice));
+                    let record = crate::protocol::tlv::TlvRecord::new(
+                        msg_type,
+                        Bytes::copy_from_slice(slice),
+                    );
                     let message = self.mux.route(record).map_err(SessionError::Mux)?;
 
                     let decision = ingress
@@ -350,10 +353,10 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::tlv::{MessageType, TlvEncoder};
+    use crate::session::manager::{Ingress, IngressDecision, SessionFrame};
     use std::sync::{Arc, Mutex};
     use tokio::runtime::Runtime;
-    use crate::session::manager::{Ingress, IngressDecision, SessionFrame};
-    use crate::protocol::tlv::{TlvEncoder, MessageType};
 
     struct DummyIngress {
         frames: Arc<Mutex<Vec<SessionFrame>>>,
@@ -373,7 +376,11 @@ mod tests {
             message_payload: bytes::Bytes,
         ) -> IngressDecision {
             let mut vec = self.frames.lock().unwrap();
-            vec.push(SessionFrame { session_id, channel_id, payload: message_payload });
+            vec.push(SessionFrame {
+                session_id,
+                channel_id,
+                payload: message_payload,
+            });
             IngressDecision::Accept
         }
 
@@ -385,7 +392,9 @@ mod tests {
         // Arrange
         let rt = Runtime::new().unwrap();
         let frames = Arc::new(Mutex::new(Vec::new()));
-        let ingress = DummyIngress { frames: frames.clone() };
+        let ingress = DummyIngress {
+            frames: frames.clone(),
+        };
 
         let config = NewSessionConfig::unauthenticated(
             TransportKind::Tcp,

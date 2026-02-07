@@ -158,7 +158,7 @@ impl AreaActor {
         if self.area_watermark > old_watermark {
             // Persist watermark to storage
             let _ = self.store.set_watermark(
-                self.family_id.id(),
+                self.family_id.as_u64(),
                 &self.realm,
                 &self.area,
                 self.area_watermark,

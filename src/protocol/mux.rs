@@ -104,12 +104,12 @@ impl TypeMapping {
 
         match msg_type {
             0..=99 => Some(ChannelId::Control),
-            100..=199 => Some(ChannelId::Pub),  // KV
-            200..=299 => Some(ChannelId::Sub),  // Queue
-            300..=399 => Some(ChannelId::Rpc),  // RPC
-            400..=499 => Some(ChannelId::Lease), // Lease
-            500..=599 => Some(ChannelId::Pub),  // Notice (use Pub channel)
-            600..=699 => Some(ChannelId::Sub),  // Stream (use Sub channel)
+            100..=199 => Some(ChannelId::Pub),      // KV
+            200..=299 => Some(ChannelId::Sub),      // Queue
+            300..=399 => Some(ChannelId::Rpc),      // RPC
+            400..=499 => Some(ChannelId::Lease),    // Lease
+            500..=599 => Some(ChannelId::Pub),      // Notice (use Pub channel)
+            600..=699 => Some(ChannelId::Sub),      // Stream (use Sub channel)
             700..=799 => Some(ChannelId::Internal), // Schedule
             _ => None,
         }

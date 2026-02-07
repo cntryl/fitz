@@ -11,7 +11,7 @@
 //!
 //! ## RouteFamily
 //!
-//! A **RouteFamily** is a hard isolation boundary represented as an integer (u64).
+//! A **RouteFamily** is a hard isolation boundary represented as an integer (u32).
 //!
 //! **Properties:**
 //! - Opaque identifier with no semantic meaning to the runtime
@@ -158,9 +158,9 @@ use std::hash::{Hash, Hasher};
 /// # Alignment with Storage
 ///
 /// RouteFamilyId aligns 1:1 (by value) with Midge ColumnFamilyId:
-/// - RouteFamily stores u64 (Midge API parameter type)
+/// - RouteFamily stores u32 (aligned with Midge ColumnFamilyId)
 /// - ColumnFamilyId stores u32 (Midge internal storage type)
-/// - Conversion happens at persistence layer with validation
+/// - Wire format may send u64 for future compatibility; values are validated on parse
 /// - Alignment is contractual, not enforced by storage code
 ///
 /// # Design
@@ -173,29 +173,48 @@ use std::hash::{Hash, Hasher};
 /// This ensures families are true isolation boundaries.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RouteFamily {
-    id: u64,
+    id: u32,
 }
 
 impl RouteFamily {
-    /// Create a new route family
+    /// Create a new route family from a wire-format u64 value
     ///
-    /// # Arguments
-    ///
-    /// - `id`: Unique numeric identifier for the family (u64 for Midge API compatibility)
+    /// Values above `u32::MAX` are clamped to `u32::MAX` with a warning.
+    /// Fitz stores route families as u32 to align 1:1 with Midge ColumnFamilyId.
     ///
     /// # Example
     ///
     /// ```
     /// # use fitz::runtime::routing::RouteFamily;
     /// let family = RouteFamily::new(1);
+    /// assert_eq!(family.id(), 1);
     /// ```
     pub fn new(id: u64) -> Self {
+        if id > u32::MAX as u64 {
+            tracing::warn!(
+                "RouteFamily {} exceeds u32::MAX, clamping to {}",
+                id,
+                u32::MAX
+            );
+            Self { id: u32::MAX }
+        } else {
+            Self { id: id as u32 }
+        }
+    }
+
+    /// Create a route family directly from a u32 value
+    pub fn from_u32(id: u32) -> Self {
         Self { id }
     }
 
-    /// Get the family ID
-    pub fn id(&self) -> u64 {
+    /// Get the family ID as u32
+    pub fn id(&self) -> u32 {
         self.id
+    }
+
+    /// Get the family ID as u64 (for APIs that expect u64)
+    pub fn as_u64(&self) -> u64 {
+        self.id as u64
     }
 }
 

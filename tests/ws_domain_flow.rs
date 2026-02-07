@@ -1,8 +1,11 @@
 use fitz::boot::domains;
-use fitz::runtime::Router;
-use fitz::session::{RuntimeIngress, Session, Ingress, SessionMetadata, SessionPermissions, NewSessionConfig, TransportKind, SessionOutboundSink};
-use fitz::testkit::create_test_engine_with_cfs;
 use fitz::protocol::tlv::TlvEncoder;
+use fitz::runtime::Router;
+use fitz::session::{
+    Ingress, NewSessionConfig, RuntimeIngress, Session, SessionMetadata, SessionOutboundSink,
+    SessionPermissions, TransportKind,
+};
+use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -23,7 +26,10 @@ async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
         fitz::runtime::routing::RouteFamily::new(0),
         fitz::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
     );
-    router.register(inbox_addr.clone(), sink as std::sync::Arc<dyn fitz::runtime::router::MailboxSink>);
+    router.register(
+        inbox_addr.clone(),
+        sink as std::sync::Arc<dyn fitz::runtime::router::MailboxSink>,
+    );
 
     // Create session and open
     let session_config = NewSessionConfig::unauthenticated(
