@@ -253,7 +253,7 @@ where
     // Let ingress validate and accept the session
     let session_id = ingress.on_open(session.info()).await?;
 
-    info!("WebSocket connection established, session {}", session_id);
+    info!(session_id = session_id, "WebSocket session accepted by ingress");
 
     // Split WebSocket stream
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -270,19 +270,32 @@ where
         session.info().route_family,
         crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
     );
+    tracing::debug!(
+        session_id = session_id,
+        inbox = %inbox_route,
+        "Registering outbound sink at inbox route"
+    );
     router.register(
         inbox_route.clone(),
         sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
     );
 
     // Spawn task to send outbound frames
+    let ws_session_id = session_id;
     tokio::spawn(async move {
+        tracing::debug!(session_id = ws_session_id, "WS outbound writer task started");
         while let Some(frame) = outbound_rx.recv().await {
+            tracing::debug!(
+                session_id = ws_session_id,
+                frame_len = frame.len(),
+                "WS outbound: sending frame to wire"
+            );
             if let Err(e) = ws_sender.send(Message::Binary(frame)).await {
-                tracing::error!("WebSocket send error: {}", e);
+                tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
                 break;
             }
         }
+        tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
     });
 
     // Process inbound frames
@@ -290,6 +303,11 @@ where
         match msg_result {
             Ok(Message::Binary(data)) => {
                 let frame = Bytes::from(data);
+                tracing::debug!(
+                    session_id = session_id,
+                    frame_len = frame.len(),
+                    "WS inbound: received binary frame"
+                );
 
                 // Check frame size
                 if frame.len() > config.max_frame_size {
@@ -298,6 +316,7 @@ where
                         frame.len(),
                         config.max_frame_size
                     );
+                    tracing::warn!(session_id = session_id, frame_len = frame.len(), max = config.max_frame_size, "WS frame too large");
                     ingress
                         .on_close(session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -307,18 +326,21 @@ where
                 // Forward frame to session for processing (decoding + routing)
                 if let Err(e) = session.on_frame(frame, ingress.as_ref()).await {
                     let reason = format!("session frame error: {:?}", e);
+                    tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
                     ingress
                         .on_close(session_id, CloseReason::Error(reason.clone()))
                         .await;
                     return Err(reason);
                 }
+                tracing::trace!(session_id = session_id, "WS inbound frame processed successfully");
             }
             Ok(Message::Close(_)) => {
+                tracing::debug!(session_id = session_id, "WS received Close frame");
                 ingress.on_close(session_id, CloseReason::ClientClose).await;
                 break;
             }
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Text(_)) => {
-                // Ignore ping/pong/text frames
+                tracing::trace!(session_id = session_id, "WS received non-binary frame (ignored)");
                 continue;
             }
             Ok(_) => continue,

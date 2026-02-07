@@ -105,6 +105,13 @@ impl MailboxSink for KvDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        tracing::debug!(
+            domain = "kv",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "KV domain sink: received envelope"
+        );
+
         // Extract frame context from envelope payload
         // The transport layer stores FrameContext as the envelope payload
         let frame_ctx = match envelope.payload::<FrameContext>() {
@@ -178,8 +185,21 @@ impl MailboxSink for KvDomainSink {
             actor.handle(kv_message)
         };
 
+        tracing::debug!(
+            domain = "kv",
+            session = frame_ctx.session_id,
+            response = ?std::mem::discriminant(&response),
+            "KV actor returned response"
+        );
+
         // Encode the response
         let response_bytes = crate::protocol::kv::encode_response(&response);
+        tracing::trace!(
+            domain = "kv",
+            session = frame_ctx.session_id,
+            response_len = response_bytes.len(),
+            "KV response encoded"
+        );
 
         // Build response envelope using try_reply_to (non-panicking)
         // This swaps source/destination and sets causation
@@ -285,6 +305,13 @@ impl MailboxSink for NoticeDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        tracing::debug!(
+            domain = "notice",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "Notice domain sink: received envelope"
+        );
+
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -292,6 +319,14 @@ impl MailboxSink for NoticeDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+
+        tracing::debug!(
+            domain = "notice",
+            session = frame_ctx.session_id,
+            msg_type = frame_ctx.msg_type.as_u16(),
+            payload_len = frame_ctx.payload.len(),
+            "Notice: parsing request"
+        );
 
         let notice_msg =
             match crate::protocol::notice_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
@@ -487,6 +522,13 @@ impl MailboxSink for RpcDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        tracing::debug!(
+            domain = "rpc",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "RPC domain sink: received envelope"
+        );
+
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -494,6 +536,14 @@ impl MailboxSink for RpcDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+
+        tracing::debug!(
+            domain = "rpc",
+            session = frame_ctx.session_id,
+            msg_type = frame_ctx.msg_type.as_u16(),
+            payload_len = frame_ctx.payload.len(),
+            "RPC: parsing request"
+        );
 
         let rpc_msg =
             match crate::protocol::rpc_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
@@ -687,6 +737,13 @@ impl MailboxSink for QueueDomainSink {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
+
+        tracing::debug!(
+            domain = "queue",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "Queue domain sink: received envelope"
+        );
 
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
@@ -912,6 +969,13 @@ impl MailboxSink for StreamDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        tracing::debug!(
+            domain = "stream",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "Stream domain sink: received envelope"
+        );
+
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -922,7 +986,15 @@ impl MailboxSink for StreamDomainSink {
 
         let stream_msg =
             match crate::protocol::stream_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
-                Ok(msg) => msg,
+                Ok(msg) => {
+                    tracing::debug!(
+                        domain = "stream",
+                        session = frame_ctx.session_id,
+                        msg_type = frame_ctx.msg_type.as_u16(),
+                        "Stream: parsed message successfully"
+                    );
+                    msg
+                }
                 Err(e) => {
                     tracing::warn!(domain = "stream", error = %e, "Failed to parse stream message");
                     return Err(DeliveryError::ActorStopped);
@@ -1211,6 +1283,13 @@ impl MailboxSink for LeaseDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        tracing::debug!(
+            domain = "lease",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "Lease domain sink: received envelope"
+        );
+
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -1221,7 +1300,15 @@ impl MailboxSink for LeaseDomainSink {
 
         let lease_msg =
             match crate::protocol::lease_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
-                Ok(msg) => msg,
+                Ok(msg) => {
+                    tracing::debug!(
+                        domain = "lease",
+                        session = frame_ctx.session_id,
+                        msg_type = frame_ctx.msg_type.as_u16(),
+                        "Lease: parsed message successfully"
+                    );
+                    msg
+                }
                 Err(e) => {
                     tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
                     return Err(DeliveryError::ActorStopped);
@@ -1387,6 +1474,13 @@ impl MailboxSink for ScheduleDomainSink {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
+
+        tracing::debug!(
+            domain = "schedule",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "Schedule domain sink: received envelope"
+        );
 
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),

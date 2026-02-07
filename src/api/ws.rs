@@ -12,6 +12,7 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+use tracing::{debug, trace, warn, error};
 
 /// WebSocket connection handler
 ///
@@ -63,6 +64,16 @@ impl WebSocketHandler {
             // Binary frames: convert to Bytes and forward
             Message::Binary(data) => {
                 let frame = Bytes::from(data);
+                debug!(
+                    session_id = self.session_id,
+                    frame_len = frame.len(),
+                    "WS received binary frame"
+                );
+                trace!(
+                    session_id = self.session_id,
+                    frame_hex = %hex_preview(&frame),
+                    "WS binary frame payload preview"
+                );
 
                 // Check frame size
                 if frame.len() > self.config.max_frame_size {
@@ -71,6 +82,7 @@ impl WebSocketHandler {
                         frame.len(),
                         self.config.max_frame_size
                     );
+                    warn!(session_id = self.session_id, frame_len = frame.len(), max = self.config.max_frame_size, "WS frame too large");
                     self.ingress
                         .on_close(self.session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -82,24 +94,47 @@ impl WebSocketHandler {
                 // For now simply send through tx channel as a placeholder
                 if let Err(e) = self.tx.send((self.session_id, frame)).await {
                     let reason = format!("failed to send frame: {}", e);
+                    error!(session_id = self.session_id, error = %e, "WS failed to send frame to channel");
                     self.ingress
                         .on_close(self.session_id, CloseReason::Error(reason.clone()))
                         .await;
                     return Err(reason);
                 }
+                trace!(session_id = self.session_id, "WS frame forwarded to channel");
 
                 Ok(true)
             }
             Message::Close(_) => {
+                debug!(session_id = self.session_id, "WS received Close frame");
                 self.ingress
                     .on_close(self.session_id, CloseReason::ClientClose)
                     .await;
                 Ok(false)
             }
-            Message::Ping(_) | Message::Pong(_) => Ok(true),
-            Message::Text(_) => Ok(true),
-            _ => Ok(true),
+            Message::Ping(_) | Message::Pong(_) => {
+                trace!(session_id = self.session_id, "WS ping/pong");
+                Ok(true)
+            }
+            Message::Text(_) => {
+                debug!(session_id = self.session_id, "WS received text frame (ignored)");
+                Ok(true)
+            }
+            _ => {
+                trace!(session_id = self.session_id, "WS received unknown frame type");
+                Ok(true)
+            },
         }
+    }
+}
+
+/// Helper: preview first N bytes as hex string for trace logging
+fn hex_preview(data: &[u8]) -> String {
+    let limit = data.len().min(32);
+    let hex: Vec<String> = data[..limit].iter().map(|b| format!("{:02x}", b)).collect();
+    if data.len() > limit {
+        format!("{}... ({} bytes total)", hex.join(" "), data.len())
+    } else {
+        hex.join(" ")
     }
 }
 

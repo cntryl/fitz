@@ -38,6 +38,7 @@ use crate::runtime::envelope::Envelope;
 use crate::runtime::routing::RouteAddress;
 use dashmap::DashMap;
 use std::sync::Arc;
+use tracing::{debug, trace, warn};
 
 /// Trait for delivering envelopes to actor mailboxes
 ///
@@ -243,6 +244,7 @@ impl Router {
     ///
     /// If a route is already registered, the old sink is replaced.
     pub fn register(&self, address: RouteAddress, sink: Arc<dyn MailboxSink>) {
+        debug!(route = %address, "Router: registering exact route");
         self.registry.register(address, sink);
     }
 
@@ -269,6 +271,7 @@ impl Router {
     /// The domain sink receives the full RouteAddress (family + route) and can
     /// enforce tenant isolation internally.
     pub fn register_domain_pattern(&self, domain: &str, sink: Arc<dyn MailboxSink>) {
+        debug!(domain = domain, "Router: registering domain pattern");
         self.registry
             .register_domain_pattern(domain.to_string(), sink);
     }
@@ -311,8 +314,11 @@ impl Router {
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
 
+        trace!(destination = %dest, "Router: routing envelope");
+
         // Try exact RouteAddress lookup first
         let sink = if let Some(sink) = self.registry.get(&dest) {
+            trace!(destination = %dest, "Router: exact route match found");
             sink
         } else {
             // Fall back to domain pattern matching
@@ -320,13 +326,26 @@ impl Router {
             let route_str = dest.route().as_str();
             let domain = route_str.split("://").next().unwrap_or("");
 
+            trace!(destination = %dest, domain = domain, "Router: trying domain pattern fallback");
+
             self.registry
                 .get_by_domain(domain)
-                .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?
+                .ok_or_else(|| {
+                    warn!(destination = %dest, domain = domain, "Router: no route found (exact or domain pattern)");
+                    RouteError::RouteNotFound(dest.clone())
+                })?
         };
 
-        sink.deliver(envelope)
-            .map_err(|e| RouteError::DeliveryFailed(dest, e))
+        match sink.deliver(envelope) {
+            Ok(()) => {
+                debug!(destination = %dest, "Router: envelope delivered successfully");
+                Ok(())
+            }
+            Err(e) => {
+                warn!(destination = %dest, error = %e, "Router: delivery failed");
+                Err(RouteError::DeliveryFailed(dest, e))
+            }
+        }
     }
 
     /// Route an envelope to the high-priority lane (runtime-internal use only)

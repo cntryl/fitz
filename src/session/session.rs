@@ -17,6 +17,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tracing::{debug, trace, warn, error};
 
 /// Unique session identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -257,6 +258,12 @@ impl Session {
         frame: Bytes,
         ingress: &dyn Ingress,
     ) -> Result<(), SessionError> {
+        debug!(
+            session_id = self.info.session_id,
+            frame_len = frame.len(),
+            buffer_before = self.buffer.len(),
+            "Session on_frame: received raw frame"
+        );
         // Append incoming bytes to per-session buffer and decode as many records
         self.buffer.extend_from_slice(&frame);
 
@@ -264,12 +271,30 @@ impl Session {
             // Attempt to decode one record from buffer
             match self.decoder.decode_one_ref(&self.buffer) {
                 Ok((msg_type, slice, consumed)) => {
+                    debug!(
+                        session_id = self.info.session_id,
+                        msg_type = msg_type.as_u16(),
+                        payload_len = slice.len(),
+                        consumed = consumed,
+                        "Session decoded TLV record"
+                    );
                     // Build owned record and route it
                     let record = crate::protocol::tlv::TlvRecord::new(
                         msg_type,
                         Bytes::copy_from_slice(slice),
                     );
-                    let message = self.mux.route(record).map_err(SessionError::Mux)?;
+                    let message = self.mux.route(record).map_err(|e| {
+                        warn!(session_id = self.info.session_id, error = ?e, "Mux routing error");
+                        SessionError::Mux(e)
+                    })?;
+
+                    debug!(
+                        session_id = self.info.session_id,
+                        channel = ?message.channel,
+                        msg_type = message.msg_type.as_u16(),
+                        payload_len = message.payload.len(),
+                        "Session dispatching to ingress.on_frame"
+                    );
 
                     let decision = ingress
                         .on_frame(
@@ -284,15 +309,18 @@ impl Session {
 
                     match decision {
                         IngressDecision::Accept => {
+                            trace!(session_id = self.info.session_id, "Ingress accepted frame");
                             // consume bytes and continue
                             let _ = self.buffer.split_to(consumed);
                             continue;
                         }
                         IngressDecision::Backpressure => {
+                            warn!(session_id = self.info.session_id, channel = ?message.channel, "Ingress backpressure");
                             // leave buffer intact (message held by mux) and propagate backpressure
                             return Err(SessionError::Backpressure(message.channel));
                         }
                         IngressDecision::Close(reason) => {
+                            warn!(session_id = self.info.session_id, reason = %reason, "Ingress requested close");
                             return Err(SessionError::IngressClose(reason));
                         }
                     }
@@ -301,10 +329,18 @@ impl Session {
                 | Err(crate::protocol::tlv::TlvError::IncompleteLength)
                 | Err(crate::protocol::tlv::TlvError::IncompleteValue { .. })
                 | Err(crate::protocol::tlv::TlvError::EmptyFrame) => {
+                    trace!(
+                        session_id = self.info.session_id,
+                        buffer_remaining = self.buffer.len(),
+                        "Session: incomplete TLV frame, waiting for more bytes"
+                    );
                     // Incomplete frame or empty buffer: wait for more bytes
                     break;
                 }
-                Err(e) => return Err(SessionError::Decode(e)),
+                Err(e) => {
+                    error!(session_id = self.info.session_id, error = ?e, "Session TLV decode error");
+                    return Err(SessionError::Decode(e));
+                }
             }
         }
 

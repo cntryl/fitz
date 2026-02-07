@@ -19,6 +19,7 @@ use crate::session::{CloseReason, SessionInfo};
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
+use tracing::{debug, trace, warn, error, info};
 
 /// Outcome from the runtime for a single protocol message
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +151,13 @@ impl Default for RuntimeIngress {
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
         let session_id = session.session_id;
+        info!(
+            session_id = session_id,
+            transport = %session.transport_kind,
+            peer_addr = ?session.peer_addr,
+            authenticated = session.authenticated,
+            "Ingress: session opened"
+        );
 
         self.sessions.insert(session_id, session.clone());
 
@@ -176,15 +184,16 @@ impl Ingress for RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
     ) -> IngressDecision {
-        eprintln!(
-            "on_frame enter: session_id={} channel={} msg_type={}",
-            session_id,
-            channel_id,
-            msg_type.as_u16()
+        debug!(
+            session_id = session_id,
+            channel = ?channel_id,
+            msg_type = msg_type.as_u16(),
+            payload_len = message_payload.len(),
+            "Ingress on_frame: enter"
         );
         // Verify session exists
         if !self.sessions.contains_key(&session_id) {
-            eprintln!("Frame for unknown session: {}", session_id);
+            warn!(session_id = session_id, "Ingress: frame for unknown session");
             return IngressDecision::Close(format!("unknown session: {}", session_id));
         }
 
@@ -194,7 +203,7 @@ impl Ingress for RuntimeIngress {
         let mut notify_frame: Option<SessionFrame> = None;
         {
             let Some(mut entry) = self.sessions.get_mut(&session_id) else {
-                eprintln!("Session vanished during frame processing: {}", session_id);
+                warn!(session_id = session_id, "Ingress: session vanished during frame processing");
                 return IngressDecision::Close(format!("session vanished: {}", session_id));
             };
             if !entry.authenticated {
@@ -202,7 +211,7 @@ impl Ingress for RuntimeIngress {
                     if channel_id != ChannelId::Control
                         || msg_type != crate::protocol::tlv::MessageType::CONNECT
                     {
-                        eprintln!("forcing close for unauthenticated session {}", session_id);
+                        warn!(session_id = session_id, channel = ?channel_id, msg_type = msg_type.as_u16(), "Ingress: unauthenticated, CONNECT required");
                         return IngressDecision::Close(
                             "unauthenticated: connect required".to_string(),
                         );
@@ -211,6 +220,7 @@ impl Ingress for RuntimeIngress {
                     // Auth is required - parse JWT
                     // Try to prefer verified tokens when an issuer is present.
                     let compact = std::str::from_utf8(&message_payload).unwrap_or("");
+                    debug!(session_id = session_id, jwt_len = compact.len(), "Ingress: parsing CONNECT JWT");
 
                     // First, parse the token without verification to inspect claims for `iss`.
                     match crate::auth::parse_jwt_noverify(compact) {
@@ -254,7 +264,7 @@ impl Ingress for RuntimeIngress {
                                                         // If the header is simply malformed (e.g. missing `alg`), allow
                                                         // a fallback to the no-verify path for this test-friendly flow.
                                                         if e.starts_with("invalid jwt header:") {
-                                                            eprintln!("invalid jwt header (falling back to no-verify): {}", e);
+                                                            debug!(session_id = session_id, error = %e, "Ingress: invalid JWT header, falling back to no-verify");
                                                             match crate::auth::permissions_from_compact_jwt(compact) {
                                                             Ok(snapshot) => {
                                                                 entry.permissions_snapshot = snapshot.clone();
@@ -275,14 +285,15 @@ impl Ingress for RuntimeIngress {
                                                                 });
                                                             }
                                                             Err(e) => {
-                                                                eprintln!("connect failed: {}", e);
+                                                                error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (jwt header fallback)");
                                                                 return IngressDecision::Close(format!("connect failed: {}", e));
                                                             }
                                                         }
                                                         } else {
-                                                            eprintln!(
-                                                                "connect failed (signature): {}",
-                                                                e
+                                                            error!(
+                                                                session_id = session_id,
+                                                                error = %e,
+                                                                "Ingress: CONNECT failed (signature verification)"
                                                             );
                                                             return IngressDecision::Close(
                                                                 format!("connect failed: {}", e),
@@ -292,10 +303,11 @@ impl Ingress for RuntimeIngress {
                                                 }
                                             }
                                             Err(e) => {
-                                                eprintln!(
-                                                "jwks fetch failed (falling back to no-verify): {}",
-                                                e
-                                            );
+                                                debug!(
+                                                    session_id = session_id,
+                                                    error = %e,
+                                                    "Ingress: JWKS fetch failed, falling back to no-verify"
+                                                );
                                                 // Fall back to no-verify parsing below
                                                 match crate::auth::permissions_from_compact_jwt(
                                                     compact,
@@ -322,7 +334,7 @@ impl Ingress for RuntimeIngress {
                                                         });
                                                     }
                                                     Err(e) => {
-                                                        eprintln!("connect failed: {}", e);
+                                                        error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify after JWKS fetch failure)");
                                                         return IngressDecision::Close(format!(
                                                             "connect failed: {}",
                                                             e
@@ -333,10 +345,11 @@ impl Ingress for RuntimeIngress {
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!(
-                                        "jwks derivation failed (falling back to no-verify): {}",
-                                        e
-                                    );
+                                        debug!(
+                                            session_id = session_id,
+                                            error = %e,
+                                            "Ingress: JWKS derivation failed, falling back to no-verify"
+                                        );
                                         match crate::auth::permissions_from_compact_jwt(compact) {
                                             Ok(snapshot) => {
                                                 entry.permissions_snapshot = snapshot.clone();
@@ -359,7 +372,7 @@ impl Ingress for RuntimeIngress {
                                                 });
                                             }
                                             Err(e) => {
-                                                eprintln!("connect failed: {}", e);
+                                                error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify after JWKS derivation failure)");
                                                 return IngressDecision::Close(format!(
                                                     "connect failed: {}",
                                                     e
@@ -390,7 +403,7 @@ impl Ingress for RuntimeIngress {
                                         });
                                     }
                                     Err(e) => {
-                                        eprintln!("connect failed: {}", e);
+                                        error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify, no issuer)");
                                         return IngressDecision::Close(format!(
                                             "connect failed: {}",
                                             e
@@ -400,7 +413,7 @@ impl Ingress for RuntimeIngress {
                             }
                         }
                         Err(e) => {
-                            eprintln!("connect failed: {}", e);
+                            error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (JWT parse)");
                             return IngressDecision::Close(format!("connect failed: {}", e));
                         }
                     }
@@ -428,7 +441,7 @@ impl Ingress for RuntimeIngress {
         }
 
         if let Some(frame) = &notify_frame {
-            eprintln!("notifying frame for session {}", session_id);
+            debug!(session_id = session_id, "Ingress: auth completed, notifying frame handler");
             if let Some(handler) = &self.event_handler {
                 handler(SessionEvent::Frame(frame.clone()));
             }
@@ -451,6 +464,12 @@ impl Ingress for RuntimeIngress {
             };
 
             if !domain.is_empty() {
+                debug!(
+                    session_id = session_id,
+                    msg_type = msg_type.as_u16(),
+                    domain = domain,
+                    "Ingress: resolved domain for msg_type"
+                );
                 if let Some(session_info) = self.get_session(session_id) {
                     // Authorization: determine required access for this msg type
                     let access = match msg_type.as_u16() {
@@ -484,7 +503,7 @@ impl Ingress for RuntimeIngress {
                         Ok(Some(r)) => r,
                         Ok(None) => crate::runtime::routing::Route::new(format!("{}://**", domain)),
                         Err(e) => {
-                            eprintln!("failed to derive route for auth: {}", e);
+                            warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive route for authorization");
                             return IngressDecision::Close(format!(
                                 "authorization parse failed: {}",
                                 e
@@ -495,18 +514,19 @@ impl Ingress for RuntimeIngress {
                     // Check session actor's authorization
                     if let Some(actor_ref) = self.get_session_actor(session_id) {
                         if !actor_ref.authorize(&auth_route, access) {
-                            eprintln!(
-                                "authorization failed for session {} msg_type {} route {}",
-                                session_id,
-                                msg_type.as_u16(),
-                                auth_route.as_str()
+                            warn!(
+                                session_id = session_id,
+                                msg_type = msg_type.as_u16(),
+                                route = auth_route.as_str(),
+                                access = ?access,
+                                "Ingress: authorization DENIED"
                             );
                             return IngressDecision::Close(
                                 "unauthorized: permission denied".to_string(),
                             );
                         }
                     } else {
-                        eprintln!("missing session actor for {}", session_id);
+                        warn!(session_id = session_id, "Ingress: missing session actor for authorization");
                         return IngressDecision::Close(
                             "unauthorized: session actor missing".to_string(),
                         );
@@ -534,8 +554,16 @@ impl Ingress for RuntimeIngress {
                     );
                     let envelope =
                         crate::runtime::envelope::Envelope::from_route(source, addr, ctx);
+                    debug!(
+                        session_id = session_id,
+                        domain = domain,
+                        msg_type = msg_type.as_u16(),
+                        route = %envelope.destination(),
+                        source = ?envelope.source(),
+                        "Ingress: routing envelope to domain"
+                    );
                     if let Err(e) = router.route(envelope) {
-                        eprintln!("router.route failed: {}", e);
+                        error!(session_id = session_id, domain = domain, error = %e, "Ingress: router.route failed for domain dispatch");
                     }
                 }
             }
@@ -552,11 +580,12 @@ impl Ingress for RuntimeIngress {
             }
         }
 
-        eprintln!("returning Accept for regular frame");
+        trace!(session_id = session_id, msg_type = msg_type.as_u16(), "Ingress: returning Accept");
         IngressDecision::Accept
     }
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
+        info!(session_id = session_id, reason = %reason, "Ingress: session closing");
         // Remove session and associated actor
         self.sessions.remove(&session_id);
         self.session_actors.remove(&session_id);
