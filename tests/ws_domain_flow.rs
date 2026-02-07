@@ -7,6 +7,7 @@ use fitz::session::{
 };
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
+use bytes::Bytes;
 
 #[tokio::test]
 async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
@@ -66,7 +67,7 @@ async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
     let resp = rx.recv().await.expect("expected response");
     // Decode TLV header to check msg_type and that the payload is a GET result
     let dec = fitz::protocol::tlv::TlvDecoder::new();
-    let (record, _) = dec.decode_one(&bytes::Bytes::from(resp)).unwrap();
+    let (record, _) = dec.decode_one(&Bytes::from(resp)).unwrap();
     assert_eq!(record.msg_type().as_u16(), 103);
     // Response body begins with a found byte (0/1)
     let body = record.value();
