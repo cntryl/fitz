@@ -95,8 +95,40 @@ async fn handle_tcp_connection(
     use crate::api::tcp::create_session;
 
     // Create session and handler
-    let (frame_tx, _frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
-    let handler = create_session(ingress, config, stream, frame_tx).await?;
+    let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
+    let handler = create_session(ingress.clone(), config.clone(), stream, frame_tx).await?;
+    
+    // Get session_id from handler before it consumes the stream
+    let session_id = handler.session_id;
+
+    // Spawn task to process frames from the channel
+    let ingress_clone = ingress.clone();
+    let config_clone = config.clone();
+    tokio::spawn(async move {
+        // Create ONE session instance that persists for all frames on this connection
+        let session_config = crate::session::NewSessionConfig::unauthenticated(
+            crate::session::TransportKind::Tcp,
+            None,
+            crate::session::SessionPermissions::empty(),
+            crate::session::SessionMetadata::new(),
+            config_clone.channel_capacity,
+            None,
+            crate::runtime::routing::RouteFamily::new(0),
+        );
+        
+        let mut session = crate::session::Session::new(session_id, session_config);
+        let mut frame_rx = frame_rx;
+        
+        // Process frames as they arrive, maintaining the session buffer state
+        while let Some((_sid, frame)) = frame_rx.recv().await {
+            // Process frame through session (decodes TLV and routes to ingress)
+            if let Err(e) = session.on_frame(frame, ingress_clone.as_ref()).await {
+                tracing::error!(session_id = session_id, error = %e, "TCP frame processing error");
+                ingress_clone.on_close(session_id, crate::session::CloseReason::Error(format!("{:?}", e))).await;
+                break;
+            }
+        }
+    });
 
     // Run TCP handler (reads frames and forwards to ingress)
     handler.run().await?;

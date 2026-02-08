@@ -29,7 +29,7 @@ pub struct TcpHandler {
     /// Configuration for ingress
     config: IngressConfig,
     /// Session ID assigned by ingress
-    session_id: u64,
+    pub session_id: u64,
     /// Channel for sending frames to runtime
     tx: mpsc::Sender<(u64, Bytes)>,
     /// TCP stream
