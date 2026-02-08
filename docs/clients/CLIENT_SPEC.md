@@ -7,22 +7,25 @@ This document defines what every Fitz client implementation MUST do to interoper
 
 1. [Scope & Non-Goals](#scope--non-goals)
 2. [Client Model](#client-model)
-3. [Terminology & Definitions](#terminology--definitions)
-4. [Supported Transports](#supported-transports)
-5. [Wire Protocol](#wire-protocol)
-6. [Connection Lifecycle](#connection-lifecycle)
-7. [Authentication & Security](#authentication--security)
-8. [Routing](#routing)
-9. [Verbs](#verbs)
-10. [Permissions](#permissions)
-11. [Transactions](#transactions)
-12. [Subscriptions](#subscriptions)
-13. [Request/Response Correlation](#requestresponse-correlation)
-14. [Error Handling](#error-handling)
-15. [Idempotency & Retry Strategy](#idempotency--retry-strategy)
-16. [Domains](#domains)
-17. [Constants & TLV Registry](#constants--tlv-registry)
-18. [Acceptance Criteria](#acceptance-criteria)
+3. [Recommended Client API Design](#recommended-client-api-design)
+4. [Terminology & Definitions](#terminology--definitions)
+5. [Supported Transports](#supported-transports)
+6. [Wire Protocol](#wire-protocol)
+7. [Connection Lifecycle](#connection-lifecycle)
+8. [Authentication & Security](#authentication--security)
+9. [Routing](#routing)
+10. [HTTP-Like Design Principle](#http-like-design-principle)
+11. [Verbs](#verbs)
+12. [Server-Side Architecture](#server-side-architecture-client-non-concerns)
+13. [Permissions](#permissions)
+14. [Transactions](#transactions)
+15. [Subscriptions](#subscriptions)
+16. [Request/Response Correlation](#requestresponse-correlation)
+17. [Error Handling](#error-handling)
+18. [Idempotency & Retry Strategy](#idempotency--retry-strategy)
+19. [Domains](#domains)
+20. [Constants & TLV Registry](#constants--tlv-registry)
+21. [Acceptance Criteria](#acceptance-criteria)
 
 ## Scope & Non-Goals
 
@@ -67,6 +70,120 @@ A Fitz client is a **synchronous or asynchronous transport adapter** that:
 - Caching or memoization
 - Session migration across brokers
 
+## Recommended Client API Design
+
+While the wire protocol requires routes in every message for self-contained operations, client implementations SHOULD provide ergonomic abstractions that hide this verbosity from end users.
+
+### Pattern: Return Domain-Specific Objects
+
+**Good abstraction:**
+
+```python
+# begin() returns a Transaction object
+tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
+
+# Transaction methods hide route repetition
+tx.put(b"key", b"value")      # Simple API
+tx.get(b"key")                 # Focus on data
+tx.commit()                    # No route visible
+```
+
+**Under the hood (wire protocol):**
+
+```python
+class KvTransaction:
+    def __init__(self, client, route, tx_id):
+        self._client = client
+        self._route = route      # Stored internally
+        self._tx_id = tx_id
+
+    def put(self, key, value):
+        # Wire protocol: sends tx_id + route + key + value
+        return self._client._send_kv_put(
+            self._tx_id,
+            self._route,  # ← Sent on wire every time
+            key,
+            value
+        )
+
+    def get(self, key):
+        return self._client._send_kv_get(self._tx_id, self._route, key)
+
+    def commit(self):
+        return self._client._send_kv_commit(self._tx_id, self._route)
+```
+
+### Why This Pattern Works
+
+1. **Wire Protocol Compliance**: Every message includes full context (tx_id + route)
+2. **User Ergonomics**: Users don't repeat `route` in every call
+3. **Stateless Operations**: Server doesn't track implicit state; each message is self-contained
+4. **Reconnection Safety**: If connection drops mid-transaction, no server-side cleanup needed
+5. **Language Idiomatic**: Feels natural in each language (Python context managers, Rust Drop trait, Go defer)
+
+### Anti-Pattern: Implicit State
+
+**❌ WRONG - Do not do this:**
+
+```python
+# BAD: Client stores route globally or per-connection
+client = FitzClient(realm="prod")  # ❌ Implicit realm
+tx = client.kv_begin("users")      # ❌ Incomplete route
+
+# BAD: Server tracks route per tx_id
+tx.put(b"key", b"value")  # ❌ Server must remember route from BEGIN
+```
+
+**Why it's wrong:**
+
+- Couples client to single realm
+- Makes wire protocol stateful (server must track route per tx_id)
+- Breaks on reconnection (server state lost)
+- Violates self-contained operation principle
+
+### Recommended Patterns by Language
+
+**Python (Context Manager):**
+
+```python
+with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
+    tx.put(b"key", b"value")
+    tx.commit()  # Or auto-commit on __exit__
+```
+
+**Rust (Drop trait):**
+
+```rust
+let mut tx = client.kv_begin("kv://prod/app/users", TxMode::ReadWrite)?;
+tx.put(b"key", b"value")?;
+tx.commit()?;  // Or auto-rollback in Drop
+```
+
+**Go (defer):**
+
+```go
+tx, err := client.KvBegin("kv://prod/app/users", TxModeReadWrite)
+defer tx.Rollback()  // Safe cleanup
+tx.Put([]byte("key"), []byte("value"))
+tx.Commit()  // Clears rollback flag
+```
+
+**JavaScript (Builder Pattern):**
+
+```javascript
+const tx = await client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+await tx.put(Buffer.from("key"), Buffer.from("value"));
+await tx.commit();
+```
+
+### Key Principle
+
+**"Ergonomic API, Self-Contained Wire Protocol"**
+
+- User-facing API: hide route repetition via object methods
+- Wire protocol: every message includes full context (route + tx_id)
+- No server-side implicit state beyond what's in the message
+
 ## Terminology & Definitions
 
 Use these exact terms. Other terms are forbidden.
@@ -77,8 +194,11 @@ Use these exact terms. Other terms are forbidden.
 | **resource** | Named entity within an area (e.g., table, queue, stream) | — |
 | **route** | URI-like string addressing a resource or operation | `endpoint`, `path`, `key` |
 | **verb** | Operation name (e.g., `GET`, `PUT`, `PUBLISH`) | `operation`, `method` (ambiguous) |
-| **route_family** | Numeric partition key for sharding (u64) | `shard_id`, `partition_id` |
 | **domain** | Service category (kv, queue, notice, stream, rpc, lease, schedule) | — |
+
+**Note on RouteFamily (Server-Side Only):**
+
+`RouteFamily` is a **server-internal sharding concept** determined from the JWT during session authentication. Clients MUST NOT send, store, or manage RouteFamily values. The server extracts RouteFamily from JWT claims to partition resources across shards. This is transparent to clients — routes are opaque strings.
 **Forbidden terminology in client code:**
 
 - NEVER use `tenant` — use `realm`
@@ -391,6 +511,77 @@ queue://prod/app/orders/send     # Queue enqueue
 notice://prod/app/events/publish # Pub/sub publish
 ```
 
+## HTTP-Like Design Principle
+
+Fitz follows an **HTTP-like model** where every operation is self-contained and stateless on the server side:
+
+### Core Analogy
+
+**HTTP:**
+
+```
+POST /api/users HTTP/1.1
+Host: example.com
+Content-Type: application/json
+
+{"name": "alice"}
+```
+
+**Fitz:**
+
+```
+Verb: PUT (MessageType=104)
+Route: kv://prod/app/users
+Payload: [tx_id][key][value]
+```
+
+### Key Principles
+
+1. **Every operation includes a route** (like HTTP URL)
+   - KV PUT: `[tx_id][route][key][value]`
+   - Queue ENQUEUE: `[route][body][delay]`
+   - Stream APPEND: `[session_id][route][body]`
+
+2. **Operations are self-contained** (like HTTP statelessness)
+   - Server doesn't track implicit context beyond session auth
+   - Each message has full addressing information
+   - Connection loss doesn't leave orphaned server state
+
+3. **Verbs determine action** (like HTTP GET/POST/PUT/DELETE)
+   - MessageType selects operation
+   - Wire codes are stable ABI
+   - Domain+Verb fully specifies behavior
+
+4. **TLV is the wire format** (like HTTP has headers+body)
+   - Type-Length-Value encoding
+   - Binary efficient, not text-based
+   - Extensible without version negotiation
+
+### Why This Matters
+
+**For implementers:**
+
+- Simple mental model: "It's like HTTP but binary and over WebSocket/TCP"
+- Familiar patterns: routes, verbs, self-contained requests
+- Easy to reason about: no hidden state machines
+
+**For operations:**
+
+- Debuggable: every message is complete, can be logged/replayed
+- Reconnect-safe: operations don't depend on connection history
+- Scalable: stateless server processing enables horizontal scaling
+
+### Comparison
+
+| Aspect         | HTTP                            | Fitz                                   |
+| -------------- | ------------------------------- | -------------------------------------- |
+| **Addressing** | URL path                        | Route (kv://realm/area/resource)       |
+| **Verb**       | GET, POST, PUT, DELETE          | MessageType (100=BEGIN, 104=PUT, etc.) |
+| **Transport**  | TCP + TLS                       | WebSocket or TCP + TLS                 |
+| **Format**     | Text (headers + body)           | Binary (TLV)                           |
+| **State**      | Stateless (cookies for session) | Stateless (JWT for session auth)       |
+| **Operations** | Self-contained requests         | Self-contained requests                |
+
 ## Route Acceptance Criteria (Authoritative)
 
 A request is valid **only if**:
@@ -540,15 +731,6 @@ This specification is the **single source of truth** for:
 - Permission enforcement
 - Long-term protocol stability
 
-## Route Family
-
-**Route family** is a numeric `u64` partition key, **separate from the route string**.
-
-- Provided by client with each request
-- Used by broker for sharding/isolation
-- MUST be consistent for same realm/area/resource tuple
-- Opaque to client (no semantic meaning)
-
 ## Verbs
 
 Verbs are the **primary behavior selector**. They determine what action a request performs.
@@ -612,6 +794,52 @@ Clients MUST:
 
 Each domain occupies an exclusive 100-code block. The broker's mux layer routes by numeric range — **no overlap, no disambiguation needed**.
 **Clients MUST use the wire codes from the Constants & TLV Registry section.**
+
+## Server-Side Architecture (Client Non-Concerns)
+
+This section documents broker-internal mechanisms that clients **MUST NOT** implement or interact with. These details are provided for completeness and to explain why certain client design decisions were made.
+
+### RouteFamily (Sharding Key)
+
+**What It Is:**
+
+`RouteFamily` is a **server-internal numeric identifier (u64)** used for resource partitioning and sharding across broker instances or threads. It determines which shard handles operations for a given route.
+
+**How Server Determines RouteFamily:**
+
+The broker extracts `RouteFamily` from the **JWT during session authentication**:
+
+1. Client sends CONNECT frame with JWT
+2. Broker parses JWT claims: `tenant_id`, `org_id`, `env`, etc.
+3. Broker calls control plane lookup: `RouteFamily::from_jwt(jwt)` (see `src/session/tenant.rs`)
+4. Resulting `RouteFamily` value is **stored in session state** and used for all subsequent operations
+5. Current implementation returns `RouteFamily::new(0)` as a stub (all realms map to family 0 until multi-tenant control plane is integrated)
+
+**Why Clients Don't Send RouteFamily:**
+
+- **Separation of Concerns**: RouteFamily is a server implementation detail for sharding and load distribution
+- **Security**: Allowing clients to specify RouteFamily would enable cross-tenant access and sharding bypass
+- **Simplicity**: Clients treat routes as opaque strings; server handles all partitioning logic
+- **Future-Proof**: Server can change sharding strategy without breaking client protocol
+
+**Client Requirements:**
+
+- Clients MUST NOT send `family_id` in any wire protocol message
+- Clients MUST NOT store or track RouteFamily values
+- Clients MUST treat all routes as opaque strings (no parsing realm/area to derive family)
+- Server determines RouteFamily from session JWT; clients have **zero visibility** into this value
+
+**Protocol Evolution:**
+
+In earlier protocol iterations, some domains required `[u64 BE] family_id` in wire formats. This was removed to enforce proper separation: clients send routes, servers extract RouteFamily from session. The current specification reflects this corrected design.
+
+**Implementation Reference:**
+
+See Fitz server code:
+
+- `src/session/tenant.rs:45-132` - RouteFamily extraction from JWT
+- `src/session/session.rs:97` - SessionInfo stores RouteFamily
+- `src/session/manager.rs:651` - Server passes RouteFamily to codec parsers (clients never send it)
 
 ## Permissions
 
@@ -751,7 +979,7 @@ Clients MUST:
 
 ```rust
 // ✅ CORRECT - explicit transaction lifecycle
-let tx_id = client.begin(KvBeginRequest { resource, mode })?;
+let tx_id = client.begin(KvBeginRequest { route, mode })?;
 client.put(KvPutRequest { tx_id, key, value })?;
 client.get(KvGetRequest { tx_id, key })?;
 client.commit(KvCommitRequest { tx_id })?;
@@ -777,7 +1005,6 @@ Clients MUST expose:
 ```javascript
 // ✅ CORRECT - explicit subscribe
 client.subscribe({
-  family_id: 1,
   pattern: "notice://prod/app/*",
   handler: (route, payload) => {
     /* ... */
@@ -785,7 +1012,6 @@ client.subscribe({
 });
 // ✅ CORRECT - explicit unsubscribe
 client.unsubscribe({
-  family_id: 1,
   pattern: "notice://prod/app/*",
 });
 // ❌ WRONG - implicit subscriptions
@@ -970,7 +1196,6 @@ Each domain has a specific wire format, verb set, and semantics. Implement each 
 #### PUBLISH Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route (UTF-8, e.g., "notice://realm/area/events")
 [u32 BE]  payload_len
@@ -988,52 +1213,75 @@ Response (status=1 error):
 #### SUBSCRIBE Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_pattern_len
 [bytes]   route_pattern (supports * and ** wildcards)
-[u64 BE]  session_id
-[u32 BE]  subscriber_route_len
-[bytes]   subscriber_route
 Response (status=0):
   [u8]     0
-  [u8]     has_subscription_id
-  [u64 BE] subscription_id (if present)
+  [u64 BE] subscription_id
 Response (status=1):
   [u8]     1
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
+**Design Notes:**
+
+- Server tracks subscriptions by `(session_id, route_pattern)` tuple
+- `session_id` is implicit from connection (not sent by client)
+- Duplicate SUBSCRIBE to same pattern is idempotent (returns same `subscription_id`)
+- Client handles local multiplexing (multiple handlers per `subscription_id`)
+
 #### UNSUBSCRIBE Request
 
 ```
-[u64 BE]  family_id
-[u32 BE]  route_pattern_len
-[bytes]   route_pattern
-[u64 BE]  session_id
-[u32 BE]  subscriber_route_len
-[bytes]   subscriber_route
-Response: status byte + error (if status=1)
+[u64 BE]  subscription_id
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
+
+**Design Notes:**
+
+- Client sends `subscription_id` returned from SUBSCRIBE
+- Server removes subscription for calling session
+- Idempotent: unsubscribing non-existent subscription_id returns success
 
 #### UNSUBSCRIBE_ALL Request
 
 ```
-[u64 BE]  session_id
-[u64 BE]  family_id
-[u32 BE]  subscriber_route_len
-[bytes]   subscriber_route
-Response: status byte + error (if status=1)
+(no payload - session_id implicit from connection)
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
+
+**Design Notes:**
+
+- Removes all subscriptions for calling session
+- Idempotent: safe to call even if no subscriptions exist
 
 #### NOTIFY (Server Delivery)
 
 ```
+[u64 BE]  subscription_id
 [u32 BE]  route_len
-[bytes]   route (published route, not subscription pattern)
+[bytes]   route (exact published route, not subscription pattern)
 [u32 BE]  payload_len
 [bytes]   payload
 ```
+
+**Design Notes:**
+
+- `subscription_id` tells client which subscription(s) matched
+- Client demultiplexes to local handlers registered for that `subscription_id`
+- Single NOTIFY delivered per `(session_id, pattern)` tuple (server deduplicates)
+- If client has multiple handlers for same pattern, client calls all handlers locally
 
 #### Pattern Matching
 
@@ -1041,28 +1289,193 @@ Response: status byte + error (if status=1)
 - `**` matches zero or more segments (e.g., `notice://realm/**` matches all routes in realm)
 - Exact routes (no wildcards) also supported
 
-#### Usage Example
+#### Client-Side Multiplexing
+
+**Key Design Principle:** One subscription per `(session, pattern)` on server, multiple handlers per subscription on client.
+
+**What Happens When Multiple Handlers Subscribe to Same Pattern:**
 
 ```python
-# Subscriber
-sub_id = client.notice_subscribe(
+# User creates two handlers for same pattern
+sub1 = client.notice_subscribe("notice://prod/app/*", handler1)
+sub2 = client.notice_subscribe("notice://prod/app/*", handler2)
+
+# Behind the scenes:
+# - First subscribe: Client sends SUBSCRIBE to server, gets subscription_id=42
+# - Second subscribe: Client reuses subscription_id=42, adds handler2 to local list
+# - Server has ONE subscription (session_id, "notice://prod/app/*") → subscription_id=42
+# - Client tracks: subscription_id=42 → [handler1, handler2]
+
+# When message published to "notice://prod/app/orders":
+# - Server sends ONE NOTIFY with subscription_id=42
+# - Client demuxes locally: calls handler1(route, payload) then handler2(route, payload)
+```
+
+**Reference Counting for Unsubscribe:**
+
+```python
+sub1.unsubscribe()  # Client removes handler1 from local list
+# subscription_id=42 still has handler2 registered
+# NO UNSUBSCRIBE sent to server
+
+sub2.unsubscribe()  # Client removes handler2 from local list
+# subscription_id=42 now has zero handlers
+# NOW client sends UNSUBSCRIBE(subscription_id=42) to server
+```
+
+**Benefits:**
+
+- **Wire efficiency**: One NOTIFY per pattern match (not N duplicates)
+- **Server simplicity**: No duplicate subscription tracking
+- **Familiar pattern**: Same as EventEmitter, RxJS, Redis pub/sub listeners
+
+**Client Implementation Responsibilities:**
+
+- Track map: `subscription_id → [handler1, handler2, ...]`
+- Track map: `route_pattern → subscription_id` (for dedup)
+- Reference count handlers per subscription
+- Only send UNSUBSCRIBE when last handler removed
+
+#### Usage Example
+
+**Recommended User-Facing API (Subscription Object with Multiplexing):**
+
+```python
+# Client connects
+client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
+
+# Multiple handlers can subscribe to same pattern
+sub1 = client.notice_subscribe(
     pattern="notice://prod/app/orders/*",
-    subscriber_route="notice://prod/app/listener"
+    handler=lambda route, payload: print(f"Handler1: {route}")
 )
-# Receive notifications
-while notification = client.receive_notification():
-    print(f"Received: {notification.route} => {notification.payload}")
-# Publisher
+
+sub2 = client.notice_subscribe(
+    pattern="notice://prod/app/orders/*",
+    handler=lambda route, payload: print(f"Handler2: {route}")
+)
+
+# Behind scenes: Both share subscription_id=42 from server
+# Client tracks: sub_id=42 → [handler1, handler2]
+
+# When notification arrives, client calls both handlers
+# (Server sent ONE NOTIFY, client demuxes locally)
+
+# Unsubscribe individual handler
+sub1.unsubscribe()  # Removes handler1, keeps handler2
+# No server UNSUBSCRIBE sent yet (handler2 still active)
+
+sub2.unsubscribe()  # Removes handler2 (last handler)
+# NOW sends UNSUBSCRIBE(subscription_id=42) to server
+
+# Publisher (stateless)
 client.notice_publish(
     route="notice://prod/app/orders/created",
     payload=b'{"order_id": 123}'
 )
-# Cleanup
-client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
 ```
+
+**NoticeSubscription Object Implementation:**
+
+```python
+class NoticeClient:
+    def __init__(self):
+        self._subscriptions = {}  # subscription_id → [handlers]
+        self._patterns = {}       # route_pattern → subscription_id
+        self._handler_refs = {}   # handler → (subscription_id, pattern)
+
+    def subscribe(self, pattern, handler):
+        """Subscribe handler to pattern (may reuse existing subscription)"""
+        # Check if already subscribed to this pattern
+        if pattern in self._patterns:
+            sub_id = self._patterns[pattern]
+            self._subscriptions[sub_id].append(handler)
+            self._handler_refs[id(handler)] = (sub_id, pattern)
+            return NoticeSubscription(self, pattern, sub_id, handler)
+
+        # New pattern - send SUBSCRIBE to server
+        sub_id = self._send_subscribe_wire(pattern)  # Wire: [pattern_len][pattern]
+        self._patterns[pattern] = sub_id
+        self._subscriptions[sub_id] = [handler]
+        self._handler_refs[id(handler)] = (sub_id, pattern)
+        return NoticeSubscription(self, pattern, sub_id, handler)
+
+    def _handle_notify(self, subscription_id, route, payload):
+        """Called when NOTIFY frame arrives from server"""
+        # Fan out to all local handlers for this subscription_id
+        handlers = self._subscriptions.get(subscription_id, [])
+        for handler in handlers:
+            handler(route, payload)
+
+    def _unsubscribe_handler(self, subscription_id, pattern, handler):
+        """Remove specific handler (may unsubscribe from server)"""
+        handlers = self._subscriptions.get(subscription_id, [])
+        if handler in handlers:
+            handlers.remove(handler)
+            del self._handler_refs[id(handler)]
+
+        # If no handlers left, unsubscribe from server
+        if not handlers:
+            self._send_unsubscribe_wire(subscription_id)  # Wire: [subscription_id]
+            del self._subscriptions[subscription_id]
+            del self._patterns[pattern]
+
+class NoticeSubscription:
+    def __init__(self, client, pattern, subscription_id, handler):
+        self._client = client
+        self._pattern = pattern              # Stored internally
+        self._subscription_id = subscription_id  # From server
+        self._handler = handler              # Specific handler
+
+    def unsubscribe(self):
+        """Remove this handler (may send UNSUBSCRIBE if last handler)"""
+        self._client._unsubscribe_handler(
+            self._subscription_id,
+            self._pattern,
+            self._handler
+        )
+```
+
+**Wire Protocol (what actually goes on the wire):**
+
+```
+CLIENT → SERVER (first subscribe to pattern):
+  SUBSCRIBE: [pattern_len]["notice://prod/app/*"]
+
+SERVER → CLIENT:
+  Response: [status=0][subscription_id=42]
+
+CLIENT → SERVER (second subscribe to SAME pattern):
+  (nothing sent - client reuses subscription_id=42 locally)
+
+SERVER → CLIENT (when message published):
+  NOTIFY: [subscription_id=42][route_len]["notice://prod/app/orders/created"][payload_len][payload]
+
+CLIENT PROCESSING:
+  - Looks up subscription_id=42 → finds [handler1, handler2]
+  - Calls handler1(route, payload)
+  - Calls handler2(route, payload)
+
+CLIENT → SERVER (first unsubscribe):
+  (nothing sent - handler2 still active locally)
+
+CLIENT → SERVER (second unsubscribe, last handler removed):
+  UNSUBSCRIBE: [subscription_id=42]
+```
+
+**Key Points:**
+
+- User calls `client.subscribe(pattern, handler)` - simple, handler-focused API
+- First subscribe to pattern sends SUBSCRIBE to server, gets `subscription_id`
+- Subsequent subscribes to same pattern reuse server subscription, track handler locally
+- NOTIFY includes `subscription_id` for client demux (NOT route pattern)
+- Unsubscribe only sends to server when last handler removed (reference counting)
+- Pattern: Familiar to EventEmitter, RxJS, Redux listeners, etc.
 
 #### Semantics
 
+- **Client-Side Multiplexing**: Server tracks one subscription per `(session, pattern)`. Client tracks multiple handlers per `subscription_id`. Server sends one NOTIFY per pattern match; client demuxes to all local handlers.
+- **Idempotent SUBSCRIBE**: Duplicate SUBSCRIBE to same pattern returns same `subscription_id` (no duplicate server subscription created)
 - **Delivery**: Best-effort; under backpressure, notifications may be dropped
 - **Ordering**: Delivered in publish order per subscription
 - **Fanout**: Single publish reaches all matching subscriptions
@@ -1070,6 +1483,27 @@ client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
 - **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use RPC or Queue for guaranteed delivery or acknowledgement-based workflows.**
+
+##### Pattern Matching & Precedence
+
+**Multiple pattern matches:**
+
+- Single PUBLISH may match multiple subscriptions
+- Each matching subscription receives NOTIFY
+- No precedence or filtering (all matches deliver)
+
+**Example:**
+
+- Client subscribes to: `notice://prod/app/*`
+- Client subscribes to: `notice://prod/**`
+- Publish to: `notice://prod/app/orders`
+- Result: Client receives 2 NOTIFY frames (one per subscription)
+
+**Deduplication:**
+
+- Server does NOT deduplicate across different subscriptions
+- If client subscribes twice to same pattern: both reference same `subscription_id` (client-side multiplexing)
+- Client SHOULD use reference counting to avoid premature unsubscribe
 
 #### Error Codes (3xxx range)
 
@@ -1081,11 +1515,13 @@ client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
 #### Acceptance Tests
 
 - subscribe to pattern, receive matching publications
-- multiple subscriptions on same pattern both receive
+- **client-side multiplexing**: two handlers subscribe to same pattern, both receive NOTIFY (client tracks, server sends one)
+- **reference counting**: unsubscribe first handler doesn't send UNSUBSCRIBE to server; unsubscribe second handler (last) sends UNSUBSCRIBE
+- **idempotent subscribe**: second SUBSCRIBE to same pattern returns same `subscription_id`
 - publish with no subscribers returns ok
 - unsubscribe stops delivery
-- wildcard patterns match correctly
-- exact routes take precedence
+- wildcard patterns match correctly (`*` single segment, `**` multi-segment)
+- exact routes work without wildcards
 
 ### Stream Domain (Durable Append-Only Logs)
 
@@ -1106,7 +1542,6 @@ client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
 #### BEGIN Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 [u64 BE]  expected_offset
@@ -1115,8 +1550,7 @@ client.notice_unsubscribe(pattern="notice://prod/app/orders/*")
 [bytes]   ingest_metadata
 Response (status=0):
   [u8]     0
-  [u8]     has_session_id
-  [u64 BE] session_id (if present)
+  [u64 BE] session_id
   [u32 BE] data_len
   [bytes]  data
 Response (status=1):
@@ -1128,38 +1562,65 @@ Response (status=1):
 #### APPEND Request
 
 ```
-[u32 BE]  session_id_len
-[bytes]   session_id (UTF-8, from BEGIN response)
+[u64 BE]  session_id
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  body_len
 [bytes]   body
 [u8]      has_metadata
 [u32 BE]  metadata_len (if has_metadata=1)
 [bytes]   metadata
-Response: status byte + optional session_id + data
+Response (status=0):
+  [u8]     0
+  [u32 BE] data_len
+  [bytes]  data
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
+
+**Design Note:** `session_id` is `u64` (not string), returned from BEGIN response.
 
 #### COMMIT Request
 
 ```
-[u32 BE]  session_id_len
-[bytes]   session_id
-[u32 BE]  mode_len
-[bytes]   mode ("Buffered" or "Sync")
-Response: status byte + data
+[u64 BE]  session_id
+[u32 BE]  route_len
+[bytes]   route
+[u8]      mode (0=Buffered, 1=Sync)
+Response (status=0):
+  [u8]     0
+  [u32 BE] data_len
+  [bytes]  data
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
+
+**Commit Modes:**
+
+- **Sync (mode=1)**: Appends are flushed to durable storage (fsync) before COMMIT returns. Survives broker crash/restart. Higher latency, guaranteed durability.
+- **Buffered (mode=0)**: Appends written to memory buffer, background flush to storage. Lower latency, best-effort durability. May lose recent appends on broker crash (up to flush interval). Use for non-critical events or when throughput > durability.
 
 #### ROLLBACK Request
 
 ```
-[u32 BE]  session_id_len
-[bytes]   session_id
-Response: status byte + data
+[u64 BE]  session_id
+[u32 BE]  route_len
+[bytes]   route
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### READ Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 [u64 BE]  from_offset
@@ -1172,7 +1633,6 @@ Response: status byte + data
 #### LAST Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 Response: status byte + data
@@ -1181,7 +1641,6 @@ Response: status byte + data
 #### GET_METADATA Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 Response: status byte + data
@@ -1189,16 +1648,27 @@ Response: status byte + data
 
 #### Usage Example
 
+**Recommended User-Facing API (StreamSession Object):**
+
 ```python
-# Append to stream
-session_id = client.stream_begin(
+# Client connects
+client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
+
+# BEGIN returns a StreamSession object
+session = client.stream_begin(
     route="stream://prod/app/events",
-    expected_offset=100  # Optimistic concurrency
+    expected_offset=100
 )
-client.stream_append(session_id, b"event_data_1")
-client.stream_append(session_id, b"event_data_2")
-client.stream_commit(session_id, mode="Sync")  # Durably committed
-# Read from stream
+
+# Session methods are slim - no route or session_id needed in API
+session.append(b"event_data_1")
+session.append(b"event_data_2")
+session.commit(mode=CommitMode.Sync)
+
+# Or rollback
+session.rollback()
+
+# Read from stream (stateless - no session needed)
 records = client.stream_read(
     route="stream://prod/app/events",
     from_offset=100,
@@ -1206,8 +1676,63 @@ records = client.stream_read(
 )
 ```
 
+**StreamSession Object Implementation:**
+
+```python
+class StreamSession:
+    def __init__(self, client, route, session_id):
+        self._client = client
+        self._route = route         # Stored internally
+        self._session_id = session_id  # Stored internally
+
+    def append(self, body, metadata=None):
+        """Slim API - route/session_id hidden from user"""
+        # Wire protocol: packs session_id + route + body
+        return self._client._send_stream_append(
+            self._session_id,
+            self._route,  # ← Sent on wire every time
+            body,
+            metadata
+        )
+
+    def commit(self, mode=CommitMode.Sync):
+        """Commit session"""
+        # Wire: [session_id][route_len][route][mode]
+        return self._client._send_stream_commit(
+            self._session_id,
+            self._route,
+            mode
+        )
+
+    def rollback(self):
+        """Rollback session"""
+        # Wire: [session_id][route_len][route]
+        return self._client._send_stream_rollback(
+            self._session_id,
+            self._route
+        )
+```
+
+**Wire Protocol (what actually happens):**
+
+Every session operation includes **both session_id AND route** on the wire:
+
+- `BEGIN`: `[route_len][route][expected_offset][...] → returns session_id`
+- `APPEND`: `[session_id][route_len][route][body_len][body][metadata]`
+- `COMMIT`: `[session_id][route_len][route][mode]`
+- `ROLLBACK`: `[session_id][route_len][route]`
+- `READ`: `[route_len][route][from_offset][limit][...]` (stateless)
+
+**Key Points:**
+
+- User calls `session.append(data)` - simple, focused on data
+- Internally, client packs `[session_id][route][data]` on wire
+- Server processes self-contained messages (no implicit state)
+- Connection loss doesn't leave orphaned server state
+
 #### Semantics
 
+- **Self-Contained Operations**: Every request includes route for stateless server processing
 - **Atomicity**: Appends are atomic; partial writes never visible
 - **Ordering**: Records strictly ordered by offset within resource
 - **Watermarks**: Reads cannot advance beyond watermark (protects uncommitted data)
@@ -1248,6 +1773,8 @@ records = client.stream_read(
 #### ENQUEUE Request
 
 ```
+[u32 BE]  route_len
+[bytes]   route (e.g., "queue://realm/area/resource")
 [u32 BE]  body_len
 [bytes]   body
 [u8]      has_delay
@@ -1264,6 +1791,8 @@ Response (status=1):
 #### RESERVE Request
 
 ```
+[u32 BE]  route_len
+[bytes]   route
 [u64 BE]  lease_seconds
 [u8]      has_batch_size
 [u32 BE]  batch_size (if present)
@@ -1286,6 +1815,8 @@ Response (status=1):
 #### EXTEND Request
 
 ```
+[u32 BE]  route_len
+[bytes]   route
 [u64 BE]  message_id
 [u64 BE]  lease_token
 [u64 BE]  lease_seconds
@@ -1300,6 +1831,8 @@ Response (status=1):
 #### COMPLETE Request
 
 ```
+[u32 BE]  route_len
+[bytes]   route
 [u64 BE]  message_id
 [u64 BE]  lease_token
 Response (status=0):
@@ -1320,6 +1853,8 @@ Response (status=1):
 
 #### Usage Example
 
+**Recommended User-Facing API:**
+
 ```python
 # Producer: Enqueue messages
 msg_id = client.queue_enqueue(
@@ -1327,28 +1862,66 @@ msg_id = client.queue_enqueue(
     body=b"task_payload",
     delay_seconds=0
 )
+
 # Consumer: Reserve, process, complete
 leases = client.queue_reserve(
     route="queue://prod/app/tasks",
     lease_seconds=30,
     batch_size=5
 )
+
 for lease in leases:
     try:
         process_task(lease.body)
-        client.queue_complete(lease.message_id, lease.lease_token)
+        # Complete includes route for self-contained operation
+        client.queue_complete(
+            route="queue://prod/app/tasks",
+            message_id=lease.message_id,
+            lease_token=lease.lease_token
+        )
     except ProcessingError:
         # Let lease expire, message returns to queue
         pass
 ```
 
+**Wire Protocol:**
+
+Every operation includes route:
+
+- `ENQUEUE`: `[route_len][route][body_len][body][...]`
+- `RESERVE`: `[route_len][route][lease_seconds][...]`
+- `COMPLETE`: `[route_len][route][message_id][lease_token]`
+
 #### Semantics
 
+- **Self-Contained Operations**: Every request includes route; no server-side implicit state
 - **At-Least-Once**: Messages delivered until completed; expired leases requeue them
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
 - **Visibility Timeout**: Leased messages invisible to other consumers until expiry
 - **Token Binding**: Complete/Extend require both message_id and lease_token
 - **Durability**: All enqueued messages survive broker restart
+
+##### Opaque Server-Generated IDs
+
+**`message_id` and `lease_token` are server-generated opaque `u64` values:**
+
+- Clients MUST NOT generate, predict, or cache these values
+- Clients MUST treat them as opaque cookies
+- `message_id`: Unique identifier assigned at ENQUEUE time
+- `lease_token`: Fencing token generated at RESERVE time, prevents stale operations
+- Sending wrong `message_id` or `lease_token`: ERR_INVALID_TOKEN
+
+##### RESERVE Long Polling
+
+**`wait_seconds` behavior:**
+
+- If messages available: Return immediately (up to `batch_size`)
+- If no messages available:
+  - `wait_seconds=0` or omitted: Return empty immediately
+  - `wait_seconds>0`: Block up to `wait_seconds` waiting for message
+    - Returns as soon as message available
+    - Returns empty if timeout expires
+- Long polling pattern: Set `wait_seconds=30`, client loops
 
 #### Acceptance Tests
 
@@ -1376,7 +1949,6 @@ for lease in leases:
 #### SUBSCRIBE_WORKER Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  worker_route_len
 [bytes]   worker_route
 Response (status=0):
@@ -1392,39 +1964,44 @@ Response (status=1):
 #### UNSUBSCRIBE_WORKER Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  worker_route_len
 [bytes]   worker_route
-Response: status byte + data
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### REQUEST Request (Client sends to server)
 
 ```
-[u64 BE]  family_id
-[u32 BE]  correlation_id_len
-[bytes]   correlation_id (16 bytes, UUID)
-[u32 BE]  route_len
-[bytes]   route
-[u32 BE]  reply_route_len
-[bytes]   reply_route
-[u32 BE]  body_len
-[bytes]   body
-Response from broker:
-  [u8]     status (0=ok, 1=error)
-  [u32 BE] data_len
-  [bytes]  data (empty on success)
+[16 bytes] correlation_id (UUID, big-endian)
+[u32 BE]   route_len
+[bytes]    route
+[u32 BE]   reply_route_len
+[bytes]    reply_route
+[u32 BE]   body_len
+[bytes]    body
+Response from broker (status=0):
+  [u8]     0
+Response from broker (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
+
+**Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed.
 
 #### RESPONSE (From worker to caller via broker)
 
 ```
-[u32 BE]  correlation_id_len
-[bytes]   correlation_id (16 bytes)
-[u64 BE]  sequence
-[u32 BE]  body_len
-[bytes]   body
-[u8]      stream_end (0=more, 1=end)
+[16 bytes] correlation_id (UUID, big-endian)
+[u64 BE]   sequence
+[u32 BE]   body_len
+[bytes]    body
+[u8]       stream_end (0=more, 1=end)
 Response from broker:
   [u8]     status
   [u32 BE] data_len
@@ -1443,21 +2020,31 @@ Response: status + data
 
 #### Usage Example
 
+**Recommended User-Facing API (WorkerSubscription Object):**
+
 ```python
-# Worker: Register to handle requests
-client.rpc_subscribe_worker(
+# Client connects
+client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
+
+# SUBSCRIBE_WORKER returns a WorkerSubscription object
+worker = client.rpc_subscribe_worker(
     worker_route="rpc://prod/app/compute"
 )
-# Worker: Handle incoming requests
-while request = client.receive_rpc_request():
+
+# Worker: Handle incoming requests through subscription
+for request in worker.receive_requests():
     result = process_request(request.body)
-    client.rpc_response(
+    # Slim response method - worker_route stored internally
+    worker.respond(
         correlation_id=request.correlation_id,
-        sequence=0,
         body=result,
         stream_end=True
     )
-# Caller: Send request and wait for response
+
+# Slim unsubscribe method
+worker.unsubscribe()
+
+# Caller: Send request and wait for response (stateless)
 correlation_id = generate_uuid()
 responses = client.rpc_request(
     route="rpc://prod/app/compute",
@@ -1470,13 +2057,79 @@ for response in responses:
         break
 ```
 
+**WorkerSubscription Object Implementation:**
+
+```python
+class WorkerSubscription:
+    def __init__(self, client, worker_route):
+        self._client = client
+        self._worker_route = worker_route  # Stored internally
+
+    def unsubscribe(self):
+        """Slim API - worker_route hidden from user"""
+        # Wire protocol: packs worker_route
+        return self._client._send_rpc_unsubscribe_worker(
+            self._worker_route  # ← Sent on wire
+        )
+
+    def receive_requests(self):
+        """Receive RPC requests for this worker"""
+        # Filter incoming REQUEST frames by worker_route
+        return self._client._receive_rpc_requests(self._worker_route)
+
+    def respond(self, correlation_id, body, sequence=0, stream_end=True):
+        """Send response - simplified API"""
+        return self._client._send_rpc_response(
+            correlation_id,
+            sequence,
+            body,
+            stream_end
+        )
+```
+
+**Wire Protocol (what actually happens):**
+
+Every operation includes full context:
+
+- `SUBSCRIBE_WORKER`: `[worker_route_len][worker_route]`
+- `UNSUBSCRIBE_WORKER`: `[worker_route_len][worker_route]`
+- `REQUEST`: `[16 bytes correlation_id][route_len][route][reply_route_len][reply_route][body_len][body]`
+- `RESPONSE`: `[16 bytes correlation_id][sequence][body_len][body][stream_end]`
+
+**Key Points:**
+
+- User calls `worker.unsubscribe()` - simple, no route repetition
+- Internally, client packs `[worker_route]` on wire
+- `correlation_id` is fixed 16 bytes (UUID) - no length prefix
+- Pattern: Same as KV Transaction, Stream Session, and Notice Subscription objects
+
 #### Semantics
 
+- **Self-Contained Operations**: Every SUBSCRIBE/REQUEST includes full route information
 - **Correlation**: UUID links request to responses (client-generated)
 - **Streaming**: Multi-frame responses have incrementing `sequence` and `stream_end` flag
 - **Backpressure**: ERR_RPC_BACKPRESSURE if outbound queue full
 - **Ordering**: Responses delivered in sequence order
 - **Exactly-Once**: Each request reaches worker once
+
+##### Worker Selection & Load Balancing
+
+**Multiple workers on same route:**
+
+- Server selects worker using round-robin
+- No least-connections or load-aware routing
+- Clients should register multiple workers for horizontal scaling
+
+**If all workers busy:**
+
+- Server queues request (up to backpressure limit)
+- Returns ERR_RPC_BACKPRESSURE if queue full
+- Client should implement retry with backoff
+
+**Worker failure:**
+
+- If worker disconnects during request: ERR_WORKER_NOT_FOUND
+- Caller receives timeout after configured interval (default 30s)
 
 #### Error Codes (6xxx range)
 
@@ -1517,8 +2170,8 @@ for response in responses:
 #### BEGIN Request
 
 ```
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route (UTF-8, e.g., "kv://realm/area/resource")
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
 [u8]      durability (0=Sync, 1=Buffered)
 Response (success):
@@ -1532,8 +2185,8 @@ Response (error):
 
 ```
 [u64 BE]  tx_id
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  key_len
 [bytes]   key
 [u32 BE]  value_len
@@ -1545,8 +2198,8 @@ Response: (empty on success, error on failure)
 
 ```
 [u64 BE]  tx_id
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  key_len
 [bytes]   key
 Response (success):
@@ -1562,8 +2215,8 @@ Response (error):
 
 ```
 [u64 BE]  tx_id
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  key_len
 [bytes]   key
 [u32 BE]  value_len
@@ -1575,8 +2228,8 @@ Response: (empty on success)
 
 ```
 [u64 BE]  tx_id
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  key_len
 [bytes]   key
 Response: (empty on success)
@@ -1586,8 +2239,8 @@ Response: (empty on success)
 
 ```
 [u64 BE]  tx_id
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  start_key_len
 [bytes]   start_key
 [u32 BE]  end_key_len
@@ -1599,8 +2252,8 @@ Response: (empty on success)
 
 ```
 [u64 BE]  tx_id
-[u32 BE]  resource_len
-[bytes]   resource_name
+[u32 BE]  route_len
+[bytes]   route
 [u8]      has_start (0 or 1)
 [u32 BE]  start_key_len (if present)
 [bytes]   start_key
@@ -1624,6 +2277,8 @@ Response:
 
 ```
 [u64 BE]  tx_id
+[u32 BE]  route_len
+[bytes]   route
 Response: (empty on success)
 ```
 
@@ -1631,15 +2286,97 @@ Response: (empty on success)
 
 ```
 [u64 BE]  tx_id
+[u32 BE]  route_len
+[bytes]   route
 Response: (empty on success)
 ```
 
 #### Semantics
 
-- **Isolation**: Transactions isolated by realm + area
-- **Durability**: Sync mode guarantees WAL; buffered is best-effort
-- **Read Modes**: ReadOnly allows multi-reader; ReadWrite is exclusive per resource
+- **Self-Contained Operations**: Every request includes the full route; no implicit state beyond tx_id
 - **Persistence**: All committed data survives broker restart
+- **Client Convenience**: Clients MAY track route internally per tx_id for ergonomics, but MUST send route with every operation on the wire
+
+##### Isolation Levels
+
+**ReadOnly (mode=0):**
+
+- Multiple ReadOnly transactions MAY run concurrently on same resource
+- Reads see committed state at BEGIN time (snapshot isolation)
+- Cannot see uncommitted writes from active ReadWrite transactions
+- Cannot perform writes (PUT/INSERT/DELETE fail with ERR_WRITE_IN_READONLY)
+
+**ReadWrite (mode=1):**
+
+- Exclusive lock on resource (realm+area+resource tuple)
+- Only one ReadWrite transaction active per resource at a time
+- Other transactions (ReadOnly or ReadWrite) block until COMMIT/ROLLBACK
+- Serializable isolation (all-or-nothing commit)
+
+**Conflict Resolution:**
+
+- If ReadWrite transaction begins while another active: ERR_ISOLATION_CONFLICT
+- If ReadOnly transaction begins during ReadWrite: blocks until commit/rollback
+
+##### Durability Modes
+
+**Sync (durability=1):**
+
+- Commits are flushed to durable storage (WAL fsync) before returning
+- Survives broker crash/restart
+- Higher latency, guaranteed durability
+
+**Buffered (durability=0):**
+
+- Commits written to memory buffer, background flush to storage
+- Lower latency, best-effort durability
+- May lose recent commits on broker crash (up to flush interval)
+- Use for caching or when throughput > durability
+
+##### SCAN Semantics
+
+**`reverse` flag:**
+
+- `reverse=0` (forward): Scan keys in ascending lexicographic order
+  - Start at `start_key` (or first key if omitted)
+  - End at `end_key` (or last key if omitted)
+- `reverse=1` (backward): Scan keys in descending lexicographic order
+  - Start at `end_key` (or last key if omitted)
+  - End at `start_key` (or first key if omitted)
+- `limit` applies regardless of direction
+
+#### Usage Example
+
+**Recommended User-Facing API (see [Recommended Client API Design](#recommended-client-api-design)):**
+
+```python
+# Connect with JWT (server extracts RouteFamily from JWT)
+client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
+
+# Begin transaction - returns Transaction object
+# Route is full URI: kv://realm/area/resource
+tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync)
+
+# Transaction methods focus on data, hide route repetition
+tx.put(b"user:123", b"alice")
+value = tx.get(b"user:123")
+tx.commit()
+
+# Context manager pattern (Python)
+with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
+    tx.put(b"key", b"value")
+    tx.commit()  # Or auto-commit on __exit__
+```
+
+**Wire Protocol (what actually happens under the hood):**
+
+Every transaction operation sends **both tx_id AND route** on the wire:
+
+- `PUT`: `[tx_id][route_len][route][key_len][key][value_len][value]`
+- `GET`: `[tx_id][route_len][route][key_len][key]`
+- `COMMIT`: `[tx_id][route_len][route]`
+
+The Transaction object stores the route internally and includes it in every wire message, making operations self-contained and stateless on the server side.
 
 #### Error Codes (1xxx)
 
@@ -1679,7 +2416,6 @@ Response: (empty on success)
 #### ACQUIRE Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 [u32 BE]  owner_id_len
@@ -1687,47 +2423,71 @@ Response: (empty on success)
 [u64 BE]  ttl_secs
 Response (status=0):
   [u8]     0
-  [u8]     has_token
-  [u32 BE] token_len (if has_token=1)
-  [bytes]  token
+  [u64 BE] fencing_token
 Response (status=1):
   [u8]     1
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
+**Design Notes:**
+
+- `fencing_token` is server-generated opaque `u64` value
+- Clients MUST treat as cookie (no prediction or caching)
+- Used for preventing stale releases
+
 #### RENEW Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 [u32 BE]  owner_id_len
 [bytes]   owner_id
 [u64 BE]  fencing_token
 [u64 BE]  ttl_secs
-Response: status + optional token
+Response (status=0):
+  [u8]     0
+  [u64 BE] new_fencing_token
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### RELEASE Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
 [u32 BE]  owner_id_len
 [bytes]   owner_id
 [u64 BE]  fencing_token
-Response: status + optional token
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### QUERY Request
 
 ```
-[u64 BE]  family_id
 [u32 BE]  route_len
 [bytes]   route
-Response: status + optional token
+Response (status=0, lease free):
+  [u8]     0
+  [u8]     0 (has_holder=false)
+Response (status=0, lease held):
+  [u8]     0
+  [u8]     1 (has_holder=true)
+  [u32 BE] owner_id_len
+  [bytes]  owner_id
+  [u64 BE] ttl_remaining_secs
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### Usage Example
@@ -1763,11 +2523,20 @@ else:
 
 #### Semantics
 
+- **Self-Contained Operations**: Every ACQUIRE/RENEW/RELEASE includes full route
 - **Mutual Exclusion**: Only one owner holds a lease at a time
-- **Fencing Token**: Prevents stale commands from releasing new holder's lease
 - **TTL-based Expiry**: Expired leases automatically released; query returns free
 - **Route Partitioned**: Different routes have independent leases
 - **In-Memory**: Lost on broker restart (use for coordination, not durability)
+
+##### Fencing Token
+
+**`fencing_token` is server-generated opaque `u64` value:**
+- Prevents stale commands from releasing new holder's lease
+- Clients MUST treat as cookie (no prediction or caching)
+- Generated at ACQUIRE time, changes on each RENEW
+- Sending wrong `fencing_token`: ERR_INVALID_FENCE
+- Use case: Prevents "zombie" lease holder from releasing lease after it expired and was re-acquired by another owner
 
 #### Error Codes (5xxx)
 
@@ -1800,8 +2569,14 @@ else:
 #### CREATE Request
 
 ```
-[u32 BE]  schedule_payload_len
-[bytes]   schedule_payload (nested TLV, see below)
+[u32 BE]  route_len
+[bytes]   route (e.g., "schedule://realm/area/resource")
+[u32 BE]  cron_len
+[bytes]   cron (UTF-8 cron expression)
+[u32 BE]  target_resource_len
+[bytes]   target_resource
+[u32 BE]  target_operation_len
+[bytes]   target_operation
 Response (status=0):
   [u8]     0
   [u8]     has_schedule_id
@@ -1816,6 +2591,8 @@ Response (status=1):
 #### CANCEL Request
 
 ```
+[u32 BE]  route_len
+[bytes]   route
 [u32 BE]  schedule_id_len
 [bytes]   schedule_id
 Response: status + optional schedule_id
@@ -1824,21 +2601,12 @@ Response: status + optional schedule_id
 #### LIST Request
 
 ```
-(empty payload)
+[u32 BE]  route_len
+[bytes]   route
 Response: status + optional schedule_id
 ```
 
 **Note:** LIST returns one schedule per response. If no schedules, respond with status=0 and `has_schedule_id=0`.
-
-#### Schedule Payload (Nested TLV)
-
-```
-Type 1: cron (UTF-8 string)
-Type 2: target_resource (UTF-8 string)
-Type 3: target_operation (UTF-8 string)
-```
-
-Total payload = concatenated TLV records, no outer length prefix.
 
 #### Cron Syntax (Broker-Enforced)
 
@@ -1905,30 +2673,37 @@ Client MUST continue reading until `has_schedule_id=0`.
 #### Usage Example
 
 ```python
-# Create one-time delayed task
+# Create schedule
 schedule_id = client.schedule_create(
     route="schedule://prod/app/reminders",
     cron="0 9 * * 1",  # Every Monday at 9 AM
     target_resource="notice://prod/app/notifications",
     target_operation="PUBLISH"
 )
-# Create recurring task
-recurring_id = client.schedule_create(
-    route="schedule://prod/app/cleanup",
-    cron="0 2 * * *",  # Daily at 2 AM
-    target_resource="kv://prod/app/cache",
-    target_operation="DELETE_RANGE"
-)
+
 # List schedules
 schedules = client.schedule_list(
     route="schedule://prod/app/reminders"
 )
+
 # Cancel schedule
-client.schedule_cancel(schedule_id)
+client.schedule_cancel(
+    route="schedule://prod/app/reminders",
+    schedule_id=schedule_id
+)
 ```
+
+**Wire Protocol:**
+
+Every operation includes route:
+
+- `CREATE`: `[route_len][route][cron_len][cron][target_resource_len][target_resource][target_operation_len][target_operation]`
+- `LIST`: `[route_len][route]`
+- `CANCEL`: `[route_len][route][schedule_id_len][schedule_id]`
 
 #### Semantics
 
+- **Self-Contained Operations**: Every request includes route for stateless processing
 - **Durability**: Schedules persist across broker restarts
 - **Strict Timing**: Tasks execute at designated times (best-effort)
 - **Recurring**: Interval-based recurring tasks (cron-like)
