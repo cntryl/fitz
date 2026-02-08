@@ -163,8 +163,8 @@ Clients MUST:
 2. Consume all bytes in request payloads; error if trailing data remains
 3. Encode responses with exact length prefixes
 4. Handle both single-byte and escape-byte MessageTypes identically
-5. **Duplicate TLV tags are NOT permitted.** If a TLV tag appears more than once in a frame the frame **MUST** be treated as malformed and the receiver **MUST** close the connection with a TLV parse error. **Rationale:** Fitz TLV disallows duplicate tags to keep decoding deterministic and to simplify client implementations and conformance testing.
-6. **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads MUST be chunked across multiple TLV records or multiple frames/operations.
+5. **Duplicate TLV tags are NOT permitted within a single frame.** If a TLV tag appears more than once in a frame the frame **MUST** be treated as malformed and the receiver **MUST** close the connection with a TLV parse error. **Rationale:** Fitz TLV disallows duplicate tags to keep decoding deterministic and to simplify client implementations and conformance testing.
+6. **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads MUST be split across multiple frames or multiple operations — never by repeating the same TLV tag within a single frame (which would violate rule 5).
 
 ## Connection Lifecycle
 
