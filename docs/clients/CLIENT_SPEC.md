@@ -261,6 +261,249 @@ Each record is:
 - **Length** (u16, big-endian): byte count of value (0..=65535)
 - **Value**: exactly `length` bytes
 
+### Message Framing (How Domain Operations Map to TLV)
+
+**CRITICAL: Every Fitz message is a single TLV record where:**
+- **Type** = MessageType (verb wire code: 100-108 for KV, 500-504 for Notice, etc.)
+- **Length** = Total byte count of domain payload (all fields concatenated)
+- **Value** = Domain-specific fields (as documented per domain)
+
+**TLV is NOT nested** - the entire domain payload is the TLV Value, pre-encoded.
+
+#### Message Structure
+
+```
+[MessageType (u16 BE)][Length (u16 BE)][Payload (Length bytes)]
+│                     │                 │
+│                     │                 └─ Domain fields (concatenated)
+│                     └─ Total payload size
+└─ Verb wire code
+```
+
+#### Complete Message Examples
+
+**Example 1: KV PUT (MessageType=104)**
+
+Wire format specification:
+```
+[u64 BE]  tx_id
+[u32 BE]  route_len
+[bytes]   route
+[u32 BE]  key_len
+[bytes]   key
+[u32 BE]  value_len
+[bytes]   value
+```
+
+Actual bytes on wire:
+```
+[0x00 0x68]                              (MessageType=104, KV PUT)
+[0x00 0x2F]                              (Length=47 bytes)
+  [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01]  (tx_id=1, u64 BE)
+  [0x00 0x00 0x00 0x15]                  (route_len=21)
+  [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
+  [0x00 0x00 0x00 0x04]                  (key_len=4)
+  [75 73 65 72]                          (key="user", 4 bytes)
+  [0x00 0x00 0x00 0x05]                  (value_len=5)
+  [61 6c 69 63 65]                       (value="alice", 5 bytes)
+
+Total frame size: 2 (type) + 2 (length) + 47 (payload) = 51 bytes
+```
+
+**Example 2: Notice SUBSCRIBE (MessageType=501)**
+
+Wire format specification:
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern
+```
+
+Actual bytes on wire:
+```
+[0x01 0xF5]                              (MessageType=501, Notice SUBSCRIBE)
+[0x00 0x18]                              (Length=24 bytes)
+  [0x00 0x00 0x00 0x14]                  (route_pattern_len=20)
+  [6e 6f 74 69 63 65 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 2a]  (pattern="notice://prod/app/*", 20 bytes)
+
+Total frame size: 2 (type) + 2 (length) + 24 (payload) = 28 bytes
+```
+
+**Example 3: KV BEGIN (MessageType=100)**
+
+Wire format specification:
+```
+[u32 BE]  route_len
+[bytes]   route
+[u8]      mode (0=ReadOnly, 1=ReadWrite)
+[u8]      durability (0=Buffered, 1=Sync)
+```
+
+Actual bytes on wire:
+```
+[0x00 0x64]                              (MessageType=100, KV BEGIN)
+[0x00 0x17]                              (Length=23 bytes)
+  [0x00 0x00 0x00 0x15]                  (route_len=21)
+  [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
+  [0x01]                                 (mode=1, ReadWrite)
+  [0x01]                                 (durability=1, Sync)
+
+Total frame size: 2 (type) + 2 (length) + 23 (payload) = 27 bytes
+```
+
+**Example 4: RPC REQUEST (MessageType=302)**
+
+Wire format specification:
+```
+[16 bytes] correlation_id (UUID)
+[u32 BE]   route_len
+[bytes]    route
+[u32 BE]   reply_route_len
+[bytes]    reply_route
+[u32 BE]   body_len
+[bytes]    body
+```
+
+Actual bytes on wire:
+```
+[0x01 0x2E]                              (MessageType=302, RPC REQUEST)
+[0x00 0x3A]                              (Length=58 bytes)
+  [12 34 56 78 9a bc de f0 12 34 56 78 9a bc de f0]  (correlation_id, 16 bytes UUID)
+  [0x00 0x00 0x00 0x10]                  (route_len=16)
+  [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 77 6f 72 6b 65 72]  (route="rpc://prod/app/worker", 16 bytes)
+  [0x00 0x00 0x00 0x13]                  (reply_route_len=19)
+  [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 63 61 6c 6c 65 72]  (reply_route="rpc://prod/app/caller", 19 bytes)
+  [0x00 0x00 0x00 0x03]                  (body_len=3)
+  [66 6f 6f]                             (body="foo", 3 bytes)
+
+Total frame size: 2 (type) + 2 (length) + 58 (payload) = 62 bytes
+```
+
+#### Transport Layer Framing
+
+**WebSocket:**
+```
+Binary WebSocket frame contains raw TLV message:
+[MessageType][Length][Payload]
+
+Example: Send KV PUT
+WebSocket binary frame body = 51 bytes (from Example 1 above)
+```
+
+**TCP (with length-prefixed framing):**
+```
+[Frame Length (u32 BE)][MessageType][Length][Payload]
+│                       │
+│                       └─ TLV message
+└─ Total message size (including MessageType + Length + Payload)
+
+Example: Send KV PUT (51 bytes TLV)
+[0x00 0x00 0x00 0x33]  (frame_length=51)
+[0x00 0x68]            (MessageType=104)
+[0x00 0x2F]            (Length=47)
+[...47 bytes payload...]
+```
+
+#### Reference Decoder Pseudocode
+
+```python
+def decode_frame(frame_bytes):
+    """Decode a single TLV frame into a domain message."""
+    # Parse TLV header
+    message_type = read_u16_be(frame_bytes[0:2])
+    length = read_u16_be(frame_bytes[2:4])
+    payload = frame_bytes[4:4+length]
+    
+    # Verify payload matches declared length
+    if len(payload) != length:
+        raise ProtocolError("Payload length mismatch")
+    
+    # Route to domain decoder based on MessageType
+    if 100 <= message_type <= 199:
+        return decode_kv_message(message_type, payload)
+    elif 200 <= message_type <= 299:
+        return decode_queue_message(message_type, payload)
+    elif 300 <= message_type <= 399:
+        return decode_rpc_message(message_type, payload)
+    elif 400 <= message_type <= 499:
+        return decode_lease_message(message_type, payload)
+    elif 500 <= message_type <= 599:
+        return decode_notice_message(message_type, payload)
+    elif 600 <= message_type <= 699:
+        return decode_stream_message(message_type, payload)
+    elif 700 <= message_type <= 799:
+        return decode_schedule_message(message_type, payload)
+    else:
+        raise UnknownMessageType(message_type)
+
+def decode_kv_message(message_type, payload):
+    """Decode KV domain message based on MessageType."""
+    offset = 0
+    
+    if message_type == 100:  # BEGIN
+        route_len = read_u32_be(payload[offset:offset+4])
+        offset += 4
+        route = payload[offset:offset+route_len].decode('utf-8')
+        offset += route_len
+        mode = payload[offset]
+        offset += 1
+        durability = payload[offset]
+        offset += 1
+        
+        return KvBegin(route=route, mode=mode, durability=durability)
+    
+    elif message_type == 104:  # PUT
+        tx_id = read_u64_be(payload[offset:offset+8])
+        offset += 8
+        
+        route_len = read_u32_be(payload[offset:offset+4])
+        offset += 4
+        route = payload[offset:offset+route_len].decode('utf-8')
+        offset += route_len
+        
+        key_len = read_u32_be(payload[offset:offset+4])
+        offset += 4
+        key = payload[offset:offset+key_len]
+        offset += key_len
+        
+        value_len = read_u32_be(payload[offset:offset+4])
+        offset += 4
+        value = payload[offset:offset+value_len]
+        offset += value_len
+        
+        # Verify all payload consumed
+        if offset != len(payload):
+            raise ProtocolError("Trailing data in PUT payload")
+        
+        return KvPut(tx_id=tx_id, route=route, key=key, value=value)
+    
+    # ... other KV verbs
+
+def decode_notice_message(message_type, payload):
+    """Decode Notice domain message based on MessageType."""
+    offset = 0
+    
+    if message_type == 501:  # SUBSCRIBE
+        pattern_len = read_u32_be(payload[offset:offset+4])
+        offset += 4
+        pattern = payload[offset:offset+pattern_len].decode('utf-8')
+        offset += pattern_len
+        
+        if offset != len(payload):
+            raise ProtocolError("Trailing data in SUBSCRIBE payload")
+        
+        return NoticeSubscribe(pattern=pattern)
+    
+    # ... other Notice verbs
+```
+
+**Key Insights for Implementers:**
+
+1. **Single TLV Level:** Each message is ONE TLV record, not nested TLVs
+2. **MessageType = Verb:** The TLV Type field IS the verb wire code (100-799)
+3. **Payload = Concatenated Fields:** Just concatenate domain fields in order (no internal TLV structure)
+4. **Length Validation:** Always verify `offset == len(payload)` after decoding (detects trailing data)
+5. **Transport Agnostic:** Same TLV message format for WebSocket and TCP (TCP adds outer length prefix)
+
 ### Primitive Encodings
 
 All fields use **big-endian** byte order.
@@ -285,6 +528,58 @@ Clients MUST:
 4. Handle both single-byte and escape-byte MessageTypes identically
 5. **Duplicate TLV tags are NOT permitted within a single frame.** If a TLV tag appears more than once in a frame the frame **MUST** be treated as malformed and the receiver **MUST** close the connection with a TLV parse error. **Rationale:** Fitz TLV disallows duplicate tags to keep decoding deterministic and to simplify client implementations and conformance testing.
 6. **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads MUST be split across multiple frames or multiple operations — never by repeating the same TLV tag within a single frame (which would violate rule 5).
+
+### Response Format Convention
+
+**All domain responses follow this standard structure:**
+
+1. **Status byte** (u8): 0=success, 1=error
+2. **If success (status=0):** Domain-specific success payload
+3. **If error (status=1):** Error message
+   ```
+   [u32 BE] error_len
+   [bytes]  error_msg (UTF-8, human-readable)
+   ```
+
+**Clients MUST check status byte first before parsing payload.**
+
+**Example (KV GET success):**
+```
+[0x00]                    (status=0, success)
+[0x00 0x00 0x00 0x05]     (value_len=5)
+[0x61 0x6c 0x69 0x63 0x65] ("alice")
+```
+
+**Example (KV GET error):**
+```
+[0x01]                    (status=1, error)
+[0x00 0x00 0x00 0x0d]     (error_len=13)
+[0x4b 0x65 0x79...]       ("Key not found")
+```
+
+**Rationale:** Standardized error format across all domains simplifies client error handling and ensures consistent debugging experience.
+
+### Frame Size Limits
+
+**Default maximum frame size: 1 MB (1,048,576 bytes)**
+
+**Rules:**
+- Client MUST NOT send frames exceeding broker's limit
+- Broker MUST close connection if frame exceeds limit (transport error)
+- No negotiation protocol (clients assume 1 MB default)
+- Deployments with custom limits MUST document them
+- Clients SHOULD make `max_frame_size` configurable
+
+**Handling large payloads:**
+- Split across multiple operations (e.g., batch ENQUEUE)
+- Use streaming (e.g., Stream APPEND multiple records)
+- Application-level chunking (not protocol-level)
+- For Queue/Notice/RPC: Keep payload under limit or use external blob storage with reference
+
+**Discovery:**
+- No runtime discovery mechanism
+- Clients assume 1 MB by default
+- Server documentation MUST specify if non-default
 
 ## Connection Lifecycle
 
@@ -599,6 +894,24 @@ A request is valid **only if**:
 - `*` MAY appear only in positions explicitly allowed by the domain
 - Extra path segments are **forbidden**
 - Route shape validation occurs **before** permission or dispatch checks
+
+### Wildcard Support by Domain
+
+**Domains supporting wildcards (`*` and `**` patterns):**
+- **Notice:** Full wildcard support in SUBSCRIBE patterns (`notice://realm/area/*`, `notice://realm/**`)
+- **RPC:** Wildcards in SUBSCRIBE_WORKER patterns (`rpc://realm/area/*`)
+- **Stream:** Wildcards in READ patterns (check Stream domain spec for details)
+- **Queue:** Wildcards in RESERVE patterns (check Queue domain spec for details)
+
+**Domains requiring concrete routes only (no wildcards):**
+- **KV:** All operations use concrete routes only (`kv://realm/area/resource`)
+- **Lease:** All operations use concrete routes only (`lease://realm/area/resource`)
+- **Schedule:** All operations use concrete routes only (`schedule://realm/area/resource`)
+
+**Pattern matching semantics:**
+- `*` matches exactly one path segment
+- `**` matches zero or more path segments (greedy)
+- Concrete routes (no wildcards) match exactly
 
 ## Route Shapes by Domain
 
@@ -1109,6 +1422,46 @@ When a single operation generates multiple responses:
 - Multiple records may arrive in single response or multiple frames
 - Broker MAY split large responses across multiple frames
 
+### Reconnection & In-Flight Requests
+
+**When connection drops during an operation:**
+
+**In-Flight Request Semantics:**
+- Any request sent but not yet responded to is **LOST**
+- Server MAY have processed the request before disconnect
+- Client CANNOT know if request succeeded or failed
+- **No automatic replay or recovery**
+
+**Client Retry Strategy:**
+- **Idempotent operations** (GET, SCAN, READ): SAFE to retry
+- **Non-idempotent operations** (PUT, ENQUEUE, PUBLISH): DO NOT retry
+  - Retrying may cause duplicate execution
+  - Use application-level idempotency tokens if needed (e.g., RPC correlation_id)
+
+**Transaction-Specific Behavior:**
+- If disconnect during KV transaction: server ROLLS BACK automatically
+- If disconnect during Stream session: server ROLLS BACK automatically
+- Client MUST re-BEGIN transaction/session and retry all operations from scratch
+
+**Subscription-Specific Behavior:**
+- All active subscriptions (Notice, RPC worker) are **dropped** on disconnect
+- Clients MUST re-subscribe explicitly after reconnect
+- Clients MAY implement transparent auto-resubscribe (opt-in, with exponential backoff)
+- Servers MUST treat duplicate SUBSCRIBE as idempotent
+
+**Reconnection Flow:**
+1. Detect transport failure (connection lost, read error, timeout)
+2. Wait (exponential backoff: 1s → 2s → 4s → 8s → cap at 30s)
+3. Re-open transport connection
+4. Send new CONNECT frame (authentication may have changed)
+5. Re-establish any subscriptions if needed
+6. Resume normal operations
+
+**Clients SHOULD:**
+- Log all in-flight requests at disconnect for debugging
+- Surface connection state changes to application
+- Provide hooks for reconnection events
+
 ### Connection Handling
 
 For all operations:
@@ -1224,6 +1577,11 @@ Response (status=1):
   [bytes]  error_msg
 ```
 
+**Idempotency:**
+- If client re-subscribes to same pattern, server returns the SAME `subscription_id`
+- No duplicate server-side subscription created
+- Client is responsible for local multiplexing (tracking multiple handlers per subscription_id)
+
 **Design Notes:**
 
 - Server tracks subscriptions by `(session_id, route_pattern)` tuple
@@ -1282,6 +1640,16 @@ Response (status=1):
 - Client demultiplexes to local handlers registered for that `subscription_id`
 - Single NOTIFY delivered per `(session_id, pattern)` tuple (server deduplicates)
 - If client has multiple handlers for same pattern, client calls all handlers locally
+
+**Example Flow (Client-Side Routing):**
+
+1. Client subscribes: `"notice://prod/app/*"` → server returns `subscription_id=42`
+2. Server receives PUBLISH to: `"notice://prod/app/orders/created"`
+3. Server sends NOTIFY: `[subscription_id=42][route="notice://prod/app/orders/created"][payload]`
+4. Client looks up `subscription_id=42` → finds `[handler1, handler2]`
+5. Client calls:
+   - `handler1("notice://prod/app/orders/created", payload)`
+   - `handler2("notice://prod/app/orders/created", payload)`
 
 #### Pattern Matching
 
@@ -2011,12 +2379,16 @@ Response from broker:
 #### ACK (Acknowledge receipt)
 
 ```
-[u32 BE]  correlation_id_len
-[bytes]   correlation_id (16 bytes)
-Response: status + data
+[16 bytes] correlation_id (UUID, big-endian)
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
-**Important:** `correlation_id_len` MUST be exactly 16. Any other value is a protocol error.
+**Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed (consistent with REQUEST/RESPONSE).
 
 #### Usage Example
 
@@ -2603,10 +2975,31 @@ Response: status + optional schedule_id
 ```
 [u32 BE]  route_len
 [bytes]   route
-Response: status + optional schedule_id
+Response 1..N (streaming):
+  [u8]     0 (status)
+  [u8]     1 (has_schedule_id=true)
+  [u32 BE] schedule_id_len
+  [bytes]  schedule_id
+  [u32 BE] cron_len
+  [bytes]  cron
+  [u32 BE] target_resource_len
+  [bytes]  target_resource
+  [u32 BE] target_operation_len
+  [bytes]  target_operation
+Response N+1 (final, end-of-stream):
+  [u8]     0 (status)
+  [u8]     0 (has_schedule_id=false, no more schedules)
+Response (error):
+  [u8]     1 (status=error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
-**Note:** LIST returns one schedule per response. If no schedules, respond with status=0 and `has_schedule_id=0`.
+**Streaming Protocol:**
+- Client continues reading until response with `has_schedule_id=0`
+- Empty result set: Single response with `status=0, has_schedule_id=0`
+- Non-empty result: N responses with schedules, then final response with `has_schedule_id=0`
+- Client MUST NOT assume stream ends after fixed count
 
 #### Cron Syntax (Broker-Enforced)
 
@@ -2970,16 +3363,33 @@ These items are **not standardized** and may require broker-specific implementat
 - Lost on disconnect (previous session ID becomes invalid)
 - NOT returned to client in standard response (internal only, except where specified per domain)
 
-#### Resource Disambiguation (KV/Queue)
+#### Wire Protocol Philosophy (Stateless Operations)
 
-Some domains derive resource from context rather than explicit payload:
+**All Fitz operations include full routing context in every message:**
+- KV: Every operation includes `[tx_id][route_len][route]` (not just BEGIN)
+- Stream: Every operation includes `[session_id][route_len][route]` (not just BEGIN)
+- Queue: Every operation includes `[route_len][route]`
+- Notice: PUBLISH/SUBSCRIBE include full route/pattern
+- RPC: REQUEST includes full route
+- Lease: ACQUIRE/RENEW/RELEASE include full route
+- Schedule: CREATE/CANCEL/LIST include full route
 
-- **KV transactions:** The resource is established at `BEGIN` and subsequent KV operations omit a route; resource identity is implicit in the transaction context (this keeps transaction operations compact and bound to the transaction's resource).
-- **Queue operations:** Queue requests usually include route or are derived from the producer/consumer context; the queue name is typically explicit in the operation payload.
-  Why this matters:
-- Domains that derive resource from context (KV transactions) are **session-scoped**: breaking the connection mid-transaction loses context and triggers rollback.
-- Domains that require explicit routes (Notice, RPC) do so to enable fanout and correct addressing across many subscribers or workers.
-  Clients MUST be aware that breaking connection mid-transaction loses context (transaction auto-rollback).
+**Why this design:**
+- HTTP-like statelessness: Each message is self-contained and fully addressable
+- Reconnect-safe: No server-side implicit state (beyond session auth)
+- Debuggable: Every message can be logged/replayed without context
+- Scalable: Stateless processing enables horizontal scaling
+
+**Client convenience wrappers:**
+- Client implementations MAY provide ergonomic wrapper objects (Transaction, Session, Subscription)
+- These wrappers store route/session_id internally to hide repetition from users
+- Example: `tx.put(key, value)` internally sends `[tx_id][route][key][value]` on wire
+- But the wire protocol always remains fully explicit
+
+**Session-scoped behavior:**
+- Transactions (KV, Stream): Breaking connection triggers auto-rollback
+- Subscriptions (Notice, RPC): Breaking connection drops all subscriptions
+- Leases: In-memory only, survive until TTL expiry (not connection-bound)
 
 #### Serialization Formats (Domain-Specific)
 

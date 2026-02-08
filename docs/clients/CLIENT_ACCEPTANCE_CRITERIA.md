@@ -34,13 +34,14 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-CONN-002: CONNECT Frame with JWT
 
 **MUST** authenticate with valid JWT
-**Given:** Valid JWT with required claims (`iss`, `aud`, `sub`, `exp`, `tid`, `fitz.permissions`)  
-**When:** Client sends CONNECT frame with JWT on control channel  
+**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `exp`, custom `route_family` and `scopes`)  
+**When:** Client sends CONNECT frame as first message after WebSocket upgrade  
 **Then:**
 
-- Server responds with Accept
+- Server extracts `route_family` (u64) from JWT
+- Server responds with success
 - Client can proceed with domain operations
-- Subsequent frames are authorized per JWT permissions
+- Subsequent frames are authorized per JWT `scopes`
 
 ### AC-CONN-003: CONNECT Frame Rejection
 
@@ -76,16 +77,16 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 ### AC-CONN-006: Re-subscribe on reconnect
 
-**MUST** be able to re-subscribe to previously active subscriptions after reconnect; clients **MUST NOT** assume subscriptions persist across reconnects
-**Given:** Client had active subscriptions or registrations (for example: Notice subscriptions, RPC worker registrations, Stream/subscriber registrations) and was authenticated before a disconnect
-**When:** Connection is lost and the client reconnects and successfully re-authenticates
+**MUST** re-establish subscriptions after reconnect; clients **MUST NOT** assume subscriptions persist across disconnects
+**Given:** Client had active Notice or RPC subscriptions before disconnect  
+**When:** Connection is lost and client reconnects and re-authenticates  
 **Then:**
 
-- Client **MUST** be able to re-send `Subscribe` (or equivalent) frames for previously active subscriptions; subscription state is **not** preserved by the broker on disconnect
-- Client **MAY** implement automatic re-subscribe helpers (opt-in); such helpers **SHOULD** use exponential backoff and handle partial failures
-- Server **MUST** treat duplicate subscribe requests as idempotent (duplicate subscriptions SHOULD NOT create duplicate deliveries)
-- Client resumes receiving new notifications, RPC requests, or stream deliveries only after explicit re-subscription and server confirmation
-- Reconnect is a new session: clients **MUST** re-authenticate and re-register subscriptions when needed.
+- Client **MUST** re-send SUBSCRIBE frames for Notice/RPC subscriptions
+- Subscription state is **NOT** preserved by broker across disconnects
+- SUBSCRIBE is idempotent - duplicate subscription to same pattern returns same subscription_id
+- Client resumes receiving notifications/requests only after re-subscription confirmed
+- In-flight operations (KV transactions, Queue leases) are lost on disconnect
 
 ## KV Domain
 
@@ -250,40 +251,27 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Server returns empty result set
 - No error (valid state)
 
-### AC-STREAM-004: Subscribe to Stream
+### AC-STREAM-004: Session-Based Writes
 
-**MUST** receive new messages via subscription
-**Given:** Client subscribes to `stream://prod/logs/events`  
+**MUST** use session for durable write tracking
+**Given:** Client creates session with `Begin(realm, area, resource, durability=Sync)`  
 **When:**
 
-1. Client sends `Subscribe(pattern="stream://prod/logs/events")`
-2. Another client appends message to same stream
-3. Client waits for push notification
+1. Server returns `session_id` (u64)
+2. Client sends `Append(session_id, payload="event1")`
+3. Client sends `Append(session_id, payload="event2")`
+4. Client sends `Commit(session_id)`
    **Then:**
 
-- Server pushes new message to subscriber
-- Message includes offset and payload
-- Delivery occurs within reasonable time (< 1s)
+- All appends are batched within session
+- Commit makes writes durable
+- session_id is opaque u64 (client treats as cookie)
 
-### AC-STREAM-005: Commit Consumer Offset
-
-**MUST** track consumer position
-**Given:** Consumer reads messages up to offset 10  
-**When:**
-
-1. Client sends `CommitOffset(consumer_id, offset=10)`
-2. Client disconnects and reconnects
-3. Client sends `GetOffset(consumer_id)`
-   **Then:**
-
-- Server returns last committed offset (10)
-- Client can resume from offset 11
-
-### AC-STREAM-006: Unauthorized Append
+### AC-STREAM-005: Unauthorized Append (renumbered)
 
 **MUST** reject append without write permission
-**Given:** Session has `stream://prod/logs/**#read` (read-only)  
-**When:** Client sends `Append(realm, area, resource, payload)`  
+**Given:** Session JWT has no `stream:write` scope for target route  
+**When:** Client sends `Append(session_id, payload)`  
 **Then:**
 
 - Server returns error code `2009` (Unauthorized)
@@ -347,23 +335,8 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 - Second client receives the same message
 - Message has new lease token
-- Delivery count increments
 
-### AC-QUEUE-006: Dead Letter Queue After Max Attempts
-
-**MUST** move message to DLQ after max retries
-**Given:** Queue configured with `max_attempts=3`  
-**When:**
-
-1. Message fails and redelivers 3 times
-2. Client sends `Reserve()` after 3rd failure
-   **Then:**
-
-- Message is NOT returned in reserve
-- Message is moved to DLQ (dead letter queue)
-- DLQ contains message for inspection
-
-### AC-QUEUE-007: Invalid Token Rejection
+### AC-QUEUE-006: Invalid Token Rejection (renumbered)
 
 **MUST** reject complete with wrong token
 **Given:** Message reserved with token `T1`  
@@ -374,7 +347,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Message remains in queue
 - Lease remains active
 
-### AC-QUEUE-008: Delayed Message Visibility
+### AC-QUEUE-007: Delayed Message Visibility (renumbered)
 
 **MUST** delay message visibility
 **Given:** Client enqueues message with `visibility_delay=10s`  
@@ -388,7 +361,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - First reserve returns empty (message invisible)
 - Second reserve returns message (now visible)
 
-### AC-QUEUE-009: Unauthorized Enqueue
+### AC-QUEUE-008: Unauthorized Enqueue (renumbered)
 
 **MUST** reject enqueue without write permission
 **Given:** Session has `queue://realm/area/**#read` (read-only)  
@@ -400,25 +373,26 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 ## Notice Domain
 
-### AC-NOTICE-001: Subscribe to Route
+### AC-NOTICE-001: Subscribe to Route Pattern
 
-**MUST** subscribe to notice route
-**Given:** Session with `notice://realm/area/**#read` permission  
-**When:** Client sends `Subscribe(route="notice://prod/orders/create", channel=1)`  
+**MUST** subscribe to notice route pattern
+**Given:** Session JWT includes `notice:read` scope  
+**When:** Client sends `Subscribe(route_pattern="notice://prod/orders/create")`  
 **Then:**
 
-- Server returns `SubscribeOk`
-- Client is registered as subscriber
-- Client can receive notifications on channel 1
+- Server returns `SubscribeOk(subscription_id=<u64>)`
+- Client stores subscription_id for this pattern
+- Client can receive NOTIFY frames with this subscription_id
+- Repeat SUBSCRIBE with same pattern returns same subscription_id (idempotent)
 
 ### AC-NOTICE-002: Publish to Route
 
 **MUST** publish notice to subscribers
-**Given:** Client A subscribed to `notice://prod/orders/create`  
-**When:** Client B publishes to `notice://prod/orders/create` with payload `"order:123"`  
+**Given:** Client A subscribed to `notice://prod/orders/create` with subscription_id=123  
+**When:** Client B publishes to `notice://prod/orders/create` with payload `"order:456"`  
 **Then:**
 
-- Server delivers notification to Client A on subscribed channel
+- Server delivers NOTIFY(subscription_id=123, route="notice://prod/orders/create", payload="order:456") to Client A
 - Payload matches published data
 - Delivery occurs within reasonable time (< 100ms)
 
@@ -451,17 +425,33 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-NOTICE-005: Unsubscribe
 
 **MUST** stop receiving after unsubscribe
-**Given:** Client subscribed to `notice://prod/orders/create`  
+**Given:** Client subscribed with subscription_id=123  
 **When:**
 
-1. Client sends `Unsubscribe(route)`
-2. Another client publishes to same route
+1. Client sends `Unsubscribe(subscription_id=123)`
+2. Another client publishes to matching route
    **Then:**
 
 - Client does NOT receive notification
 - Server confirms unsubscribe
 
-### AC-NOTICE-006: Realm Isolation
+### AC-NOTICE-006: Client-Side Multiplexing
+
+**MUST** support multiple local handlers for same subscription
+**Given:** Client library API allows registering multiple handlers  
+**When:**
+
+1. App registers handler1 for pattern `notice://prod/orders/*`
+2. App registers handler2 for same pattern `notice://prod/orders/*`
+3. Both use same underlying subscription_id
+4. Server sends NOTIFY for `notice://prod/orders/create`
+   **Then:**
+
+- Client receives one NOTIFY frame (subscription_id=X)
+- Client routes to BOTH handler1 and handler2 locally
+- UNSUBSCRIBE uses reference counting (only sent when both handlers unsubscribe)
+
+### AC-NOTICE-007: Realm Isolation (renumbered)
 
 **MUST** isolate notifications by realm
 **Given:**
@@ -473,7 +463,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Client A receives notification
 - Client B does NOT receive notification (different realm)
 
-### AC-NOTICE-007: Fanout to Multiple Subscribers
+### AC-NOTICE-008: Fanout to Multiple Subscribers (renumbered)
 
 **MUST** deliver to all matching subscribers
 **Given:**
@@ -483,17 +473,19 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Client C subscribes to `notice://prod/**`
   **When:** Client publishes to `notice://prod/orders/create`  
   **Then:**
-- All 3 clients (A, B, C) receive notification
+
+- All 3 clients (A, B, C) receive NOTIFY
+- Each receives with their own subscription_id
 - Delivery is concurrent (no serialization)
 
-### AC-NOTICE-008: Unauthorized Publish
+### AC-NOTICE-009: Unauthorized Publish (renumbered)
 
 **MUST** reject publish without write permission
-**Given:** Session has `notice://prod/orders/**#read` (read-only)  
+**Given:** Session JWT has no `notice:write` scope  
 **When:** Client sends `Publish(route, payload)`  
 **Then:**
 
-- Server returns error code `3009` (Unauthorized)
+- Server returns error code (Unauthorized)
 - No notifications delivered
   **Notes:**
 - Fitz notices are **best-effort, non-durable signals**. Clients **MUST NOT** assume guaranteed delivery, ordering across reconnects, or replay after disconnect.
@@ -505,28 +497,29 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-RPC-001: Worker Registration
 
 **MUST** register as RPC worker
-**Given:** Session with `rpc://realm/area/resource#*` (admin permission)  
-**When:** Client sends `Subscribe(route="rpc://prod/users/validate", channel=2)`  
+**Given:** Session JWT includes `rpc:read` and `rpc:write` scopes  
+**When:** Client sends `Subscribe(route_pattern="rpc://prod/users/validate")`  
 **Then:**
 
-- Server returns `SubscribeOk`
+- Server returns `SubscribeOk(subscription_id=<u64>)`
 - Client is registered as worker
-- Client can receive RPC requests on channel 2
+- Client receives REQUEST frames with this subscription_id
+- Idempotent: repeat SUBSCRIBE returns same subscription_id
 
 ### AC-RPC-002: RPC Call and Response
 
 **MUST** complete RPC request-response cycle
-**Given:** Worker registered for `rpc://prod/users/validate`  
+**Given:** Worker registered for `rpc://prod/users/validate` with subscription_id=456  
 **When:**
 
-1. Caller sends `Call(route, payload="user:123", timeout=5s)`
-2. Worker receives request
+1. Caller sends `Call(route="rpc://prod/users/validate", payload="user:123", timeout=5s)`
+2. Worker receives REQUEST(subscription_id=456, correlation_id=<16 bytes>, payload)
 3. Worker sends `Reply(correlation_id, result="valid")`
    **Then:**
 
 - Caller receives response within timeout
 - Response payload matches worker's reply
-- Correlation ID matches request
+- correlation_id is fixed 16 bytes (UUID)
 
 ### AC-RPC-003: RPC Timeout
 
@@ -569,11 +562,11 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-RPC-006: Worker Unregister
 
 **MUST** stop receiving requests after unregister
-**Given:** Worker registered for `rpc://prod/tasks/process`  
+**Given:** Worker registered with subscription_id=789  
 **When:**
 
-1. Worker sends `Unsubscribe(route)`
-2. Caller sends RPC request
+1. Worker sends `Unsubscribe(subscription_id=789)`
+2. Caller sends RPC request to same route
    **Then:**
 
 - Worker does NOT receive request
@@ -608,8 +601,9 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client sends `Acquire(route="lease://prod/locks/resource:123", ttl=30)`  
 **Then:**
 
-- Server returns `AcquireOk(token=<uuid>, fencing_token=1)`
-- Lease is granted to client
+- Server returns `AcquireOk(token=<u64>, fencing_token=<u64>)`
+- token is opaque u64 (client treats as cookie)
+- fencing_token is u64 (monotonically increasing)
 - Lease expires after 30 seconds if not renewed
 
 ### AC-LEASE-002: Lease Conflict
@@ -619,7 +613,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client B sends `Acquire(same_route, ttl=30)`  
 **Then:**
 
-- Server returns error code `5002` (Already Held)
+- Server returns error (Already Held)
 - Client B does NOT acquire lease
 - Client A retains lease
 
@@ -661,11 +655,11 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-LEASE-006: Idempotent Acquire
 
 **MUST** return existing token on duplicate acquire
-**Given:** Client holds lease with token `T1`, fencing token `123`  
+**Given:** Client holds lease with token `T1` (u64), fencing_token `123`  
 **When:** Same client sends `Acquire(same_route)` again  
 **Then:**
 
-- Server returns same token `T1`, fencing token `123`
+- Server returns same token `T1`, fencing_token `123`
 - Lease TTL is NOT reset
 - No new lease is created
 
@@ -752,29 +746,18 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Payload matches job's configured payload
 - Notification arrives within 1 second of scheduled time
 
-### AC-SCHEDULE-004: Update Job Schedule
+### AC-SCHEDULE-004: Cancel Job (renumbered)
 
-**MUST** update existing job's cron expression
-**Given:** Job exists with cron `"0 2 * * *"`  
-**When:** Client sends `Update(job_id, new_cron="0 3 * * *")`  
-**Then:**
-
-- Server returns `UpdateOk`
-- Job's schedule is updated
-- Next execution occurs at 3:00 AM (not 2:00 AM)
-
-### AC-SCHEDULE-005: Delete Job
-
-**MUST** delete scheduled job
+**MUST** cancel scheduled job
 **Given:** Job exists with `job_id=J1`  
-**When:** Client sends `Delete(job_id=J1)`  
+**When:** Client sends `Cancel(job_id=J1)`  
 **Then:**
 
-- Server returns `DeleteOk`
+- Server returns `CancelOk`
 - Job no longer fires
 - Future scheduled times do not trigger notifications
 
-### AC-SCHEDULE-006: List Jobs
+### AC-SCHEDULE-005: List Jobs (renumbered)
 
 **MUST** retrieve all jobs for realm/area
 **Given:** Jobs exist for `schedule://prod/jobs/*`  
@@ -787,21 +770,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
   - Next scheduled time
   - Payload
 
-### AC-SCHEDULE-007: Pause/Resume Job
-
-**MUST** pause and resume job execution
-**Given:** Active job with `job_id=J1`  
-**When:**
-
-1. Client sends `Pause(job_id=J1)`
-2. Scheduled time arrives
-3. Client sends `Resume(job_id=J1)`
-   **Then:**
-
-- After pause, job does NOT fire
-- After resume, job fires at next scheduled time
-
-### AC-SCHEDULE-008: Cron Wildcards
+### AC-SCHEDULE-006: Cron Wildcards (renumbered)
 
 **MUST** support wildcard expressions
 **Given:** Job with cron `"* * * * *"` (every minute)  
@@ -811,7 +780,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Job fires every minute
 - No missed executions (within 1s tolerance)
 
-### AC-SCHEDULE-009: Cron Ranges and Lists
+### AC-SCHEDULE-007: Cron Ranges and Lists (renumbered)
 
 **MUST** support range and list syntax
 **Given:** Job with cron `"0 9-17 * * 1-5"` (9 AM to 5 PM, Mon-Fri)  
@@ -822,14 +791,14 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Time is Monday 8:00 AM  
 **Then:** Job does NOT fire
 
-### AC-SCHEDULE-010: Unauthorized Create
+### AC-SCHEDULE-008: Unauthorized Create (renumbered)
 
 **MUST** reject job creation without write permission
-**Given:** Session has `schedule://prod/jobs/**#read` (read-only)  
+**Given:** Session JWT has no `schedule:write` scope  
 **When:** Client sends `Create(route, cron, payload)`  
 **Then:**
 
-- Server returns error code `7009` (Unauthorized)
+- Server returns error (Unauthorized)
 - Job NOT created
 
 ## Error Handling
@@ -894,18 +863,8 @@ Clients **MUST** interpret error codes using this mapping.
 - Client detects disconnection within 5 seconds
 - Client attempts reconnection with exponential backoff
 - Client re-authenticates with CONNECT frame
-- Client re-establishes subscriptions
-
-### AC-ERROR-005: Idempotency Tokens
-
-**SHOULD** use idempotency for critical operations
-**Given:** Client sends operation with idempotency token  
-**When:** Client retries due to timeout (uncertain if first attempt succeeded)  
-**Then:**
-
-- Server recognizes duplicate via idempotency token
-- Server returns same result as first attempt
-- Operation executes exactly once
+- Client re-establishes subscriptions (Notice/RPC)
+- In-flight transactions (KV, Stream sessions) are lost
 
 ## Performance
 
@@ -987,17 +946,17 @@ Use this checklist to verify client implementation completeness:
 
 - [ ] AC-KV-001 through AC-KV-011
 
-### Stream Domain (6 criteria)
+### Stream Domain (5 criteria)
 
-- [ ] AC-STREAM-001 through AC-STREAM-006
+- [ ] AC-STREAM-001 through AC-STREAM-005
 
-### Queue Domain (9 criteria)
+### Queue Domain (8 criteria)
 
-- [ ] AC-QUEUE-001 through AC-QUEUE-009
+- [ ] AC-QUEUE-001 through AC-QUEUE-008
 
-### Notice Domain (8 criteria)
+### Notice Domain (9 criteria)
 
-- [ ] AC-NOTICE-001 through AC-NOTICE-008
+- [ ] AC-NOTICE-001 through AC-NOTICE-009
 
 ### RPC Domain (8 criteria)
 
@@ -1007,18 +966,19 @@ Use this checklist to verify client implementation completeness:
 
 - [ ] AC-LEASE-001 through AC-LEASE-010
 
-### Schedule Domain (10 criteria)
+### Schedule Domain (8 criteria)
 
-- [ ] AC-SCHEDULE-001 through AC-SCHEDULE-010
+- [ ] AC-SCHEDULE-001 through AC-SCHEDULE-008
 
-### Error Handling (5 criteria)
+### Error Handling (4 criteria)
 
-- [ ] AC-ERROR-001 through AC-ERROR-005
+- [ ] AC-ERROR-001 through AC-ERROR-004
 
 ### Performance (5 criteria)
 
 - [ ] AC-PERF-001 through AC-PERF-005
-      **Total:** 80 explicit acceptance criteria
+
+**Total:** 74 explicit acceptance criteria
 
 ## Compliance Levels
 
