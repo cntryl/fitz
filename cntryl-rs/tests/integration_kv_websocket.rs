@@ -8,7 +8,6 @@ use cntryl::FitzClient;
 /// Note: This test requires Fitz server with WebSocket support running on localhost:4092
 /// Start with: cargo run --manifest-path ../Cargo.toml -F boot
 #[test]
-#[ignore] // Uncomment to run against real server with WebSocket enabled
 fn should_execute_kv_transaction_over_websocket() {
     // Arrange
     let client = FitzClient::connect_ws("ws://127.0.0.1:4092/fitz", "test-realm", "secret-key")
@@ -73,7 +72,6 @@ fn should_execute_kv_transaction_over_websocket() {
 
 /// Test rollback over WebSocket
 #[test]
-#[ignore] // Uncomment to run against real server
 fn should_rollback_kv_transaction_over_websocket() {
     // Arrange
     let client = FitzClient::connect_ws("ws://127.0.0.1:4092/fitz", "test-realm", "secret-key")

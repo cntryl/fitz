@@ -246,49 +246,41 @@ fn test_large_values(transport: Transport) {
 
 // Test runners for each transport
 #[test]
-#[ignore]
 fn test_kv_crud_tcp() {
     test_kv_crud_operations(Transport::Tcp);
 }
 
 #[test]
-#[ignore]
 fn test_kv_crud_websocket() {
     test_kv_crud_operations(Transport::WebSocket);
 }
 
 #[test]
-#[ignore]
 fn test_isolation_tcp() {
     test_transaction_isolation(Transport::Tcp);
 }
 
 #[test]
-#[ignore]
 fn test_isolation_websocket() {
     test_transaction_isolation(Transport::WebSocket);
 }
 
 #[test]
-#[ignore]
 fn test_rollback_tcp() {
     test_rollback_behavior(Transport::Tcp);
 }
 
 #[test]
-#[ignore]
 fn test_rollback_websocket() {
     test_rollback_behavior(Transport::WebSocket);
 }
 
 #[test]
-#[ignore]
 fn test_large_values_tcp() {
     test_large_values(Transport::Tcp);
 }
 
 #[test]
-#[ignore]
 fn test_large_values_websocket() {
     test_large_values(Transport::WebSocket);
 }

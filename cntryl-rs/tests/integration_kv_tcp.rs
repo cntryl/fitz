@@ -8,7 +8,6 @@ use cntryl::FitzClient;
 /// Note: This test requires Fitz server running on localhost:4091
 /// Start with: cargo run --manifest-path ../Cargo.toml -F boot
 #[test]
-#[ignore] // Uncomment to run against real server
 fn should_execute_kv_transaction_over_tcp() {
     // Arrange
     let client = FitzClient::connect_tcp("127.0.0.1", 4091, "test-realm", "secret-key")
@@ -73,7 +72,6 @@ fn should_execute_kv_transaction_over_tcp() {
 
 /// Test rollback behavior
 #[test]
-#[ignore] // Uncomment to run against real server
 fn should_rollback_kv_transaction_over_tcp() {
     // Arrange
     let client = FitzClient::connect_tcp("127.0.0.1", 4091, "test-realm", "secret-key")
@@ -134,7 +132,6 @@ fn should_rollback_kv_transaction_over_tcp() {
 
 /// Test multiple concurrent transactions (same client, sequential ops)
 #[test]
-#[ignore] // Uncomment to run against real server
 fn should_isolate_multiple_kv_transactions_over_tcp() {
     // Arrange
     let client = FitzClient::connect_tcp("127.0.0.1", 4091, "test-realm", "secret-key")
