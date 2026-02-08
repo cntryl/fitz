@@ -147,9 +147,29 @@ fn parse_begin(
     if offset + resource_len > payload.len() {
         return Err("BEGIN resource name overflow".to_string());
     }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
+    let resource_raw = String::from_utf8(payload[offset..offset + resource_len].to_vec())
         .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
     offset += resource_len;
+
+    // If realm/area were not provided by the caller, extract from resource path.
+    // The client encodes resource as "realm/area/resource".
+    let (realm, area, resource) = if realm.is_empty() {
+        let parts: Vec<&str> = resource_raw.splitn(3, '/').collect();
+        if parts.len() == 3 {
+            (
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+            )
+        } else {
+            return Err(format!(
+                "BEGIN resource path must be realm/area/resource, got '{}'",
+                resource_raw
+            ));
+        }
+    } else {
+        (realm, area, resource_raw)
+    };
 
     // Read mode (u8): 0=ReadOnly, 1=ReadWrite
     if offset >= payload.len() {
@@ -183,7 +203,9 @@ fn parse_begin(
 }
 
 fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 16 {
+    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 key_len][key]
+    // Resource is implicit from transaction context (established at BEGIN).
+    if payload.len() < 12 {
         return Err("GET payload too short".to_string());
     }
 
@@ -201,23 +223,6 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
         payload[offset + 7],
     ]);
     offset += 8;
-
-    // Read resource name length (u32)
-    let resource_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read resource name
-    if offset + resource_len > payload.len() {
-        return Err("GET resource name overflow".to_string());
-    }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
-    offset += resource_len;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -240,12 +245,14 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     Ok(KvMessage::Get {
         tx_id,
         route_family,
-        resource,
+        resource: String::new(),
         key,
     })
 }
 
 fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 key_len][key][u32 value_len][value]
+    // Resource is implicit from transaction context (established at BEGIN).
     if payload.len() < 16 {
         return Err("PUT payload too short".to_string());
     }
@@ -264,23 +271,6 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
         payload[offset + 7],
     ]);
     offset += 8;
-
-    // Read resource name length (u32)
-    let resource_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read resource name
-    if offset + resource_len > payload.len() {
-        return Err("PUT resource name overflow".to_string());
-    }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
-    offset += resource_len;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -322,13 +312,15 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     Ok(KvMessage::Put {
         tx_id,
         route_family,
-        resource,
+        resource: String::new(),
         key,
         value,
     })
 }
 
 fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 key_len][key][u32 value_len][value]
+    // Resource is implicit from transaction context (established at BEGIN).
     if payload.len() < 16 {
         return Err("INSERT payload too short".to_string());
     }
@@ -347,23 +339,6 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
         payload[offset + 7],
     ]);
     offset += 8;
-
-    // Read resource name length (u32)
-    let resource_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read resource name
-    if offset + resource_len > payload.len() {
-        return Err("INSERT resource name overflow".to_string());
-    }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
-    offset += resource_len;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -405,14 +380,16 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     Ok(KvMessage::Insert {
         tx_id,
         route_family,
-        resource,
+        resource: String::new(),
         key,
         value,
     })
 }
 
 fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 16 {
+    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 key_len][key]
+    // Resource is implicit from transaction context (established at BEGIN).
+    if payload.len() < 12 {
         return Err("DELETE payload too short".to_string());
     }
 
@@ -430,23 +407,6 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
         payload[offset + 7],
     ]);
     offset += 8;
-
-    // Read resource name length (u32)
-    let resource_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read resource name
-    if offset + resource_len > payload.len() {
-        return Err("DELETE resource name overflow".to_string());
-    }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
-    offset += resource_len;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -469,13 +429,15 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     Ok(KvMessage::Delete {
         tx_id,
         route_family,
-        resource,
+        resource: String::new(),
         key,
     })
 }
 
 fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 20 {
+    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 start_len][start][u32 end_len][end]
+    // Resource is implicit from transaction context (established at BEGIN).
+    if payload.len() < 16 {
         return Err("DELETE_RANGE payload too short".to_string());
     }
 
@@ -493,23 +455,6 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
         payload[offset + 7],
     ]);
     offset += 8;
-
-    // Read resource name length (u32)
-    let resource_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read resource name
-    if offset + resource_len > payload.len() {
-        return Err("DELETE_RANGE resource name overflow".to_string());
-    }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
-    offset += resource_len;
 
     // Read start key length (u32)
     if offset + 4 > payload.len() {
@@ -551,14 +496,16 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
     Ok(KvMessage::DeleteRange {
         tx_id,
         route_family,
-        resource,
+        resource: String::new(),
         start,
         end,
     })
 }
 
 fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    if payload.len() < 12 {
+    // Wire format per CLIENT_SPEC: [u64 tx_id][u8 start_opt][start?][u8 end_opt][end?][u8 limit_opt][limit?][u8 reverse]
+    // Resource is implicit from transaction context (established at BEGIN).
+    if payload.len() < 11 {
         return Err("SCAN payload too short".to_string());
     }
 
@@ -576,23 +523,6 @@ fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, St
         payload[offset + 7],
     ]);
     offset += 8;
-
-    // Read resource name length (u32)
-    let resource_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read resource name
-    if offset + resource_len > payload.len() {
-        return Err("SCAN resource name overflow".to_string());
-    }
-    let resource = String::from_utf8(payload[offset..offset + resource_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in resource name".to_string())?;
-    offset += resource_len;
 
     // Read start key option (u8): 0=None, 1=Some
     if offset >= payload.len() {
@@ -683,7 +613,7 @@ fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, St
     Ok(KvMessage::Scan {
         tx_id,
         route_family,
-        resource,
+        resource: String::new(),
         query: ScanQuery {
             start,
             end,
@@ -724,12 +654,9 @@ mod tests {
     #[test]
     fn should_parse_get_with_key() {
         // Arrange
-        let resource = "users";
         let key = b"user:1001";
         let mut payload = Vec::new();
         payload.put_u64(1); // tx_id
-        payload.put_u32(resource.len() as u32);
-        payload.put_slice(resource.as_bytes());
         payload.put_u32(key.len() as u32);
         payload.put_slice(key);
 

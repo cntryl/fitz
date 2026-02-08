@@ -1,22 +1,22 @@
 //! Integration test: KV domain over WebSocket transport
-//! This test connects to a real Fitz server running on localhost:4092 (WebSocket port)
+//! This test connects to a real Fitz server running on 127.0.0.1:4090 (WebSocket port)
 //! and executes a complete KV transaction sequence
 
 use cntryl::protocol::TransactionMode;
 use cntryl::FitzClient;
 
-/// Note: This test requires Fitz server with WebSocket support running on localhost:4092
-/// Start with: cargo run --manifest-path ../Cargo.toml -F boot
+/// Note: This test requires Fitz server with WebSocket support running on 127.0.0.1:4090
+/// Start with: docker compose up (or cargo run -F boot)
 #[test]
 fn should_execute_kv_transaction_over_websocket() {
     // Arrange
-    let client = FitzClient::connect_ws("ws://127.0.0.1:4092/fitz", "test-realm", "secret-key")
+    let client = FitzClient::connect_ws("ws://127.0.0.1:4090/ws", "test-realm", "secret-key")
         .expect("Failed to connect to Fitz WebSocket");
 
     let kv = client.kv();
 
     // Act - Begin transaction
-    let mut tx = kv
+    let tx = kv
         .begin("app", "users", TransactionMode::ReadWrite)
         .expect("Failed to begin transaction");
 
@@ -51,7 +51,7 @@ fn should_execute_kv_transaction_over_websocket() {
         .expect("Failed to commit transaction");
 
     // Act - Verify in new transaction that changes persisted
-    let mut verify_tx = kv
+    let verify_tx = kv
         .begin("app", "users", TransactionMode::ReadOnly)
         .expect("Failed to begin verify transaction");
 
@@ -74,13 +74,13 @@ fn should_execute_kv_transaction_over_websocket() {
 #[test]
 fn should_rollback_kv_transaction_over_websocket() {
     // Arrange
-    let client = FitzClient::connect_ws("ws://127.0.0.1:4092/fitz", "test-realm", "secret-key")
+    let client = FitzClient::connect_ws("ws://127.0.0.1:4090/ws", "test-realm", "secret-key")
         .expect("Failed to connect");
 
     let kv = client.kv();
 
     // Put initial value
-    let mut setup_tx = kv
+    let setup_tx = kv
         .begin("app", "test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
@@ -92,7 +92,7 @@ fn should_rollback_kv_transaction_over_websocket() {
         .expect("Failed to commit setup");
 
     // Act - Begin transaction, modify value, then rollback
-    let mut tx = kv
+    let tx = kv
         .begin("app", "test", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
@@ -112,7 +112,7 @@ fn should_rollback_kv_transaction_over_websocket() {
         .expect("Failed to rollback");
 
     // Assert - New transaction should see original value
-    let mut verify_tx = kv
+    let verify_tx = kv
         .begin("app", "test", TransactionMode::ReadOnly)
         .expect("Failed to begin verify");
 

@@ -11,7 +11,7 @@
 # - Health:       http://localhost:4090/healthz
 # - Metrics:      http://localhost:4090/metrics
 # - Admin API:    http://localhost:4090/api/v1/admin/stats
-# - WebSocket:    ws://localhost:4090/ws
+# - WebSocket:    http|ws://localhost:4090/ws
 # - TCP:          tcp://localhost:4091
 
 services:
@@ -32,7 +32,7 @@ services:
       FITZ_STORAGE_PATH: "/data" # Storage directory
 
       # Logging
-      RUST_LOG: "info,fitz=trace"
+      RUST_LOG: "debug"
 
       # Optional: Cloud storage (uncomment for S3/GCS/Azure)
       # FITZ_STORAGE_MODE: "s3"

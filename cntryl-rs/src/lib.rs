@@ -64,14 +64,9 @@ impl FitzClientBuilder {
         let token = gen.generate(&self.realm, "fitz-client")?;
 
         // Send CONNECT frame with JWT
+        // Per wire protocol: silence means success, server closes on invalid CONNECT
         let connect_frame = codec::encode_message_frame(protocol::message_type::CONNECT, token.as_bytes());
         conn.send_frame(&connect_frame)?;
-
-        // Expect empty response
-        let resp = conn.recv_frame()?;
-        if !resp.is_empty() {
-            return Err(FitzError::Protocol("Expected empty CONNECT response".into()));
-        }
 
         Ok(FitzClient {
             connection: Arc::new(Mutex::new(conn)),
@@ -89,14 +84,9 @@ impl FitzClientBuilder {
         let token = gen.generate(&self.realm, "fitz-client")?;
 
         // Send CONNECT frame with JWT
+        // Per wire protocol: silence means success, server closes on invalid CONNECT
         let connect_frame = codec::encode_message_frame(protocol::message_type::CONNECT, token.as_bytes());
         conn.send_frame(&connect_frame)?;
-
-        // Expect empty response
-        let resp = conn.recv_frame()?;
-        if !resp.is_empty() {
-            return Err(FitzError::Protocol("Expected empty CONNECT response".into()));
-        }
 
         Ok(FitzClient {
             connection: Arc::new(Mutex::new(conn)),

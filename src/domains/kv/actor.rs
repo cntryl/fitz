@@ -222,15 +222,20 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Validate resource match
-        if resource != active.bound_resource {
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        let resource = if resource.is_empty() {
+            active.bound_resource.clone()
+        } else if resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        }
+        } else {
+            resource
+        };
 
         let realm = active.bound_realm.clone();
         let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
@@ -264,15 +269,20 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Validate resource match
-        if resource != active.bound_resource {
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        let resource = if resource.is_empty() {
+            active.bound_resource.clone()
+        } else if resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        }
+        } else {
+            resource
+        };
 
         let realm = active.bound_realm.clone();
         let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
@@ -299,15 +309,20 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Validate resource match
-        if resource != active.bound_resource {
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        let resource = if resource.is_empty() {
+            active.bound_resource.clone()
+        } else if resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        }
+        } else {
+            resource
+        };
 
         // Check if key exists first
         let realm = active.bound_realm.clone();
@@ -348,15 +363,20 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Validate resource match
-        if resource != active.bound_resource {
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        let resource = if resource.is_empty() {
+            active.bound_resource.clone()
+        } else if resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        }
+        } else {
+            resource
+        };
 
         let realm = active.bound_realm.clone();
         let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
@@ -383,15 +403,20 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Validate resource match
-        if resource != active.bound_resource {
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        let resource = if resource.is_empty() {
+            active.bound_resource.clone()
+        } else if resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        }
+        } else {
+            resource
+        };
 
         // Validate range
         if start >= end {
@@ -425,15 +450,20 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Validate resource match before using transaction
-        if resource != active.bound_resource {
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        let resource = if resource.is_empty() {
+            active.bound_resource.clone()
+        } else if resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        }
+        } else {
+            resource
+        };
 
         let realm = active.bound_realm.clone();
         let prefix = Self::realm_resource_prefix(&realm, &resource);

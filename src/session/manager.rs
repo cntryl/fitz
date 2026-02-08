@@ -635,12 +635,13 @@ impl RuntimeIngress {
             payload.clone(),
         );
 
-        // Try to extract realm from authenticated claims for more precise routing
+        // Try to extract realm from authenticated claims for more precise routing.
+        // Anonymous sessions have no claims — use empty string, never wildcard.
         let realm = session_info
             .claims
             .as_ref()
             .map(|c| c.tenant.clone())
-            .unwrap_or_else(|| "*".to_string());
+            .unwrap_or_default();
 
         let mt = msg_type.as_u16();
         match mt {
@@ -657,30 +658,9 @@ impl RuntimeIngress {
                             Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
                         }
 
-                        crate::domains::kv::KvMessage::Get { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
-                        }
-
-                        crate::domains::kv::KvMessage::Put { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
-                        }
-
-                        crate::domains::kv::KvMessage::Insert { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
-                        }
-
-                        crate::domains::kv::KvMessage::Delete { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
-                        }
-
-                        crate::domains::kv::KvMessage::DeleteRange { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
-                        }
-
-                        crate::domains::kv::KvMessage::Scan { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
-                        }
-
+                        // Per CLIENT_SPEC: non-BEGIN KV operations do not carry a resource
+                        // on the wire; resource is implicit from transaction context.
+                        // Authorization was already checked at BEGIN time.
                         _ => Ok(None),
                     },
                     Err(e) => Err(e),

@@ -46,11 +46,9 @@ async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
     ingress.on_open(session.info()).await.unwrap();
 
     // Build a KV GET TLV message (msg_type 103)
+    // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
     let mut payload = Vec::new();
     payload.extend_from_slice(&0u64.to_be_bytes()); // tx_id
-    let resource = "users";
-    payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
-    payload.extend_from_slice(resource.as_bytes());
     let key = b"nonexistent";
     payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
     payload.extend_from_slice(key);

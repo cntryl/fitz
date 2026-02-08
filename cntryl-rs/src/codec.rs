@@ -141,7 +141,7 @@ pub fn encode_message_frame(msg_type: u16, payload: &[u8]) -> Vec<u8> {
         frame.push(msg_type as u8);
     } else {
         frame.push(0xFF);
-        frame.extend_from_slice(&msg_type.to_be_bytes()[1..]);
+        frame.extend_from_slice(&msg_type.to_be_bytes());
     }
     
     // Encode length (u16 BE)

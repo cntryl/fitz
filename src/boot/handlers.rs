@@ -15,12 +15,14 @@ pub async fn spawn_tcp_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
+    runtime: crate::boot::Runtime,
 ) -> BootResult<()> {
     let tcp_addr = format!("{}:{}", config.bind_addr, config.tcp_port);
     let tcp_listener = TcpListener::bind(&tcp_addr).await?;
     info!("TCP endpoint listening on {}", tcp_addr);
 
     let tcp_config = ingress_config.clone();
+    let runtime = Arc::new(runtime);
     tokio::spawn(async move {
         loop {
             match tcp_listener.accept().await {
@@ -28,8 +30,9 @@ pub async fn spawn_tcp_listener(
                     info!("TCP connection from {}", peer_addr);
                     let ingress = ingress.clone();
                     let config = tcp_config.clone();
+                    let runtime = runtime.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_tcp_connection(stream, ingress, config).await {
+                        if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime).await {
                             tracing::error!("TCP handler error: {}", e);
                         }
                     });
@@ -82,24 +85,83 @@ pub async fn spawn_http_listener(
     Ok(())
 }
 
-/// Handle an incoming TCP connection
+/// Handle an incoming TCP connection with outbound response support
 ///
 /// # Protocol
 /// - Length-prefixed frames: [u32 BE length][payload]
 /// - Forwards to ingress for session and frame handling
+/// - Registers outbound sink with router for response delivery
 async fn handle_tcp_connection(
     stream: TcpStream,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
+    runtime: Arc<crate::boot::Runtime>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::api::tcp::create_session;
+    use tokio::io::AsyncWriteExt;
 
     // Create session and handler
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
     let handler = create_session(ingress.clone(), config.clone(), stream, frame_tx).await?;
     
-    // Get session_id from handler before it consumes the stream
+    // Get session_id and stream from handler
     let session_id = handler.session_id;
+    let stream = handler.stream.clone();
+
+    // Create outbound channel for responses
+    let (outbound_tx, mut outbound_rx) =
+        tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
+
+    // Register outbound sink with router under inbox route
+    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
+        outbound_tx.clone(),
+    ));
+    let inbox_route = crate::runtime::routing::RouteAddress::new(
+        crate::runtime::routing::RouteFamily::new(0),
+        crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
+    );
+    tracing::debug!(
+        session_id = session_id,
+        inbox = %inbox_route,
+        "Registering TCP outbound sink at inbox route"
+    );
+    runtime.router.register(
+        inbox_route.clone(),
+        sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+    );
+
+    // Spawn task to send outbound frames through TCP
+    let tcp_session_id = session_id;
+    let stream_clone = stream.clone();
+    tokio::spawn(async move {
+        tracing::debug!(
+            session_id = tcp_session_id,
+            "TCP outbound writer task started"
+        );
+        while let Some(frame) = outbound_rx.recv().await {
+            tracing::debug!(
+                session_id = tcp_session_id,
+                frame_len = frame.len(),
+                "TCP outbound: sending frame to wire"
+            );
+            let mut stream_guard = stream_clone.lock().await;
+            // Write length-prefixed frame
+            let len = frame.len() as u32;
+            if let Err(e) = stream_guard.write_all(&len.to_be_bytes()).await {
+                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (header)");
+                break;
+            }
+            if let Err(e) = stream_guard.write_all(&frame).await {
+                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (payload)");
+                break;
+            }
+            if let Err(e) = stream_guard.flush().await {
+                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound flush error");
+                break;
+            }
+        }
+        tracing::debug!(session_id = tcp_session_id, "TCP outbound writer task ended");
+    });
 
     // Spawn task to process frames from the channel
     let ingress_clone = ingress.clone();
@@ -130,7 +192,7 @@ async fn handle_tcp_connection(
         }
     });
 
-    // Run TCP handler (reads frames and forwards to ingress)
+    // Run TCP handler (reads frames and forwards to ingress) - this will block until client closes
     handler.run().await?;
 
     Ok(())

@@ -1,11 +1,11 @@
 //! Integration test: KV domain over TCP transport
-//! This test connects to a real Fitz server running on localhost:4091
+//! This test connects to a real Fitz server running on 127.0.0.1:4091
 //! and executes a complete KV transaction sequence
 
 use cntryl::protocol::TransactionMode;
 use cntryl::FitzClient;
 
-/// Note: This test requires Fitz server running on localhost:4091
+/// Note: This test requires Fitz server running on 127.0.0.1:4091
 /// Start with: cargo run --manifest-path ../Cargo.toml -F boot
 #[test]
 fn should_execute_kv_transaction_over_tcp() {
@@ -16,7 +16,7 @@ fn should_execute_kv_transaction_over_tcp() {
     let kv = client.kv();
 
     // Act - Begin transaction
-    let mut tx = kv
+    let tx = kv
         .begin("app", "users", TransactionMode::ReadWrite)
         .expect("Failed to begin transaction");
 
@@ -51,7 +51,7 @@ fn should_execute_kv_transaction_over_tcp() {
         .expect("Failed to commit transaction");
 
     // Act - Verify in new transaction that changes persisted
-    let mut verify_tx = kv
+    let verify_tx = kv
         .begin("app", "users", TransactionMode::ReadOnly)
         .expect("Failed to begin verify transaction");
 
@@ -80,7 +80,7 @@ fn should_rollback_kv_transaction_over_tcp() {
     let kv = client.kv();
 
     // Put initial value
-    let mut setup_tx = kv
+    let setup_tx = kv
         .begin("app", "test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
@@ -92,7 +92,7 @@ fn should_rollback_kv_transaction_over_tcp() {
         .expect("Failed to commit setup");
 
     // Act - Begin transaction, modify value, then rollback
-    let mut tx = kv
+    let tx = kv
         .begin("app", "test", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
@@ -112,7 +112,7 @@ fn should_rollback_kv_transaction_over_tcp() {
         .expect("Failed to rollback");
 
     // Assert - New transaction should see original value
-    let mut verify_tx = kv
+    let verify_tx = kv
         .begin("app", "test", TransactionMode::ReadOnly)
         .expect("Failed to begin verify");
 
@@ -140,7 +140,7 @@ fn should_isolate_multiple_kv_transactions_over_tcp() {
     let kv = client.kv();
 
     // Act - Begin first transaction
-    let mut tx1 = kv
+    let tx1 = kv
         .begin("app", "data", TransactionMode::ReadWrite)
         .expect("Failed to begin tx1");
 
@@ -148,7 +148,7 @@ fn should_isolate_multiple_kv_transactions_over_tcp() {
         .expect("Failed to put in tx1");
 
     // Act - Begin second transaction (should not see tx1's changes)
-    let mut tx2 = kv
+    let tx2 = kv
         .begin("app", "data", TransactionMode::ReadOnly)
         .expect("Failed to begin tx2");
 
@@ -163,7 +163,7 @@ fn should_isolate_multiple_kv_transactions_over_tcp() {
         .expect("Failed to commit tx1");
 
     // Act - Begin new transaction and verify changes visible
-    let mut tx3 = kv
+    let tx3 = kv
         .begin("app", "data", TransactionMode::ReadOnly)
         .expect("Failed to begin tx3");
 

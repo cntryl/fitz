@@ -32,8 +32,8 @@ pub struct TcpHandler {
     pub session_id: u64,
     /// Channel for sending frames to runtime
     tx: mpsc::Sender<(u64, Bytes)>,
-    /// TCP stream
-    stream: TcpStream,
+    /// TCP stream (wrapped for shared access between reader and writer)
+    pub stream: Arc<tokio::sync::Mutex<TcpStream>>,
 }
 
 impl TcpHandler {
@@ -45,13 +45,13 @@ impl TcpHandler {
     /// * `config` - Ingress configuration
     /// * `session_id` - Session ID from ingress
     /// * `tx` - Channel for forwarding frames to runtime
-    /// * `stream` - TCP stream
+    /// * `stream` - TCP stream (wrapped in Arc<Mutex> for shared access)
     pub fn new(
         ingress: Arc<dyn Ingress>,
         config: IngressConfig,
         session_id: u64,
         tx: mpsc::Sender<(u64, Bytes)>,
-        stream: TcpStream,
+        stream: Arc<tokio::sync::Mutex<TcpStream>>,
     ) -> Self {
         Self {
             ingress,
@@ -68,16 +68,19 @@ impl TcpHandler {
     /// to the runtime. Handles backpressure gracefully.
     ///
     /// Returns `Ok` on clean close, `Err` on error
-    pub async fn run(mut self) -> Result<(), String> {
+    pub async fn run(self) -> Result<(), String> {
         let mut buffer = BytesMut::with_capacity(4096);
         info!(session_id = self.session_id, "TCP handler run loop started");
 
         loop {
-            // Read more data
-            let n = self.stream.read_buf(&mut buffer).await.map_err(|e| {
-                error!(session_id = self.session_id, error = %e, "TCP read error");
-                format!("read error: {}", e)
-            })?;
+            // Read more data (lock stream for reading)
+            let n = {
+                let mut stream_guard = self.stream.lock().await;
+                stream_guard.read_buf(&mut buffer).await.map_err(|e| {
+                    error!(session_id = self.session_id, error = %e, "TCP read error");
+                    format!("read error: {}", e)
+                })?
+            };
 
             // 0 bytes means EOF
             if n == 0 {
@@ -206,6 +209,9 @@ pub async fn create_session(
     // Extract peer address
     let peer_addr = stream.peer_addr().ok();
     debug!(peer_addr = ?peer_addr, "Creating TCP session");
+
+    // Wrap stream in Arc<Mutex> for shared access between reader and writer
+    let stream = Arc::new(tokio::sync::Mutex::new(stream));
 
     // Create transport-level session
     let session_config = crate::session::NewSessionConfig::unauthenticated(

@@ -1,10 +1,19 @@
 //! KV (Key-Value) domain client
 
 use crate::error::{FitzError, Result};
-use crate::codec::{TlvEncoder, TlvDecoder, encode_message_frame};
+use crate::codec::{TlvEncoder, encode_message_frame, decode_message_frame};
 use crate::connection::FitzConnection;
 use crate::protocol::{message_type, TransactionMode};
 use std::sync::{Arc, Mutex};
+
+/// Strip the TLV header from a response frame and return just the payload bytes.
+fn strip_tlv_header(frame: &[u8]) -> Result<&[u8]> {
+    if frame.is_empty() {
+        return Ok(frame);
+    }
+    let (_msg_type, payload_start) = decode_message_frame(frame)?;
+    Ok(&frame[payload_start..])
+}
 
 /// KV request types
 pub enum KvRequest {
@@ -88,32 +97,45 @@ impl KvResponse {
             return Ok(KvResponse::Ok);
         }
 
-        let mut dec = TlvDecoder::new(buf);
-
-        // Try to decode as u64 (transaction ID)
+        // Try to decode as u64 (transaction ID) — only for BEGIN responses
         if buf.len() == 8 {
-            if let Ok(tx_id) = dec.get_u64() {
-                return Ok(KvResponse::TransactionId(tx_id));
-            }
+            let tx_id = u64::from_be_bytes([
+                buf[0], buf[1], buf[2], buf[3],
+                buf[4], buf[5], buf[6], buf[7],
+            ]);
+            return Ok(KvResponse::TransactionId(tx_id));
         }
 
         // Try to decode as GET response: [u8 found][u32 len][value]
-        if !dec.is_empty() {
-            let mut dec = TlvDecoder::new(buf);
-            if let Ok(found) = dec.get_u8() {
-                let found_bool = found != 0;
-                if !dec.is_empty() {
-                    if let Ok(value) = dec.get_bytes() {
-                        return Ok(KvResponse::GetResult {
-                            found: found_bool,
-                            value: Some(value),
-                        });
-                    }
-                } else {
+        // The found flag is 0 or 1; an error's first byte would be 0 only
+        // if the error message length fits in the upper 3 bytes (very large).
+        if !buf.is_empty() && (buf[0] == 0 || buf[0] == 1) {
+            let found_bool = buf[0] != 0;
+            if buf.len() == 1 {
+                // found=false with no value payload
+                return Ok(KvResponse::GetResult {
+                    found: found_bool,
+                    value: None,
+                });
+            }
+            if buf.len() >= 5 {
+                let value_len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
+                if 5 + value_len == buf.len() {
+                    let value = buf[5..].to_vec();
                     return Ok(KvResponse::GetResult {
                         found: found_bool,
-                        value: None,
+                        value: if value.is_empty() { None } else { Some(value) },
                     });
+                }
+            }
+        }
+
+        // Try to decode as error: [u32 error_len][error_msg_bytes]
+        if buf.len() >= 4 {
+            let error_len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+            if 4 + error_len == buf.len() {
+                if let Ok(msg) = std::str::from_utf8(&buf[4..]) {
+                    return Ok(KvResponse::Error(msg.to_string()));
                 }
             }
         }
@@ -153,14 +175,16 @@ impl KvClient {
         let mut conn = self.conn.lock().unwrap();
         conn.send_frame(&frame)?;
         let resp_frame = conn.recv_frame()?;
+        let payload = strip_tlv_header(&resp_frame)?;
 
-        match KvResponse::decode(&resp_frame)? {
+        match KvResponse::decode(payload)? {
             KvResponse::TransactionId(tx_id) => {
                 Ok(KvTransaction {
                     conn: self.conn.clone(),
                     tx_id,
                 })
             }
+            KvResponse::Error(e) => Err(FitzError::Protocol(e)),
             _ => Err(FitzError::Protocol("Expected transaction ID".to_string())),
         }
     }
@@ -184,8 +208,9 @@ impl KvTransaction {
         let mut conn = self.conn.lock().unwrap();
         conn.send_frame(&frame)?;
         let resp_frame = conn.recv_frame()?;
+        let payload = strip_tlv_header(&resp_frame)?;
 
-        match KvResponse::decode(&resp_frame)? {
+        match KvResponse::decode(payload)? {
             KvResponse::GetResult { found, value } => {
                 if found {
                     Ok(value)
@@ -193,6 +218,7 @@ impl KvTransaction {
                     Ok(None)
                 }
             }
+            KvResponse::Error(e) => Err(FitzError::Protocol(e)),
             _ => Err(FitzError::Protocol("Expected GET result".to_string())),
         }
     }
@@ -210,10 +236,12 @@ impl KvTransaction {
         let mut conn = self.conn.lock().unwrap();
         conn.send_frame(&frame)?;
         let resp_frame = conn.recv_frame()?;
+        let payload = strip_tlv_header(&resp_frame)?;
 
-        match KvResponse::decode(&resp_frame)? {
+        match KvResponse::decode(payload)? {
             KvResponse::Ok => Ok(()),
-            _ => Err(FitzError::Protocol("Expected OK response".to_string())),
+            KvResponse::Error(e) => Err(FitzError::Protocol(e)),
+            _ => Err(FitzError::Protocol("Expected OK response for PUT".to_string())),
         }
     }
 
@@ -229,10 +257,12 @@ impl KvTransaction {
         let mut conn = self.conn.lock().unwrap();
         conn.send_frame(&frame)?;
         let resp_frame = conn.recv_frame()?;
+        let payload = strip_tlv_header(&resp_frame)?;
 
-        match KvResponse::decode(&resp_frame)? {
+        match KvResponse::decode(payload)? {
             KvResponse::Ok => Ok(()),
-            _ => Err(FitzError::Protocol("Expected OK response".to_string())),
+            KvResponse::Error(e) => Err(FitzError::Protocol(e)),
+            _ => Err(FitzError::Protocol("Expected OK response for DELETE".to_string())),
         }
     }
 
@@ -245,10 +275,12 @@ impl KvTransaction {
         let mut conn = self.conn.lock().unwrap();
         conn.send_frame(&frame)?;
         let resp_frame = conn.recv_frame()?;
+        let payload = strip_tlv_header(&resp_frame)?;
 
-        match KvResponse::decode(&resp_frame)? {
+        match KvResponse::decode(payload)? {
             KvResponse::Ok => Ok(()),
-            _ => Err(FitzError::Protocol("Expected OK response".to_string())),
+            KvResponse::Error(e) => Err(FitzError::Protocol(e)),
+            _ => Err(FitzError::Protocol("Expected OK response for COMMIT".to_string())),
         }
     }
 
@@ -261,10 +293,12 @@ impl KvTransaction {
         let mut conn = self.conn.lock().unwrap();
         conn.send_frame(&frame)?;
         let resp_frame = conn.recv_frame()?;
+        let payload = strip_tlv_header(&resp_frame)?;
 
-        match KvResponse::decode(&resp_frame)? {
+        match KvResponse::decode(payload)? {
             KvResponse::Ok => Ok(()),
-            _ => Err(FitzError::Protocol("Expected OK response".to_string())),
+            KvResponse::Error(e) => Err(FitzError::Protocol(e)),
+            _ => Err(FitzError::Protocol("Expected OK response for ROLLBACK".to_string())),
         }
     }
 }

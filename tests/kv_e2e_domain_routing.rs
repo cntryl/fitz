@@ -11,14 +11,12 @@ mod tests {
     #[test]
     fn should_parse_kv_get_message() {
         // Test the codec GET parser
-        let resource = "test_resource";
+        // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "test_key";
         let tx_id = 42u64;
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&tx_id.to_be_bytes());
-        payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
-        payload.extend_from_slice(resource.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
 
@@ -36,15 +34,13 @@ mod tests {
     #[test]
     fn should_parse_kv_put_message() {
         // Test the codec PUT parser
-        let resource = "my_resource";
+        // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "my_key";
         let value = "my_value";
         let tx_id = 42u64;
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&tx_id.to_be_bytes());
-        payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
-        payload.extend_from_slice(resource.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
         payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
@@ -129,14 +125,12 @@ mod tests {
     #[test]
     fn should_roundtrip_kv_message() {
         // Test parsing and the fact that it completes successfully
-        let resource = "test_resource";
+        // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "test_key";
         let tx_id = 42u64;
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&tx_id.to_be_bytes());
-        payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
-        payload.extend_from_slice(resource.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
 

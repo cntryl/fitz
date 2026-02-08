@@ -54,7 +54,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_domains_ready();
 
     // Step 5: Start transport listeners
-    handlers::spawn_tcp_listener(&config, ingress.clone(), ingress_config.clone()).await?;
+    handlers::spawn_tcp_listener(&config, ingress.clone(), ingress_config.clone(), runtime.clone()).await?;
     handlers::spawn_http_listener(
         &config,
         ingress.clone(),

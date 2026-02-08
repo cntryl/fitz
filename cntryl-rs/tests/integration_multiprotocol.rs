@@ -28,12 +28,12 @@ impl Transport {
 fn connect_client(transport: Transport, realm: &str, secret: &str) -> Result<FitzClient, FitzError> {
     match transport {
         Transport::Tcp => FitzClient::connect_tcp("127.0.0.1", 4091, realm, secret),
-        Transport::WebSocket => FitzClient::connect_ws("ws://127.0.0.1:4092/fitz", realm, secret),
+        Transport::WebSocket => FitzClient::connect_ws("ws://127.0.0.1:4090/ws", realm, secret),
     }
 }
 
 /// Parameterized test: Basic KV put/get/delete over transport
-fn test_kv_crud_operations(transport: Transport) {
+fn run_kv_crud_operations(transport: Transport) {
     println!("Running KV CRUD test over {}", transport.name());
 
     let client = connect_client(transport, "test-realm", "secret-key")
@@ -42,7 +42,7 @@ fn test_kv_crud_operations(transport: Transport) {
     let kv = client.kv();
 
     // Begin transaction
-    let mut tx = kv
+    let tx = kv
         .begin("app", "data", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
@@ -81,7 +81,7 @@ fn test_kv_crud_operations(transport: Transport) {
 }
 
 /// Parameterized test: Transaction isolation
-fn test_transaction_isolation(transport: Transport) {
+fn run_transaction_isolation(transport: Transport) {
     println!("Running transaction isolation test over {}", transport.name());
 
     let client = connect_client(transport, "test-realm", "secret-key")
@@ -90,7 +90,7 @@ fn test_transaction_isolation(transport: Transport) {
     let kv = client.kv();
 
     // Setup initial value
-    let mut setup = kv
+    let setup = kv
         .begin("app", "isolation_test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
@@ -102,7 +102,7 @@ fn test_transaction_isolation(transport: Transport) {
         .expect("Failed to commit setup");
 
     // Begin read-write transaction
-    let mut tx_rw = kv
+    let tx_rw = kv
         .begin("app", "isolation_test", TransactionMode::ReadWrite)
         .expect("Failed to begin rw");
 
@@ -111,7 +111,7 @@ fn test_transaction_isolation(transport: Transport) {
         .expect("Failed to modify");
 
     // Begin read-only transaction in parallel (conceptually)
-    let mut tx_ro = kv
+    let tx_ro = kv
         .begin("app", "isolation_test", TransactionMode::ReadOnly)
         .expect("Failed to begin ro");
 
@@ -145,7 +145,7 @@ fn test_transaction_isolation(transport: Transport) {
 }
 
 /// Parameterized test: Rollback behavior
-fn test_rollback_behavior(transport: Transport) {
+fn run_rollback_behavior(transport: Transport) {
     println!("Running rollback test over {}", transport.name());
 
     let client = connect_client(transport, "test-realm", "secret-key")
@@ -154,7 +154,7 @@ fn test_rollback_behavior(transport: Transport) {
     let kv = client.kv();
 
     // Setup initial value
-    let mut setup = kv
+    let setup = kv
         .begin("app", "rollback_test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
@@ -166,7 +166,7 @@ fn test_rollback_behavior(transport: Transport) {
         .expect("Failed to commit setup");
 
     // Begin transaction, make changes, rollback
-    let mut tx = kv
+    let tx = kv
         .begin("app", "rollback_test", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
@@ -187,7 +187,7 @@ fn test_rollback_behavior(transport: Transport) {
         .expect("Failed to rollback");
 
     // Verify rollback in new transaction
-    let mut verify = kv
+    let verify = kv
         .begin("app", "rollback_test", TransactionMode::ReadOnly)
         .expect("Failed to begin verify");
 
@@ -208,7 +208,7 @@ fn test_rollback_behavior(transport: Transport) {
 }
 
 /// Parameterized test: Large value handling
-fn test_large_values(transport: Transport) {
+fn run_large_values(transport: Transport) {
     println!("Running large value test over {}", transport.name());
 
     let client = connect_client(transport, "test-realm", "secret-key")
@@ -216,7 +216,7 @@ fn test_large_values(transport: Transport) {
 
     let kv = client.kv();
 
-    let mut tx = kv
+    let tx = kv
         .begin("app", "large_data", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
@@ -246,41 +246,41 @@ fn test_large_values(transport: Transport) {
 
 // Test runners for each transport
 #[test]
-fn test_kv_crud_tcp() {
-    test_kv_crud_operations(Transport::Tcp);
+fn should_execute_kv_crud_over_tcp() {
+    run_kv_crud_operations(Transport::Tcp);
 }
 
 #[test]
-fn test_kv_crud_websocket() {
-    test_kv_crud_operations(Transport::WebSocket);
+fn should_execute_kv_crud_over_websocket() {
+    run_kv_crud_operations(Transport::WebSocket);
 }
 
 #[test]
-fn test_isolation_tcp() {
-    test_transaction_isolation(Transport::Tcp);
+fn should_isolate_transactions_over_tcp() {
+    run_transaction_isolation(Transport::Tcp);
 }
 
 #[test]
-fn test_isolation_websocket() {
-    test_transaction_isolation(Transport::WebSocket);
+fn should_isolate_transactions_over_websocket() {
+    run_transaction_isolation(Transport::WebSocket);
 }
 
 #[test]
-fn test_rollback_tcp() {
-    test_rollback_behavior(Transport::Tcp);
+fn should_rollback_over_tcp() {
+    run_rollback_behavior(Transport::Tcp);
 }
 
 #[test]
-fn test_rollback_websocket() {
-    test_rollback_behavior(Transport::WebSocket);
+fn should_rollback_over_websocket() {
+    run_rollback_behavior(Transport::WebSocket);
 }
 
 #[test]
-fn test_large_values_tcp() {
-    test_large_values(Transport::Tcp);
+fn should_handle_large_values_over_tcp() {
+    run_large_values(Transport::Tcp);
 }
 
 #[test]
-fn test_large_values_websocket() {
-    test_large_values(Transport::WebSocket);
+fn should_handle_large_values_over_websocket() {
+    run_large_values(Transport::WebSocket);
 }
