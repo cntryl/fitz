@@ -17,19 +17,22 @@
 services:
   fitz:
     build:
-      context: .
+      context: ../fitz
       dockerfile: Dockerfile
     container_name: fitz-node
     ports:
       - "4090:4090" # HTTP/WebSocket (admin API + data plane)
       - "4091:4091" # TCP (binary protocol)
     environment:
+      # Auth configuration
+      FITZ_AUTH_REQUIRED: FALSE
+
       # Storage configuration
-      FITZ_STORAGE_MODE: "local" # local, memory, s3, gcs, azure
+      FITZ_STORAGE_MODE: "memory" # local, memory, s3, gcs, azure
       FITZ_STORAGE_PATH: "/data" # Storage directory
 
       # Logging
-      RUST_LOG: "info,fitz=debug"
+      RUST_LOG: "info,fitz=trace"
 
       # Optional: Cloud storage (uncomment for S3/GCS/Azure)
       # FITZ_STORAGE_MODE: "s3"
@@ -38,21 +41,5 @@ services:
       # FITZ_STORAGE_PREFIX: "prod"
       # AWS_ACCESS_KEY_ID: "..."
       # AWS_SECRET_ACCESS_KEY: "..."
-    volumes:
-      # Persist storage data
-      - fitz-data:/data
-    restart: unless-stopped
-    healthcheck:
-      # Distroless has no shell, healthchecks must be external
-      # Use orchestrator's HTTP probes instead
-      disable: true
-    # Note: For production, add resource limits:
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '2'
-    #       memory: 2G
 
-volumes:
-  fitz-data:
-    driver: local
+    restart: unless-stopped
