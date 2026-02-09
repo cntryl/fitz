@@ -222,9 +222,9 @@ pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
 }
 
 /// Staging key/value encoding for Transaction
-pub fn encode_staging_key(session_id: &str, event_index: usize) -> Vec<u8> {
+pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
     let mut key = vec![KeyPrefix::Staging as u8];
-    key.extend_from_slice(session_id.as_bytes());
+    key.extend_from_slice(&session_id.to_be_bytes());
     key.push(0);
     key.extend_from_slice(&(event_index as u64).to_be_bytes());
     key

@@ -152,31 +152,6 @@ pub enum QueueMessage {
         delay_seconds: Option<u64>,
     },
 
-    /// Enqueue a batch of messages (first-class batch API)
-    ///
-    /// Route format: `queue://{realm}/{area}/{resource}/enqueue_batch`
-    ///
-    /// Writes all messages in ONE Midge write batch for amortized cost.
-    /// Preserves FIFO ordering within the batch.
-    /// Returns MessageIds in the same order as input.
-    ///
-    /// # Semantics
-    /// - Exactly ONE Midge write batch per enqueue_batch call
-    /// - All messages succeed or all fail (no partial visibility)
-    /// - delay_seconds applies to all messages if scalar, or per-message if Vec
-    /// - At most ONE availability notice per batch
-    ///
-    /// # Performance
-    /// - Optimized for high-throughput ingestion (1M+ msg/sec)
-    /// - Amortizes durable write cost across batch
-    /// - Minimal per-message overhead
-    EnqueueBatch {
-        family_id: RouteFamily,
-        route: Route,
-        messages: Vec<Bytes>,
-        delay_seconds: Option<u64>, // Scalar: apply to all messages
-    },
-
     /// Reserve messages for processing
     ///
     /// Route format: `queue://{realm}/{area}/{resource}/reserve`
@@ -262,9 +237,6 @@ impl QueueError {
 pub enum QueueResponse {
     /// Message successfully enqueued
     Enqueued { id: MessageId },
-
-    /// Batch of messages successfully enqueued
-    EnqueuedBatch { ids: Vec<MessageId> },
 
     /// Messages successfully reserved
     Reserved { messages: Vec<ReservedMessage> },

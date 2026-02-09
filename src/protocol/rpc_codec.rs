@@ -2,6 +2,9 @@
 //!
 //! Encodes/decodes TLV messages for the RPC domain.
 //! Supports Subscribe, Unsubscribe, Request, Response operations.
+//!
+//! `route_family` is a server-internal concept supplied by the session layer
+//! — it never appears on the wire.
 
 use crate::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
 use crate::protocol::frame_context::FrameContext;
@@ -18,14 +21,21 @@ pub enum RpcResponseMsg {
     Error(String),
 }
 
-/// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<RpcMessage, String> {
+/// Parse incoming message from TLV-encoded bytes.
+///
+/// `route_family` is injected by the session layer — it is never read
+/// from the wire payload.
+pub fn parse_request(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+) -> Result<RpcMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        300 => parse_subscribe(&mut dec),
-        301 => parse_unsubscribe(&mut dec),
-        302 => parse_rpc_request(&mut dec),
+        300 => parse_subscribe(&mut dec, route_family),
+        301 => parse_unsubscribe(&mut dec, route_family),
+        302 => parse_rpc_request(&mut dec, route_family),
         303 => parse_rpc_response(&mut dec),
         304 => parse_ack(&mut dec),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
@@ -52,10 +62,10 @@ pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
 
 // ===== Helper Parsers =====
 
-fn parse_subscribe(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string worker_addr]`
+fn parse_subscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
     let worker_addr_str = dec.get_string()?;
-    let worker_addr = RouteAddress::new(RouteFamily::new(family_id), Route::new(worker_addr_str));
+    let worker_addr = RouteAddress::new(route_family, Route::new(worker_addr_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -64,10 +74,10 @@ fn parse_subscribe(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
     Ok(RpcMessage::Subscribe { worker_addr })
 }
 
-fn parse_unsubscribe(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string worker_addr]`
+fn parse_unsubscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
     let worker_addr_str = dec.get_string()?;
-    let worker_addr = RouteAddress::new(RouteFamily::new(family_id), Route::new(worker_addr_str));
+    let worker_addr = RouteAddress::new(route_family, Route::new(worker_addr_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -76,8 +86,8 @@ fn parse_unsubscribe(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
     Ok(RpcMessage::Unsubscribe { worker_addr })
 }
 
-fn parse_rpc_request(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[bytes correlation_id][string route][string reply_route][bytes body]`
+fn parse_rpc_request(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
     let correlation_id_bytes = dec.get_bytes()?;
     if correlation_id_bytes.len() != 16 {
         return Err("Correlation ID must be 16 bytes (UUID)".to_string());
@@ -99,7 +109,7 @@ fn parse_rpc_request(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
     }
 
     Ok(RpcMessage::Request(RpcRequest::new(
-        RouteFamily::new(family_id),
+        route_family,
         correlation_id,
         route,
         reply_route,

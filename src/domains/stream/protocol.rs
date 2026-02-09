@@ -131,7 +131,7 @@ pub enum StreamMessage {
 
     /// Append event to active session
     Append {
-        session_id: String,
+        session_id: u64,
         body: Bytes,
         metadata: Option<Bytes>,
     },
@@ -139,12 +139,12 @@ pub enum StreamMessage {
     /// Commit session (atomic write)
     /// Requires the caller to specify a write mode: Buffered or Sync.
     Commit {
-        session_id: String,
+        session_id: u64,
         mode: StreamWriteMode,
     }, // caller must specify StreamWriteMode (Buffered|Sync)
 
     /// Rollback session (discard)
-    Rollback { session_id: String },
+    Rollback { session_id: u64 },
 
     /// Read events from stream
     Read {
@@ -258,7 +258,7 @@ pub struct AreaWatermarkAdvanced {
 /// Response for begin session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BeginSessionResponse {
-    pub session_id: String,
+    pub session_id: u64,
 }
 
 /// Response for append to session

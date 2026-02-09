@@ -1,9 +1,8 @@
 //! Queue benchmarking helpers
 
 use super::storage::{create_bench_store, create_local_bench_store};
-use crate::domains::queue::{QueueActor, QueueKey, QueueProducer};
+use crate::domains::queue::{QueueActor, QueueKey};
 use crate::runtime::routing::RouteFamily;
-use std::time::Duration;
 
 /// Create a QueueActor for benchmarking with buffered writes
 ///
@@ -66,16 +65,4 @@ pub fn create_local_bench_queue_actor(
     let (store, temp_dir) = create_local_bench_store();
     let actor = QueueActor::new(RouteFamily::new(0), queue_key, store, max_attempts);
     (actor, temp_dir)
-}
-
-/// Create a QueueProducer for benchmarking producer-side batching
-///
-/// Creates a producer with specified batching parameters.
-///
-/// # Arguments
-/// * `max_batch_size` - Maximum messages to buffer before flush (e.g., 100-1000)
-/// * `flush_interval_ms` - Maximum milliseconds to buffer before flush (e.g., 1-5ms)
-///
-pub fn create_bench_producer(max_batch_size: usize, flush_interval_ms: u64) -> QueueProducer {
-    QueueProducer::new(max_batch_size, Duration::from_millis(flush_interval_ms))
 }

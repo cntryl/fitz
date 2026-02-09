@@ -30,7 +30,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
     );
     actor.receive(
         StreamMessage::Append {
-            session_id: "session1".to_string(),
+            session_id: 1,
             body: Bytes::from("event_0"),
             metadata: None,
         },
@@ -38,7 +38,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
     );
     actor.receive(
         StreamMessage::Commit {
-            session_id: "session1".to_string(),
+            session_id: 1,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -102,7 +102,7 @@ fn should_allow_new_session_after_commit() {
     );
     actor.receive(
         StreamMessage::Append {
-            session_id: "session1".to_string(),
+            session_id: 1,
             body: Bytes::from("event_0"),
             metadata: None,
         },
@@ -110,7 +110,7 @@ fn should_allow_new_session_after_commit() {
     );
     actor.receive(
         StreamMessage::Commit {
-            session_id: "session1".to_string(),
+            session_id: 1,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -145,7 +145,7 @@ fn should_allow_new_session_after_abort() {
     );
     actor.receive(
         StreamMessage::Rollback {
-            session_id: "session1".to_string(),
+            session_id: 1,
         },
         &mut ctx,
     );
@@ -364,7 +364,7 @@ fn should_request_lease_when_insufficient_capacity() {
     for i in 0..10 {
         actor.receive(
             StreamMessage::Append {
-                session_id: "large_session".to_string(),
+                session_id: 2,
                 body: Bytes::from(format!("event_{}", i)),
                 metadata: None,
             },
@@ -374,7 +374,7 @@ fn should_request_lease_when_insufficient_capacity() {
     // Try to commit (should request lease if insufficient)
     actor.receive(
         StreamMessage::Commit {
-            session_id: "large_session".to_string(),
+            session_id: 2,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -400,7 +400,7 @@ fn should_process_pending_commits_after_lease_grant() {
     );
     actor.receive(
         StreamMessage::Append {
-            session_id: "pending_session".to_string(),
+            session_id: 3,
             body: Bytes::from("event_data"),
             metadata: None,
         },
@@ -409,7 +409,7 @@ fn should_process_pending_commits_after_lease_grant() {
     // Try commit (will be queued if no lease)
     actor.receive(
         StreamMessage::Commit {
-            session_id: "pending_session".to_string(),
+            session_id: 3,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -448,7 +448,7 @@ fn should_reject_event_exceeding_max_size() {
     let huge_payload = vec![0u8; 2 * 1024 * 1024]; // 2 MB
     actor.receive(
         StreamMessage::Append {
-            session_id: "oversized_session".to_string(),
+            session_id: 4,
             body: Bytes::from(huge_payload),
             metadata: None,
         },

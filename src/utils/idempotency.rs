@@ -189,7 +189,7 @@ fn classify_queue(msg_type: u16) -> Idempotency {
         204 => Idempotency::ContextDependent {
             dedup_key: "message_id+token",
         },
-        // ENQUEUE, ENQUEUE_BATCH, EXTEND are non-idempotent
+        // ENQUEUE, EXTEND are non-idempotent
         200 | 201 | 203 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }

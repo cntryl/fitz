@@ -66,7 +66,7 @@ fn should_append_single_event_to_stream() {
     // Append single event
     actor.receive(
         StreamMessage::Append {
-            session_id: "test_session".to_string(),
+            session_id: 1,
             body: Bytes::from("event_data"),
             metadata: None,
         },
@@ -76,7 +76,7 @@ fn should_append_single_event_to_stream() {
     // Commit session
     actor.receive(
         StreamMessage::Commit {
-            session_id: "test_session".to_string(),
+            session_id: 1,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -117,7 +117,7 @@ fn should_append_batch_of_events() {
     for i in 0..5 {
         actor.receive(
             StreamMessage::Append {
-                session_id: "batch_session".to_string(),
+                session_id: 2,
                 body: Bytes::from(format!("event_{}", i)),
                 metadata: Some(Bytes::from(format!("meta_{}", i))),
             },
@@ -128,7 +128,7 @@ fn should_append_batch_of_events() {
     // Commit session
     actor.receive(
         StreamMessage::Commit {
-            session_id: "batch_session".to_string(),
+            session_id: 2,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -167,7 +167,7 @@ fn should_assign_sequential_resource_offsets() {
 
     actor.receive(
         StreamMessage::Append {
-            session_id: "session1".to_string(),
+            session_id: 3,
             body: Bytes::from("event_0"),
             metadata: None,
         },
@@ -176,7 +176,7 @@ fn should_assign_sequential_resource_offsets() {
 
     actor.receive(
         StreamMessage::Commit {
-            session_id: "session1".to_string(),
+            session_id: 3,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -195,7 +195,7 @@ fn should_assign_sequential_resource_offsets() {
 
     actor.receive(
         StreamMessage::Append {
-            session_id: "session2".to_string(),
+            session_id: 4,
             body: Bytes::from("event_1"),
             metadata: None,
         },
@@ -204,7 +204,7 @@ fn should_assign_sequential_resource_offsets() {
 
     actor.receive(
         StreamMessage::Commit {
-            session_id: "session2".to_string(),
+            session_id: 4,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -247,7 +247,7 @@ fn should_handle_session_with_ingest_metadata() {
 
     actor.receive(
         StreamMessage::Append {
-            session_id: "import_session".to_string(),
+            session_id: 5,
             body: Bytes::from("data"),
             metadata: None,
         },
@@ -256,7 +256,7 @@ fn should_handle_session_with_ingest_metadata() {
 
     actor.receive(
         StreamMessage::Commit {
-            session_id: "import_session".to_string(),
+            session_id: 5,
             mode: StreamWriteMode::Sync,
         },
         &mut ctx,
@@ -292,7 +292,7 @@ fn should_abort_session_without_committing() {
 
     actor.receive(
         StreamMessage::Append {
-            session_id: "abort_session".to_string(),
+            session_id: 6,
             body: Bytes::from("should_not_commit"),
             metadata: None,
         },
@@ -302,7 +302,7 @@ fn should_abort_session_without_committing() {
     // Abort instead of commit
     actor.receive(
         StreamMessage::Rollback {
-            session_id: "abort_session".to_string(),
+            session_id: 6,
         },
         &mut ctx,
     );
@@ -340,7 +340,7 @@ fn should_peek_at_last_committed_event() {
 
         actor.receive(
             StreamMessage::Append {
-                session_id: format!("session_{}", i),
+                session_id: i,
                 body: Bytes::from(format!("event_{}", i)),
                 metadata: None,
             },
@@ -349,7 +349,7 @@ fn should_peek_at_last_committed_event() {
 
         actor.receive(
             StreamMessage::Commit {
-                session_id: format!("session_{}", i),
+                session_id: i,
                 mode: StreamWriteMode::Sync,
             },
             &mut ctx,

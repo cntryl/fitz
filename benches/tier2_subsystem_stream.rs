@@ -134,15 +134,14 @@ fn bench_multi_resource_round_robin(c: &mut Criterion) {
                         &mut contexts[res_idx],
                     );
 
-                    let session_id =
-                        format!("bench-session-{}-{}", res_idx, expected_offsets[res_idx]);
+                    let session_id = (res_idx as u64 * 1000000) + expected_offsets[res_idx];
 
                     // Append batch_size events
                     for _ in 0..batch_size {
                         let payload = black_box(&payloads[payload_offset % payloads.len()]);
                         actors[res_idx].receive(
                             StreamMessage::Append {
-                                session_id: session_id.clone(),
+                                session_id,
                                 body: Bytes::from(payload.clone()),
                                 metadata: None,
                             },
@@ -207,7 +206,7 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
                     &mut contexts[res_idx],
                 );
 
-                let session_id = format!("bench-session-{}-{}", res_idx, expected_offsets[res_idx]);
+                let session_id = (res_idx as u64 * 1000000) + expected_offsets[res_idx];
 
                 // Append chunk_size events
                 for _ in 0..chunk_size {
@@ -215,7 +214,7 @@ fn bench_streaming_ingest_10k(c: &mut Criterion) {
                     let payload = black_box(&payloads[idx]);
                     actors[res_idx].receive(
                         StreamMessage::Append {
-                            session_id: session_id.clone(),
+                            session_id,
                             body: Bytes::from(payload.clone()),
                             metadata: None,
                         },
@@ -271,12 +270,12 @@ fn bench_multi_resource_actor_coordination(c: &mut Criterion) {
                     &mut contexts[res_idx],
                 );
 
-                let session_id = format!("bench-session-{}-{}", res_idx, expected_offset);
+                let session_id = (res_idx as u64 * 1000000) + expected_offset;
 
                 for i in 0..10 {
                     actor.receive(
                         StreamMessage::Append {
-                            session_id: session_id.clone(),
+                            session_id,
                             body: Bytes::from(payloads[(chunk_start + i) % payloads.len()].clone()),
                             metadata: None,
                         },

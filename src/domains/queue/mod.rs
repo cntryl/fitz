@@ -143,11 +143,9 @@
 //!
 //! Queue operations are dispatched via RPC or WebSocket messages.
 
-pub mod producer;
 pub mod protocol;
 pub mod queue_actor;
 pub mod session;
 
-pub use producer::QueueProducer;
 pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 pub use queue_actor::{Clock, QueueActor, SystemClock};

@@ -49,6 +49,9 @@ async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
     // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
     let mut payload = Vec::new();
     payload.extend_from_slice(&0u64.to_be_bytes()); // tx_id
+    let route = b"kv://realm/area/resource";
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route);
     let key = b"nonexistent";
     payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
     payload.extend_from_slice(key);
