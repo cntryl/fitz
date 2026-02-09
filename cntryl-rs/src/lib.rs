@@ -8,17 +8,16 @@
 //! ```ignore
 //! use cntryl::FitzClient;
 //!
+//! // Connect — realm is in the JWT, not on the client struct.
 //! let client = FitzClient::connect_tcp("127.0.0.1", 4091, "my-realm", "secret")?;
 //!
-//! // One-shot convenience: auto-wraps a transaction
-//! client.kv().put_one("app", "users", b"user:1", b"alice")?;
-//! let val = client.kv().get_one("app", "users", b"user:1")?;
-//!
-//! // Or use explicit transactions for multi-key atomicity
-//! let mut tx = client.kv().begin("app", "users", TransactionMode::ReadWrite)?;
-//! tx.put(b"user:2", b"bob")?;
-//! tx.put(b"user:3", b"carol")?;
+//! // Routes are opaque strings — the client never parses them.
+//! let tx = client.kv().begin("kv://my-realm/app/users", TransactionMode::ReadWrite)?;
+//! tx.put(b"user:1", b"alice")?;
 //! tx.commit()?;
+//!
+//! // Leases
+//! let grant = client.lease().acquire("lease://my-realm/locks/leader", "node-1", 30)?;
 //! ```
 
 pub mod auth;
@@ -31,12 +30,15 @@ pub mod domains;
 
 pub use auth::TestTokenGenerator;
 pub use error::{FitzError, Result};
-pub use protocol::{Route, TransactionMode};
+pub use protocol::TransactionMode;
 
 use connection::{FitzConnection, SharedConnection};
 use std::time::Duration;
 
-/// Builder for creating Fitz clients with flexible configuration
+/// Builder for creating Fitz clients with flexible configuration.
+///
+/// `realm` is embedded in the JWT during CONNECT — it is not stored
+/// on the client or passed to domain methods.
 pub struct FitzClientBuilder {
     realm: String,
     secret: String,
@@ -44,7 +46,6 @@ pub struct FitzClientBuilder {
 }
 
 impl FitzClientBuilder {
-    /// Create a new client builder
     pub fn new(realm: &str, secret: &str) -> Self {
         Self {
             realm: realm.to_string(),
@@ -53,19 +54,19 @@ impl FitzClientBuilder {
         }
     }
 
-    /// Set connection timeout
+    /// Set connection timeout.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
-    /// Connect via TCP
+    /// Connect via TCP.
     pub fn connect_tcp(self, host: &str, port: u16) -> Result<FitzClient> {
         let conn = FitzConnection::connect_tcp(host, port)?;
         self.finish(conn)
     }
 
-    /// Connect via WebSocket
+    /// Connect via WebSocket.
     pub fn connect_ws(self, url: &str) -> Result<FitzClient> {
         let conn = FitzConnection::connect_ws(url)?;
         self.finish(conn)
@@ -80,11 +81,7 @@ impl FitzClientBuilder {
         let token = gen.generate(&self.realm, "fitz-client")?;
         shared.send_only(protocol::message_type::CONNECT, token.as_bytes())?;
 
-        Ok(FitzClient {
-            connection: shared,
-            realm: self.realm,
-            route_family: 1,
-        })
+        Ok(FitzClient { connection: shared })
     }
 }
 
@@ -92,38 +89,40 @@ impl FitzClientBuilder {
 ///
 /// Create one per connection. Call `.kv()`, `.lease()`, etc. to get
 /// domain-specific handles (they share the underlying connection).
+///
+/// The client is intentionally realm-agnostic — realm context lives in
+/// the JWT sent during CONNECT, and route strings carry the addressing.
 pub struct FitzClient {
     connection: SharedConnection,
-    realm: String,
-    route_family: u64,
 }
 
 impl FitzClient {
-    /// Create a builder
+    /// Create a builder.
     pub fn builder(realm: &str, secret: &str) -> FitzClientBuilder {
         FitzClientBuilder::new(realm, secret)
     }
 
-    /// Convenient helper: connect via TCP
+    /// Convenient helper: connect via TCP.
     pub fn connect_tcp(host: &str, port: u16, realm: &str, secret: &str) -> Result<Self> {
         FitzClient::builder(realm, secret).connect_tcp(host, port)
     }
 
-    /// Convenient helper: connect via WebSocket
+    /// Convenient helper: connect via WebSocket.
     pub fn connect_ws(url: &str, realm: &str, secret: &str) -> Result<Self> {
         FitzClient::builder(realm, secret).connect_ws(url)
     }
 
-    /// Get a KV client
+    /// Get a KV domain client.
     pub fn kv(&self) -> domains::kv::KvClient {
-        domains::kv::KvClient::new(
-            self.connection.clone(),
-            self.realm.clone(),
-            self.route_family,
-        )
+        domains::kv::KvClient::new(self.connection.clone())
     }
 
-    /// Close the connection
+    /// Get a Lease domain client.
+    pub fn lease(&self) -> domains::lease::LeaseClient {
+        domains::lease::LeaseClient::new(self.connection.clone())
+    }
+
+    /// Close the connection.
     pub fn close(&self) -> Result<()> {
         self.connection.close()
     }
@@ -136,6 +135,6 @@ mod tests {
     #[test]
     fn should_create_client_builder() {
         let builder = FitzClient::builder("test-realm", "secret");
-        assert!(builder.realm == "test-realm");
+        assert_eq!(builder.realm, "test-realm");
     }
 }

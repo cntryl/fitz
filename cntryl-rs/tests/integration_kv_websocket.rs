@@ -17,7 +17,7 @@ fn should_execute_kv_transaction_over_websocket() {
 
     // Act - Begin transaction
     let tx = kv
-        .begin("app", "users", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/users", TransactionMode::ReadWrite)
         .expect("Failed to begin transaction");
 
     // Act - Put a value
@@ -52,7 +52,7 @@ fn should_execute_kv_transaction_over_websocket() {
 
     // Act - Verify in new transaction that changes persisted
     let verify_tx = kv
-        .begin("app", "users", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/users", TransactionMode::ReadOnly)
         .expect("Failed to begin verify transaction");
 
     let verify = verify_tx
@@ -81,7 +81,7 @@ fn should_rollback_kv_transaction_over_websocket() {
 
     // Put initial value
     let setup_tx = kv
-        .begin("app", "test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
     let key = b"rollback_test_ws";
@@ -93,7 +93,7 @@ fn should_rollback_kv_transaction_over_websocket() {
 
     // Act - Begin transaction, modify value, then rollback
     let tx = kv
-        .begin("app", "test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/test", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
     let new_value = b"modified_ws";
@@ -113,7 +113,7 @@ fn should_rollback_kv_transaction_over_websocket() {
 
     // Assert - New transaction should see original value
     let verify_tx = kv
-        .begin("app", "test", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/test", TransactionMode::ReadOnly)
         .expect("Failed to begin verify");
 
     let after_rollback = verify_tx

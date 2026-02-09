@@ -20,7 +20,7 @@ pub trait Transport: Send + Sync {
 /// Runtime-selected transport
 pub enum AnyTransport {
     Tcp(tcp::TcpTransport),
-    WebSocket(websocket::WebSocketTransport),
+    WebSocket(Box<websocket::WebSocketTransport>),
 }
 
 impl Transport for AnyTransport {

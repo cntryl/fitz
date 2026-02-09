@@ -36,7 +36,7 @@ impl Transport for WebSocketTransport {
             self.ws
                 .send(Message::Binary(frame.to_vec()))
                 .await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+                .map_err(io::Error::other)
         })
     }
 
@@ -58,7 +58,7 @@ impl Transport for WebSocketTransport {
                         ))
                     }
                     Some(Ok(_)) => continue, // Ignore ping/pong
-                    Some(Err(e)) => return Err(io::Error::new(io::ErrorKind::Other, e)),
+                    Some(Err(e)) => return Err(io::Error::other(e)),
                     None => {
                         return Err(io::Error::new(
                             io::ErrorKind::ConnectionReset,
@@ -75,7 +75,7 @@ impl Transport for WebSocketTransport {
             self.ws
                 .close(None)
                 .await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+                .map_err(io::Error::other)
         })
     }
 }

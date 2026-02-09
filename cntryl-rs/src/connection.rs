@@ -25,10 +25,10 @@ impl FitzConnection {
 
     /// Connect via WebSocket
     pub fn connect_ws(url: &str) -> Result<Self> {
-        let transport = AnyTransport::WebSocket(
+        let transport = AnyTransport::WebSocket(Box::new(
             crate::transport::websocket::WebSocketTransport::connect(url)
                 .map_err(|e| FitzError::Connection(e.to_string()))?,
-        );
+        ));
         Ok(Self { transport })
     }
 
