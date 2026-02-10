@@ -2,6 +2,10 @@
 //!
 //! Encodes/decodes TLV messages for the notice domain.
 //! Supports Publish, Subscribe, Unsubscribe operations.
+//!
+//! `route_family`, `session_id`, and `subscriber` are server-internal
+//! concepts supplied by the session/transport layer — they never appear
+//! on the wire.
 
 use crate::domains::notice::protocol::{
     NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
@@ -21,15 +25,33 @@ pub enum NoticeResponse {
     Error(String),
 }
 
-/// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<NotificationMessage, String> {
+/// Parse incoming message from TLV-encoded bytes.
+///
+/// `route_family`, `session_id`, and `subscriber` are injected by the
+/// session layer — they are never read from the wire payload.
+pub fn parse_request(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<NotificationMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        500 => parse_publish(&mut dec).map(NotificationMessage::Publish),
-        501 => parse_subscribe(&mut dec).map(NotificationMessage::Subscribe),
-        502 => parse_unsubscribe(&mut dec).map(NotificationMessage::Unsubscribe),
-        503 => parse_unsubscribe_all(&mut dec).map(NotificationMessage::UnsubscribeAll),
+        500 => parse_publish(&mut dec, route_family).map(NotificationMessage::Publish),
+        501 => {
+            parse_subscribe(&mut dec, route_family, session_id, subscriber)
+                .map(NotificationMessage::Subscribe)
+        }
+        502 => {
+            parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
+                .map(NotificationMessage::Unsubscribe)
+        }
+        503 => {
+            parse_unsubscribe_all(session_id, subscriber)
+                .map(NotificationMessage::UnsubscribeAll)
+        }
         504 => parse_notify(&mut dec).map(NotificationMessage::Notify),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
@@ -55,8 +77,8 @@ pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
 
 // ===== Helper Parsers =====
 
-fn parse_publish(dec: &mut TlvDecoder) -> Result<PublishMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string route][bytes payload]`
+fn parse_publish(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<PublishMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let payload = dec.get_bytes()?;
@@ -66,64 +88,63 @@ fn parse_publish(dec: &mut TlvDecoder) -> Result<PublishMessage, String> {
     }
 
     Ok(PublishMessage {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         route,
         payload,
     })
 }
 
-fn parse_subscribe(dec: &mut TlvDecoder) -> Result<SubscribeMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string pattern]`
+fn parse_subscribe(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<SubscribeMessage, String> {
     let pattern_str = dec.get_string()?;
     let pattern = Route::new(pattern_str);
-    let session_id_u64 = dec.get_u64()?;
-    let subscriber_str = dec.get_string()?;
-    let subscriber = RouteAddress::new(RouteFamily::new(family_id), Route::new(subscriber_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
     Ok(SubscribeMessage {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         pattern,
-        session_id: SessionId(session_id_u64),
+        session_id,
         subscriber,
     })
 }
 
-fn parse_unsubscribe(dec: &mut TlvDecoder) -> Result<UnsubscribeMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string pattern]`
+fn parse_unsubscribe(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<UnsubscribeMessage, String> {
     let pattern_str = dec.get_string()?;
     let pattern = Route::new(pattern_str);
-    let session_id_u64 = dec.get_u64()?;
-    let subscriber_str = dec.get_string()?;
-    let subscriber = RouteAddress::new(RouteFamily::new(family_id), Route::new(subscriber_str));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
     Ok(UnsubscribeMessage {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         pattern,
-        session_id: SessionId(session_id_u64),
+        session_id,
         subscriber,
     })
 }
 
-fn parse_unsubscribe_all(dec: &mut TlvDecoder) -> Result<UnsubscribeAllMessage, String> {
-    let session_id_u64 = dec.get_u64()?;
-    let family_id = dec.get_u64()?;
-    let subscriber_str = dec.get_string()?;
-    let subscriber = RouteAddress::new(RouteFamily::new(family_id), Route::new(subscriber_str));
-
-    if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
-    }
-
+/// Wire format: `(empty)` — all fields are server-supplied
+fn parse_unsubscribe_all(
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<UnsubscribeAllMessage, String> {
     Ok(UnsubscribeAllMessage {
-        session_id: SessionId(session_id_u64),
+        session_id,
         subscriber,
     })
 }

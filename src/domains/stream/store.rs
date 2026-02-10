@@ -3,7 +3,6 @@
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use uuid::Uuid;
 
 use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
 use super::storage::{
@@ -24,14 +23,14 @@ struct AppendSession {
     realm: String,
     area: String,
     resource: String,
-    session_id: String,
+    session_id: u64,
     txn: cntryl_midge::Transaction,
     event_count: usize,
     total_bytes: usize,
     ingest_metadata: Option<IngestMetadata>,
 }
 
-pub type SessionId = String;
+pub type SessionId = u64;
 
 #[derive(Debug, Clone)]
 pub struct BatchLimits {
@@ -94,6 +93,7 @@ pub struct StreamStore {
     limits: BatchLimits,
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,
     ttl: StreamTTL,
+    next_session_id: std::sync::atomic::AtomicU64,
 }
 
 impl StreamStore {
@@ -111,6 +111,7 @@ impl StreamStore {
             limits,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             ttl,
+            next_session_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
 
@@ -122,7 +123,7 @@ impl StreamStore {
         resource: &str,
         ingest_metadata: Option<IngestMetadata>,
     ) -> Result<SessionId, String> {
-        let session_id = Uuid::new_v4().to_string();
+        let session_id = self.next_session_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Create transaction for staging (O(1) memory)
         // Use RouteFamily id as column family id to provide family isolation
@@ -135,7 +136,7 @@ impl StreamStore {
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
-            session_id: session_id.clone(),
+            session_id,
             txn,
             event_count: 0,
             total_bytes: 0,
@@ -145,7 +146,7 @@ impl StreamStore {
         self.sessions
             .lock()
             .unwrap()
-            .insert(session_id.clone(), session);
+            .insert(session_id, session);
         Ok(session_id)
     }
 
@@ -169,7 +170,7 @@ impl StreamStore {
         }
 
         // Write to staging transaction (O(1) memory - no heap buffer)
-        let staging_key = encode_staging_key(&session.session_id, session.event_count);
+        let staging_key = encode_staging_key(session.session_id, session.event_count);
         let staging_value = encode_staging_value(&event);
 
         session
@@ -224,7 +225,7 @@ impl StreamStore {
 
         // Read events from staging transaction and add to transaction
         for i in 0..batch_size {
-            let staging_key = encode_staging_key(&session.session_id, i);
+            let staging_key = encode_staging_key(session.session_id, i);
             let staging_value = session
                 .txn
                 .get(&staging_key)

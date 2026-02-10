@@ -646,28 +646,45 @@ impl RuntimeIngress {
         let mt = msg_type.as_u16();
         match mt {
             100..=108 => {
+                // KV domain: Per CLIENT_SPEC, all operations now include route on wire
+                // Parse message to extract route for authorization
                 match crate::protocol::kv::parse_request(
                     mt,
                     session_info.route_family,
-                    realm.clone(),
-                    String::new(),
                     payload.as_ref(),
                 ) {
                     Ok(kmsg) => match kmsg {
-                        crate::domains::kv::KvMessage::Begin { resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}", realm, resource))))
+                        crate::domains::kv::KvMessage::Begin { realm, area, resource, .. } => {
+                            Ok(Some(Route::new(format!("kv://{}/{}/{}", realm, area, resource))))
                         }
-
-                        // Per CLIENT_SPEC: non-BEGIN KV operations do not carry a resource
-                        // on the wire; resource is implicit from transaction context.
-                        // Authorization was already checked at BEGIN time.
-                        _ => Ok(None),
+                        crate::domains::kv::KvMessage::Get { route_family: _, resource: _, .. }
+                        | crate::domains::kv::KvMessage::Put { route_family: _, resource: _, .. }
+                        | crate::domains::kv::KvMessage::Insert { route_family: _, resource: _, .. }
+                        | crate::domains::kv::KvMessage::Delete { route_family: _, resource: _, .. }
+                        | crate::domains::kv::KvMessage::DeleteRange { route_family: _, resource: _, ..  }
+                        | crate::domains::kv::KvMessage::Scan { route_family: _, resource: _, .. } => {
+                            // Operations now include full route; authorization was checked at BEGIN time
+                            Ok(None)
+                        }
+                        crate::domains::kv::KvMessage::Commit { .. }
+                        | crate::domains::kv::KvMessage::Rollback { .. } => {
+                            // Transaction control operations don't need re-authorization
+                            Ok(None)
+                        }
                     },
                     Err(e) => Err(e),
                 }
             }
-            500..=599 => match crate::protocol::notice_codec::parse_request(&ctx, payload.as_ref())
-            {
+            500..=599 => match crate::protocol::notice_codec::parse_request(
+                &ctx,
+                payload.as_ref(),
+                session_info.route_family,
+                crate::session::SessionId(session_info.session_id),
+                crate::runtime::routing::RouteAddress::new(
+                    session_info.route_family,
+                    Route::new(""),
+                ),
+            ) {
                 Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => {
                     Ok(Some(p.route.clone()))
                 }
@@ -677,7 +694,11 @@ impl RuntimeIngress {
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
-            300..=399 => match crate::protocol::rpc_codec::parse_request(&ctx, payload.as_ref()) {
+            300..=399 => match crate::protocol::rpc_codec::parse_request(
+                &ctx,
+                payload.as_ref(),
+                session_info.route_family,
+            ) {
                 Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => {
                     Ok(Some(r.route.clone()))
                 }
@@ -686,7 +707,11 @@ impl RuntimeIngress {
             },
             200..=299 => Ok(None),
             400..=499 => {
-                match crate::protocol::lease_codec::parse_request(&ctx, payload.as_ref()) {
+                match crate::protocol::lease_codec::parse_request(
+                    &ctx,
+                    payload.as_ref(),
+                    session_info.route_family,
+                ) {
                     Ok(crate::domains::lease::protocol::LeaseMessage::Acquire {
                         route, ..
                     }) => Ok(Some(route.clone())),
@@ -703,8 +728,11 @@ impl RuntimeIngress {
                     Err(e) => Err(e),
                 }
             }
-            600..=699 => match crate::protocol::stream_codec::parse_request(&ctx, payload.as_ref())
-            {
+            600..=699 => match crate::protocol::stream_codec::parse_request(
+                &ctx,
+                payload.as_ref(),
+                session_info.route_family,
+            ) {
                 Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => {
                     Ok(Some(route.clone()))
                 }

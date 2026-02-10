@@ -18,10 +18,9 @@ fn bench_pipeline_iter_route_fanout(c: &mut Criterion) {
         let mut encoder = TlvEncoder::with_capacity(1024 * 8);
         let payload = vec![0u8; size];
         for i in 0..records {
-            encoder.encode(MessageType::new((i % 0xFF) as u16), &payload);
+            encoder.encode(MessageType::new(i as u16), &payload);
         }
         let data = encoder.finish();
-        let decoder = TlvDecoder::new();
 
         for &nsub in &subs {
             let name = format!("iter_{}B_{}subs", size, nsub);
@@ -30,6 +29,7 @@ fn bench_pipeline_iter_route_fanout(c: &mut Criterion) {
             group.throughput(Throughput::Elements(records as u64));
             group.bench_function(&name, |b| {
                 b.iter(|| {
+                    let decoder = TlvDecoder::new();
                     // decode via iterator and route_ref with simulated fanout
                     for res in decoder.iter(black_box(&data)) {
                         let (mt, slice) = res.unwrap();
@@ -61,10 +61,9 @@ fn bench_pipeline_decode_into_route_fanout(c: &mut Criterion) {
         let mut encoder = TlvEncoder::with_capacity(1024 * 8);
         let payload = vec![0u8; size];
         for i in 0..records {
-            encoder.encode(MessageType::new((i % 0xFF) as u16), &payload);
+            encoder.encode(MessageType::new(i as u16), &payload);
         }
         let data = encoder.finish();
-        let decoder = TlvDecoder::new();
 
         for &nsub in &subs {
             let name = format!("into_{}B_{}subs", size, nsub);
@@ -74,6 +73,7 @@ fn bench_pipeline_decode_into_route_fanout(c: &mut Criterion) {
             group.throughput(Throughput::Elements(records as u64));
             group.bench_function(&name, |b| {
                 b.iter(|| {
+                    let decoder = TlvDecoder::new();
                     out.clear();
                     decoder.decode_into(black_box(&data), &mut out).unwrap();
                     for rec in &out {

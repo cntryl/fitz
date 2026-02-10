@@ -56,16 +56,15 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         let mut encoder = TlvEncoder::with_capacity(1024 * 8);
         let payload = vec![0u8; size];
         for i in 0..records {
-            encoder.encode(MessageType::new((i % 0xFF) as u16), &payload);
+            encoder.encode(MessageType::new(i as u16), &payload);
         }
         let data = encoder.finish();
-
-        let decoder = TlvDecoder::new();
 
         group.throughput(Throughput::Elements(records as u64));
         let bench_name = format!("decode_all_{}B_{}recs", size, records);
         group.bench_function(&bench_name, |b| {
             b.iter(|| {
+                let decoder = TlvDecoder::new();
                 // Ensure result escapes to black_box so it can't be optimized away
                 black_box(decoder.decode_all(&data).unwrap());
             })
@@ -77,6 +76,7 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
             // pre-allocate outside hot path
             let mut out: Vec<TlvRecord> = Vec::with_capacity(records);
             b.iter(|| {
+                let decoder = TlvDecoder::new();
                 out.clear();
                 // iterate by using decode_one repeatedly
                 let mut offset = 0usize;
@@ -107,10 +107,10 @@ fn bench_tlv_decode_single_record(c: &mut Criterion) {
         encoder.encode(MessageType::new(42), &payload);
         let data = encoder.finish();
 
-        let decoder = TlvDecoder::new();
         let bench_name = format!("decode_one_{}B", size);
         group.bench_function(&bench_name, |b| {
             b.iter(|| {
+                let decoder = TlvDecoder::new();
                 black_box(decoder.decode_one(black_box(&data)).unwrap());
             })
         });

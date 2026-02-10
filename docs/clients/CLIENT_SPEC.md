@@ -143,46 +143,296 @@ tx.put(b"key", b"value")  # ❌ Server must remember route from BEGIN
 
 ### Recommended Patterns by Language
 
-**Python (Context Manager):**
+**Python (Parallel Transactions & Queues):**
 
 ```python
+# Sequential within a transaction (one tx at a time)
 with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
     tx.put(b"key", b"value")
-    tx.commit()  # Or auto-commit on __exit__
+    tx.commit()
+
+# BUT: Multiple transactions to different resources run in PARALLEL
+tx_users = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
+tx_posts = client.kv_begin("kv://prod/app/posts", TxMode.ReadWrite)
+# Both active simultaneously, on same KV channel to different actor instances
+tx_users.put(b"u1", b"alice")
+tx_posts.put(b"p1", b"hello")
+tx_users.commit()
+tx_posts.commit()
+
+# Parallel queue enqueues to different queues
+msg_id_1 = client.queue_enqueue("queue://prod/app/tasks", b"task1")
+msg_id_2 = client.queue_enqueue("queue://prod/app/events", b"event1")
+# Both complete in parallel
+
+# Cross-domain multiplexing (different channels run in parallel)
+notice_sub = client.notice_subscribe("notice://prod/app/*")
+tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
+# Now client can receive notifications while KV transaction is in flight
+# (they're on different channels)
 ```
 
-**Rust (Drop trait):**
+**Rust (Drop trait, Parallel Transactions):**
 
 ```rust
-let mut tx = client.kv_begin("kv://prod/app/users", TxMode::ReadWrite)?;
-tx.put(b"key", b"value")?;
-tx.commit()?;  // Or auto-rollback in Drop
+// Multiple transactions to different resources in parallel
+let mut tx_users = client.kv_begin("kv://prod/app/users", TxMode::ReadWrite)?;
+let mut tx_posts = client.kv_begin("kv://prod/app/posts", TxMode::ReadWrite)?;
+
+// Both can be active simultaneously
+tx_users.put(b"key", b"value")?;
+tx_posts.put(b"key", b"value")?;
+
+tx_users.commit()?;  // Or auto-rollback in Drop
+tx_posts.commit()?;
 ```
 
-**Go (defer):**
+**Go (defer, Parallel Transactions):**
 
 ```go
-tx, err := client.KvBegin("kv://prod/app/users", TxModeReadWrite)
-defer tx.Rollback()  // Safe cleanup
-tx.Put([]byte("key"), []byte("value"))
-tx.Commit()  // Clears rollback flag
+// Multiple concurrent transactions to different resources
+tx1, _ := client.KvBegin("kv://prod/app/users", TxModeReadWrite)
+tx2, _ := client.KvBegin("kv://prod/app/posts", TxModeReadWrite)
+defer tx1.Rollback()  // Safe cleanup
+defer tx2.Rollback()  // Safe cleanup
+
+// Both active simultaneously
+tx1.Put([]byte("key"), []byte("value"))
+tx2.Put([]byte("key"), []byte("value"))
+tx1.Commit()  // Clears rollback flag
+tx2.Commit()  // Clears rollback flag
 ```
 
-**JavaScript (Builder Pattern):**
+**JavaScript (Promises, Parallel Transactions & Queues, Parallel Across Domains):**
 
 ```javascript
-const tx = await client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
-await tx.put(Buffer.from("key"), Buffer.from("value"));
-await tx.commit();
+// Parallel transactions to different resources (same channel / KV domain)
+const tx_users = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+const tx_posts = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite);
+
+await Promise.all([
+  tx_users.put(Buffer.from("key"), Buffer.from("alice")),
+  tx_posts.put(Buffer.from("key"), Buffer.from("hello"))
+]);
+
+await Promise.all([
+  tx_users.commit(),
+  tx_posts.commit()
+]);
+
+// Parallel queue enqueues to different queues (same channel / Queue domain)
+const msg1 = client.queueEnqueue("queue://prod/app/tasks", Buffer.from("task1"));
+const msg2 = client.queueEnqueue("queue://prod/app/events", Buffer.from("event1"));
+await Promise.all([msg1, msg2]);
+
+// Cross-domain parallelism (different channels: Notice + RPC)
+const notice_sub = client.noticeSubscribe("notice://prod/app/*");
+const rpc_call = client.rpcRequest(
+  "rpc://prod/app/worker",
+  "rpc://prod/app/caller",
+  correlation_id_uuid,
+  Buffer.from("payload")
+);
+// All three run in parallel (different channels)
 ```
 
-### Key Principle
+### Key Principles
 
-**"Ergonomic API, Self-Contained Wire Protocol"**
+**"Ergonomic API, Self-Contained Wire Protocol with Channel-Based Multiplexing"**
 
-- User-facing API: hide route repetition via object methods
-- Wire protocol: every message includes full context (route + tx_id)
+- User-facing API: hide route repetition and correlation ID management (where applicable) via object methods
+- Wire protocol: every message includes full context (route + tx_id/session_id/etc.)
+- **Channel-based multiplexing**: Different domains (KV, RPC, Notice) run on independent logical channels, allowing true concurrent operations across domains
+- **Multiple transactions can parallelize**: You can have 2+ transactions to different resources active simultaneously. **BUT:** one transaction (single tx_id) MUST be strictly sequential
+- **Multiple queues can parallelize**: Different queue resources can have parallel requests
+- **RPC exception**: RPC domain uses 16-byte UUID `correlation_id` for per-request correlation, enabling multiple in-flight RPC requests to be matched to responses
 - No server-side implicit state beyond what's in the message
+- Reconnection safe: breaking connection doesn't leave orphaned server state
+
+## Concurrency & Multiplexing Patterns
+
+Fitz supports **true concurrent multiplexing** of operations. Understanding the concurrency model is essential for building efficient clients.
+
+### Three Levels of Concurrency
+
+#### Level 1: Cross-Domain Parallelism ✅ FULLY PARALLEL
+
+Different domains run on independent logical channels. A single client connection can have operations from KV, Queue, Notice, RPC, Stream, Lease, and Schedule all in flight simultaneously.
+
+```javascript
+// All four domains active at the same time
+const kv_tx = client.kvBegin("kv://prod/app/data", TxMode.ReadWrite);
+const queue_msg = client.queueEnqueue("queue://prod/app/tasks", payload);
+const notice_sub = client.noticeSubscribe("notice://prod/app/*");
+const rpc_call = client.rpcRequest("rpc://prod/app/svc", reply_route, correlation_id, payload);
+
+// All complete independently and concurrently
+await Promise.all([kv_tx.commit(), queue_msg, notice_sub, rpc_call]);
+```
+
+**Channel Assignment:**
+- KV operations → KV Channel
+- Queue operations → Queue Channel
+- Notice operations → Notice Channel
+- RPC operations → RPC Channel
+- Stream operations → Stream Channel
+- Lease operations → Lease Channel
+- Schedule operations → Schedule Channel
+
+#### Level 2: Same-Domain, Different-Resource Parallelism ✅ PARALLEL
+
+Within a single domain, you can have multiple concurrent operations to **different resources**. Each resource has its own actor instance on the server, so they execute independently.
+
+**KV Example:**
+```javascript
+// Two transactions to different resources (users vs posts)
+const tx_users = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+const tx_posts = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite);
+
+// Both can execute concurrently (different actor instances)
+await Promise.all([
+  tx_users.put(b"key", b"value"),
+  tx_posts.put(b"key", b"value")
+]);
+
+// Both can commit concurrently
+await Promise.all([
+  tx_users.commit(),
+  tx_posts.commit()
+]);
+```
+
+**Queue Example:**
+```javascript
+// Enqueue to different queues in parallel
+const task_msg = client.queueEnqueue("queue://prod/app/tasks", b"task");
+const event_msg = client.queueEnqueue("queue://prod/app/events", b"event");
+
+// Both complete in parallel (different queue actor instances)
+await Promise.all([task_msg, event_msg]);
+```
+
+**Why This Works:**
+- Router partitions by (realm, area, resource) → different actors
+- Each actor has independent state
+- Server executor can schedule multiple actors from the same domain concurrently
+- No blocking between resource pairs
+
+#### Level 3: Same Transaction Cannot Parallelize ⚠️ STRICT SEQUENTIAL
+
+**ONE transaction (single tx_id) CANNOT have parallel calls.** All operations within a single transaction MUST be sequential.
+
+However, **MULTIPLE transactions can be parallelized** (see Level 2).
+
+**KV: One Transaction (Sequential):**
+```javascript
+// ✅ CORRECT - operations on SAME transaction are sequential
+const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+await tx.put(b"k1", b"v1");      // Request 1 → Response 1
+await tx.put(b"k2", b"v2");      // Request 2 → Response 2 (after Request 1 completes)
+await tx.commit();                // Request 3 → Response 3 (after Request 2 completes)
+```
+
+**❌ WRONG - Parallel calls on SAME transaction:**
+```javascript
+// DO NOT DO THIS - multiple parallel operations on same tx_id
+const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+await Promise.all([
+  tx.put(b"k1", b"v1"),  // ❌ These would interleave incorrectly
+  tx.put(b"k2", b"v2"),  // ❌ Same tx_id cannot have concurrent calls
+]);
+```
+
+**✅ CORRECT - Multiple transactions in parallel:**
+```javascript
+// DO THIS INSTEAD - different transactions to different resources
+const tx1 = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+const tx2 = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite);
+await Promise.all([
+  tx1.put(b"k1", b"v1"),   // ✅ Different tx_id, can be parallel
+  tx2.put(b"k1", b"v1"),   // ✅ Different tx_id, can be parallel
+]);
+await Promise.all([tx1.commit(), tx2.commit()]);
+```
+
+**Why Not Within One Transaction:**
+- Single tx_id maintains transaction state on server
+- Concurrent operations on same tx_id violate transaction semantics (ACID isolation)
+- Server processes operations for a given tx_id sequentially
+- Out-of-order request delivery would corrupt transaction state
+
+**Queue: Same Queue Cannot Be Parallelized:**
+```javascript
+// ❌ WRONG - Parallel operations on same queue
+const lease1_promise = client.queueReserve("queue://prod/app/tasks", lease_secs=30);
+const lease2_promise = client.queueReserve("queue://prod/app/tasks", lease_secs=30);
+await Promise.all([lease1_promise, lease2_promise]);  // ❌ FIFO ordering violated
+
+// ✅ CORRECT - Single batch request
+const leases = client.queueReserve("queue://prod/app/tasks", lease_secs=30, batch_size=10);
+// Single request returns multiple messages, FIFO order preserved
+
+// ✅ CORRECT - Multiple queues can be parallelized
+const task_leases = client.queueReserve("queue://prod/app/tasks", lease_secs=30);
+const event_leases = client.queueReserve("queue://prod/app/events", lease_secs=30);
+await Promise.all([task_leases, event_leases]);  // ✅ Different queues, parallel OK
+```
+
+### RPC Exception: True Per-Request Multiplexing
+
+RPC is the **only domain with true per-request multiplexing via correlation IDs**. Multiple RPC requests can be in flight simultaneously on the same channel, and responses are matched by UUID.
+
+```javascript
+// Multiple RPC calls in flight, responses matched by correlation_id
+const rpc1 = client.rpcRequest("rpc://prod/app/svc", reply_route, uuid1, payload1);
+const rpc2 = client.rpcRequest("rpc://prod/app/svc", reply_route, uuid2, payload2);
+
+// Responses arrive in any order and are matched by correlation_id
+const [resp1, resp2] = await Promise.all([rpc1, rpc2]);
+```
+
+### Backpressure & Flow Control
+
+Clients SHOULD implement backpressure:
+
+1. **Per-channel backpressure**: If a channel queue fills (typical limit: 1000 messages), retry with exponential backoff before sending next request
+2. **Per-connection monitoring**: Track in-flight request count; implement concurrency limit on client side (e.g., max 50 concurrent requests)
+3. **Graceful degradation**: If server rejects with backpressure error (429-like), pause and retry
+
+```python
+# Recommended: Limit concurrent operations per connection
+MAX_INFLIGHT = 50
+
+async def safe_enqueue(client, route, payload):
+    while client.inflight_count >= MAX_INFLIGHT:
+        await asyncio.sleep(0.01)  # Backoff
+    return await client.queue_enqueue(route, payload)
+```
+
+### Summary: Concurrency Matrix
+
+| Scenario | Status | Rule | Example |
+|----------|--------|------|---------|
+| **Different domains** | ✅ Parallel | Domains on independent channels | KV + Queue + Notice simultaneously |
+| **Same domain, different resources** | ✅ Parallel | Each resource has independent actor instance | 2 KV txs to different tables; 2 queue enqueues |
+| **ONE transaction, multiple calls** | ❌ NOT parallel | Single tx_id MUST be sequential | `await tx.put(); await tx.commit();` |
+| **ONE queue, multiple operations** | ❌ NOT parallel | FIFO ordering must be preserved | Use `batch_size` parameter instead |
+| **RPC requests** | ✅ Parallel (correlation_id) | Per-request UUID correlation matching | Multiple RPC calls matched by UUID |
+
+### Best Practice: When to Parallelize
+
+✅ **DO parallelize:**
+- Different transactions (`tx1`, `tx2`)
+- Different queues or resources
+- Different domains (KV + Notice + RPC)
+- RPC requests (via correlation_id)
+
+❌ **DO NOT parallelize:**
+- Operations within one transaction
+- Multiple operations on same queue resource
+- Anything that shares a tx_id
+
+**Simple Rule: If they share an ID (tx_id, queue instance), make them sequential.**
 
 ## Terminology & Definitions
 
@@ -286,36 +536,36 @@ Each record is:
 
 Wire format specification:
 ```
-[u64 BE]  tx_id
-[u32 BE]  route_len
-[bytes]   route
-[u32 BE]  key_len
-[bytes]   key
-[u32 BE]  value_len
-[bytes]   value
+[u64 BE]   tx_id
+[u32 BE]   route_len
+[bytes]    route
+[u32 BE]   key_len
+[bytes]    key
+[u32 BE]   value_len
+[bytes]    value
 ```
 
 Actual bytes on wire:
 ```
 [0x00 0x68]                              (MessageType=104, KV PUT)
-[0x00 0x2F]                              (Length=47 bytes)
+[0x00 0x39]                              (Length=57 bytes)
   [0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01]  (tx_id=1, u64 BE)
   [0x00 0x00 0x00 0x15]                  (route_len=21)
   [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
-  [0x00 0x00 0x00 0x04]                  (key_len=4)
-  [75 73 65 72]                          (key="user", 4 bytes)
+  [0x00 0x00 0x00 0x03]                  (key_len=3)
+  [62 6f 62]                             (key="bob", 3 bytes)
   [0x00 0x00 0x00 0x05]                  (value_len=5)
   [61 6c 69 63 65]                       (value="alice", 5 bytes)
 
-Total frame size: 2 (type) + 2 (length) + 47 (payload) = 51 bytes
+Total frame size: 2 (type) + 2 (length) + 57 (payload) = 61 bytes
 ```
 
 **Example 2: Notice SUBSCRIBE (MessageType=501)**
 
 Wire format specification:
 ```
-[u32 BE]  route_pattern_len
-[bytes]   route_pattern
+[u32 BE]   route_pattern_len
+[bytes]    route_pattern
 ```
 
 Actual bytes on wire:
@@ -341,13 +591,13 @@ Wire format specification:
 Actual bytes on wire:
 ```
 [0x00 0x64]                              (MessageType=100, KV BEGIN)
-[0x00 0x17]                              (Length=23 bytes)
+[0x00 0x1F]                              (Length=31 bytes)
   [0x00 0x00 0x00 0x15]                  (route_len=21)
   [6b 76 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 75 73 65 72 73]  (route="kv://prod/app/users", 21 bytes)
   [0x01]                                 (mode=1, ReadWrite)
   [0x01]                                 (durability=1, Sync)
 
-Total frame size: 2 (type) + 2 (length) + 23 (payload) = 27 bytes
+Total frame size: 2 (type) + 2 (length) + 31 (payload) = 35 bytes
 ```
 
 **Example 4: RPC REQUEST (MessageType=302)**
@@ -543,6 +793,9 @@ Clients MUST:
 
 **Clients MUST check status byte first before parsing payload.**
 
+**Exception: RPC Domain**
+RPC responses include a `correlation_id` field (16-byte UUID) to match responses to requests across multiple in-flight operations. See [RPC Domain](#rpc-domain-requestresponse--streaming) for details on how RPC enables per-request correlation.
+
 **Example (KV GET success):**
 ```
 [0x00]                    (status=0, success)
@@ -557,7 +810,7 @@ Clients MUST:
 [0x4b 0x65 0x79...]       ("Key not found")
 ```
 
-**Rationale:** Standardized error format across all domains simplifies client error handling and ensures consistent debugging experience.
+**Rationale:** Standardized error format across all domains simplifies client error handling and ensures consistent debugging experience. Multiplexing is channel-based for different domains; RPC is the only domain with explicit per-request correlation IDs for true request/response matching.
 
 ### Frame Size Limits
 
@@ -612,7 +865,7 @@ DISCONNECTED --(open transport)--> CONNECTING --(CONNECT & accepted)--> AUTHENTI
 Notes:
 
 - Clients MUST handle transport failures and implement exponential backoff on reconnect.
-- Clients MUST follow the single in-flight request rule in AUTHENTICATED state.
+- **Multiplexing Support**: Clients MAY send multiple in-flight requests **on different channels** (domains). For example, a client can send a KV PUT while also sending a Notice PUBLISH—these go to different logical channels and are processed independently. However, within a single domain, clients SHOULD follow request/response sequencing unless the domain supports explicit correlation IDs (currently only RPC).
 
 ### 2. Send CONNECT Record (FIRST MESSAGE)
 
@@ -684,9 +937,14 @@ Broker behavior:
 ### 4. Send Domain Requests
 
 After successful CONNECT, client may send domain-specific requests.
-Important client model constraint:
 
-- **Clients MUST NOT have more than one in-flight request per connection.** The Fitz protocol is synchronous (request → response). Sending a second request before receiving the response to the first request is undefined behavior and the broker MAY close the connection. Asynchronous deliveries (e.g., `NOTIFY`, RPC worker invocations) are out-of-band and do not count as request responses; clients MUST handle them separately.
+**Channel-Based Multiplexing:**
+
+- **Clients MAY send multiple in-flight requests on different channels (domains).** Each domain (KV, RPC, Notice, etc.) is routed to its own logical channel by the broker. This allows concurrent operations across different domains on the same connection.
+- **Within a single domain**: Follow request/response sequencing unless the domain explicitly supports per-request correlation IDs (currently only RPC). Sending multiple requests of the same type without waiting for responses is undefined behavior.
+- **RPC domain is special**: RPC REQUEST includes an explicit 16-byte UUID `correlation_id` that clients generate. This allows true request/response matching for multiple in-flight RPC requests.
+- **Out-of-band messages**: Asynchronous deliveries (e.g., Notice NOTIFY, RPC RESPONSE streaming) arrive without correlation IDs to requests; clients MUST handle them separately.
+- **Order guarantees**: Responses are delivered in the order requests were sent (per domain/channel).
 
 ### 5. Receive Responses
 
@@ -1288,7 +1546,10 @@ Clients MUST:
 2. **Require explicit `COMMIT` or `ROLLBACK`** (no auto-commit)
 3. **Surface transaction errors** (e.g., isolation conflicts)
 4. **NOT retry transactions automatically** (client chooses)
-   **Example (Rust-like pseudocode):**
+5. **Support multiple concurrent transactions to different resources** (same domain, different actor instances)
+6. **NOT parallelize operations within ONE transaction** (single tx_id must be sequential)
+
+**Example (Rust-like pseudocode):**
 
 ```rust
 // ✅ CORRECT - explicit transaction lifecycle
@@ -1296,6 +1557,24 @@ let tx_id = client.begin(KvBeginRequest { route, mode })?;
 client.put(KvPutRequest { tx_id, key, value })?;
 client.get(KvGetRequest { tx_id, key })?;
 client.commit(KvCommitRequest { tx_id })?;
+
+// ✅ CORRECT - multiple concurrent transactions to different resources
+let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode })?;
+let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode })?;
+// Both tx1 and tx2 active simultaneously
+client.put(KvPutRequest { tx_id: tx1, key, value })?;
+client.put(KvPutRequest { tx_id: tx2, key, value })?;
+client.commit(KvCommitRequest { tx_id: tx1 })?;
+client.commit(KvCommitRequest { tx_id: tx2 })?;
+
+// ❌ WRONG - parallel operations on SAME transaction
+let tx = client.begin(KvBeginRequest { route, mode })?;
+// DO NOT DO THIS:
+// futures::join_all(vec![
+//   client.put(KvPutRequest { tx_id: tx, key: "k1", value: "v1" }),
+//   client.put(KvPutRequest { tx_id: tx, key: "k2", value: "v2" }),
+// ])?;  // ❌ Same tx_id cannot have parallel calls
+
 // ❌ WRONG - auto-open transactions
 let value = client.get(key)?;  // Do NOT auto-begin
 // ❌ WRONG - auto-commit
@@ -1390,20 +1669,36 @@ raise DomainError(error_msg)
 
 ## Request/Response Correlation
 
-### Synchronous Model
+### Synchronous Model (Per Domain)
 
-**Fitz uses synchronous request/response:**
+**Fitz uses channel-based multiplexing:**
 
-- Client sends one request, blocks waiting for response
-- Broker processes request, sends exactly one response
-- Client receives response, unblocks
-- **Pipelining:** NOT supported (no request IDs, no response tagging). **Clients MUST NOT have more than one in-flight request per connection.** Sending another request before the response to the previous request is received is undefined behavior and the broker MAY close the connection.
-  **Exception: Streaming and Fanout**
-  For operations with multiple responses (Notice, RPC, Stream):
-- First response is immediate (operation accepted, subscription ID, etc.)
-- Subsequent responses (notifications, RPC calls) arrive asynchronously
-- Client MUST handle asynchronous delivery (subscribe to in-band notifications)
-- Connection remains open; no explicit end marker for streaming
+- Different domains (KV, RPC, Notice, etc.) run on independent logical channels
+- Within a single domain/channel: Client sends request and blocks waiting for response
+- **Across domains**: Multiple in-flight requests on different channels are allowed (e.g., KV PUT while Notice PUBLISH)
+- **Within same domain**: Sending multiple requests without waiting for responses is undefined behavior; the broker MAY close the connection
+
+**Exception: RPC Domain**
+RPC REQUEST uses explicit 16-byte UUID `correlation_id` to match responses across multiple in-flight requests. Example:
+
+```python
+# RPC allows true multiplexing (multiple in-flight requests)
+future1 = client.rpc_request(..., correlation_id=uuid1)
+future2 = client.rpc_request(..., correlation_id=uuid2)
+# Both in-flight simultaneously; responses matched by correlation_id
+response1 = future1.wait()  # Matched by uuid1
+response2 = future2.wait()  # Matched by uuid2
+```
+
+**Channel-Based Multiplexing (Typical):**
+
+```python
+# KV, Notice, Queue, etc. are sequential within domain
+# But concurrent across domains
+kv_tx = client.kv_begin(route, mode)  # Blocks on KV channel
+notice_sub = client.notice_subscribe(pattern)  # Queued on Notice channel (concurrent)
+# KV transaction continues on KV channel while Notice processes on Notice channel
+```
 
 ### Multi-Response Operations
 
@@ -1414,9 +1709,9 @@ When a single operation generates multiple responses:
 - Subsequent PUBLISHes → NOTIFY frames (asynchronous)
 - Client reads NOTIFYs from same connection
   **RPC REQUEST:**
-- Request → Response 1 (accepted, empty body)
-- Worker responses → Response 2+ (streaming, with `sequence` and `stream_end` flag)
-- Correlation ID links all responses
+- Request → Response 1 (accepted via correlation_id)
+- Worker responses → Response 2+ (streaming, matched by correlation_id)
+- Multiple RPC responses matched by correlation_id on same connection
   **Stream READ:**
 - Request → Response 1 (record stream)
 - Multiple records may arrive in single response or multiple frames
@@ -1426,9 +1721,9 @@ When a single operation generates multiple responses:
 
 **When connection drops during an operation:**
 
-**In-Flight Request Semantics:**
-- Any request sent but not yet responded to is **LOST**
-- Server MAY have processed the request before disconnect
+**In-Flight Request Semantics (Per Channel):**
+- Any request sent but not yet responded to is **LOST** (for that channel)
+- Server may have processed the request before disconnect
 - Client CANNOT know if request succeeded or failed
 - **No automatic replay or recovery**
 
@@ -1540,11 +1835,11 @@ Each domain has a specific wire format, verb set, and semantics. Implement each 
 
 | Type | Name            | Direction                  |
 | ---: | --------------- | -------------------------- |
-|  100 | PUBLISH         | Client → Server            |
-|  101 | SUBSCRIBE       | Client → Server            |
-|  102 | UNSUBSCRIBE     | Client → Server            |
-|  103 | UNSUBSCRIBE_ALL | Client → Server            |
-|  104 | NOTIFY          | Server → Client (delivery) |
+|  500 | PUBLISH         | Client → Server            |
+|  501 | SUBSCRIBE       | Client → Server            |
+|  502 | UNSUBSCRIBE     | Client → Server            |
+|  503 | UNSUBSCRIBE_ALL | Client → Server            |
+|  504 | NOTIFY          | Server → Client (delivery) |
 
 #### PUBLISH Request
 
@@ -1899,13 +2194,13 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 | Type | Name         |
 | ---: | ------------ |
-|  200 | BEGIN        |
-|  201 | APPEND       |
-|  202 | COMMIT       |
-|  203 | ROLLBACK     |
-|  204 | READ         |
-|  205 | LAST         |
-|  206 | GET_METADATA |
+|  600 | BEGIN        |
+|  601 | APPEND       |
+|  602 | COMMIT       |
+|  603 | ROLLBACK     |
+|  604 | READ         |
+|  605 | LAST         |
+|  606 | GET_METADATA |
 
 #### BEGIN Request
 
@@ -2224,12 +2519,29 @@ Response (status=1):
 **Recommended User-Facing API:**
 
 ```python
-# Producer: Enqueue messages
-msg_id = client.queue_enqueue(
+# Producer: Sequential enqueues to SAME queue
+msg_id_1 = client.queue_enqueue(
     route="queue://prod/app/tasks",
-    body=b"task_payload",
+    body=b"task_1",
     delay_seconds=0
 )
+msg_id_2 = client.queue_enqueue(
+    route="queue://prod/app/tasks",
+    body=b"task_2",
+    delay_seconds=0
+)
+
+# Producer: Parallel enqueues to DIFFERENT queues
+# Both complete independently and concurrently
+msg_tasks = client.queue_enqueue(
+    route="queue://prod/app/tasks",
+    body=b"task_payload"
+)
+msg_events = client.queue_enqueue(
+    route="queue://prod/app/events",
+    body=b"event_payload"
+)
+# Both msg_tasks and msg_events complete in parallel
 
 # Consumer: Reserve, process, complete
 leases = client.queue_reserve(
@@ -2934,9 +3246,9 @@ else:
 
 | Type | Name   |
 | ---: | ------ |
-|  500 | CREATE |
-|  501 | CANCEL |
-|  502 | LIST   |
+|  700 | CREATE |
+|  701 | CANCEL |
+|  702 | LIST   |
 
 #### CREATE Request
 
@@ -3331,6 +3643,11 @@ Client implementations MUST pass these cross-cutting tests:
 - Client with `kv:read` scope sends PUT request
 - Broker returns ERR_UNAUTHORIZED (1001 domain error)
 - Verify client surfaces error correctly to caller
+  **Multiplexing Across Domains (Channel-Based):**
+- Client sends KV PUT (KV channel)
+- While KV is in-flight, client sends Notice PUBLISH (Notice channel)
+- Both proceed concurrently (independent channels)
+- Verify both responses received correctly
   **Reconnect State:**
 - Client subscribes to pattern, closes connection
 - Reconnects with same JWT, old subscription is lost
@@ -3339,11 +3656,16 @@ Client implementations MUST pass these cross-cutting tests:
 - Single PUBLISH to 1000 SUBSCRIBE clients
 - All clients receive NOTIFY within 100ms (broker-dependent)
 - Verify no message loss
-  **Concurrent Request Handling (Pipelining Rejection):**
-- Client sends REQUEST 1 without waiting for response
-- Client sends REQUEST 2 while REQUEST 1 pending
-- Broker behavior is implementation-defined (MAY close connection, MAY serialize)
-- Clients MUST NOT rely on pipelining support
+  **Within-Domain Pipelining (NOT Supported):**
+- Client sends KV REQUEST 1 without waiting for response
+- Client sends KV REQUEST 2 on same channel while REQUEST 1 pending
+- Broker MAY close connection or serialize; behavior undefined
+- Clients MUST NOT pipeline multiple requests within a single domain/channel
+  **RPC Multiplexing (Exception: Correlation ID Based):**
+- Client sends RPC REQUEST with correlation_id_1
+- Client sends another RPC REQUEST with correlation_id_2 (both in-flight)
+- Broker matches responses by correlation_id
+- Clients MAY truly multiplex RPC requests via correlation IDs
 
 ## Known Broker-Specific Behaviors
 

@@ -143,13 +143,10 @@ impl MailboxSink for KvDomainSink {
         let route_family = route_addr.family();
 
         // Parse TLV frame using codec
-        // The codec will convert msg_type and raw bytes into a KvMessage
-        // TODO: Extract realm and area from route path
+        // Per CLIENT_SPEC: All KV operations now include full route on wire
         let kv_message = match crate::protocol::kv::parse_request(
             frame_ctx.msg_type.as_u16(),
             *route_family,
-            String::new(), // TODO: extract from route
-            String::new(), // TODO: extract from route
             &frame_ctx.payload,
         ) {
             Ok(msg) => msg,
@@ -329,7 +326,13 @@ impl MailboxSink for NoticeDomainSink {
         );
 
         let notice_msg =
-            match crate::protocol::notice_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+            match crate::protocol::notice_codec::parse_request(
+                &frame_ctx,
+                &frame_ctx.payload,
+                *envelope.destination().family(),
+                crate::session::SessionId(frame_ctx.session_id),
+                envelope.source().cloned().unwrap_or_else(|| envelope.destination().clone()),
+            ) {
                 Ok(msg) => msg,
                 Err(e) => {
                     tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
@@ -546,7 +549,11 @@ impl MailboxSink for RpcDomainSink {
         );
 
         let rpc_msg =
-            match crate::protocol::rpc_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+            match crate::protocol::rpc_codec::parse_request(
+                &frame_ctx,
+                &frame_ctx.payload,
+                *envelope.destination().family(),
+            ) {
                 Ok(msg) => msg,
                 Err(e) => {
                     tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
@@ -757,12 +764,10 @@ impl MailboxSink for QueueDomainSink {
         let route_family = *route_addr.family();
 
         // Parse queue message using codec
+        // Per CLIENT_SPEC: All Queue operations now include full route on wire
         let queue_msg = match crate::protocol::queue_codec::parse_request(
             frame_ctx.msg_type.as_u16(),
             route_family,
-            String::new(), // TODO: extract realm from route
-            String::new(), // TODO: extract area from route
-            route_addr.route().as_str().to_string(),
             &frame_ctx.payload,
         ) {
             Ok(msg) => msg,
@@ -809,24 +814,6 @@ impl MailboxSink for QueueDomainSink {
                         crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
                     });
                     actor.handle_enqueue(body, delay_seconds)
-                }
-                QueueMessage::EnqueueBatch {
-                    family_id,
-                    route,
-                    messages,
-                    delay_seconds,
-                } => {
-                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
-                        family: family_id,
-                        realm: String::new(),
-                        area: String::new(),
-                        resource: "default".to_string(),
-                    });
-                    let store = self.store.clone();
-                    let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
-                    });
-                    actor.handle_enqueue_batch(messages, delay_seconds)
                 }
                 QueueMessage::Reserve {
                     family_id,
@@ -985,7 +972,11 @@ impl MailboxSink for StreamDomainSink {
         };
 
         let stream_msg =
-            match crate::protocol::stream_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+            match crate::protocol::stream_codec::parse_request(
+                &frame_ctx,
+                &frame_ctx.payload,
+                *envelope.destination().family(),
+            ) {
                 Ok(msg) => {
                     tracing::debug!(
                         domain = "stream",
@@ -1299,7 +1290,11 @@ impl MailboxSink for LeaseDomainSink {
         };
 
         let lease_msg =
-            match crate::protocol::lease_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+            match crate::protocol::lease_codec::parse_request(
+                &frame_ctx,
+                &frame_ctx.payload,
+                *envelope.destination().family(),
+            ) {
                 Ok(msg) => {
                     tracing::debug!(
                         domain = "lease",
@@ -1366,17 +1361,17 @@ impl MailboxSink for LeaseDomainSink {
         let codec_response = match domain_response {
             LeaseResponse::Acquired { fencing_token } => {
                 crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token.to_string()),
+                    token: Some(fencing_token),
                 }
             }
             LeaseResponse::AlreadyHeld { fencing_token } => {
                 crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token.to_string()),
+                    token: Some(fencing_token),
                 }
             }
             LeaseResponse::Renewed { fencing_token } => {
                 crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token.to_string()),
+                    token: Some(fencing_token),
                 }
             }
             LeaseResponse::Released => {
@@ -1404,14 +1399,11 @@ impl MailboxSink for LeaseDomainSink {
                 crate::protocol::lease_codec::LeaseResponse::Error("Not found".to_string())
             }
             LeaseResponse::Status {
-                owner_id,
+                owner_id: _,
                 fencing_token,
-                expires_in_secs,
+                expires_in_secs: _,
             } => crate::protocol::lease_codec::LeaseResponse::Ok {
-                token: Some(format!(
-                    "owner={} token={} expires_in={}s",
-                    owner_id, fencing_token, expires_in_secs
-                )),
+                token: Some(fencing_token),
             },
         };
 

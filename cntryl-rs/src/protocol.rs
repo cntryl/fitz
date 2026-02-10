@@ -58,17 +58,7 @@ pub mod message_type {
     pub const SCHEDULE_LIST: u16 = 702;
 }
 
-pub struct Route {
-    pub family: u64,
-    pub path: String,
-}
-
-impl Route {
-    pub fn new(family: u64, path: String) -> Self {
-        Self { family, path }
-    }
-}
-
+/// Transaction mode for KV operations.
 #[derive(Debug, Clone, Copy)]
 pub enum TransactionMode {
     ReadOnly = 0,

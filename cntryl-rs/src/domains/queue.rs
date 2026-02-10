@@ -1,5 +1,6 @@
 //! Queue domain client - placeholder
 
+#[derive(Default)]
 pub struct QueueClient;
 
 impl QueueClient {

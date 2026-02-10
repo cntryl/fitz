@@ -14,17 +14,18 @@ mod tests {
         // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "test_key";
         let tx_id = 42u64;
+        let route = "kv://realm/area/resource";
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&tx_id.to_be_bytes());
+        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(route.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
 
         let result = kv::parse_request(
             103, // GET
             RouteFamily::new(1),
-            "realm".to_string(),
-            "area".to_string(),
             &payload,
         );
 
@@ -38,9 +39,12 @@ mod tests {
         let key = "my_key";
         let value = "my_value";
         let tx_id = 42u64;
+        let route = "kv://realm/area/resource";
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&tx_id.to_be_bytes());
+        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(route.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
         payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
@@ -49,8 +53,6 @@ mod tests {
         let result = kv::parse_request(
             104, // PUT
             RouteFamily::new(1),
-            "realm".to_string(),
-            "area".to_string(),
             &payload,
         );
 
@@ -60,19 +62,17 @@ mod tests {
     #[test]
     fn should_parse_kv_begin_message() {
         // Test the codec BEGIN parser
-        let resource = "my_resource";
+        let route = "kv://realm/area/my_resource";
 
         let mut payload = Vec::new();
-        payload.extend_from_slice(&(resource.len() as u32).to_be_bytes());
-        payload.extend_from_slice(resource.as_bytes());
+        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(route.as_bytes());
         payload.push(0); // ReadWrite mode
         payload.push(0); // Buffered write option
 
         let result = kv::parse_request(
             100, // BEGIN
             RouteFamily::new(1),
-            "realm".to_string(),
-            "area".to_string(),
             &payload,
         );
 
@@ -128,9 +128,12 @@ mod tests {
         // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "test_key";
         let tx_id = 42u64;
+        let route = "kv://realm/area/resource";
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&tx_id.to_be_bytes());
+        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(route.as_bytes());
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
 
@@ -138,8 +141,6 @@ mod tests {
         let parse_result = kv::parse_request(
             103, // GET
             RouteFamily::new(1),
-            "realm".to_string(),
-            "area".to_string(),
             &payload,
         );
 

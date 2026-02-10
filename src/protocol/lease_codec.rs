@@ -2,6 +2,9 @@
 //!
 //! Encodes/decodes TLV messages for the lease domain.
 //! Supports Acquire, Renew, Release, Query operations.
+//!
+//! `route_family` is a server-internal concept supplied by the session layer
+//! — it never appears on the wire.
 
 use crate::domains::lease::protocol::LeaseMessage;
 use crate::protocol::frame_context::FrameContext;
@@ -12,20 +15,27 @@ use crate::runtime::routing::{Route, RouteFamily};
 #[derive(Debug, Clone)]
 pub enum LeaseResponse {
     /// Operation succeeded with optional token
-    Ok { token: Option<String> },
+    Ok { token: Option<u64> },
     /// Operation failed with error message
     Error(String),
 }
 
-/// Parse incoming message from TLV-encoded bytes
-pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<LeaseMessage, String> {
+/// Parse incoming message from TLV-encoded bytes.
+///
+/// `route_family` is injected by the session layer — it is never read
+/// from the wire payload.
+pub fn parse_request(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        400 => parse_acquire(&mut dec),
-        401 => parse_renew(&mut dec),
-        402 => parse_release(&mut dec),
-        403 => parse_query(&mut dec),
+        400 => parse_acquire(&mut dec, route_family),
+        401 => parse_renew(&mut dec, route_family),
+        402 => parse_release(&mut dec, route_family),
+        403 => parse_query(&mut dec, route_family),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -37,7 +47,7 @@ pub fn encode_response(response: &LeaseResponse) -> Vec<u8> {
     match response {
         LeaseResponse::Ok { token } => {
             enc.put_u8(0); // success flag
-            enc.put_optional_string(token.as_deref());
+            enc.put_optional_u64(*token);
         }
         LeaseResponse::Error(e) => {
             enc.put_u8(1); // error flag
@@ -50,8 +60,8 @@ pub fn encode_response(response: &LeaseResponse) -> Vec<u8> {
 
 // ===== Helper Parsers =====
 
-fn parse_acquire(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string route][string owner_id][u64 ttl_secs]`
+fn parse_acquire(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let owner_id = dec.get_string()?;
@@ -62,15 +72,15 @@ fn parse_acquire(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
     }
 
     Ok(LeaseMessage::Acquire {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         route,
         owner_id,
         ttl_secs,
     })
 }
 
-fn parse_renew(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string route][string owner_id][u64 fencing_token][u64 ttl_secs]`
+fn parse_renew(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let owner_id = dec.get_string()?;
@@ -82,7 +92,7 @@ fn parse_renew(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
     }
 
     Ok(LeaseMessage::Renew {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         route,
         owner_id,
         fencing_token,
@@ -90,8 +100,8 @@ fn parse_renew(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
     })
 }
 
-fn parse_release(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string route][string owner_id][u64 fencing_token]`
+fn parse_release(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let owner_id = dec.get_string()?;
@@ -102,15 +112,15 @@ fn parse_release(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
     }
 
     Ok(LeaseMessage::Release {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         route,
         owner_id,
         fencing_token,
     })
 }
 
-fn parse_query(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
-    let family_id = dec.get_u64()?;
+/// Wire format: `[string route]`
+fn parse_query(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
 
@@ -119,7 +129,7 @@ fn parse_query(dec: &mut TlvDecoder) -> Result<LeaseMessage, String> {
     }
 
     Ok(LeaseMessage::Query {
-        family_id: RouteFamily::new(family_id),
+        family_id: route_family,
         route,
     })
 }

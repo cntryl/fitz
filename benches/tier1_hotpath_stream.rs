@@ -116,11 +116,11 @@ fn bench_append_commit_single_event(c: &mut Criterion) {
 
             // Note: In Fitz actor model, session_id is managed internally by the actor
             // We use a deterministic session_id based on expected_offset for benchmarking
-            let session_id = format!("bench-session-{}", expected_offset);
+            let session_id = expected_offset;
 
             actor.receive(
                 StreamMessage::Append {
-                    session_id: session_id.clone(),
+                    session_id,
                     body: Bytes::from(payload.clone()),
                     metadata: None,
                 },
@@ -184,7 +184,7 @@ fn bench_append_commit_batches(c: &mut Criterion) {
                     &mut ctx,
                 );
 
-                let session_id = format!("bench-session-{}", expected_offset);
+                let session_id = expected_offset;
 
                 // Append batch_size events
                 for i in 0..batch_size {
@@ -192,7 +192,7 @@ fn bench_append_commit_batches(c: &mut Criterion) {
                     let payload = black_box(&payloads[idx]);
                     actor.receive(
                         StreamMessage::Append {
-                            session_id: session_id.clone(),
+                            session_id,
                             body: Bytes::from(payload.clone()),
                             metadata: None,
                         },
@@ -242,12 +242,12 @@ fn bench_resource_read_sequential(c: &mut Criterion) {
             &mut ctx,
         );
 
-        let session_id = format!("bench-session-{}", expected_offset);
+        let session_id = expected_offset;
 
         for i in 0..100 {
             actor.receive(
                 StreamMessage::Append {
-                    session_id: session_id.clone(),
+                    session_id,
                     body: Bytes::from(payloads[chunk_start + i].clone()),
                     metadata: None,
                 },
@@ -318,12 +318,12 @@ fn bench_resource_read_batched(c: &mut Criterion) {
             &mut ctx,
         );
 
-        let session_id = format!("bench-session-{}", expected_offset);
+        let session_id = expected_offset;
 
         for i in 0..100 {
             actor.receive(
                 StreamMessage::Append {
-                    session_id: session_id.clone(),
+                    session_id,
                     body: Bytes::from(payloads[chunk_start + i].clone()),
                     metadata: None,
                 },
@@ -420,13 +420,13 @@ fn bench_area_read_sequential(c: &mut Criterion) {
                 &mut ctx,
             );
 
-            let session_id = format!("bench-session-{}-{}", res_idx, expected_offset);
+            let session_id = (res_idx as u64 * 1000000) + expected_offset;
 
             for i in 0..50 {
                 let idx = (chunk_start + i) % payloads.len();
                 actor.receive(
                     StreamMessage::Append {
-                        session_id: session_id.clone(),
+                        session_id,
                         body: Bytes::from(payloads[idx].clone()),
                         metadata: None,
                     },
@@ -546,13 +546,13 @@ fn bench_realm_read_sequential(c: &mut Criterion) {
                 );
 
                 let session_id =
-                    format!("bench-session-{}-{}-{}", area_idx, res_idx, expected_offset);
+                    (area_idx as u64 * 1000000) + (res_idx as u64 * 10000) + expected_offset;
 
                 for i in 0..50 {
                     let idx = (chunk_start + i) % payloads.len();
                     actor.receive(
                         StreamMessage::Append {
-                            session_id: session_id.clone(),
+                            session_id,
                             body: Bytes::from(payloads[idx].clone()),
                             metadata: None,
                         },

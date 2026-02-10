@@ -1,5 +1,6 @@
 //! RPC domain client - placeholder
 
+#[derive(Default)]
 pub struct RpcClient;
 
 impl RpcClient {

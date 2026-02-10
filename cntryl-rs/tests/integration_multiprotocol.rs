@@ -43,7 +43,7 @@ fn run_kv_crud_operations(transport: Transport) {
 
     // Begin transaction
     let tx = kv
-        .begin("app", "data", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/data", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
     let test_key = b"crud_test_key";
@@ -91,7 +91,7 @@ fn run_transaction_isolation(transport: Transport) {
 
     // Setup initial value
     let setup = kv
-        .begin("app", "isolation_test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/isolation_test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
     let key = b"isolation_key";
@@ -103,7 +103,7 @@ fn run_transaction_isolation(transport: Transport) {
 
     // Begin read-write transaction
     let tx_rw = kv
-        .begin("app", "isolation_test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/isolation_test", TransactionMode::ReadWrite)
         .expect("Failed to begin rw");
 
     let new_value = b"modified";
@@ -112,7 +112,7 @@ fn run_transaction_isolation(transport: Transport) {
 
     // Begin read-only transaction in parallel (conceptually)
     let tx_ro = kv
-        .begin("app", "isolation_test", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/isolation_test", TransactionMode::ReadOnly)
         .expect("Failed to begin ro");
 
     // Read-only transaction should NOT see uncommitted changes
@@ -155,7 +155,7 @@ fn run_rollback_behavior(transport: Transport) {
 
     // Setup initial value
     let setup = kv
-        .begin("app", "rollback_test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/rollback_test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
     let key = b"rollback_key";
@@ -167,7 +167,7 @@ fn run_rollback_behavior(transport: Transport) {
 
     // Begin transaction, make changes, rollback
     let tx = kv
-        .begin("app", "rollback_test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/rollback_test", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
     let changed = b"changed";
@@ -188,7 +188,7 @@ fn run_rollback_behavior(transport: Transport) {
 
     // Verify rollback in new transaction
     let verify = kv
-        .begin("app", "rollback_test", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/rollback_test", TransactionMode::ReadOnly)
         .expect("Failed to begin verify");
 
     let after_rollback = verify
@@ -217,7 +217,7 @@ fn run_large_values(transport: Transport) {
     let kv = client.kv();
 
     let tx = kv
-        .begin("app", "large_data", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/large_data", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
     // Create a large value (1 MB)

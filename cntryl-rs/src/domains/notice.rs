@@ -1,5 +1,6 @@
 //! Notice (pub/sub) domain client - placeholder
 
+#[derive(Default)]
 pub struct NoticeClient;
 
 impl NoticeClient {

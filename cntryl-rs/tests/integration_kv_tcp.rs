@@ -17,7 +17,7 @@ fn should_execute_kv_transaction_over_tcp() {
 
     // Act - Begin transaction
     let tx = kv
-        .begin("app", "users", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/users", TransactionMode::ReadWrite)
         .expect("Failed to begin transaction");
 
     // Act - Put a value
@@ -52,7 +52,7 @@ fn should_execute_kv_transaction_over_tcp() {
 
     // Act - Verify in new transaction that changes persisted
     let verify_tx = kv
-        .begin("app", "users", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/users", TransactionMode::ReadOnly)
         .expect("Failed to begin verify transaction");
 
     let verify = verify_tx
@@ -81,7 +81,7 @@ fn should_rollback_kv_transaction_over_tcp() {
 
     // Put initial value
     let setup_tx = kv
-        .begin("app", "test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/test", TransactionMode::ReadWrite)
         .expect("Failed to begin setup");
 
     let key = b"rollback_test";
@@ -93,7 +93,7 @@ fn should_rollback_kv_transaction_over_tcp() {
 
     // Act - Begin transaction, modify value, then rollback
     let tx = kv
-        .begin("app", "test", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/test", TransactionMode::ReadWrite)
         .expect("Failed to begin");
 
     let new_value = b"modified";
@@ -113,7 +113,7 @@ fn should_rollback_kv_transaction_over_tcp() {
 
     // Assert - New transaction should see original value
     let verify_tx = kv
-        .begin("app", "test", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/test", TransactionMode::ReadOnly)
         .expect("Failed to begin verify");
 
     let after_rollback = verify_tx
@@ -141,7 +141,7 @@ fn should_isolate_multiple_kv_transactions_over_tcp() {
 
     // Act - Begin first transaction
     let tx1 = kv
-        .begin("app", "data", TransactionMode::ReadWrite)
+        .begin("kv://test-realm/app/data", TransactionMode::ReadWrite)
         .expect("Failed to begin tx1");
 
     tx1.put(b"key1", b"value1")
@@ -149,7 +149,7 @@ fn should_isolate_multiple_kv_transactions_over_tcp() {
 
     // Act - Begin second transaction (should not see tx1's changes)
     let tx2 = kv
-        .begin("app", "data", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/data", TransactionMode::ReadOnly)
         .expect("Failed to begin tx2");
 
     let tx2_view = tx2
@@ -164,7 +164,7 @@ fn should_isolate_multiple_kv_transactions_over_tcp() {
 
     // Act - Begin new transaction and verify changes visible
     let tx3 = kv
-        .begin("app", "data", TransactionMode::ReadOnly)
+        .begin("kv://test-realm/app/data", TransactionMode::ReadOnly)
         .expect("Failed to begin tx3");
 
     let tx3_view = tx3

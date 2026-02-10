@@ -342,50 +342,11 @@ impl QueueActor {
 
     /// Handle enqueue operation
     pub fn handle_enqueue(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
-        // Delegate to batch enqueue with single message
-        match self.handle_enqueue_batch(vec![body], delay_seconds) {
-            QueueResponse::EnqueuedBatch { ids } => QueueResponse::Enqueued { id: ids[0] },
-            other => other,
-        }
-    }
-
-    /// Handle batch enqueue operation (first-class batch API)
-    ///
-    /// # Atomicity Guarantee (V-001 Fix)
-    ///
-    /// All-or-nothing transactionality:
-    /// - ID allocation happens INSIDE Midge transaction
-    /// - All message writes + next_id update happen in SINGLE transaction
-    /// - If commit fails, no IDs are lost or duplicated
-    /// - If crash happens before commit, no next_id corruption
-    ///
-    /// # Invariants
-    /// - Message IDs assigned in input order (consistent ordering)
-    /// - All messages written in ONE Midge transaction
-    /// - next_id updated in same transaction as batch
-    /// - All messages succeed or all fail (no partial visibility)
-    /// - Minimal data loss: buffered writes OK (producers can retry)
-    ///
-    /// # Performance
-    /// - Uses sync() writes to ensure reserve() sees enqueued messages immediately
-    /// - Per-message sync() overhead amortized by batching
-    /// - Competing consumers need consistency over peak throughput
-    pub fn handle_enqueue_batch(
-        &mut self,
-        messages: Vec<Bytes>,
-        delay_seconds: Option<u64>,
-    ) -> QueueResponse {
-        if messages.is_empty() {
-            return QueueResponse::BadRequest {
-                reason: "Empty batch".to_string(),
-            };
-        }
-
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
         let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
 
-        // Start transaction (ID allocation will happen inside)
+        // Start transaction
         let cf_id = self.queue_key.family.id();
         let mut txn = match self
             .store
@@ -399,38 +360,28 @@ impl QueueActor {
             }
         };
 
-        // Allocate message IDs and write records inside transaction
-        let base_id = self.next_id;
-        let mut batch: Vec<(MessageId, QueueRecord, Instant)> = Vec::with_capacity(messages.len());
+        // Allocate message ID
+        let id = MessageId::new(self.next_id);
+        let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
+        let visible_at = now_instant + Duration::from_millis(delay_ms);
 
-        for (idx, body) in messages.into_iter().enumerate() {
-            let id_u64 = base_id + (idx as u64);
-            let id = MessageId::new(id_u64);
+        let record = QueueRecord {
+            body,
+            attempts: 0,
+            visible_at_ms,
+        };
 
-            // Use absolute epoch_ms for visibility (survives restarts)
-            let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
-            let visible_at = now_instant + Duration::from_millis(delay_ms);
-
-            let record = QueueRecord {
-                body,
-                attempts: 0,
-                visible_at_ms,
+        // Write message to transaction
+        let key = Self::message_key(&self.queue_key, id);
+        let value = Self::encode_record(&record);
+        if let Err(e) = txn.put(key, value, None) {
+            return QueueResponse::Error {
+                message: format!("Failed to add message to transaction: {:?}", e),
             };
-
-            // Write message to transaction
-            let key = Self::message_key(&self.queue_key, id);
-            let value = Self::encode_record(&record);
-            if let Err(e) = txn.put(key, value, None) {
-                return QueueResponse::Error {
-                    message: format!("Failed to add message to transaction: {:?}", e),
-                };
-            }
-
-            batch.push((id, record, visible_at));
         }
 
-        // Update next_id counter in SAME transaction (atomicity guarantee)
-        let next_id = base_id + (batch.len() as u64);
+        // Update next_id counter in SAME transaction
+        let next_id = self.next_id + 1;
         if let Err(e) = txn.put(
             Self::meta_key(&self.queue_key),
             next_id.to_le_bytes().to_vec(),
@@ -441,42 +392,25 @@ impl QueueActor {
             };
         }
 
-        // Commit with sync() to ensure reserve() sees messages immediately
-        // While this reduces throughput vs buffered(), correctness is non-negotiable for competing consumers.
-        // High-throughput scenarios should use batch enqueue to amortize fsync cost.
+        // Commit with sync() to ensure reserve() sees message immediately
         if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::sync()) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
         }
 
-        // Commit succeeded; advance in-memory next_id ONLY after durable success
+        // Commit succeeded; advance in-memory next_id
         self.next_id = next_id;
 
-        // Update in-memory queues after durable persistence
-        let mut ready_count = 0;
-        let message_ids: Vec<MessageId> = batch.iter().map(|(id, _, _)| *id).collect();
-
-        for (id, _, visible_at) in batch {
-            if visible_at <= now_instant {
-                // Immediately visible
-                self.ready.push_back(id);
-                ready_count += 1;
-            } else {
-                // Delayed visibility
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
-            }
+        // Update in-memory queues
+        if visible_at <= now_instant {
+            self.ready.push_back(id);
+        } else {
+            self.delayed
+                .push(Reverse(DelayedMessage { id, visible_at }));
         }
 
-        // Emit at most ONE availability notice per batch
-        if ready_count > 0 {
-            // TODO: Emit notice://{realm}/{area}/{resource}/available
-            // This hint allows long-polling RPC clients to wake up and retry reserve.
-            // Emission is optional (best-effort, not guaranteed delivery).
-        }
-
-        QueueResponse::EnqueuedBatch { ids: message_ids }
+        QueueResponse::Enqueued { id }
     }
 
     /// Handle reserve operation
@@ -844,15 +778,6 @@ impl Actor for QueueActor {
                 ..
             } => {
                 let _response = self.handle_enqueue(body, delay_seconds);
-                // TODO: Send response back to caller via reply
-            }
-
-            QueueMessage::EnqueueBatch {
-                messages,
-                delay_seconds,
-                ..
-            } => {
-                let _response = self.handle_enqueue_batch(messages, delay_seconds);
                 // TODO: Send response back to caller via reply
             }
 
@@ -1640,132 +1565,5 @@ pub mod tests {
             }
             _ => panic!("Expected Reserved response"),
         }
-    }
-
-    #[test]
-    fn should_enqueue_batch_atomically() {
-        // Arrange
-        let clock = MockClock::new();
-        let store = Arc::new(
-            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
-                .expect("Failed to open Midge"),
-        );
-        let queue_key = unique_queue_key("jobs-batch-atomic");
-        let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0), /* CF=0 for Midge test limitation */
-            queue_key,
-            store,
-            Box::new(clock.clone()),
-            None,
-        );
-
-        // Act - Enqueue batch of 5 messages
-        let messages = vec![
-            Bytes::from("msg1"),
-            Bytes::from("msg2"),
-            Bytes::from("msg3"),
-            Bytes::from("msg4"),
-            Bytes::from("msg5"),
-        ];
-        let response = actor.handle_enqueue_batch(messages, None);
-
-        // Assert - Response contains all message IDs
-        let ids = match response {
-            QueueResponse::EnqueuedBatch { ids } => ids,
-            other => panic!("Expected EnqueuedBatch response, got {:?}", other),
-        };
-        assert_eq!(ids.len(), 5);
-
-        // Assert - All messages available for reservation in FIFO order
-        let reserve_response = actor.handle_reserve(30, Some(5));
-        let reserved = match reserve_response {
-            QueueResponse::Reserved { messages } => messages,
-            _ => panic!("Expected Reserved response"),
-        };
-        assert_eq!(reserved.len(), 5);
-
-        // Verify IDs match returned batch IDs
-        for (i, msg) in reserved.iter().enumerate() {
-            assert_eq!(msg.id, ids[i]);
-        }
-    }
-
-    #[test]
-    fn should_reject_empty_batch_enqueue() {
-        // Arrange
-        let clock = MockClock::new();
-        let store = Arc::new(
-            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
-                .expect("Failed to open Midge"),
-        );
-        let queue_key = unique_queue_key("jobs-batch-empty");
-        let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0), /* CF=0 for Midge test limitation */
-            queue_key,
-            store,
-            Box::new(clock.clone()),
-            None,
-        );
-
-        // Act
-        let response = actor.handle_enqueue_batch(vec![], None);
-
-        // Assert
-        match response {
-            QueueResponse::BadRequest { reason } => {
-                assert_eq!(reason, "Empty batch");
-            }
-            other => panic!("Expected BadRequest response, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn should_preserve_fifo_order_in_batch_enqueue() {
-        // Arrange
-        let clock = MockClock::new();
-        let store = Arc::new(
-            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
-                .expect("Failed to open Midge"),
-        );
-        let queue_key = unique_queue_key("jobs-batch-fifo");
-        let mut actor = QueueActor::with_clock(
-            RouteFamily::new(0), /* CF=0 for Midge test limitation */
-            queue_key,
-            store,
-            Box::new(clock.clone()),
-            None,
-        );
-
-        // Act - Enqueue batch with distinct payloads
-        let messages = vec![
-            Bytes::from("first"),
-            Bytes::from("second"),
-            Bytes::from("third"),
-        ];
-        let response = actor.handle_enqueue_batch(messages.clone(), None);
-        let ids = match response {
-            QueueResponse::EnqueuedBatch { ids } => ids,
-            _ => panic!("Expected EnqueuedBatch response"),
-        };
-
-        // Assert - Reserve in FIFO order
-        let reserve_response = actor.handle_reserve(30, Some(3));
-        let reserved = match reserve_response {
-            QueueResponse::Reserved { messages: msgs } => msgs,
-            _ => panic!("Expected Reserved response"),
-        };
-
-        // Verify order matches input order
-        assert_eq!(reserved.len(), 3);
-        assert_eq!(reserved[0].body, messages[0]);
-        assert_eq!(reserved[1].body, messages[1]);
-        assert_eq!(reserved[2].body, messages[2]);
-
-        // Verify IDs are sequential
-        assert_eq!(reserved[0].id, ids[0]);
-        assert_eq!(reserved[1].id, ids[1]);
-        assert_eq!(reserved[2].id, ids[2]);
-        assert_eq!(ids[1].as_u64(), ids[0].as_u64() + 1);
-        assert_eq!(ids[2].as_u64(), ids[1].as_u64() + 1);
     }
 }

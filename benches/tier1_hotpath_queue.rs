@@ -2,7 +2,7 @@ use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
-use fitz::benchkit::{create_bench_producer, create_bench_queue_actor};
+use fitz::benchkit::create_bench_queue_actor;
 use fitz::domains::queue::QueueResponse;
 
 #[path = "config.rs"]
@@ -17,49 +17,6 @@ mod config;
 //
 // These benchmarks call actor methods directly to measure the hot path.
 // ============================================================================
-
-fn bench_producer_batched_enqueue(c: &mut Criterion) {
-    //! PRODUCER-SIDE BATCHED ENQUEUE - Measure producer batching efficiency
-    //!
-    //! Target: 1M+ msg/sec for batch(100), 5M+ msg/sec for batch(1000)
-    //!
-    //! Measures:
-    //! - Producer buffer overhead
-    //! - Batch flush cost
-    //! - Amortized enqueue throughput
-    //!
-    //! This is the RECOMMENDED pattern for high-throughput producers.
-    //! Batching happens on the CLIENT SIDE, not inside the actor.
-
-    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
-    let payload = Bytes::from_static(b"test message payload");
-
-    let mut group = c.benchmark_group("queue_batch_latency_producer_batched_enqueue");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for batch_size in [10, 100, 1000] {
-        let mut producer = create_bench_producer(batch_size, 5);
-
-        group.throughput(Throughput::Elements(batch_size as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(batch_size),
-            &batch_size,
-            |b, &size| {
-                b.iter(|| {
-                    // Simulate producer enqueuing messages
-                    for _ in 0..size {
-                        producer.enqueue(black_box(payload.clone()), black_box(None));
-                    }
-
-                    // Flush batch to actor
-                    let _result = producer.flush(black_box(&mut actor));
-                })
-            },
-        );
-    }
-
-    group.finish();
-}
 
 fn bench_enqueue_only(c: &mut Criterion) {
     //! ENQUEUE ONLY - Measure pure enqueue throughput (UNBATCHED BASELINE)
@@ -268,47 +225,6 @@ fn bench_lease_expiry_requeue(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_batch_enqueue_scaling(c: &mut Criterion) {
-    //! BATCH ENQUEUE SCALING - Measure batch enqueue across batch sizes
-    //!
-    //! Target: >1M msg/sec for batch(100), >5M msg/sec for batch(1000)
-    //!
-    //! Measures:
-    //! - Amortized serialization cost
-    //! - Midge write batch efficiency
-    //! - Per-message overhead at scale
-    //!
-    //! This is the TRUE batch path that leverages Midge write-batch semantics.
-    //! Each benchmark iteration performs ONE Midge write batch for ALL messages.
-
-    let mut actor = create_bench_queue_actor("bench", "test", "queue", None);
-    let payload = Bytes::from_static(b"test message payload");
-
-    let mut group = c.benchmark_group("queue_batch_latency_enqueue");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for batch_size in [1, 10, 100, 1000] {
-        // Precompute message batch (no allocations in hot path)
-        let messages: Vec<Bytes> = (0..batch_size).map(|_| payload.clone()).collect();
-
-        group.throughput(Throughput::Elements(batch_size));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(batch_size),
-            &batch_size,
-            |b, _| {
-                b.iter(|| {
-                    let _result = actor.handle_enqueue_batch(
-                        black_box(messages.clone()),
-                        black_box(None), // No delay
-                    );
-                })
-            },
-        );
-    }
-
-    group.finish();
-}
-
 fn bench_batch_reserve_scaling(c: &mut Criterion) {
     //! BATCH RESERVE SCALING - Measure reserve throughput vs batch size
     //!
@@ -351,14 +267,12 @@ criterion_group! {
     name = benches;
     config = config::criterion_config();
     targets =
-        bench_producer_batched_enqueue,
         bench_enqueue_only,
         bench_reserve_only_empty,
         bench_reserve_only_full,
         bench_complete_only,
         bench_delayed_enqueue_fire,
         bench_lease_expiry_requeue,
-        bench_batch_enqueue_scaling,
         bench_batch_reserve_scaling,
 }
 criterion_main!(benches);

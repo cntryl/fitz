@@ -18,10 +18,9 @@ fn bench_pipeline_notification(c: &mut Criterion) {
         let mut encoder = TlvEncoder::with_capacity(1024 * 8);
         let payload = vec![0u8; size];
         for i in 0..records {
-            encoder.encode(MessageType::new((i % 0xFF) as u16), &payload);
+            encoder.encode(MessageType::new(i as u16), &payload);
         }
         let data = encoder.finish();
-        let decoder = TlvDecoder::new();
 
         for &nsub in &subs {
             // setup domain (matcher + fanout stub)
@@ -36,6 +35,7 @@ fn bench_pipeline_notification(c: &mut Criterion) {
             group.throughput(Throughput::Elements(records as u64));
             group.bench_function(&name, |b| {
                 b.iter(|| {
+                    let decoder = TlvDecoder::new();
                     for res in decoder.iter(black_box(&data)) {
                         let (mt, slice) = res.unwrap();
                         // route and grant

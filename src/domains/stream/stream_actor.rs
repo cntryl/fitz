@@ -138,7 +138,7 @@ impl StreamActor {
             )
             .map_err(|_| StreamError::SessionAlreadyActive)?;
 
-        self.active_session = Some(session_id.clone());
+        self.active_session = Some(session_id);
 
         Ok(BeginSessionResponse { session_id })
     }
@@ -204,7 +204,7 @@ impl StreamActor {
             let _ = ctx.send(area_addr, lease_req);
 
             // Queue this commit (and its mode) to be processed when lease arrives
-            self.pending_commits.push_back((session_id.clone(), mode));
+            self.pending_commits.push_back((*session_id, mode));
             return Err(StreamError::LeaseRequested);
         }
 
