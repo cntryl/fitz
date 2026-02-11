@@ -505,9 +505,11 @@ WebSocket transport          TCP transport
 Frame payloads consist of one or more **TLV records** concatenated back-to-back.
 Each record is:
 
-- **Type** (u16, big-endian):
-  - If `type <= 0xFE`: single byte
+- **Type** (variable, 1 or 3 bytes):
+  - If `type <= 0xFE`: encoded as a single byte
   - If `type > 0xFE`: escape byte `0xFF` followed by 2-byte big-endian u16
+
+**IMPORTANT:** The wire examples in this document show MessageTypes as 2-byte big-endian for readability. Conformant implementations MUST use the variable-length encoding: types 0–254 are 1 byte, types 255+ use the `0xFF` escape followed by `u16 BE`. See **Type Encoding Rules** at the end of the Constants section for decoder/encoder pseudocode.
 - **Length** (u16, big-endian): byte count of value (0..=65535)
 - **Value**: exactly `length` bytes
 
@@ -909,11 +911,26 @@ Broker behavior:
 - **Valid CONNECT:** No explicit ACK message. Broker remains silent and is ready for requests.
 - **Invalid CONNECT:** Broker closes connection within 1 second (no response frame sent)
 - **No CONNECT within 10 seconds:** Broker closes connection with graceful shutdown
-  Clients MUST:
-- Wait 5–10 seconds after sending CONNECT before considering it failed
-- If no close frame within 5 seconds, assume connection is ready
-- If connection closes immediately, treat as authentication failure
-- Handle immediate connection close (treat as auth failure, do NOT retry same JWT)
+
+Clients MUST:
+
+- Send CONNECT as the first frame after transport is established
+- **Immediately proceed to send domain requests** after sending CONNECT (do not wait for an ACK)
+- If the broker rejects the JWT, it closes the connection — the client discovers this when the transport drops or when the first domain response fails
+- If the connection closes within 1 second of CONNECT, treat as authentication failure
+- Do NOT retry with the same JWT after auth failure
+- Implement a CONNECT timeout of 5–10 seconds — if no domain response AND no connection close within this window, close and retry with backoff
+
+**Recommended client pattern:**
+
+```
+1. Open transport (WebSocket/TCP)
+2. Send CONNECT frame with JWT
+3. Immediately send first domain request (e.g., KV BEGIN, Notice SUBSCRIBE)
+4. If domain response arrives → connection is authenticated and working
+5. If connection closes → auth failure, do NOT retry same JWT
+6. If neither within timeout → close, retry with backoff
+```
   **Session State After Successful CONNECT:**
   On successful CONNECT, broker creates session and MUST:
 - Assign unique session ID (internal use only)
@@ -1036,7 +1053,23 @@ Clients SHOULD implement queueing and backoff:
 - Implement configurable write queue with maximum size
 - On queue full, return error to caller (do NOT silently drop)
 - Implement exponential backoff for retries
-- **Server backpressure:** Brokers MAY signal backpressure via rate-limit or backpressure error codes (or an explicit backpressure frame). Clients MUST respect such signals and apply backoff and queue-management strategies.
+
+**Server backpressure signaling:**
+
+Brokers signal backpressure through **domain error responses**. There is no separate backpressure frame. When a domain's internal queue is full, the broker returns a domain error in the standard response format:
+
+- RPC: `6003 = ERR_RPC_BACKPRESSURE`
+- Queue: `4005 = ERR_QUEUE_FULL`
+- Other domains: connection close if internal buffers overflow
+
+**Client behavior on backpressure errors:**
+
+1. Pause sending to the affected domain
+2. Apply exponential backoff (starting at 100ms, max 30s)
+3. Retry the failed operation after backoff
+4. If backpressure persists, surface error to caller
+
+**Notice domain exception:** Since PUBLISH is fire-and-forget with no response, the broker silently drops notifications under backpressure. Clients have no visibility into dropped notices — this is by design (best-effort semantics).
 
 ## Routing
 
@@ -1234,9 +1267,8 @@ A request is valid **only if**:
   | `RESERVE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
   | `COMPLETE` | `{realm}/{area}/{resource}` |
   | `EXTEND` | `{realm}/{area}/{resource}` |
-  **Note:** `LIST`, `CREATE`, `DELETE` (admin), and `SEND`/`RECEIVE`/`RELEASE` operations are either broker-internal or legacy verbs. Clients should use: ENQUEUE, RESERVE, COMPLETE, EXTEND as documented in the wire format section.source`|
-|`RELEASE`|`{realm}/{area}/{resource}`|
-|`EXTEND`|`{realm}/{area}/{resource}` |
+
+  **Note:** `LIST` is a broker-internal management operation not currently exposed in the client wire protocol. Clients should use: ENQUEUE, RESERVE, COMPLETE, EXTEND as documented in the wire format section.
 
 ### Schedule Domain
 
@@ -1246,12 +1278,13 @@ A request is valid **only if**:
 - `schedule://{realm}/{area}/{resource}`
 - `schedule://{realm}/{area}/*`
   **Method Acceptance:**
-  | Method | Accepted Route Sh/{resource}`|
-|`CANCEL`|`{realm}/{area}/{resource}`|
-**Note:**`DELETE`(admin) and`TRIGGER`operations are broker-internal. Clients should use: CREATE, CANCEL, LIST as documented in the wire format section. LIST is fully documented with streaming protocol.
-|`PUT`|`{realm}/{area}/{resource}`|
-|`DELETE`(data) |`{realm}/{area}/{resource}`|
-|`TRIGGER`|`{realm}/{area}/{resource}` |
+  | Method | Accepted Route Shapes |
+  | -------- | ----------------------------------------------- |
+  | `CREATE` | `{realm}/{area}/{resource}` |
+  | `CANCEL` | `{realm}/{area}/{resource}` |
+  | `LIST` | `{realm}/{area}`, `{realm}/{area}/*` |
+
+  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST as documented in the wire format section. LIST is fully documented with streaming protocol.
 
 ### Lease Domain
 
@@ -1264,6 +1297,7 @@ A request is valid **only if**:
   | `ACQUIRE` | `{realm}/{area}/{resource}` |
   | `RENEW` | `{realm}/{area}/{resource}` |
   | `RELEASE` | `{realm}/{area}/{resource}` |
+  | `QUERY` | `{realm}/{area}/{resource}` |
 
 ### Notice Domain
 
@@ -1332,7 +1366,7 @@ Clients MUST:
 | KV       | DELETE_RANGE       |       107 | Data          | Delete key range        |
 | KV       | SCAN               |       108 | Data          | Scan keys in range      |
 | Queue    | ENQUEUE            |       200 | Data          | Add message             |
-| Queue    | ENQUEUE_BATCH      |       201 | Data          | Batch add messages      |
+| Queue    | ENQUEUE_BATCH      |       201 | Reserved      | Batch add (future)      |
 | Queue    | RESERVE            |       202 | Data          | Lease message(s)        |
 | Queue    | EXTEND             |       203 | Data          | Extend lease            |
 | Queue    | COMPLETE           |       204 | Data          | Mark complete           |
@@ -1848,15 +1882,16 @@ Each domain has a specific wire format, verb set, and semantics. Implement each 
 [bytes]   route (UTF-8, e.g., "notice://realm/area/events")
 [u32 BE]  payload_len
 [bytes]   payload
-Response (status=0 success):
-  [u8]     0
-  [u8]     has_subscription_id (0 or 1)
-  [u64 BE] subscription_id (if has_subscription_id=1)
-Response (status=1 error):
-  [u8]     1
-  [u32 BE] error_len
-  [bytes]  error_msg
 ```
+
+**No response frame.** PUBLISH is fire-and-forget. The broker accepts the frame and fans out to matching subscribers. The client MUST NOT wait for a response after sending PUBLISH.
+
+**Design Notes:**
+
+- No delivery confirmation (best-effort)
+- No error returned for invalid routes or missing subscribers
+- Client-side errors (e.g., connection closed, frame too large) are transport-level only
+- This matches the Notice domain's non-durable, best-effort semantics
 
 #### SUBSCRIBE Request
 
@@ -2137,6 +2172,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 #### Semantics
 
+- **Fire-and-Forget PUBLISH**: PUBLISH sends a frame with no response. No delivery confirmation, no error response. Transport errors (connection closed) are the only failure mode.
 - **Client-Side Multiplexing**: Server tracks one subscription per `(session, pattern)`. Client tracks multiple handlers per `subscription_id`. Server sends one NOTIFY per pattern match; client demuxes to all local handlers.
 - **Idempotent SUBSCRIBE**: Duplicate SUBSCRIBE to same pattern returns same `subscription_id` (no duplicate server subscription created)
 - **Delivery**: Best-effort; under backpressure, notifications may be dropped
@@ -2215,12 +2251,14 @@ Response (status=0):
   [u8]     0
   [u64 BE] session_id
   [u32 BE] data_len
-  [bytes]  data
+  [bytes]  data (broker-defined opaque bytes; clients MUST treat as opaque and MAY ignore)
 Response (status=1):
   [u8]     1
   [u32 BE] error_len
   [bytes]  error_msg
 ```
+
+**Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 
 #### APPEND Request
 
@@ -2674,6 +2712,22 @@ Response from broker (status=1):
 
 **Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed.
 
+#### REQUEST Delivery (Server forwards to worker)
+
+When the broker selects a worker for an incoming REQUEST, it delivers the same REQUEST frame (MessageType=302) to the worker's connection. The worker receives:
+
+```
+[16 bytes] correlation_id (UUID, from caller)
+[u32 BE]   route_len
+[bytes]    route (the target route)
+[u32 BE]   reply_route_len
+[bytes]    reply_route (caller's reply route)
+[u32 BE]   body_len
+[bytes]    body
+```
+
+The worker MUST use `correlation_id` when sending RESPONSE frames back. The broker routes RESPONSE frames to the caller by matching `reply_route`.
+
 #### RESPONSE (From worker to caller via broker)
 
 ```
@@ -2857,10 +2911,12 @@ Every operation includes full context:
 [u32 BE]  route_len
 [bytes]   route (UTF-8, e.g., "kv://realm/area/resource")
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
-[u8]      durability (0=Sync, 1=Buffered)
+[u8]      durability (0=Buffered, 1=Sync)
 Response (success):
+  [u8]     0 (status: success)
   [u64 BE] tx_id
 Response (error):
+  [u8]     1 (status: error)
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -2875,7 +2931,12 @@ Response (error):
 [bytes]   key
 [u32 BE]  value_len
 [bytes]   value
-Response: (empty on success, error on failure)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### GET Request
@@ -2887,10 +2948,12 @@ Response: (empty on success, error on failure)
 [u32 BE]  key_len
 [bytes]   key
 Response (success):
+  [u8]     0 (status: success)
   [u8]     found (0=not_found, 1=found)
-  [u32 BE] value_len
-  [bytes]  value (empty if not found)
+  [u32 BE] value_len (present only if found=1)
+  [bytes]  value (present only if found=1)
 Response (error):
+  [u8]     1 (status: error)
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -2905,7 +2968,12 @@ Response (error):
 [bytes]   key
 [u32 BE]  value_len
 [bytes]   value
-Response: (empty on success)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### DELETE Request
@@ -2916,7 +2984,12 @@ Response: (empty on success)
 [bytes]   route
 [u32 BE]  key_len
 [bytes]   key
-Response: (empty on success)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### DELETE_RANGE Request
@@ -2929,7 +3002,12 @@ Response: (empty on success)
 [bytes]   start_key
 [u32 BE]  end_key_len
 [bytes]   end_key
-Response: (empty on success)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### SCAN Request
@@ -2947,7 +3025,8 @@ Response: (empty on success)
 [u8]      has_limit
 [u32 BE]  limit (if present)
 [u8]      reverse (0 or 1)
-Response:
+Response (success):
+  [u8]     0 (status: success)
   [u32 BE] item_count
   [repeat]
     [u32 BE] key_len
@@ -2955,6 +3034,10 @@ Response:
     [u32 BE] value_len
     [bytes]  value
   [u8]     has_more (0 or 1)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### COMMIT Request
@@ -2963,7 +3046,12 @@ Response:
 [u64 BE]  tx_id
 [u32 BE]  route_len
 [bytes]   route
-Response: (empty on success)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### ROLLBACK Request
@@ -2972,7 +3060,12 @@ Response: (empty on success)
 [u64 BE]  tx_id
 [u32 BE]  route_len
 [bytes]   route
-Response: (empty on success)
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 #### Semantics
@@ -3224,10 +3317,10 @@ else:
 
 #### Error Codes (5xxx)
 
-- 4001 = ERR_LEASE_HELD
-- 4002 = ERR_INVALID_FENCE
-- 4003 = ERR_LEASE_EXPIRED
-- 4004 = ERR_LEASE_NOT_FOUND
+- 5001 = ERR_LEASE_HELD
+- 5002 = ERR_INVALID_FENCE
+- 5003 = ERR_LEASE_EXPIRED
+- 5004 = ERR_LEASE_NOT_FOUND
 
 #### Acceptance Tests
 
@@ -3415,6 +3508,15 @@ Every operation includes route:
 - **Cancellation**: Cancels future runs; already-running tasks may not abort
 - **Route Scoped**: Independent schedules per route
 
+##### Execution Model
+
+When a schedule fires, the broker performs the `target_operation` on the `target_resource` internally. For example:
+
+- `target_resource="notice://prod/app/notifications"` + `target_operation="PUBLISH"` → broker publishes a Notice to that route
+- `target_resource="queue://prod/app/tasks"` + `target_operation="ENQUEUE"` → broker enqueues a message to that queue
+
+**Client observability:** To observe schedule execution, clients should subscribe to the target resource via the appropriate domain (e.g., Notice SUBSCRIBE for Notice targets, Queue RESERVE for Queue targets). The broker acts as an internal client when executing scheduled operations.
+
 #### Error Codes (7xxx)
 
 - 7001 = ERR_SCHEDULE_NOT_FOUND
@@ -3455,7 +3557,7 @@ Every operation includes route:
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
-| 201 | ENQUEUE_BATCH |
+| 201 | ENQUEUE_BATCH (reserved) |
 | 202 | RESERVE |
 | 203 | EXTEND |
 | 204 | COMPLETE |
@@ -3542,9 +3644,42 @@ Clients do NOT encode these; listed for reference:
 
 ### Type Encoding Rules
 
-- `type 0x00..0xFE`: single byte
-- `type 0xFF`: escape marker for types > 0xFE
-  - Followed by `u16 BE` for actual type
+- `type 0x00..0xFE`: single byte on wire
+- `type 0xFF`: escape marker — followed by `u16 BE` for actual type value (for types > 0xFE)
+
+**Decoder pseudocode:**
+
+```python
+def read_message_type(stream):
+    """Read MessageType from wire. Returns u16."""
+    first_byte = stream.read_u8()
+    if first_byte == 0xFF:
+        # Escape: next 2 bytes are the actual type
+        return stream.read_u16_be()
+    else:
+        # Single byte type (0x00–0xFE)
+        return first_byte
+```
+
+**Encoder pseudocode:**
+
+```python
+def write_message_type(stream, msg_type):
+    """Write MessageType to wire."""
+    if msg_type <= 0xFE:
+        stream.write_u8(msg_type)
+    else:
+        stream.write_u8(0xFF)
+        stream.write_u16_be(msg_type)
+```
+
+**Current implications:**
+
+- CONNECT (type=1): encodes as 1 byte `[0x01]`
+- KV BEGIN (type=100): encodes as 1 byte `[0x64]`
+- Notice PUBLISH (type=500): encodes as 3 bytes `[0xFF][0x01][0xF4]`
+
+**IMPORTANT:** The wire examples elsewhere in this document show all MessageTypes as 2-byte `[u16 BE]` for readability. Conformant implementations MUST use the variable-length encoding described above.
 
 ## Acceptance Criteria
 
@@ -3566,38 +3701,6 @@ Client implementations MUST pass the following test suite against a reference br
 - Publish with no subscribers returns ok
 - Unsubscribe stops delivery
 - Wildcard patterns match correctly
-  **Stream:**
-- Begin/append/commit cycle succeeds
-- Read returns records in offset order
-- Read beyond watermark fails appropriately
-- Append with mismatched expected_offset fails
-- Rollback discards uncommitted appends
-  **Queue:**
-- Enqueue/reserve/complete cycle succeeds
-- Lease expiry returns message to ready queue
-- Extend lease delays expiry
-- Complete with wrong token fails
-- Batch reserve returns up to specified count
-  **RPC:**
-- Single request/response cycle succeeds
-- Streaming response reassembled in order
-- Request timeout returns error
-- Multiple workers on same route handle requests
-  **KV:**
-- Begin/put/commit cycle succeeds
-- Begin/get on non-existent key handled correctly
-- ReadOnly mode rejects write operations
-- Two transactions on same resource conflict
-- Scan returns lexicographically ordered pairs
-  **Lease:**
-- Acquire succeeds when free, fails when held
-- Renew with valid token extends TTL
-- Release with valid token releases lease
-- Expired lease acquirable by new owner
-  **Schedule:**
-- Create schedule and verify execution
-- Cancel prevents future runs
-- List returns created schedules
   **Stream:**
 - Begin/append/commit cycle succeeds
 - Read returns records in offset order

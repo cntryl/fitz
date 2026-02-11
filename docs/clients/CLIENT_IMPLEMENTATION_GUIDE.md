@@ -445,10 +445,10 @@ from enum import IntEnum
 
 class MessageType(IntEnum):
     BEGIN = 100
-    PUT = 104
+    COMMIT = 101
+    ROLLBACK = 102
     GET = 103
-    COMMIT = 107
-    ROLLBACK = 108
+    PUT = 104
 
 @dataclass
 class GetResult:

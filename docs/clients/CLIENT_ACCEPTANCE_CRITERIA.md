@@ -34,12 +34,12 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-CONN-002: CONNECT Frame with JWT
 
 **MUST** authenticate with valid JWT
-**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `exp`, custom `route_family` and `scopes`)  
+**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `scopes`, `exp`, optional for multitenant scenarios `tid` or `tenant_id`)  
 **When:** Client sends CONNECT frame as first message after WebSocket upgrade  
 **Then:**
 
-- Server extracts `route_family` (u64) from JWT
-- Server responds with success
+- Server extracts routing information from JWT internally (e.g., RouteFamily from `tid`/`tenant_id`)
+- Server responds with success (silent acceptance — no explicit ACK)
 - Client can proceed with domain operations
 - Subsequent frames are authorized per JWT `scopes`
 
@@ -149,7 +149,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client sends `Insert(tx_id, "counter", "1")`  
 **Then:**
 
-- Server returns error code `1003` (Key Exists)
+- Server returns error code `1006` (ERR_KEY_EXISTS)
 - Transaction remains active (can rollback)
 
 ### AC-KV-006: Delete Existing Key
@@ -204,7 +204,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client sends `Put(tx_id, key, value)`  
 **Then:**
 
-- Server returns error code `1009` (Unauthorized)
+- Server returns error code `1001` (ERR_UNAUTHORIZED)
 - Write does NOT occur
 
 ### AC-KV-011: Delete Range with Invalid Bounds
@@ -214,8 +214,10 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client sends `DeleteRange(tx_id, start="z", end="a")` (inverted range)  
 **Then:**
 
-- Server returns error code `1006` (Invalid Range)
+- Server returns error (invalid range bounds)
 - No keys deleted
+
+**Note:** The specific error code for invalid range bounds is broker-defined within the 1xxx KV range.
 
 ## Stream Domain
 
@@ -340,7 +342,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 **MUST** reject complete with wrong token
 **Given:** Message reserved with token `T1`  
-**When:** Client sends `Complete(message_id, token="WRONG")`  
+**When:** Client sends `Complete(message_id, token=<invalid_u64>)`  
 **Then:**
 
 - Server returns error code `4003` (Invalid Token)
@@ -550,9 +552,9 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **Given:** Worker sends response larger than single frame limit  
 **When:**
 
-1. Worker sends `ReplyChunk(correlation_id, chunk=0, total=3, data1)`
-2. Worker sends `ReplyChunk(correlation_id, chunk=1, total=3, data2)`
-3. Worker sends `ReplyChunk(correlation_id, chunk=2, total=3, data3)`
+1. Worker sends `Response(correlation_id, sequence=0, body=data1, stream_end=false)`
+2. Worker sends `Response(correlation_id, sequence=1, body=data2, stream_end=false)`
+3. Worker sends `Response(correlation_id, sequence=2, body=data3, stream_end=true)`
    **Then:**
 
 - Caller receives complete response after all chunks arrive
