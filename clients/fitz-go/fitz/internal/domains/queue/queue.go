@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/cntryl/cntryl-go/internal/core/transport"
-	"github.com/cntryl/cntryl-go/internal/core/types"
+	"github.com/cntryl/fitz-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/types"
 )
 
 // Client is the API for the Queue domain.

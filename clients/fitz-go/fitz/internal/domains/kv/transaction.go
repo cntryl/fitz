@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/iter"
-	"github.com/cntryl/cntryl-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/iter"
+	"github.com/cntryl/fitz-go/internal/core/transport"
 )
 
 // KVPair is a simple key/value pair returned by Scan operations.

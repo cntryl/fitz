@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/iter"
+	"github.com/cntryl/fitz-go/internal/core/iter"
 )
 
 // Client is the API for the RPC domain.

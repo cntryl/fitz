@@ -8,15 +8,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/transport"
-	"github.com/cntryl/cntryl-go/internal/core/types"
-	"github.com/cntryl/cntryl-go/internal/domains/kv"
-	"github.com/cntryl/cntryl-go/internal/domains/lease"
-	"github.com/cntryl/cntryl-go/internal/domains/notice"
-	"github.com/cntryl/cntryl-go/internal/domains/queue"
-	"github.com/cntryl/cntryl-go/internal/domains/rpc"
-	"github.com/cntryl/cntryl-go/internal/domains/schedule"
-	"github.com/cntryl/cntryl-go/internal/domains/stream"
+	"github.com/cntryl/fitz-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/types"
+	"github.com/cntryl/fitz-go/internal/domains/kv"
+	"github.com/cntryl/fitz-go/internal/domains/lease"
+	"github.com/cntryl/fitz-go/internal/domains/notice"
+	"github.com/cntryl/fitz-go/internal/domains/queue"
+	"github.com/cntryl/fitz-go/internal/domains/rpc"
+	"github.com/cntryl/fitz-go/internal/domains/schedule"
+	"github.com/cntryl/fitz-go/internal/domains/stream"
 )
 
 // domainMux adapts the transport mux for domain clients.

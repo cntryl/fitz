@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/transport"
 )
 
 // client is the concrete implementation of the Notice domain client.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cntryl/cntryl-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/transport"
 )
 
 // Client provides transaction-based key-value operations only. All data

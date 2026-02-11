@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/iter"
-	"github.com/cntryl/cntryl-go/internal/core/transport"
-	"github.com/cntryl/cntryl-go/internal/core/types"
+	"github.com/cntryl/fitz-go/internal/core/iter"
+	"github.com/cntryl/fitz-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/types"
 )
 
 // Client is the API for the Stream domain.

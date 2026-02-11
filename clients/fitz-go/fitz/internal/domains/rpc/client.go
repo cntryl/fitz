@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/iter"
-	"github.com/cntryl/cntryl-go/internal/core/transport"
-	"github.com/cntryl/cntryl-go/internal/core/types"
+	"github.com/cntryl/fitz-go/internal/core/iter"
+	"github.com/cntryl/fitz-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/types"
 )
 
 // client is the concrete implementation of the RPC domain client.

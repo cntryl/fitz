@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	fitz "github.com/cntryl/cntryl-go"
-	"github.com/cntryl/cntryl-go/internal/core/client"
-	"github.com/cntryl/cntryl-go/internal/core/types"
+	fitz "github.com/cntryl/fitz-go"
+	"github.com/cntryl/fitz-go/internal/core/client"
+	"github.com/cntryl/fitz-go/internal/core/types"
 )
 
 // TestFixture manages broker connections and test lifecycle for integration tests.

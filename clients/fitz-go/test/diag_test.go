@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/transport"
 )
 
 // TestDiagBrokerRawFrames is a diagnostic test that connects to the broker

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cntryl/cntryl-go/internal/domains/notice"
-	"github.com/cntryl/cntryl-go/test/fixture"
+	"github.com/cntryl/fitz-go/internal/domains/notice"
+	"github.com/cntryl/fitz-go/test/fixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
