@@ -2,11 +2,10 @@ package kv
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"time"
 
-	"github.com/cntryl/fitz-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/protocol"
 )
 
 // Client provides transaction-based key-value operations only. All data
@@ -15,91 +14,136 @@ import (
 // non-transactional use.
 type Client interface {
 	// Begin opens a read/write transaction scoped to the provided route.
-	Begin(ctx context.Context, route string) (Tx, error)
+	// Optional functional options can configure durability mode.
+	Begin(ctx context.Context, route string, opts ...BeginOption) (Tx, error)
 
 	// BeginRead opens a read-only transaction scoped to the provided route.
 	BeginRead(ctx context.Context, route string) (ReadTx, error)
 }
 
-// client is a concrete implementation of Client using the provided mux provider.
-type client struct {
-	mux transport.MuxProvider
+// BeginOption configures transaction BEGIN parameters.
+type BeginOption func(*beginConfig)
+
+// beginConfig holds configuration for BEGIN operations.
+type beginConfig struct {
+	durability uint8
 }
 
-// NewClient creates a new KV domain client backed by the provided mux provider.
-func NewClient(mux transport.MuxProvider) Client {
+// WithDurability sets the transaction durability mode.
+// Default is DurabilityBuffered (faster, best-effort persistence).
+// Use DurabilitySync for guaranteed durability (slower, fsync on commit).
+func WithDurability(mode uint8) BeginOption {
+	return func(cfg *beginConfig) {
+		cfg.durability = mode
+	}
+}
+
+// client is a concrete implementation of Client using the connection layer.
+type client struct {
+	conn *connection.Connection
+}
+
+// NewClient creates a new KV domain client backed by the provided connection.
+func NewClient(conn *connection.Connection) Client {
 	return &client{
-		mux: mux,
+		conn: conn,
 	}
 }
 
 // Begin opens a read/write transaction scoped to the provided route.
-func (c *client) Begin(ctx context.Context, route string) (Tx, error) {
-	txID := nextTxID.Add(1)
-
-	// Send BEGIN request to broker for acknowledgement.
-	// Use new payload format per CLIENT_SPEC.md: [route_len][route][mode][durability]
-	payload := EncodeBegin(route, TxModeReadWrite, DurabilitySync)
-
-	frame := transport.Frame{
-		Type:    uint8(KVBegin), // Cast to uint8 for old Frame format (TODO: Phase 3)
-		Flags:   0,
-		Channel: transport.ChannelKV,
-		Body:    payload,
+// Per CLIENT_SPEC.md: Server assigns tx_id and returns it in response.
+func (c *client) Begin(ctx context.Context, route string, opts ...BeginOption) (Tx, error) {
+	// Apply options
+	cfg := beginConfig{
+		durability: DurabilityBuffered, // Default to buffered for performance
 	}
-	if err := c.mux.Send(frame); err != nil {
-		return nil, fmt.Errorf("send KV begin: %w", err)
+	for _, opt := range opts {
+		opt(&cfg)
 	}
 
-	// Create a temporary transaction to receive BEGIN acknowledgement.
+	// Encode BEGIN request per CLIENT_SPEC.md
+	payload, err := EncodeBegin(route, TxModeReadWrite, cfg.durability)
+	if err != nil {
+		return nil, fmt.Errorf("encode BEGIN: %w", err)
+	}
+
+	// Send request and wait for response
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeKvBegin, payload)
+	if err != nil {
+		return nil, fmt.Errorf("send BEGIN request: %w", err)
+	}
+
+	// Parse response: [u8 status][u64 BE tx_id] for success
+	success, remaining, err := connection.ParseStandardResponse(resp)
+	if err != nil {
+		return nil, fmt.Errorf("BEGIN failed: %w", mapKVError(err.Error()))
+	}
+	if !success {
+		return nil, fmt.Errorf("BEGIN failed: unexpected status")
+	}
+
+	// Extract tx_id from remaining payload (server-assigned per CLIENT_SPEC.md)
+	if len(remaining) < 8 { // tx_id is u64 (8 bytes)
+		return nil, fmt.Errorf("invalid BEGIN response: expected at least 8 bytes for tx_id, got %d", len(remaining))
+	}
+
+	txID, _, err := connection.ReadU64BE(remaining, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse tx_id: %w", err)
+	}
+
+	// Create transaction with server-assigned tx_id
 	tx := &transaction{
 		route:    route,
-		mux:      c.mux,
+		conn:     c.conn,
 		readOnly: false,
 		txID:     txID,
 	}
 
-	// Wait for server acknowledgement with timeout.
-	beginCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	for {
-		select {
-		case <-beginCtx.Done():
-			return nil, fmt.Errorf("Begin operation timed out waiting for broker response")
-		case respFrame, ok := <-c.mux.In():
-			if !ok {
-				return nil, errors.New("mux closed")
-			}
-
-			// Check if this is our response (same channel).
-			if respFrame.Channel != transport.ChannelKV {
-				continue
-			}
-
-			dec, err := transport.NewTLVDecoder(respFrame.Body)
-			if err != nil {
-				continue
-			}
-
-			// Check for error response.
-			if dec.Has(transport.TagErr) {
-				errMsg := dec.GetString(transport.TagErr)
-				return nil, mapKVError(errMsg)
-			}
-
-			// BEGIN succeeded.
-			return tx, nil
-		}
-	}
+	return tx, nil
 }
 
 // BeginRead opens a read-only transaction scoped to the provided route.
+// Per CLIENT_SPEC.md: ReadOnly transactions must also call BEGIN on server.
 func (c *client) BeginRead(ctx context.Context, route string) (ReadTx, error) {
-	txID := nextTxID.Add(1)
-	return &transaction{
+	// Encode BEGIN request with ReadOnly mode
+	payload, err := EncodeBegin(route, TxModeReadOnly, DurabilityBuffered)
+	if err != nil {
+		return nil, fmt.Errorf("encode BEGIN: %w", err)
+	}
+
+	// Send request and wait for response
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeKvBegin, payload)
+	if err != nil {
+		return nil, fmt.Errorf("send BEGIN request: %w", err)
+	}
+
+	// Parse response
+	success, remaining, err := connection.ParseStandardResponse(resp)
+	if err != nil {
+		return nil, fmt.Errorf("BEGIN failed: %w", mapKVError(err.Error()))
+	}
+	if !success {
+		return nil, fmt.Errorf("BEGIN failed: unexpected status")
+	}
+
+	// Extract tx_id from remaining payload
+	if len(remaining) < 8 {
+		return nil, fmt.Errorf("invalid BEGIN response: expected at least 8 bytes for tx_id, got %d", len(remaining))
+	}
+
+	txID, _, err := connection.ReadU64BE(remaining, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse tx_id: %w", err)
+	}
+
+	// Create read-only transaction
+	tx := &transaction{
 		route:    route,
-		mux:      c.mux,
+		conn:     c.conn,
 		readOnly: true,
 		txID:     txID,
-	}, nil
+	}
+
+	return tx, nil
 }
