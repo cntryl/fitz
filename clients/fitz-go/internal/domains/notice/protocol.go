@@ -27,8 +27,7 @@ var (
 
 func encodePublish(route string, body []byte) []byte {
 	routeBytes := []byte(route)
-	buf := make([]byte, 0, 8+4+len(routeBytes)+4+len(body))
-	buf = appendU64(buf, 0)
+	buf := make([]byte, 0, 4+len(routeBytes)+4+len(body))
 	buf = appendU32(buf, uint32(len(routeBytes)))
 	buf = append(buf, routeBytes...)
 	buf = appendU32(buf, uint32(len(body)))
@@ -38,12 +37,9 @@ func encodePublish(route string, body []byte) []byte {
 
 func encodeSubscribe(route string) []byte {
 	pat := []byte(route)
-	buf := make([]byte, 0, 8+4+len(pat)+8+4)
-	buf = appendU64(buf, 0)
+	buf := make([]byte, 0, 4+len(pat))
 	buf = appendU32(buf, uint32(len(pat)))
 	buf = append(buf, pat...)
-	buf = appendU64(buf, 0)
-	buf = appendU32(buf, 0)
 	return buf
 }
 
@@ -64,11 +60,10 @@ func DecodeNotify(body []byte) (string, []byte, bool) {
 }
 
 func decodeFirstRoute(body []byte) (int, string, bool) {
-	if len(body) < 12 {
+	if len(body) < 4 {
 		return 0, "", false
 	}
 	idx := 0
-	idx += 8 // family_id
 	routeLen := readU32(body[idx:])
 	idx += 4
 	if int(idx+int(routeLen)) > len(body) {

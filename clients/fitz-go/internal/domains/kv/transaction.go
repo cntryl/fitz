@@ -40,7 +40,7 @@ type Tx interface {
 
 // transaction is a concrete implementation of both ReadTx and Tx using the transport mux.
 type transaction struct {
-	route      Route
+	route      string
 	mux        transport.MuxProvider
 	readOnly   bool
 	mu         sync.RWMutex
@@ -71,19 +71,15 @@ func (t *transaction) Get(ctx context.Context, key []byte) ([]byte, bool, error)
 	// Use a unique request ID for correlation.
 	requestID := nextTxID.Add(1)
 
-	// Build the request TLV payload.
-	enc := transport.NewTLVEncoder()
-	enc.AddOp(KVGet)
-	enc.AddString(transport.TagRoute, t.route.String())
-	enc.AddBytes(transport.TagKey, key)
-	enc.AddUint64(transport.TagID, requestID)
+	// Build the request payload.
+	payload := EncodeGet(requestID, t.route, key)
 
 	// Send request frame on the KV channel.
 	frame := transport.Frame{
-		Type:    transport.FrameTypeReq,
+		Type:    uint8(KVGet), // Cast to uint8 for old Frame format (TODO: Phase 3)
 		Flags:   0,
 		Channel: transport.ChannelKV,
-		Body:    enc.Encode(),
+		Body:    payload,
 	}
 	if err := t.mux.Send(frame); err != nil {
 		return nil, false, fmt.Errorf("send Get request: %w", err)
@@ -149,7 +145,7 @@ func (t *transaction) Scan(ctx context.Context, startKey []byte, endKey []byte, 
 
 	// Build the request TLV payload.
 	enc := transport.NewTLVEncoder()
-	enc.AddString(transport.TagRoute, t.route.String())
+	enc.AddString(transport.TagRoute, t.route)
 	if len(startKey) > 0 {
 		enc.AddBytes(transport.TagStartKey, startKey)
 	}
@@ -291,9 +287,6 @@ func (t *transaction) Put(ctx context.Context, key []byte, value []byte) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	// Check transaction state.
 	if t.committed.Load() {
 		return fmt.Errorf("transaction already committed")
@@ -302,21 +295,57 @@ func (t *transaction) Put(ctx context.Context, key []byte, value []byte) error {
 		return fmt.Errorf("transaction already rolled back")
 	}
 
-	// Build and send PUT request immediately.
-	enc := transport.NewTLVEncoder()
-	enc.AddOp(KVPut)
-	enc.AddString(transport.TagRoute, t.route.String())
-	enc.AddBytes(transport.TagKey, key)
-	enc.AddBytes(transport.TagBody, value)
-	enc.AddUint64(transport.TagID, t.txID)
+	// Build and send PUT request.
+	payload := EncodePut(t.txID, t.route, key, value)
 
 	frame := transport.Frame{
-		Type:    transport.FrameTypeReq,
+		Type:    uint8(KVPut), // Cast to uint8 for old Frame format (TODO: Phase 3)
 		Flags:   0,
 		Channel: transport.ChannelKV,
-		Body:    enc.Encode(),
+		Body:    payload,
 	}
-	return t.mux.Send(frame)
+	if err := t.mux.Send(frame); err != nil {
+		return fmt.Errorf("send Put request: %w", err)
+	}
+
+	// Wait for broker acknowledgement with timeout.
+	putCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		select {
+		case <-putCtx.Done():
+			return fmt.Errorf("Put operation timed out waiting for broker response")
+		case respFrame, ok := <-t.mux.In():
+			if !ok {
+				return errors.New("mux closed")
+			}
+
+			// Check if this is our response (same channel, matching ID).
+			if respFrame.Channel != transport.ChannelKV {
+				continue
+			}
+
+			dec, err := transport.NewTLVDecoder(respFrame.Body)
+			if err != nil {
+				continue
+			}
+
+			// Check if response has matching ID.
+			respID, _ := dec.GetUint64(transport.TagID)
+			if respID != t.txID {
+				continue
+			}
+
+			// Check for error response.
+			if dec.Has(transport.TagErr) {
+				errMsg := dec.GetString(transport.TagErr)
+				return mapKVError(errMsg)
+			}
+
+			// Put succeeded.
+			return nil
+		}
+	}
 }
 
 // Insert sets a key/value pair only if the key does not exist.
@@ -328,9 +357,6 @@ func (t *transaction) Insert(ctx context.Context, key []byte, value []byte) erro
 		return fmt.Errorf("key cannot be empty")
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	// Check transaction state.
 	if t.committed.Load() {
 		return fmt.Errorf("transaction already committed")
@@ -339,10 +365,10 @@ func (t *transaction) Insert(ctx context.Context, key []byte, value []byte) erro
 		return fmt.Errorf("transaction already rolled back")
 	}
 
-	// Build and send INSERT request immediately.
+	// Build and send INSERT request.
 	enc := transport.NewTLVEncoder()
 	enc.AddOp(KVInsert)
-	enc.AddString(transport.TagRoute, t.route.String())
+	enc.AddString(transport.TagRoute, t.route)
 	enc.AddBytes(transport.TagKey, key)
 	enc.AddBytes(transport.TagBody, value)
 	enc.AddUint64(transport.TagID, t.txID)
@@ -353,7 +379,48 @@ func (t *transaction) Insert(ctx context.Context, key []byte, value []byte) erro
 		Channel: transport.ChannelKV,
 		Body:    enc.Encode(),
 	}
-	return t.mux.Send(frame)
+	if err := t.mux.Send(frame); err != nil {
+		return fmt.Errorf("send Insert request: %w", err)
+	}
+
+	// Wait for broker acknowledgement with timeout.
+	insertCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		select {
+		case <-insertCtx.Done():
+			return fmt.Errorf("Insert operation timed out waiting for broker response")
+		case respFrame, ok := <-t.mux.In():
+			if !ok {
+				return errors.New("mux closed")
+			}
+
+			// Check if this is our response (same channel, matching ID).
+			if respFrame.Channel != transport.ChannelKV {
+				continue
+			}
+
+			dec, err := transport.NewTLVDecoder(respFrame.Body)
+			if err != nil {
+				continue
+			}
+
+			// Check if response has matching ID.
+			respID, _ := dec.GetUint64(transport.TagID)
+			if respID != t.txID {
+				continue
+			}
+
+			// Check for error response.
+			if dec.Has(transport.TagErr) {
+				errMsg := dec.GetString(transport.TagErr)
+				return mapKVError(errMsg)
+			}
+
+			// Insert succeeded.
+			return nil
+		}
+	}
 }
 
 // Delete removes a key.
@@ -365,9 +432,6 @@ func (t *transaction) Delete(ctx context.Context, key []byte) error {
 		return fmt.Errorf("key cannot be empty")
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	// Check transaction state.
 	if t.committed.Load() {
 		return fmt.Errorf("transaction already committed")
@@ -376,10 +440,10 @@ func (t *transaction) Delete(ctx context.Context, key []byte) error {
 		return fmt.Errorf("transaction already rolled back")
 	}
 
-	// Build and send DELETE request immediately.
+	// Build and send DELETE request.
 	enc := transport.NewTLVEncoder()
 	enc.AddOp(KVDelete)
-	enc.AddString(transport.TagRoute, t.route.String())
+	enc.AddString(transport.TagRoute, t.route)
 	enc.AddBytes(transport.TagKey, key)
 	enc.AddUint64(transport.TagID, t.txID)
 
@@ -389,7 +453,48 @@ func (t *transaction) Delete(ctx context.Context, key []byte) error {
 		Channel: transport.ChannelKV,
 		Body:    enc.Encode(),
 	}
-	return t.mux.Send(frame)
+	if err := t.mux.Send(frame); err != nil {
+		return fmt.Errorf("send Delete request: %w", err)
+	}
+
+	// Wait for broker acknowledgement with timeout.
+	deleteCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		select {
+		case <-deleteCtx.Done():
+			return fmt.Errorf("Delete operation timed out waiting for broker response")
+		case respFrame, ok := <-t.mux.In():
+			if !ok {
+				return errors.New("mux closed")
+			}
+
+			// Check if this is our response (same channel, matching ID).
+			if respFrame.Channel != transport.ChannelKV {
+				continue
+			}
+
+			dec, err := transport.NewTLVDecoder(respFrame.Body)
+			if err != nil {
+				continue
+			}
+
+			// Check if response has matching ID.
+			respID, _ := dec.GetUint64(transport.TagID)
+			if respID != t.txID {
+				continue
+			}
+
+			// Check for error response.
+			if dec.Has(transport.TagErr) {
+				errMsg := dec.GetString(transport.TagErr)
+				return mapKVError(errMsg)
+			}
+
+			// Delete succeeded.
+			return nil
+		}
+	}
 }
 
 // DeleteRange removes all keys in the range [startKey, endKey).
@@ -401,9 +506,6 @@ func (t *transaction) DeleteRange(ctx context.Context, startKey []byte, endKey [
 		return 0, fmt.Errorf("startKey and endKey cannot be empty")
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	// Check transaction state.
 	if t.committed.Load() {
 		return 0, fmt.Errorf("transaction already committed")
@@ -412,10 +514,10 @@ func (t *transaction) DeleteRange(ctx context.Context, startKey []byte, endKey [
 		return 0, fmt.Errorf("transaction already rolled back")
 	}
 
-	// Build and send DELETE_RANGE request immediately.
+	// Build and send DELETE_RANGE request.
 	enc := transport.NewTLVEncoder()
 	enc.AddOp(KVDeleteRange)
-	enc.AddString(transport.TagRoute, t.route.String())
+	enc.AddString(transport.TagRoute, t.route)
 	enc.AddBytes(transport.TagStartKey, startKey)
 	enc.AddBytes(transport.TagEndKey, endKey)
 	enc.AddUint64(transport.TagID, t.txID)
@@ -427,10 +529,47 @@ func (t *transaction) DeleteRange(ctx context.Context, startKey []byte, endKey [
 		Body:    enc.Encode(),
 	}
 	if err := t.mux.Send(frame); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("send DeleteRange request: %w", err)
 	}
-	// Count returned by broker in response; for now, return 0.
-	return 0, nil
+
+	// Wait for broker acknowledgement with timeout.
+	deleteCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		select {
+		case <-deleteCtx.Done():
+			return 0, fmt.Errorf("DeleteRange operation timed out waiting for broker response")
+		case respFrame, ok := <-t.mux.In():
+			if !ok {
+				return 0, errors.New("mux closed")
+			}
+
+			// Check if this is our response (same channel, matching ID).
+			if respFrame.Channel != transport.ChannelKV {
+				continue
+			}
+
+			dec, err := transport.NewTLVDecoder(respFrame.Body)
+			if err != nil {
+				continue
+			}
+
+			// Check if response has matching ID.
+			respID, _ := dec.GetUint64(transport.TagID)
+			if respID != t.txID {
+				continue
+			}
+
+			// Check for error response.
+			if dec.Has(transport.TagErr) {
+				errMsg := dec.GetString(transport.TagErr)
+				return 0, mapKVError(errMsg)
+			}
+
+			// DeleteRange succeeded. Count is not yet returned by broker; return 0 for now.
+			return 0, nil
+		}
+	}
 }
 
 // Commit marks the transaction as complete. For immediate-send design, this signals
@@ -454,18 +593,14 @@ func (t *transaction) Commit(ctx context.Context) error {
 	}
 
 	// Send COMMIT signal to broker to finalize the transaction.
-	enc := transport.NewTLVEncoder()
-	enc.AddString(transport.TagRoute, t.route.String())
-	enc.AddUint64(transport.TagID, t.txID)
-	// Include operation tag for commit so receivers can easily identify it.
-	enc.AddOp(KVCommit)
+	payload := EncodeCommit(t.txID)
 
 	// Use KV-specific request frame type to match broker expectations.
 	frame := transport.Frame{
-		Type:    transport.FrameTypeReq,
+		Type:    uint8(KVCommit), // Cast to uint8 for old Frame format (TODO: Phase 3)
 		Flags:   0,
 		Channel: transport.ChannelKV,
-		Body:    enc.Encode(),
+		Body:    payload,
 	}
 
 	if err := t.mux.Send(frame); err != nil {
@@ -518,16 +653,13 @@ func (t *transaction) Rollback(ctx context.Context) error {
 	}
 
 	// Send ROLLBACK signal to broker using KV-specific frame type.
-	enc := transport.NewTLVEncoder()
-	enc.AddOp(KVRollback)
-	enc.AddString(transport.TagRoute, t.route.String())
-	enc.AddUint64(transport.TagID, t.txID)
+	payload := EncodeRollback(t.txID)
 
 	frame := transport.Frame{
-		Type:    transport.FrameTypeReq,
+		Type:    uint8(KVRollback), // Cast to uint8 for old Frame format (TODO: Phase 3)
 		Flags:   0,
 		Channel: transport.ChannelKV,
-		Body:    enc.Encode(),
+		Body:    payload,
 	}
 
 	_ = t.mux.Send(frame) // Best effort.

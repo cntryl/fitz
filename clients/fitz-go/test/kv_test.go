@@ -30,11 +30,7 @@ func TestShouldOpenAndCommitTransactionGivenValidRouteWhenBeginCalled(t *testing
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		// Act
 		tx, err := f.Client().KV().Begin(ctx, route)
@@ -67,11 +63,7 @@ func TestShouldReadValueGivenExistingKeyWhenGetCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		// Seed a key.
 		tx, err := f.Client().KV().Begin(ctx, route)
@@ -102,11 +94,7 @@ func TestShouldReturnNotFoundGivenNonExistentKeyWhenGetCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		rtx, err := f.Client().KV().BeginRead(ctx, route)
 		require.NoError(t, err)
@@ -132,11 +120,7 @@ func TestShouldWriteValueGivenValidKeyWhenPutCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		tx, err := f.Client().KV().Begin(ctx, route)
 		require.NoError(t, err)
@@ -167,11 +151,7 @@ func TestShouldInsertNewKeyGivenNonExistentKeyWhenInsertCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		tx, err := f.Client().KV().Begin(ctx, route)
 		require.NoError(t, err)
@@ -202,11 +182,7 @@ func TestShouldFailGivenExistingKeyWhenInsertCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		// Seed the key.
 		tx, err := f.Client().KV().Begin(ctx, route)
@@ -236,11 +212,7 @@ func TestShouldDeleteKeyGivenExistingKeyWhenDeleteCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		tx, err := f.Client().KV().Begin(ctx, route)
 		require.NoError(t, err)
@@ -275,11 +247,7 @@ func TestShouldScanKeysInOrderGivenRangeWhenScanCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		tx, err := f.Client().KV().Begin(ctx, route)
 		require.NoError(t, err)
@@ -318,11 +286,7 @@ func TestShouldRollbackChangesGivenActiveTransactionWhenRollbackCalled(t *testin
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		tx, err := f.Client().KV().Begin(ctx, route)
 		require.NoError(t, err)
@@ -354,11 +318,7 @@ func TestShouldIsolateTransactionsGivenConcurrentAccessWhenMultipleTransactions(
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		// Act — open two concurrent write transactions on the same resource.
 		tx1, err := f.Client().KV().Begin(ctx, route)
@@ -394,11 +354,7 @@ func TestShouldRejectWriteGivenReadOnlyModeWhenPutCalled(t *testing.T) {
 
 		f.ConnectOrSkip(ctx)
 
-		route := kv.Route{
-			Realm:    f.UniqueRealm(),
-			Area:     f.UniqueArea(),
-			Resource: f.UniqueResource(),
-		}
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
 
 		// Act — BeginRead returns ReadTx which does not expose mutation methods.
 		rtx, err := f.Client().KV().BeginRead(ctx, route)

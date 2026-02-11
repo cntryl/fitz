@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	fitz "github.com/cntryl/fitz-go"
+	fitz "github.com/cntryl/fitz-go/fitz"
 	"github.com/cntryl/fitz-go/internal/core/client"
 	"github.com/cntryl/fitz-go/internal/core/types"
 )
