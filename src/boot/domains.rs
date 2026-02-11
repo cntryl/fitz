@@ -343,8 +343,9 @@ impl MailboxSink for NoticeDomainSink {
         use crate::domains::notice::protocol::NotificationMessage;
         use crate::protocol::notice_codec::NoticeResponse;
 
-        let response = match notice_msg {
+        let response_opt = match notice_msg {
             NotificationMessage::Publish(pub_msg) => {
+                // PUBLISH is fire-and-forget per CLIENT_SPEC: no response, just fanout and return
                 let family_id = pub_msg.family_id.as_u64();
                 let families = self.families.lock();
                 if let Some(state) = families.get(&family_id) {
@@ -375,9 +376,8 @@ impl MailboxSink for NoticeDomainSink {
                         }
                     }
                 }
-                NoticeResponse::Ok {
-                    subscription_id: None,
-                }
+                // Return None to indicate no response should be sent (fire-and-forget)
+                None
             }
             NotificationMessage::Subscribe(sub_msg) => {
                 let family_id = sub_msg.family_id.as_u64();
@@ -406,9 +406,9 @@ impl MailboxSink for NoticeDomainSink {
                     "Subscription added"
                 );
 
-                NoticeResponse::Ok {
+                Some(NoticeResponse::Ok {
                     subscription_id: Some(sub_id),
-                }
+                })
             }
             NotificationMessage::Unsubscribe(unsub_msg) => {
                 let family_id = unsub_msg.family_id.as_u64();
@@ -419,9 +419,9 @@ impl MailboxSink for NoticeDomainSink {
                             && s.pattern.route() == unsub_msg.pattern.as_str())
                     });
                 }
-                NoticeResponse::Ok {
+                Some(NoticeResponse::Ok {
                     subscription_id: None,
-                }
+                })
             }
             NotificationMessage::UnsubscribeAll(unsub_all) => {
                 let session_id = unsub_all.session_id.0;
@@ -434,28 +434,30 @@ impl MailboxSink for NoticeDomainSink {
                     session = session_id,
                     "All subscriptions removed for session"
                 );
-                NoticeResponse::Ok {
+                Some(NoticeResponse::Ok {
                     subscription_id: None,
-                }
+                })
             }
             NotificationMessage::Notify(_) => {
                 // Notify is internal delivery, no response needed
-                NoticeResponse::Ok {
+                Some(NoticeResponse::Ok {
                     subscription_id: None,
-                }
+                })
             }
         };
 
-        // Encode and route response back
-        let response_bytes = crate::protocol::notice_codec::encode_response(&response);
-        let response_ctx = FrameContext::new(
-            frame_ctx.session_id,
-            frame_ctx.channel_id,
-            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-            bytes::Bytes::from(response_bytes),
-        );
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+        // Only send response if one was generated (PUBLISH returns None for fire-and-forget)
+        if let Some(response) = response_opt {
+            let response_bytes = crate::protocol::notice_codec::encode_response(&response);
+            let response_ctx = FrameContext::new(
+                frame_ctx.session_id,
+                frame_ctx.channel_id,
+                crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                bytes::Bytes::from(response_bytes),
+            );
+            if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                let _ = self.router.route(response_envelope);
+            }
         }
 
         Ok(())

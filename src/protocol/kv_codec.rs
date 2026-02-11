@@ -264,14 +264,14 @@ fn parse_begin(
     };
     offset += 1;
 
-    // Read durability (u8): 0=synced, 1=buffered
+    // Read durability (u8): 0=buffered, 1=sync (per CLIENT_SPEC)
     if offset >= payload.len() {
         return Err("BEGIN durability byte missing".to_string());
     }
     let write_options = if payload[offset] == 0 {
-        cntryl_midge::WriteOptions::sync()
-    } else {
         cntryl_midge::WriteOptions::buffered()
+    } else {
+        cntryl_midge::WriteOptions::sync()
     };
 
     Ok(KvMessage::Begin {
@@ -850,7 +850,7 @@ mod tests {
         payload.put_u32(route.len() as u32);
         payload.put_slice(route.as_bytes());
         payload.put_u8(1); // ReadWrite
-        payload.put_u8(1); // buffered
+        payload.put_u8(0); // buffered (per CLIENT_SPEC: 0=buffered, 1=sync)
 
         // Act
         let result = parse_request(
@@ -918,5 +918,63 @@ mod tests {
         assert!(!encoded.is_empty());
         assert_eq!(encoded[0], 0); // status: success
         assert_eq!(encoded[1], 0); // not found flag
+    }
+
+    #[test]
+    fn should_parse_begin_with_sync_durability() {
+        // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
+        let route = "kv://acme/kv/users";
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u8(1); // ReadWrite
+        payload.put_u8(1); // sync durability (per CLIENT_SPEC: 1=sync)
+
+        // Act
+        let result = parse_request(
+            msg_type::BEGIN,
+            RouteFamily::new(1),
+            &payload,
+        );
+
+        // Assert
+        match result {
+            Ok(KvMessage::Begin {
+                write_options, ..
+            }) => {
+                // Verify that durability byte 1 maps to sync
+                assert!(write_options.is_sync(), "Durability byte 1 should map to sync");
+            }
+            _ => panic!("Expected KvMessage::Begin with sync write options"),
+        }
+    }
+
+    #[test]
+    fn should_parse_begin_with_buffered_durability() {
+        // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
+        let route = "kv://acme/kv/users";
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u8(1); // ReadWrite
+        payload.put_u8(0); // buffered durability (per CLIENT_SPEC: 0=buffered)
+
+        // Act
+        let result = parse_request(
+            msg_type::BEGIN,
+            RouteFamily::new(1),
+            &payload,
+        );
+
+        // Assert
+        match result {
+            Ok(KvMessage::Begin {
+                write_options, ..
+            }) => {
+                // Verify that durability byte 0 maps to buffered
+                assert!(!write_options.is_sync(), "Durability byte 0 should map to buffered");
+            }
+            _ => panic!("Expected KvMessage::Begin with buffered write options"),
+        }
     }
 }
