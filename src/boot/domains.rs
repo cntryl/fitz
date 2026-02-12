@@ -824,7 +824,14 @@ impl MailboxSink for RpcDomainSink {
             }
             RpcMessage::Response(resp) => {
                 let mut state = self.state.lock();
-                if let Some((caller_session_id, caller_family_id)) = state.pending.remove(&resp.correlation_id) {
+                // Keep pending until stream_end so streaming responses (multiple 303 chunks) all get forwarded.
+                let caller_info = state.pending.get(&resp.correlation_id).copied();
+                if let Some((caller_session_id, caller_family_id)) = caller_info {
+                    if resp.stream_end {
+                        state.pending.remove(&resp.correlation_id);
+                    }
+                    drop(state);
+
                     // Forward response to caller's session inbox (avoids RPC domain re-entry)
                     let caller_inbox_addr = crate::runtime::routing::RouteAddress::new(
                         caller_family_id,
@@ -842,6 +849,7 @@ impl MailboxSink for RpcDomainSink {
                     tracing::debug!(
                         domain = "rpc",
                         correlation_id = %resp.correlation_id,
+                        stream_end = resp.stream_end,
                         "Response forwarded to requester"
                     );
                 } else {

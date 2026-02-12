@@ -87,6 +87,22 @@ func (c *client) initRPCHandler() {
 	}
 	c.initialized = true
 	c.conn.RegisterRPCResponseHandler(c.handleRPCResponse)
+	c.conn.RegisterRPCRequestHandler(c.handleRPCRequest)
+}
+
+// handleRPCRequest handles incoming RPC REQUEST frames (302) forwarded to this worker.
+// Payload: [u32 BE corrLen=16][16 bytes correlation_id][route][reply_route][body] (TLV).
+func (c *client) handleRPCRequest(payload []byte) {
+	if len(payload) < 20 {
+		return
+	}
+	corrLen := binary.BigEndian.Uint32(payload[0:4])
+	if corrLen != 16 || len(payload) < 20 {
+		return
+	}
+	var correlationID [16]byte
+	copy(correlationID[:], payload[4:20])
+	c.handleWorkerRequest(correlationID, payload[20:])
 }
 
 // handleRPCResponse handles incoming RPC RESPONSE frames (303).
@@ -132,16 +148,17 @@ func (c *client) handleRPCResponse(correlationID [16]byte, payload []byte) {
 			streamEnd = payload[offset] == 1
 		}
 
-		select {
-		case ch <- ResponseFrame{Body: body, Sequence: seq}:
-		default:
-		}
-
 		if streamEnd {
+			// End-of-stream: close channel and clean up; do not push a frame (caller sees N data frames then done).
 			c.mu.Lock()
 			delete(c.pendingRPCs, correlationID)
 			c.mu.Unlock()
 			close(ch)
+		} else {
+			select {
+			case ch <- ResponseFrame{Body: body, Sequence: seq}:
+			default:
+			}
 		}
 		return
 	}

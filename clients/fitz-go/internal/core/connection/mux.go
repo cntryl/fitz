@@ -29,8 +29,9 @@ type Multiplexer struct {
 	pending map[uint16]*list.List
 	mu      sync.Mutex
 
-	// Async delivery handlers (Notice NOTIFY, RPC RESPONSE per CLIENT_SPEC.md)
+	// Async delivery handlers (Notice NOTIFY, RPC REQUEST to worker, RPC RESPONSE per CLIENT_SPEC.md)
 	notifyHandler  func(subID uint64, route string, payload []byte)
+	rpcReqHandler  func(payload []byte) // incoming RPC REQUEST (302) dispatched to worker
 	rpcRespHandler func(correlationID [16]byte, payload []byte)
 
 	// Metrics for observability
@@ -111,10 +112,36 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 		m.handleNotify(payload)
 		return
 	}
-	if msgType == 303 { // RPC RESPONSE
-		debug.MuxAsync("RPC_RESPONSE", msgType, len(payload))
-		m.handleRpcResponse(payload)
-		return
+	if msgType == 302 {
+		// 302 can be either: (1) sync response (ack) to our outgoing REQUEST, or (2) async REQUEST forwarded to us as worker.
+		// If we have a pending request for 302, this is the ack; otherwise deliver to worker handler.
+		m.mu.Lock()
+		queue, exists := m.pending[302]
+		hasPending := exists && queue.Len() > 0
+		m.mu.Unlock()
+		if hasPending {
+			// Sync response to caller's SendRequest(302) — fall through to sync path below
+		} else if m.rpcReqHandler != nil {
+			debug.MuxAsync("RPC_REQUEST", msgType, len(payload))
+			m.handleRpcRequest(payload)
+			return
+		}
+		// If no pending and no handler, fall through to sync path (will drop if no pending)
+	}
+	if msgType == 303 {
+		// 303 can be either: (1) sync response (ack) to our outgoing RESPONSE as worker, or (2) async RESPONSE forwarded to us as caller.
+		// If we have a pending request for 303, this is the ack; otherwise deliver to caller's response handler.
+		m.mu.Lock()
+		queue303, exists303 := m.pending[303]
+		hasPending303 := exists303 && queue303.Len() > 0
+		m.mu.Unlock()
+		if hasPending303 {
+			// Sync response to worker's SendRequest(303) — fall through to sync path below
+		} else {
+			debug.MuxAsync("RPC_RESPONSE", msgType, len(payload))
+			m.handleRpcResponse(payload)
+			return
+		}
 	}
 
 	// Synchronous request/response - route to oldest pending request
@@ -196,6 +223,14 @@ func (m *Multiplexer) handleNotify(payload []byte) {
 	}
 }
 
+// handleRpcRequest processes RPC REQUEST messages (async delivery to worker).
+// Payload is full request: [u32 len=16][16 bytes correlation_id][route][reply_route][body]
+func (m *Multiplexer) handleRpcRequest(payload []byte) {
+	if m.rpcReqHandler != nil {
+		m.rpcReqHandler(payload)
+	}
+}
+
 // handleRpcResponse processes RPC RESPONSE messages (async delivery).
 // Per server rpc_codec.rs: [bytes correlation_id][u64 seq][bytes body][u8 stream_end]
 // where "bytes" = [u32 BE len][data] (TLV bytes format)
@@ -226,6 +261,12 @@ func (m *Multiplexer) handleRpcResponse(payload []byte) {
 // Called by the Notice domain client.
 func (m *Multiplexer) SetNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
 	m.notifyHandler = handler
+}
+
+// SetRPCRequestHandler registers the handler for RPC REQUEST messages (302).
+// Called by the RPC domain client so workers receive forwarded requests.
+func (m *Multiplexer) SetRPCRequestHandler(handler func(payload []byte)) {
+	m.rpcReqHandler = handler
 }
 
 // SetRPCResponseHandler registers the handler for RPC RESPONSE messages.
