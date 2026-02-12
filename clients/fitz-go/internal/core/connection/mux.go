@@ -29,10 +29,11 @@ type Multiplexer struct {
 	pending map[uint16]*list.List
 	mu      sync.Mutex
 
-	// Async delivery handlers (Notice NOTIFY, RPC REQUEST to worker, RPC RESPONSE per CLIENT_SPEC.md)
-	notifyHandler  func(subID uint64, route string, payload []byte)
-	rpcReqHandler  func(payload []byte) // incoming RPC REQUEST (302) dispatched to worker
-	rpcRespHandler func(correlationID [16]byte, payload []byte)
+	// Async delivery handlers (Notice NOTIFY, Schedule NOTIFY, RPC REQUEST to worker, RPC RESPONSE per CLIENT_SPEC.md)
+	notifyHandler         func(subID uint64, route string, payload []byte)
+	scheduleNotifyHandler func(subID uint64, route string, payload []byte)
+	rpcReqHandler         func(payload []byte) // incoming RPC REQUEST (302) dispatched to worker
+	rpcRespHandler        func(correlationID [16]byte, payload []byte)
 
 	// Metrics for observability
 	requestsInFlight atomic.Int64
@@ -110,6 +111,11 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	if msgType == 504 { // Notice NOTIFY
 		debug.MuxAsync("NOTICE_NOTIFY", msgType, len(payload))
 		m.handleNotify(payload)
+		return
+	}
+	if msgType == 705 { // Schedule NOTIFY
+		debug.MuxAsync("SCHEDULE_NOTIFY", msgType, len(payload))
+		m.handleScheduleNotify(payload)
 		return
 	}
 	if msgType == 302 {
@@ -223,6 +229,39 @@ func (m *Multiplexer) handleNotify(payload []byte) {
 	}
 }
 
+// handleScheduleNotify processes Schedule NOTIFY messages (705).
+// Per CLIENT_SPEC.md: [u64 BE subscription_id][u32 route_len][route][u32 payload_len][payload]
+func (m *Multiplexer) handleScheduleNotify(payload []byte) {
+	if len(payload) < 8 {
+		return
+	}
+	offset := 0
+	subID := binary.BigEndian.Uint64(payload[offset : offset+8])
+	offset += 8
+	if len(payload) < offset+4 {
+		return
+	}
+	routeLen := binary.BigEndian.Uint32(payload[offset : offset+4])
+	offset += 4
+	if len(payload) < offset+int(routeLen) {
+		return
+	}
+	route := string(payload[offset : offset+int(routeLen)])
+	offset += int(routeLen)
+	if len(payload) < offset+4 {
+		return
+	}
+	payloadLen := binary.BigEndian.Uint32(payload[offset : offset+4])
+	offset += 4
+	if len(payload) < offset+int(payloadLen) {
+		return
+	}
+	msgPayload := payload[offset : offset+int(payloadLen)]
+	if m.scheduleNotifyHandler != nil {
+		m.scheduleNotifyHandler(subID, route, msgPayload)
+	}
+}
+
 // handleRpcRequest processes RPC REQUEST messages (async delivery to worker).
 // Payload is full request: [u32 len=16][16 bytes correlation_id][route][reply_route][body]
 func (m *Multiplexer) handleRpcRequest(payload []byte) {
@@ -261,6 +300,11 @@ func (m *Multiplexer) handleRpcResponse(payload []byte) {
 // Called by the Notice domain client.
 func (m *Multiplexer) SetNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
 	m.notifyHandler = handler
+}
+
+// SetScheduleNotifyHandler registers the handler for Schedule NOTIFY messages (705).
+func (m *Multiplexer) SetScheduleNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
+	m.scheduleNotifyHandler = handler
 }
 
 // SetRPCRequestHandler registers the handler for RPC REQUEST messages (302).

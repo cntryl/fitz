@@ -20,7 +20,7 @@ func RunWithBothTransports(t *testing.T, testFn func(t *testing.T, transport Tra
 		transport := transport // capture range variable
 		t.Run(string(transport), func(t *testing.T) {
 			// Run transports sequentially to avoid cross-transport race conditions in
-			// the in-process simulator. Tests remain independent and deterministic.
+			// Tests remain independent and deterministic.
 			testFn(t, transport)
 		})
 	}

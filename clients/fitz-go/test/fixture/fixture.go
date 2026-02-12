@@ -11,6 +11,8 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/types"
 )
 
+// Note: Integration tests require a running Fitz broker (e.g. localhost:4091 TCP, localhost:4090 WS).
+
 // TestFixture manages broker connections and test lifecycle for integration tests.
 // It supports both TCP and WebSocket transports to verify protocol equivalence.
 type TestFixture struct {
@@ -63,23 +65,22 @@ func (f *TestFixture) Connect(ctx context.Context) error {
 	return f.client.Connect(ctx)
 }
 
-// SetBrokerAddr overrides the fixture broker address (useful for simulators).
+// SetBrokerAddr overrides the fixture broker address.
 func (f *TestFixture) SetBrokerAddr(addr string) {
 	f.brokerAddr = addr
 }
 
 // StartBrokerIfNeeded returns the hardcoded localhost broker address for the
 // requested transport (TCP: localhost:4091, WS: ws://localhost:4090/ws).
-// For unknown transports it falls back to the in-process simulator.
+// Only TCP and WebSocket are supported; unknown transports return an error.
 func StartBrokerIfNeeded(transport TransportType) (addr string, stop func(), err error) {
-	// Hardcoded localhost broker addresses
 	switch transport {
 	case TransportTCP:
 		return "localhost:4091", func() {}, nil
 	case TransportWebSocket:
 		return "ws://localhost:4090/ws", func() {}, nil
 	default:
-		return StartSimBroker(string(transport))
+		return "", nil, fmt.Errorf("unsupported transport: %s", transport)
 	}
 }
 
