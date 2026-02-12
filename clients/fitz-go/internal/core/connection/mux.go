@@ -197,20 +197,28 @@ func (m *Multiplexer) handleNotify(payload []byte) {
 }
 
 // handleRpcResponse processes RPC RESPONSE messages (async delivery).
-// Per CLIENT_SPEC.md: [16 bytes correlation_id][u8 status][...]
+// Per server rpc_codec.rs: [bytes correlation_id][u64 seq][bytes body][u8 stream_end]
+// where "bytes" = [u32 BE len][data] (TLV bytes format)
 func (m *Multiplexer) handleRpcResponse(payload []byte) {
-	if len(payload) < 17 {
-		debug.Log("RPC_RESPONSE malformed: payload_len=%d (need >= 17)", len(payload))
-		return // Malformed (need at least correlation_id + status)
+	// Need at least [u32 len=16][16 bytes uuid] = 20 bytes for correlation_id
+	if len(payload) < 20 {
+		debug.Log("RPC_RESPONSE malformed: payload_len=%d (need >= 20)", len(payload))
+		return
 	}
 
-	// Extract correlation_id (16 bytes UUID)
-	var correlationID [16]byte
-	copy(correlationID[:], payload[0:16])
+	// Parse correlation_id as TLV bytes: [u32 BE len][16 bytes UUID]
+	corrLen := binary.BigEndian.Uint32(payload[0:4])
+	if corrLen != 16 || len(payload) < 4+int(corrLen) {
+		debug.Log("RPC_RESPONSE bad correlation_id length: %d", corrLen)
+		return
+	}
 
-	// Call registered handler with remaining payload (status + response data)
+	var correlationID [16]byte
+	copy(correlationID[:], payload[4:20])
+
+	// Call registered handler with remaining payload (seq + body + stream_end)
 	if m.rpcRespHandler != nil {
-		m.rpcRespHandler(correlationID, payload[16:])
+		m.rpcRespHandler(correlationID, payload[20:])
 	}
 }
 

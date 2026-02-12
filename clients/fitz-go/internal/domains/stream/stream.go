@@ -65,16 +65,16 @@ func NewClient(conn *connection.Connection) Client {
 	}
 }
 
-// Begin per CLIENT_SPEC.md:
-// Request: [route_len][route][expected_offset(u64)][has_ingest_metadata(u8)]
-// Response: [status][session_id(u64)][data_len][data]
+// Begin per server stream_codec.rs:
+// Request: [string route][u64 expected_offset][optional bytes ingest_metadata]
+// Response: [status][u8 has_session_id][u64 session_id if has=1][bytes data]
 func (c *client) Begin(ctx context.Context, route string) (uint64, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
 	connection.WriteString(buf, route)
 	connection.WriteU64BE(buf, 0) // expected_offset = 0 (any)
-	connection.WriteU8(buf, 0)    // no ingest metadata
+	connection.WriteU8(buf, 0)    // no ingest metadata (optional bytes flag=0)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamBegin, buf.Bytes())
 	if err != nil {
@@ -89,8 +89,16 @@ func (c *client) Begin(ctx context.Context, route string) (uint64, error) {
 		return 0, fmt.Errorf("BEGIN failed: unexpected status")
 	}
 
-	// Parse session_id
-	sessionID, _, err := connection.ReadU64BE(remaining, 0)
+	// Parse optional session_id: [u8 has_session_id][u64 session_id if has=1]
+	if len(remaining) < 1 {
+		return 0, fmt.Errorf("BEGIN response too short")
+	}
+	hasSessionID := remaining[0]
+	if hasSessionID != 1 || len(remaining) < 9 {
+		return 0, fmt.Errorf("BEGIN response missing session_id")
+	}
+
+	sessionID, _, err := connection.ReadU64BE(remaining, 1)
 	if err != nil {
 		return 0, fmt.Errorf("parse session_id: %w", err)
 	}
@@ -103,9 +111,9 @@ func (c *client) Begin(ctx context.Context, route string) (uint64, error) {
 	return sessionID, nil
 }
 
-// Append per CLIENT_SPEC.md:
-// Request: [session_id(u64)][route_len][route][body_len][body][has_metadata(u8)]
-// Response: [status][data_len][data]
+// Append per server stream_codec.rs:
+// Request: [u64 session_id][bytes body][optional bytes metadata]
+// Response: [status][optional u64 session_id][bytes data]
 func (c *client) Append(ctx context.Context, route string, body []byte, expectedOffset *uint64) (uint64, error) {
 	c.mu.Lock()
 	sessionID, ok := c.sessions[route]
@@ -119,9 +127,8 @@ func (c *client) Append(ctx context.Context, route string, body []byte, expected
 	defer connection.PutBuffer(buf)
 
 	connection.WriteU64BE(buf, sessionID)
-	connection.WriteString(buf, route)
 	connection.WriteBytes(buf, body)
-	connection.WriteU8(buf, 0) // no metadata
+	connection.WriteU8(buf, 0) // no metadata (optional bytes flag=0)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamAppend, buf.Bytes())
 	if err != nil {
@@ -136,12 +143,21 @@ func (c *client) Append(ctx context.Context, route string, body []byte, expected
 		return 0, fmt.Errorf("APPEND failed: unexpected status")
 	}
 
-	// Parse offset from data
-	// Response data may contain the assigned offset
-	if len(remaining) >= 4 {
-		dataLen, offset, err := connection.ReadU32BE(remaining, 0)
-		if err == nil && dataLen >= 8 && offset+int(dataLen) <= len(remaining) {
-			assignedOffset, _, _ := connection.ReadU64BE(remaining, offset)
+	// Response: [u8 has_session_id][u64 session_id?][u32 data_len][data]
+	offset := 0
+	if offset < len(remaining) {
+		hasSessionID := remaining[offset]
+		offset++
+		if hasSessionID == 1 && offset+8 <= len(remaining) {
+			offset += 8 // skip session_id
+		}
+	}
+
+	// Parse data blob which may contain the assigned offset
+	if offset+4 <= len(remaining) {
+		dataLen, newOffset, err := connection.ReadU32BE(remaining, offset)
+		if err == nil && dataLen >= 8 && newOffset+int(dataLen) <= len(remaining) {
+			assignedOffset, _, _ := connection.ReadU64BE(remaining, newOffset)
 			return assignedOffset, nil
 		}
 	}
@@ -150,9 +166,9 @@ func (c *client) Append(ctx context.Context, route string, body []byte, expected
 	return 0, nil
 }
 
-// Commit per CLIENT_SPEC.md:
-// Request: [session_id(u64)][route_len][route][mode(u8)]
-// Response: [status][data_len][data]
+// Commit per server stream_codec.rs:
+// Request: [u64 session_id][u8 mode] where mode: 0=Buffered, 1=Sync
+// Response: [status][optional u64 session_id][bytes data]
 func (c *client) Commit(ctx context.Context, route string) error {
 	c.mu.Lock()
 	sessionID, ok := c.sessions[route]
@@ -166,7 +182,6 @@ func (c *client) Commit(ctx context.Context, route string) error {
 	defer connection.PutBuffer(buf)
 
 	connection.WriteU64BE(buf, sessionID)
-	connection.WriteString(buf, route)
 	connection.WriteU8(buf, 0) // mode = Buffered
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamCommit, buf.Bytes())
@@ -190,8 +205,9 @@ func (c *client) Commit(ctx context.Context, route string) error {
 	return nil
 }
 
-// Rollback per CLIENT_SPEC.md:
-// Request: [session_id(u64)][route_len][route]
+// Rollback per server stream_codec.rs:
+// Request: [u64 session_id]
+// Response: [status][optional u64 session_id][bytes data]
 func (c *client) Rollback(ctx context.Context, route string) error {
 	c.mu.Lock()
 	sessionID, ok := c.sessions[route]
@@ -205,7 +221,6 @@ func (c *client) Rollback(ctx context.Context, route string) error {
 	defer connection.PutBuffer(buf)
 
 	connection.WriteU64BE(buf, sessionID)
-	connection.WriteString(buf, route)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamRollback, buf.Bytes())
 	if err != nil {
@@ -227,9 +242,9 @@ func (c *client) Rollback(ctx context.Context, route string) error {
 	return nil
 }
 
-// ReadResource per CLIENT_SPEC.md:
-// Request: [route_len][route][from_offset(u64)][limit(u64)][has_max_bytes(u8)]
-// Response: [status][records...]
+// ReadResource per server stream_codec.rs:
+// Request: [string route][u64 from_offset][u64 limit][optional u64 max_bytes]
+// Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -237,7 +252,7 @@ func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint
 	connection.WriteString(buf, route)
 	connection.WriteU64BE(buf, fromOffset)
 	connection.WriteU64BE(buf, limit)
-	connection.WriteU8(buf, 0) // no max_bytes
+	connection.WriteU8(buf, 0) // no max_bytes (optional u64 flag=0)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamRead, buf.Bytes())
 	if err != nil {
@@ -252,8 +267,11 @@ func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint
 		return nil, fmt.Errorf("READ failed: unexpected status")
 	}
 
-	// Parse records from response
-	records, err := parseReadResponse(remaining)
+	// Skip optional session_id and extract data blob
+	data := skipOptionalSessionIDAndGetData(remaining)
+
+	// Parse records from data
+	records, err := parseReadResponse(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse READ response: %w", err)
 	}
@@ -261,9 +279,9 @@ func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint
 	return iter.NewSliceIterator(records), nil
 }
 
-// Last per CLIENT_SPEC.md:
-// Request: [route_len][route]
-// Response: [status][record data]
+// Last per server stream_codec.rs:
+// Request: [string route]
+// Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) Last(ctx context.Context, route string) (*Record, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -283,7 +301,15 @@ func (c *client) Last(ctx context.Context, route string) (*Record, error) {
 		return nil, fmt.Errorf("LAST failed: unexpected status")
 	}
 
-	record, err := parseRecord(remaining, 0)
+	// Skip optional session_id and extract data blob
+	data := skipOptionalSessionIDAndGetData(remaining)
+
+	// Empty data means no record (stream empty or server stub)
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	record, err := parseRecord(data, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse LAST response: %w", err)
 	}
@@ -291,9 +317,9 @@ func (c *client) Last(ctx context.Context, route string) (*Record, error) {
 	return record, nil
 }
 
-// GetMetadata per CLIENT_SPEC.md:
-// Request: [route_len][route]
-// Response: [status][metadata]
+// GetMetadata per server stream_codec.rs:
+// Request: [string route]
+// Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) GetMetadata(ctx context.Context, route string) (*Metadata, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -313,66 +339,80 @@ func (c *client) GetMetadata(ctx context.Context, route string) (*Metadata, erro
 		return nil, fmt.Errorf("GET_METADATA failed: unexpected status")
 	}
 
+	// Skip optional session_id and extract data blob
+	data := skipOptionalSessionIDAndGetData(remaining)
+
 	meta := &Metadata{}
 	offset := 0
 
-	// Try to parse data_len + data
-	if len(remaining) >= 4 {
-		dataLen, newOffset, err := connection.ReadU32BE(remaining, offset)
-		if err == nil {
-			offset = newOffset
-			_ = dataLen
-			// Parse metadata fields from data
-			if offset+8 <= len(remaining) {
-				meta.FirstOffset, offset, _ = connection.ReadU64BE(remaining, offset)
-			}
-			if offset+8 <= len(remaining) {
-				meta.LastOffset, offset, _ = connection.ReadU64BE(remaining, offset)
-			}
-			if offset+8 <= len(remaining) {
-				meta.RecordCount, _, _ = connection.ReadU64BE(remaining, offset)
-			}
-		}
+	// Parse metadata fields from data
+	if offset+8 <= len(data) {
+		meta.FirstOffset, offset, _ = connection.ReadU64BE(data, offset)
+	}
+	if offset+8 <= len(data) {
+		meta.LastOffset, offset, _ = connection.ReadU64BE(data, offset)
+	}
+	if offset+8 <= len(data) {
+		meta.RecordCount, _, _ = connection.ReadU64BE(data, offset)
 	}
 
 	return meta, nil
 }
 
-// parseReadResponse parses records from a READ response.
-func parseReadResponse(remaining []byte) ([]Record, error) {
-	if len(remaining) == 0 {
+// skipOptionalSessionIDAndGetData parses the common stream response format:
+// [u8 has_session_id][u64 session_id if has=1][u32 data_len][data]
+// Returns the data portion (after the data_len prefix).
+func skipOptionalSessionIDAndGetData(remaining []byte) []byte {
+	offset := 0
+	if offset >= len(remaining) {
+		return nil
+	}
+
+	// Skip optional session_id
+	hasSessionID := remaining[offset]
+	offset++
+	if hasSessionID == 1 && offset+8 <= len(remaining) {
+		offset += 8
+	}
+
+	// Read data blob: [u32 data_len][data]
+	if offset+4 > len(remaining) {
+		return nil
+	}
+	dataLen, newOffset, err := connection.ReadU32BE(remaining, offset)
+	if err != nil {
+		return nil
+	}
+	if newOffset+int(dataLen) > len(remaining) {
+		return remaining[newOffset:]
+	}
+	return remaining[newOffset : newOffset+int(dataLen)]
+}
+
+// parseReadResponse parses records from a READ response data blob.
+func parseReadResponse(data []byte) ([]Record, error) {
+	if len(data) == 0 {
 		return nil, nil
 	}
 
 	var records []Record
 	offset := 0
 
-	// Try to read data_len first (some responses wrap in data_len)
-	if len(remaining) >= 4 {
-		dataLen, newOffset, err := connection.ReadU32BE(remaining, 0)
-		if err == nil && int(dataLen)+newOffset <= len(remaining) {
-			// Has data_len wrapper
-			offset = newOffset
-			remaining = remaining[offset : offset+int(dataLen)]
-			offset = 0
-		}
-	}
-
 	// Parse record count if available
-	if len(remaining) >= 4 {
-		count, newOffset, err := connection.ReadU32BE(remaining, offset)
+	if len(data) >= 4 {
+		count, newOffset, err := connection.ReadU32BE(data, offset)
 		if err == nil {
 			offset = newOffset
-			for i := uint32(0); i < count && offset < len(remaining); i++ {
-				rec, err := parseRecord(remaining, offset)
+			for i := uint32(0); i < count && offset < len(data); i++ {
+				rec, err := parseRecord(data, offset)
 				if err != nil {
 					break
 				}
 				records = append(records, *rec)
 				// Advance offset past this record
 				offset += 8 // offset field
-				if offset+4 <= len(remaining) {
-					bodyLen, _, _ := connection.ReadU32BE(remaining, offset)
+				if offset+4 <= len(data) {
+					bodyLen, _, _ := connection.ReadU32BE(data, offset)
 					offset += 4 + int(bodyLen)
 				}
 			}
@@ -381,15 +421,15 @@ func parseReadResponse(remaining []byte) ([]Record, error) {
 	}
 
 	// Fallback: try parsing as a flat sequence of records
-	for offset < len(remaining) {
-		rec, err := parseRecord(remaining, offset)
+	for offset < len(data) {
+		rec, err := parseRecord(data, offset)
 		if err != nil {
 			break
 		}
 		records = append(records, *rec)
 		offset += 8 // offset
-		if offset+4 <= len(remaining) {
-			bodyLen, _, _ := connection.ReadU32BE(remaining, offset)
+		if offset+4 <= len(data) {
+			bodyLen, _, _ := connection.ReadU32BE(data, offset)
 			offset += 4 + int(bodyLen)
 		} else {
 			break

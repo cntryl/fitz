@@ -44,7 +44,7 @@ impl LeaseKey {
             .split('/')
             .collect();
 
-        if parts.len() >= 4 {
+        if parts.len() >= 3 {
             Some(LeaseKey {
                 family,
                 realm: parts[0].to_string(),

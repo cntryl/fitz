@@ -137,7 +137,8 @@ func (c *client) BeginRead(ctx context.Context, route string) (ReadTx, error) {
 		return nil, fmt.Errorf("parse tx_id: %w", err)
 	}
 
-	// Create read-only transaction
+	// Create read-only transaction wrapped in readOnlyTransaction
+	// to prevent casting to Tx (per CLIENT_SPEC.md).
 	tx := &transaction{
 		route:    route,
 		conn:     c.conn,
@@ -145,5 +146,5 @@ func (c *client) BeginRead(ctx context.Context, route string) (ReadTx, error) {
 		txID:     txID,
 	}
 
-	return tx, nil
+	return &readOnlyTransaction{inner: tx}, nil
 }

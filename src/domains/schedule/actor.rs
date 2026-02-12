@@ -233,6 +233,11 @@ impl ScheduleActor {
         Ok(id)
     }
 
+    /// Return schedule IDs for LIST operation (client wire format expects string IDs).
+    pub fn list_schedule_ids(&self) -> Vec<String> {
+        self.schedules.keys().map(|id| id.to_string()).collect()
+    }
+
     pub fn delete_schedule(&mut self, id: u64) -> Result<(), String> {
         self.schedules.remove(&id);
         self.store

@@ -52,9 +52,9 @@ func (c *client) Enqueue(ctx context.Context, route string, body []byte) (uint64
 		return 0, fmt.Errorf("ENQUEUE request failed: %w", err)
 	}
 
-	success, remaining, err := connection.ParseStandardResponse(resp)
+	success, remaining, err := parseQueueResponse(resp)
 	if err != nil {
-		return 0, fmt.Errorf("ENQUEUE failed: %w", mapQueueError(err.Error()))
+		return 0, fmt.Errorf("ENQUEUE failed: %w", err)
 	}
 	if !success {
 		return 0, fmt.Errorf("ENQUEUE failed: unexpected status")
@@ -83,9 +83,9 @@ func (c *client) Reserve(ctx context.Context, route string, leaseSecs uint64, ba
 		return nil, fmt.Errorf("RESERVE request failed: %w", err)
 	}
 
-	success, remaining, err := connection.ParseStandardResponse(resp)
+	success, remaining, err := parseQueueResponse(resp)
 	if err != nil {
-		return nil, fmt.Errorf("RESERVE failed: %w", mapQueueError(err.Error()))
+		return nil, fmt.Errorf("RESERVE failed: %w", err)
 	}
 	if !success {
 		return nil, fmt.Errorf("RESERVE failed: unexpected status")
@@ -149,9 +149,9 @@ func (c *client) Extend(ctx context.Context, route string, msgID uint64, token u
 		return fmt.Errorf("EXTEND request failed: %w", err)
 	}
 
-	success, _, err := connection.ParseStandardResponse(resp)
+	success, _, err := parseQueueResponse(resp)
 	if err != nil {
-		return fmt.Errorf("EXTEND failed: %w", mapQueueError(err.Error()))
+		return fmt.Errorf("EXTEND failed: %w", err)
 	}
 	if !success {
 		return fmt.Errorf("EXTEND failed: unexpected status")
@@ -176,9 +176,9 @@ func (c *client) Complete(ctx context.Context, route string, msgID uint64, token
 		return fmt.Errorf("COMPLETE request failed: %w", err)
 	}
 
-	success, _, err := connection.ParseStandardResponse(resp)
+	success, _, err := parseQueueResponse(resp)
 	if err != nil {
-		return fmt.Errorf("COMPLETE failed: %w", mapQueueError(err.Error()))
+		return fmt.Errorf("COMPLETE failed: %w", err)
 	}
 	if !success {
 		return fmt.Errorf("COMPLETE failed: unexpected status")

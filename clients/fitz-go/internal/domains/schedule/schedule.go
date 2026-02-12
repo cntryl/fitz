@@ -36,19 +36,23 @@ func NewClient(conn *connection.Connection) Client {
 	return &client{conn: conn}
 }
 
-// Create per CLIENT_SPEC.md:
-// Request: [route_len][route][cron_len][cron][target_resource_len][target_resource][target_operation_len][target_operation]
-// Response: [status][schedule_id_len][schedule_id]
+// Create per server schedule_codec.rs:
+// Request: [bytes payload] where payload is a nested TLV blob containing:
+//
+//	[u8 type=1][u16 BE cron_len][cron_bytes]
+//	[u8 type=2][u16 BE target_resource_len][target_resource_bytes]
+//	[u8 type=3][u16 BE target_operation_len][target_operation_bytes]
+//
+// Response: [status][u8 has_schedule_id][string schedule_id if has=1]
 func (c *client) Create(ctx context.Context, route string, cronExpr string, payload []byte) (string, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteString(buf, route)
-	connection.WriteString(buf, cronExpr)
-	// target_resource = route (schedule fires back to itself)
-	connection.WriteString(buf, route)
-	// target_operation = payload as string
-	connection.WriteBytes(buf, payload)
+	// Build the inner nested TLV blob (SchedulePayload format)
+	innerTLV := encodeSchedulePayload(cronExpr, route, string(payload))
+
+	// Wrap with WriteBytes: [u32 BE len][inner_tlv_blob]
+	connection.WriteBytes(buf, innerTLV)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCreate, buf.Bytes())
 	if err != nil {
@@ -63,8 +67,16 @@ func (c *client) Create(ctx context.Context, route string, cronExpr string, payl
 		return "", fmt.Errorf("CREATE failed: unexpected status")
 	}
 
-	// Parse schedule_id
-	scheduleID, _, err := connection.ReadString(remaining, 0)
+	// Parse optional schedule_id: [u8 has_schedule_id][string schedule_id if has=1]
+	if len(remaining) < 1 {
+		return "", fmt.Errorf("CREATE response too short")
+	}
+	hasScheduleID := remaining[0]
+	if hasScheduleID != 1 {
+		return "", nil // No schedule ID returned
+	}
+
+	scheduleID, _, err := connection.ReadString(remaining, 1)
 	if err != nil {
 		return "", fmt.Errorf("parse schedule_id: %w", err)
 	}
@@ -72,16 +84,13 @@ func (c *client) Create(ctx context.Context, route string, cronExpr string, payl
 	return scheduleID, nil
 }
 
-// Cancel per CLIENT_SPEC.md:
-// Request: [route_len][route][schedule_id_len][schedule_id]
-// Response: [status]
+// Cancel per server schedule_codec.rs:
+// Request: [string schedule_id]
+// Response: [status][optional string schedule_id]
 func (c *client) Cancel(ctx context.Context, scheduleID string) error {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	// For cancel, we pass the route as empty and the schedule_id
-	// The server identifies the schedule by ID
-	connection.WriteString(buf, "")
 	connection.WriteString(buf, scheduleID)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCancel, buf.Bytes())
@@ -100,16 +109,12 @@ func (c *client) Cancel(ctx context.Context, scheduleID string) error {
 	return nil
 }
 
-// List per CLIENT_SPEC.md:
-// Request: [route_len][route]
-// Response: [status][entries...]
+// List per server schedule_codec.rs:
+// Request: empty payload (no parameters)
+// Response: [status][optional string schedule_id]
 func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleList, buf.Bytes())
+	// Server expects empty payload for LIST
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleList, nil)
 	if err != nil {
 		return nil, fmt.Errorf("LIST request failed: %w", err)
 	}
@@ -122,34 +127,28 @@ func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error
 		return nil, fmt.Errorf("LIST failed: unexpected status")
 	}
 
-	// Parse entries list
+	// Response uses optional_string format: [u8 has_id][string id if has=1]
 	var entries []ScheduleEntry
 	offset := 0
 	for offset < len(remaining) {
-		// Check for has_entry flag
 		if offset >= len(remaining) {
 			break
 		}
-
 		hasEntry := remaining[offset]
 		offset++
 
 		if hasEntry == 0 {
-			break // End of list
+			break // No more entries (or None sentinel)
 		}
 
 		// Read schedule_id
 		id, newOffset, err := connection.ReadString(remaining, offset)
 		if err != nil {
-			break // Can't parse more
+			break
 		}
 		offset = newOffset
 
 		entries = append(entries, ScheduleEntry{ID: id})
-
-		// Skip any additional schedule data (cron, payload, etc.)
-		// Try to read past remaining fields until next has_entry flag
-		// This is best-effort; we consume what we can
 	}
 
 	return entries, nil

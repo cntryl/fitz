@@ -308,37 +308,39 @@ func TestShouldRollbackChangesGivenActiveTransactionWhenRollbackCalled(t *testin
 
 // TestShouldIsolateTransactionsGivenConcurrentAccessWhenMultipleTransactions
 // verifies that two transactions on the same resource detect conflicts per
-// CLIENT_SPEC.md isolation semantics.
+// CLIENT_SPEC.md isolation semantics (pessimistic resource lock).
 func TestShouldIsolateTransactionsGivenConcurrentAccessWhenMultipleTransactions(t *testing.T) {
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
-		// Arrange
-		f := fixture.NewTestFixture(t, transport)
+		// Arrange — two sessions, same resource
+		f1 := fixture.NewTestFixture(t, transport)
+		f2 := fixture.NewTestFixture(t, transport)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		f.ConnectOrSkip(ctx)
+		f1.ConnectOrSkip(ctx)
+		f2.ConnectOrSkip(ctx)
 
-		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
+		route := kv.NewRoute(f1.UniqueRealm(), f1.UniqueArea(), f1.UniqueResource()).String()
 
-		// Act — open two concurrent write transactions on the same resource.
-		tx1, err := f.Client().KV().Begin(ctx, route)
+		// First session begins ReadWrite
+		tx1, err := f1.Client().KV().Begin(ctx, route)
 		require.NoError(t, err)
-		tx2, err := f.Client().KV().Begin(ctx, route)
-		require.NoError(t, err)
+		require.NotNil(t, tx1)
+		defer func() { _ = tx1.Rollback(ctx) }()
 
-		require.NoError(t, tx1.Put(ctx, []byte("key"), []byte("tx1")))
-		require.NoError(t, tx2.Put(ctx, []byte("key"), []byte("tx2")))
+		// Act — second session tries to begin ReadWrite on same resource
+		tx2, err2 := f2.Client().KV().Begin(ctx, route)
 
-		// Commit tx1 first.
-		err1 := tx1.Commit(ctx)
-		// Commit tx2 — should conflict.
-		err2 := tx2.Commit(ctx)
-
-		// Assert — at least one should succeed, the other should conflict.
-		if err1 == nil {
-			assert.Error(t, err2, "second concurrent commit should conflict")
-		} else {
-			assert.NoError(t, err2, "if tx1 conflicted, tx2 should succeed")
+		// Assert — second begin should fail with conflict (or tx2 nil)
+		if err2 != nil {
+			assert.Nil(t, tx2)
+			assert.Contains(t, err2.Error(), "conflict", "expected conflict or resource locked error")
+			return
+		}
+		// If no error, tx2 must be nil (server may return nil tx on conflict)
+		if tx2 != nil {
+			_ = tx2.Rollback(ctx)
+			t.Fatal("second Begin on same resource should have failed with conflict")
 		}
 	})
 }

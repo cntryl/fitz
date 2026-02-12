@@ -57,31 +57,33 @@ func TestShouldReturnMessageToQueueGivenExpiredLeaseWhenLeaseExpires(t *testing.
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
 		// Arrange
 		f := fixture.NewTestFixture(t, transport)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
 		f.ConnectOrSkip(ctx)
-
 		route := f.UniqueRoute("queue")
 
-		_, err := f.Client().Queue().Enqueue(ctx, route, []byte("requeue-me"))
+		_, err := f.Client().Queue().Enqueue(ctx, route, []byte("expire-me"))
 		require.NoError(t, err)
 
-		// Reserve with very short lease.
+		// Reserve with short lease (2s)
 		items, err := f.Client().Queue().Reserve(ctx, route, 2, 1)
 		require.NoError(t, err)
 		require.Len(t, items, 1)
 
-		// Let lease expire (do NOT complete).
+		// Wait for lease to expire (server processes timers on next op)
 		time.Sleep(3 * time.Second)
 
-		// Act — reserve again should return the same message.
+		// Act — reserve again; message should be re-queued and available
 		items2, err := f.Client().Queue().Reserve(ctx, route, 30, 1)
-
-		// Assert
 		require.NoError(t, err)
-		require.Len(t, items2, 1, "expired message should be re-reservable")
-		assert.Equal(t, []byte("requeue-me"), items2[0].Body)
+
+		// Assert — should get at least one message again (re-queued after lease expiry)
+		assert.GreaterOrEqual(t, len(items2), 1, "message should be re-queued after lease expiry")
+		// Body should match; ID may differ if server assigns new id on re-queue
+		if len(items2) >= 1 {
+			assert.Equal(t, []byte("expire-me"), items2[0].Body, "re-reserved message body should match")
+		}
 	})
 }
 

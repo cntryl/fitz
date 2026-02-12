@@ -51,6 +51,20 @@ type transaction struct {
 	rolledback atomic.Bool
 }
 
+// readOnlyTransaction wraps a transaction but only exposes ReadTx methods.
+// This ensures BeginRead returns a type that cannot be cast to Tx.
+type readOnlyTransaction struct {
+	inner *transaction
+}
+
+func (r *readOnlyTransaction) Get(ctx context.Context, key []byte) ([]byte, bool, error) {
+	return r.inner.Get(ctx, key)
+}
+
+func (r *readOnlyTransaction) Scan(ctx context.Context, query ScanQuery) (iter.Iterator[KVPair], bool, error) {
+	return r.inner.Scan(ctx, query)
+}
+
 // Get retrieves a value by key.
 // Returns (value, true, nil) if key exists.
 // Returns (nil, false, nil) if key does not exist (not an error per CLIENT_SPEC.md).

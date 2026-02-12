@@ -97,19 +97,11 @@ func (c *client) handleNotify(subID uint64, route string, payload []byte) {
 
 // Publish per CLIENT_SPEC.md:
 // Request: [route_len][route][payload_len][payload]
-// Notice PUBLISH is fire-and-forget (no response expected per spec).
-// However, the server may still send a response, so we handle it.
+// Notice PUBLISH is fire-and-forget — the server does not send a response frame.
 func (c *client) Publish(ctx context.Context, route string, body []byte) error {
 	payload := encodePublish(route, body)
 
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeNoticePublish, payload)
-	if err != nil {
-		return fmt.Errorf("PUBLISH request failed: %w", err)
-	}
-
-	// Parse response (server sends ack even for fire-and-forget)
-	_, _, err = connection.ParseStandardResponse(resp)
-	if err != nil {
+	if err := c.conn.SendOneWay(ctx, protocol.MessageTypeNoticePublish, payload); err != nil {
 		return fmt.Errorf("PUBLISH failed: %w", err)
 	}
 
@@ -137,12 +129,19 @@ func (c *client) Subscribe(ctx context.Context, pattern string, handler NoticeHa
 		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
 	}
 
-	// Parse subscription_id
-	if len(remaining) < 8 {
+	// Parse optional subscription_id: [u8 has_sub_id][u64 sub_id if has=1]
+	if len(remaining) < 1 {
 		return nil, fmt.Errorf("SUBSCRIBE response too short: got %d bytes", len(remaining))
 	}
+	hasSubID := remaining[0]
+	if hasSubID != 1 {
+		return nil, fmt.Errorf("SUBSCRIBE response missing subscription_id")
+	}
+	if len(remaining) < 9 {
+		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
+	}
 
-	subID, _, err := connection.ReadU64BE(remaining, 0)
+	subID, _, err := connection.ReadU64BE(remaining, 1)
 	if err != nil {
 		return nil, fmt.Errorf("parse subscription_id: %w", err)
 	}
@@ -167,14 +166,12 @@ func (c *client) unsubscribe(sub *Subscription) {
 	delete(c.subscriptions, sub.subID)
 	c.mu.Unlock()
 
-	// Send UNSUBSCRIBE to server (best-effort, ignore errors)
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteU64BE(buf, sub.subID)
+	// Send UNSUBSCRIBE to server (best-effort, ignore errors).
+	// Server expects [string pattern] (the original subscription pattern).
+	payload := encodeUnsubscribe(sub.route)
 
 	ctx := context.Background()
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeNoticeUnsubscribe, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeNoticeUnsubscribe, payload)
 	if err != nil {
 		return
 	}

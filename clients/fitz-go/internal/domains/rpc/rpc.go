@@ -90,7 +90,8 @@ func (c *client) initRPCHandler() {
 }
 
 // handleRPCResponse handles incoming RPC RESPONSE frames (303).
-// Per CLIENT_SPEC.md: [16 bytes correlation_id][u8 status][...]
+// Per server rpc_codec.rs: [bytes correlation_id][u64 seq][bytes body][u8 stream_end]
+// where "bytes" = [u32 BE len][data] (TLV bytes format)
 func (c *client) handleRPCResponse(correlationID [16]byte, payload []byte) {
 	if len(payload) < 1 {
 		return
@@ -104,11 +105,15 @@ func (c *client) handleRPCResponse(correlationID [16]byte, payload []byte) {
 
 	if isCall {
 		// This is a response to our Call
-		// Parse: [u64 sequence][u32 body_len][body][u8 stream_end]
+		// Parse: [u64 sequence][bytes body][u8 stream_end]
 		offset := 0
+		if offset+8 > len(payload) {
+			return
+		}
 		seq := binary.BigEndian.Uint64(payload[offset : offset+8])
 		offset += 8
 
+		// body is TLV bytes: [u32 len][data]
 		if offset+4 > len(payload) {
 			return
 		}
@@ -142,15 +147,18 @@ func (c *client) handleRPCResponse(correlationID [16]byte, payload []byte) {
 	}
 
 	// This is a request dispatched to us as a worker
-	// Per CLIENT_SPEC.md: worker receives [correlation_id(16)][route_len][route][reply_route_len][reply_route][body_len][body]
 	c.handleWorkerRequest(correlationID, payload)
 }
 
 // handleWorkerRequest processes an incoming request for a registered worker.
+// Server forwards REQUEST payload: [bytes correlation_id][string route][string reply_route][bytes body]
+// where bytes/string = [u32 BE len][data] (TLV format)
+// Note: correlationID was already parsed by the mux, but the remaining payload
+// contains [string route][string reply_route][bytes body] after the correlation_id.
 func (c *client) handleWorkerRequest(correlationID [16]byte, payload []byte) {
 	offset := 0
 
-	// Parse route
+	// Parse route (TLV string: [u32 len][string])
 	if offset+4 > len(payload) {
 		return
 	}
@@ -162,7 +170,7 @@ func (c *client) handleWorkerRequest(correlationID [16]byte, payload []byte) {
 	route := string(payload[offset : offset+int(routeLen)])
 	offset += int(routeLen)
 
-	// Parse reply_route
+	// Parse reply_route (TLV string: [u32 len][string])
 	if offset+4 > len(payload) {
 		return
 	}
@@ -174,7 +182,7 @@ func (c *client) handleWorkerRequest(correlationID [16]byte, payload []byte) {
 	replyRoute := string(payload[offset : offset+int(replyRouteLen)])
 	offset += int(replyRouteLen)
 
-	// Parse body
+	// Parse body (TLV bytes: [u32 len][data])
 	if offset+4 > len(payload) {
 		return
 	}
@@ -286,9 +294,9 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteUUID(buf, correlationID)
+	connection.WriteBytes(buf, correlationID[:]) // TLV bytes format: [u32 16][16 bytes]
 	connection.WriteString(buf, route)
-	connection.WriteString(buf, "")  // reply_route (empty = use connection)
+	connection.WriteString(buf, "") // reply_route (empty = use connection)
 	connection.WriteBytes(buf, body)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcRequest, buf.Bytes())
@@ -342,7 +350,7 @@ func (w *responseWriter) Send(body []byte) error {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteUUID(buf, w.correlationID)
+	connection.WriteBytes(buf, w.correlationID[:]) // TLV bytes format: [u32 16][16 bytes]
 	connection.WriteU64BE(buf, seq)
 	connection.WriteBytes(buf, body)
 	connection.WriteU8(buf, 0) // stream_end = false
@@ -359,7 +367,7 @@ func (w *responseWriter) sendEnd() {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteUUID(buf, w.correlationID)
+	connection.WriteBytes(buf, w.correlationID[:]) // TLV bytes format: [u32 16][16 bytes]
 	connection.WriteU64BE(buf, seq)
 	connection.WriteBytes(buf, nil)
 	connection.WriteU8(buf, 1) // stream_end = true

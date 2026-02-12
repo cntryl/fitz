@@ -44,6 +44,8 @@ pub enum ScheduleMessage {
 pub enum ScheduleResponse {
     /// Operation succeeded with optional schedule ID
     Ok { schedule_id: Option<String> },
+    /// LIST operation: zero or more schedule IDs, then has_entry=0 sentinel
+    ListIds(Vec<String>),
     /// Operation failed with error message
     Error(String),
 }
@@ -79,6 +81,14 @@ pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
         ScheduleResponse::Ok { schedule_id } => {
             enc.put_u8(0); // success flag
             enc.put_optional_string(schedule_id.as_deref());
+        }
+        ScheduleResponse::ListIds(ids) => {
+            enc.put_u8(0); // success flag
+            for id in ids {
+                enc.put_u8(1); // has_entry
+                enc.put_string(id);
+            }
+            enc.put_u8(0); // end sentinel
         }
         ScheduleResponse::Error(e) => {
             enc.put_u8(1); // error flag

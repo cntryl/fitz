@@ -344,6 +344,32 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	}
 }
 
+// SendOneWay sends a fire-and-forget frame (no response expected).
+// Used for operations like Notice PUBLISH where the server does not reply.
+func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []byte) error {
+	if !c.isAuthenticated() {
+		return ErrNotAuthenticated
+	}
+
+	frame := protocol.EncodeFrame(msgType, payload)
+
+	debug.FrameSend(msgType, payload)
+
+	writeCtx := ctx
+	if c.cfg.WriteTimeout > 0 {
+		var cancel context.CancelFunc
+		writeCtx, cancel = context.WithTimeout(ctx, c.cfg.WriteTimeout)
+		defer cancel()
+	}
+
+	if err := c.transport.Write(writeCtx, frame); err != nil {
+		debug.Log("Write error for msg_type=%d: %v", msgType, err)
+		return fmt.Errorf("write fire-and-forget: %w", err)
+	}
+
+	return nil
+}
+
 // Close cleanly shuts down the connection.
 func (c *Connection) Close() error {
 	// Cancel context (signals dispatch loop to stop)

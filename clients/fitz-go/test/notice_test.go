@@ -56,17 +56,21 @@ func TestShouldReceiveNotificationGivenActiveSubscriptionWhenPublishMatches(t *t
 }
 
 // TestShouldFanoutToAllSubscribersGivenMultipleSubscriptionsWhenPublish
-// verifies a single PUBLISH reaches all matching subscriptions.
+// verifies a single PUBLISH reaches all matching subscriptions from different sessions.
 func TestShouldFanoutToAllSubscribersGivenMultipleSubscriptionsWhenPublish(t *testing.T) {
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
-		// Arrange
-		f := fixture.NewTestFixture(t, transport)
+		// Arrange — two separate clients (sessions) subscribing to the same route.
+		f1 := fixture.NewTestFixture(t, transport)
+		f2 := fixture.NewTestFixture(t, transport)
+		publisher := fixture.NewTestFixture(t, transport)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		f.ConnectOrSkip(ctx)
+		f1.ConnectOrSkip(ctx)
+		f2.ConnectOrSkip(ctx)
+		publisher.ConnectOrSkip(ctx)
 
-		route := f.UniqueRoute("notice")
+		route := f1.UniqueRoute("notice")
 
 		var mu sync.Mutex
 		var count int
@@ -78,16 +82,16 @@ func TestShouldFanoutToAllSubscribersGivenMultipleSubscriptionsWhenPublish(t *te
 			return nil
 		}
 
-		sub1, err := f.Client().Notice().Subscribe(ctx, route, handler)
+		sub1, err := f1.Client().Notice().Subscribe(ctx, route, handler)
 		require.NoError(t, err)
 		defer sub1.Unsubscribe()
 
-		sub2, err := f.Client().Notice().Subscribe(ctx, route, handler)
+		sub2, err := f2.Client().Notice().Subscribe(ctx, route, handler)
 		require.NoError(t, err)
 		defer sub2.Unsubscribe()
 
-		// Act
-		err = f.Client().Notice().Publish(ctx, route, []byte("fanout"))
+		// Act — publish from a third client
+		err = publisher.Client().Notice().Publish(ctx, route, []byte("fanout"))
 
 		// Assert
 		require.NoError(t, err)

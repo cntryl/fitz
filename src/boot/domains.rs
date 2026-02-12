@@ -74,11 +74,18 @@ impl MailboxSink for DomainSink {
 /// - Parses TLV frames to KvMessage
 /// - Dispatches to actor
 /// - Returns responses
+/// Key for pessimistic resource lock: (route_family_id, resource_key)
+type KvResourceLockKey = (u64, String);
+
 pub struct KvDomainSink {
     /// Midge storage engine
     store: Arc<cntryl_midge::Engine>,
     /// Per-session actors (keyed by session_id)
     actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
+    /// Resource lock for ReadWrite transactions: (family_id, resource_key) -> owning session_id
+    resource_locks: Mutex<HashMap<KvResourceLockKey, u64>>,
+    /// Map (session_id, tx_id) -> (family_id, resource_key) for releasing lock on Commit/Rollback
+    tx_to_resource: Mutex<HashMap<(u64, u64), KvResourceLockKey>>,
     /// Router for routing response envelopes back
     router: Arc<Router>,
     active: AtomicBool,
@@ -89,6 +96,8 @@ impl KvDomainSink {
         Self {
             store,
             actors: Arc::new(Mutex::new(HashMap::new())),
+            resource_locks: Mutex::new(HashMap::new()),
+            tx_to_resource: Mutex::new(HashMap::new()),
             router,
             active: AtomicBool::new(true),
         }
@@ -171,15 +180,96 @@ impl MailboxSink for KvDomainSink {
             "Parsed KV message successfully"
         );
 
-        // Get or create actor for this session
-        let response = {
-            let mut actors = self.actors.lock();
-            let actor = actors
-                .entry(frame_ctx.session_id)
-                .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+        // Get or create actor for this session; enforce resource lock for ReadWrite transactions
+        use crate::domains::kv::{KvError, KvMessage, KvResponse, TxMode};
+        let session_id = frame_ctx.session_id;
 
-            // Handle the message synchronously
-            actor.handle(kv_message)
+        let response = match &kv_message {
+            KvMessage::Begin {
+                route_family,
+                realm,
+                area,
+                resource,
+                mode,
+                ..
+            } if *mode == TxMode::ReadWrite => {
+                let resource_key = format!("{}/{}/{}", realm, area, resource);
+                let lock_key: KvResourceLockKey = (route_family.as_u64(), resource_key.clone());
+                {
+                    let locks = self.resource_locks.lock();
+                    if let Some(&holder) = locks.get(&lock_key) {
+                        if holder != session_id {
+                            drop(locks);
+                            KvResponse::Error {
+                                error: KvError::Conflict("resource locked by another session".to_string()),
+                            }
+                        } else {
+                            drop(locks);
+                            let mut actors = self.actors.lock();
+                            let actor = actors
+                                .entry(session_id)
+                                .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                            let resp = actor.handle(kv_message.clone());
+                            if let KvResponse::BeginOk { tx_id } = resp {
+                                self.resource_locks.lock().insert(lock_key.clone(), session_id);
+                                self.tx_to_resource
+                                    .lock()
+                                    .insert((session_id, tx_id), lock_key);
+                            }
+                            resp
+                        }
+                    } else {
+                        drop(locks);
+                        let mut actors = self.actors.lock();
+                        let actor = actors
+                            .entry(session_id)
+                            .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                        let resp = actor.handle(kv_message.clone());
+                        if let KvResponse::BeginOk { tx_id } = resp {
+                            self.resource_locks.lock().insert(lock_key.clone(), session_id);
+                            self.tx_to_resource
+                                .lock()
+                                .insert((session_id, tx_id), lock_key);
+                        }
+                        resp
+                    }
+                }
+            }
+            KvMessage::Commit { tx_id } => {
+                let mut actors = self.actors.lock();
+                let actor = actors
+                    .entry(session_id)
+                    .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                let resp = actor.handle(kv_message.clone());
+                if let KvResponse::CommitOk = resp {
+                    let lock_key = self.tx_to_resource.lock().remove(&(session_id, *tx_id));
+                    if let Some(k) = lock_key {
+                        self.resource_locks.lock().remove(&k);
+                    }
+                }
+                resp
+            }
+            KvMessage::Rollback { tx_id } => {
+                let mut actors = self.actors.lock();
+                let actor = actors
+                    .entry(session_id)
+                    .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                let resp = actor.handle(kv_message.clone());
+                if let KvResponse::RollbackOk = resp {
+                    let lock_key = self.tx_to_resource.lock().remove(&(session_id, *tx_id));
+                    if let Some(k) = lock_key {
+                        self.resource_locks.lock().remove(&k);
+                    }
+                }
+                resp
+            }
+            _ => {
+                let mut actors = self.actors.lock();
+                let actor = actors
+                    .entry(session_id)
+                    .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                actor.handle(kv_message)
+            }
         };
 
         tracing::debug!(
@@ -550,7 +640,12 @@ impl MailboxSink for NoticeDomainSink {
 
 /// Worker entry for RPC routing
 struct RpcWorker {
+    /// Route the worker registered for (e.g. rpc://realm/area/service)
     addr: crate::runtime::routing::RouteAddress,
+    /// Session ID of the worker (for routing forwarded requests to session inbox)
+    session_id: u64,
+    /// Route family of the worker's connection
+    route_family: crate::runtime::routing::RouteFamily,
 }
 
 /// RPC domain state
@@ -559,11 +654,11 @@ struct RpcState {
     workers: HashMap<String, Vec<RpcWorker>>,
     /// Round-robin index per route pattern
     rr_index: HashMap<String, usize>,
-    /// Pending requests: correlation_id -> (requester reply route, family_id)
+    /// Pending requests: correlation_id -> (caller session_id, caller route_family) for response routing to inbox
     pending: HashMap<
         uuid::Uuid,
         (
-            crate::runtime::routing::Route,
+            u64,
             crate::runtime::routing::RouteFamily,
         ),
     >,
@@ -648,10 +743,13 @@ impl MailboxSink for RpcDomainSink {
                 let workers = state.workers.entry(route_key).or_default();
                 workers.push(RpcWorker {
                     addr: worker_addr.clone(),
+                    session_id: frame_ctx.session_id,
+                    route_family: *envelope.destination().family(),
                 });
                 tracing::debug!(
                     domain = "rpc",
                     worker = worker_addr.route().as_str(),
+                    session = frame_ctx.session_id,
                     "Worker registered"
                 );
                 RpcResponseMsg::Ok { data: vec![] }
@@ -660,7 +758,7 @@ impl MailboxSink for RpcDomainSink {
                 let route_key = worker_addr.route().as_str().to_string();
                 let mut state = self.state.lock();
                 if let Some(workers) = state.workers.get_mut(&route_key) {
-                    workers.retain(|w| w.addr != worker_addr);
+                    workers.retain(|w| w.addr != worker_addr || w.session_id != frame_ctx.session_id);
                 }
                 tracing::debug!(
                     domain = "rpc",
@@ -688,24 +786,29 @@ impl MailboxSink for RpcDomainSink {
                     let pick = *idx % worker_count;
                     *idx = idx.wrapping_add(1);
 
-                    let target_addr = state.workers[&route_key][pick].addr.clone();
+                    let worker = &state.workers[&route_key][pick];
+                    let worker_inbox_addr = crate::runtime::routing::RouteAddress::new(
+                        worker.route_family,
+                        crate::runtime::routing::Route::new(format!("inbox://session/{}", worker.session_id)),
+                    );
 
-                    // Store pending request for response correlation
-                    state
-                        .pending
-                        .insert(req.correlation_id, (req.reply_route.clone(), req.family_id));
+                    // Store pending: caller session_id and family for response routing to caller inbox
+                    state.pending.insert(
+                        req.correlation_id,
+                        (frame_ctx.session_id, *envelope.destination().family()),
+                    );
 
                     // Drop state lock before routing
                     drop(state);
 
-                    // Forward request to worker's inbox
+                    // Forward request to worker's session inbox (avoids RPC domain re-entry / stack overflow)
                     let forward_ctx = FrameContext::new(
                         frame_ctx.session_id,
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(302), // Request msg_type
                         frame_ctx.payload.clone(),
                     );
-                    let forward_envelope = Envelope::new(target_addr, forward_ctx);
+                    let forward_envelope = Envelope::new(worker_inbox_addr, forward_ctx);
                     let _ = self.router.route(forward_envelope);
 
                     tracing::debug!(
@@ -721,17 +824,19 @@ impl MailboxSink for RpcDomainSink {
             }
             RpcMessage::Response(resp) => {
                 let mut state = self.state.lock();
-                if let Some((reply_route, family_id)) = state.pending.remove(&resp.correlation_id) {
-                    // Forward response to requester's reply route
-                    let reply_addr =
-                        crate::runtime::routing::RouteAddress::new(family_id, reply_route);
+                if let Some((caller_session_id, caller_family_id)) = state.pending.remove(&resp.correlation_id) {
+                    // Forward response to caller's session inbox (avoids RPC domain re-entry)
+                    let caller_inbox_addr = crate::runtime::routing::RouteAddress::new(
+                        caller_family_id,
+                        crate::runtime::routing::Route::new(format!("inbox://session/{}", caller_session_id)),
+                    );
                     let forward_ctx = FrameContext::new(
                         frame_ctx.session_id,
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(303), // Response msg_type
                         frame_ctx.payload.clone(),
                     );
-                    let forward_envelope = Envelope::new(reply_addr, forward_ctx);
+                    let forward_envelope = Envelope::new(caller_inbox_addr, forward_ctx);
                     let _ = self.router.route(forward_envelope);
 
                     tracing::debug!(
@@ -890,6 +995,8 @@ impl MailboxSink for QueueDomainSink {
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
                         crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
                     });
+                    actor.process_expired_timers();
+                    actor.process_delayed_messages();
                     actor.handle_enqueue(body, delay_seconds)
                 }
                 QueueMessage::Reserve {
@@ -909,6 +1016,8 @@ impl MailboxSink for QueueDomainSink {
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
                         crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
                     });
+                    actor.process_expired_timers();
+                    actor.process_delayed_messages();
                     actor.handle_reserve(lease_seconds, batch_size)
                 }
                 QueueMessage::Extend {
@@ -928,6 +1037,8 @@ impl MailboxSink for QueueDomainSink {
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
                         crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
                     });
+                    actor.process_expired_timers();
+                    actor.process_delayed_messages();
                     actor.handle_extend(id, token, lease_seconds)
                 }
                 QueueMessage::Complete {
@@ -946,6 +1057,8 @@ impl MailboxSink for QueueDomainSink {
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
                         crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
                     });
+                    actor.process_expired_timers();
+                    actor.process_delayed_messages();
                     actor.handle_complete(id, token)
                 }
                 QueueMessage::LeaseExpired { .. } => {
@@ -1536,6 +1649,15 @@ impl MailboxSink for LeaseDomainSink {
 
         use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 
+        // When owner_id is empty, use session_id so different sessions are distinct (enforces exclusivity)
+        let effective_owner = |owner_id: String| {
+            if owner_id.is_empty() {
+                format!("session:{}", frame_ctx.session_id)
+            } else {
+                owner_id
+            }
+        };
+
         // Dispatch to lease handlers and get domain response
         let domain_response = match lease_msg {
             LeaseMessage::Acquire {
@@ -1544,7 +1666,7 @@ impl MailboxSink for LeaseDomainSink {
                 owner_id,
                 ttl_secs,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_acquire(key, owner_id, ttl_secs),
+                Some(key) => self.handle_acquire(key, effective_owner(owner_id), ttl_secs),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Renew {
@@ -1554,7 +1676,7 @@ impl MailboxSink for LeaseDomainSink {
                 fencing_token,
                 ttl_secs,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
+                Some(key) => self.handle_renew(key, effective_owner(owner_id), fencing_token, ttl_secs),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Release {
@@ -1563,7 +1685,7 @@ impl MailboxSink for LeaseDomainSink {
                 owner_id,
                 fencing_token,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_release(key, owner_id, fencing_token),
+                Some(key) => self.handle_release(key, effective_owner(owner_id), fencing_token),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Query { family_id, route } => {
@@ -1850,7 +1972,7 @@ impl MailboxSink for ScheduleDomainSink {
                         ScheduleResponse::Error(format!("Invalid schedule ID: {}", schedule_id))
                     }
                 },
-                ScheduleMessage::List => ScheduleResponse::Ok { schedule_id: None },
+                ScheduleMessage::List => ScheduleResponse::ListIds(actor.list_schedule_ids()),
                 ScheduleMessage::Subscribe {
                     family_id,
                     pattern,

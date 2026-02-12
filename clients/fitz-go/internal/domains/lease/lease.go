@@ -48,7 +48,7 @@ func NewClient(conn *connection.Connection) Client {
 
 // Acquire per CLIENT_SPEC.md:
 // Request: [route_len][route][owner_id_len][owner_id][ttl_secs]
-// Response: [status][fencing_token (u64 BE)] on success
+// Response: [status][u8 has_token][u64 token if has=1] (optional u64)
 func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) ([]byte, int64, bool, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -74,11 +74,15 @@ func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) ([]b
 		return nil, 0, false, nil
 	}
 
-	// Parse fencing_token from remaining bytes
-	if len(remaining) < 8 {
+	// Parse optional fencing_token: [u8 has_token][u64 token if has=1]
+	if len(remaining) < 1 {
 		return nil, 0, false, fmt.Errorf("ACQUIRE response too short: got %d bytes", len(remaining))
 	}
-	fencingToken := binary.BigEndian.Uint64(remaining[:8])
+	hasToken := remaining[0]
+	if hasToken != 1 || len(remaining) < 9 {
+		return nil, 0, false, fmt.Errorf("ACQUIRE response missing token")
+	}
+	fencingToken := binary.BigEndian.Uint64(remaining[1:9])
 
 	// Convert token to bytes
 	tokenBytes := make([]byte, 8)
@@ -90,6 +94,7 @@ func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) ([]b
 
 // Renew per CLIENT_SPEC.md:
 // Request: [route_len][route][owner_id_len][owner_id][fencing_token (u64)][ttl_secs]
+// Response: [status][u8 has_token][u64 token if has=1]
 func (c *client) Renew(ctx context.Context, route string, token []byte, ttlSecs uint64) (int64, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -112,6 +117,7 @@ func (c *client) Renew(ctx context.Context, route string, token []byte, ttlSecs 
 		return 0, fmt.Errorf("RENEW failed: unexpected status")
 	}
 
+	// Response includes optional new token but we just need the new expiry
 	return time.Now().Unix() + int64(ttlSecs), nil
 }
 
@@ -143,6 +149,7 @@ func (c *client) Release(ctx context.Context, route string, token []byte) error 
 
 // Query per CLIENT_SPEC.md:
 // Request: [route_len][route]
+// Response: [status][u8 has_token][u64 token if has=1]
 func (c *client) Query(ctx context.Context, route string) (*LeaseInfo, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -167,28 +174,17 @@ func (c *client) Query(ctx context.Context, route string) (*LeaseInfo, error) {
 		return info, nil
 	}
 
-	hasHolder := remaining[0]
-	if hasHolder == 0 {
-		return info, nil
+	// Server sends optional u64: [u8 has_token][u64 token if has=1]
+	hasToken := remaining[0]
+	if hasToken == 0 {
+		return info, nil // Lease not held
 	}
 
 	info.Held = true
-	offset := 1
-
-	// Read token (fencing_token u64)
-	if offset+8 <= len(remaining) {
-		tokenVal := binary.BigEndian.Uint64(remaining[offset : offset+8])
+	if len(remaining) >= 9 {
+		tokenVal := binary.BigEndian.Uint64(remaining[1:9])
 		info.Token = make([]byte, 8)
 		binary.BigEndian.PutUint64(info.Token, tokenVal)
-		offset += 8
-	}
-
-	// Read TTL remaining (try u64 first, then u32)
-	if offset+8 <= len(remaining) {
-		ttlVal := binary.BigEndian.Uint64(remaining[offset : offset+8])
-		info.TTL = uint32(ttlVal)
-	} else if offset+4 <= len(remaining) {
-		info.TTL = binary.BigEndian.Uint32(remaining[offset : offset+4])
 	}
 
 	return info, nil
