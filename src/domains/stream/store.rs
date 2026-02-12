@@ -123,7 +123,9 @@ impl StreamStore {
         resource: &str,
         ingest_metadata: Option<IngestMetadata>,
     ) -> Result<SessionId, String> {
-        let session_id = self.next_session_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let session_id = self
+            .next_session_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Create transaction for staging (O(1) memory)
         // Use RouteFamily id as column family id to provide family isolation
@@ -143,10 +145,7 @@ impl StreamStore {
             ingest_metadata,
         };
 
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(session_id, session);
+        self.sessions.lock().unwrap().insert(session_id, session);
         Ok(session_id)
     }
 

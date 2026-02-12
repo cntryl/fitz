@@ -32,7 +32,9 @@ pub async fn spawn_tcp_listener(
                     let config = tcp_config.clone();
                     let runtime = runtime.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime).await {
+                        if let Err(e) =
+                            handle_tcp_connection(stream, ingress, config, runtime).await
+                        {
                             tracing::error!("TCP handler error: {}", e);
                         }
                     });
@@ -103,7 +105,7 @@ async fn handle_tcp_connection(
     // Create session and handler
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
     let handler = create_session(ingress.clone(), config.clone(), stream, frame_tx).await?;
-    
+
     // Get session_id and stream from handler
     let session_id = handler.session_id;
     let stream = handler.stream.clone();
@@ -160,7 +162,10 @@ async fn handle_tcp_connection(
                 break;
             }
         }
-        tracing::debug!(session_id = tcp_session_id, "TCP outbound writer task ended");
+        tracing::debug!(
+            session_id = tcp_session_id,
+            "TCP outbound writer task ended"
+        );
     });
 
     // Spawn task to process frames from the channel
@@ -177,16 +182,21 @@ async fn handle_tcp_connection(
             None,
             crate::runtime::routing::RouteFamily::new(0),
         );
-        
+
         let mut session = crate::session::Session::new(session_id, session_config);
         let mut frame_rx = frame_rx;
-        
+
         // Process frames as they arrive, maintaining the session buffer state
         while let Some((_sid, frame)) = frame_rx.recv().await {
             // Process frame through session (decodes TLV and routes to ingress)
             if let Err(e) = session.on_frame(frame, ingress_clone.as_ref()).await {
                 tracing::error!(session_id = session_id, error = %e, "TCP frame processing error");
-                ingress_clone.on_close(session_id, crate::session::CloseReason::Error(format!("{:?}", e))).await;
+                ingress_clone
+                    .on_close(
+                        session_id,
+                        crate::session::CloseReason::Error(format!("{:?}", e)),
+                    )
+                    .await;
                 break;
             }
         }

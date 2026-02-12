@@ -23,6 +23,7 @@ fn create_kv_actor() -> KvActor {
 
 #[test]
 fn should_reject_realm_switch_on_single_realm_token() {
+    // Arrange
     // NOTE: This test is a placeholder for the session/auth layer behavior.
     // The KV domain itself DOES accept the "evil" realm and creates a transaction.
     // The session/auth layer should NEVER send a realm to the domain that the
@@ -55,6 +56,7 @@ fn should_reject_realm_switch_on_single_realm_token() {
 
     actor.handle(KvMessage::Commit { tx_id });
 
+    // Act
     // Try to read from realm "evil" (should not see "acme" data)
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -77,6 +79,7 @@ fn should_reject_realm_switch_on_single_realm_token() {
         key: Bytes::from_static(b"user:123"),
     });
 
+    // Assert
     // Should NOT find data from "acme" realm
     assert!(
         matches!(
@@ -92,6 +95,7 @@ fn should_reject_realm_switch_on_single_realm_token() {
 
 #[test]
 fn should_reject_implicit_realm_without_default_realm() {
+    // Arrange
     // NOTE: Empty realm check in validation
     // This test verifies the KV domain rejects empty realm strings
     let mut actor = create_kv_actor();
@@ -254,6 +258,7 @@ fn should_enforce_realm_equality_strictly() {
 
     actor.handle(KvMessage::Commit { tx_id });
 
+    // Assert
     // Try different realm variations that should NOT match:
     // - Different case (if realms are case-sensitive, which they must be)
     let invalid_realms = vec!["ACME"];
@@ -316,6 +321,7 @@ fn should_enforce_realm_equality_strictly() {
 
 #[test]
 fn should_never_accept_client_supplied_realm_as_authority() {
+    // Arrange
     // This test documents the principle:
     // The domain accepts realm parameter, but the session/auth layer
     // must ensure only authorized realms reach the domain.
@@ -347,6 +353,7 @@ fn should_never_accept_client_supplied_realm_as_authority() {
 
     actor.handle(KvMessage::Commit { tx_id });
 
+    // Act
     // Try realm "unauthorized" - should not see data
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -369,6 +376,7 @@ fn should_never_accept_client_supplied_realm_as_authority() {
         key: Bytes::from_static(b"key"),
     });
 
+    // Assert
     assert!(
         matches!(
             response,
@@ -387,6 +395,7 @@ fn should_never_accept_client_supplied_realm_as_authority() {
 
 #[test]
 fn should_check_realm_authorization_before_touching_midge() {
+    // Arrange
     // This test documents the safety principle:
     // Realm validation must happen BEFORE any Midge database access.
     //
@@ -394,6 +403,7 @@ fn should_check_realm_authorization_before_touching_midge() {
     // preventing any possibility of invalid data being stored.
     let mut actor = create_kv_actor();
 
+    // Act
     // Attempt to begin with realm containing spaces (invalid)
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -404,6 +414,7 @@ fn should_check_realm_authorization_before_touching_midge() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
+    // Assert
     // Must be rejected BEFORE creating a transaction
     assert!(
         matches!(
@@ -422,6 +433,7 @@ fn should_check_realm_authorization_before_touching_midge() {
 
 #[test]
 fn should_treat_realm_as_opaque_identifier() {
+    // Arrange
     // This test verifies realm opacity:
     // Realms are compared as exact byte strings.
     // No normalization, no case folding, no parsing.
@@ -430,6 +442,7 @@ fn should_treat_realm_as_opaque_identifier() {
     let realm1 = "acme-corp-123";
     let realm2 = "ACME-CORP-123"; // Different case
 
+    // Act
     // Write to realm1
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -475,6 +488,7 @@ fn should_treat_realm_as_opaque_identifier() {
         key: Bytes::from_static(b"test"),
     });
 
+    // Assert
     assert!(
         matches!(
             response,
@@ -493,6 +507,7 @@ fn should_treat_realm_as_opaque_identifier() {
 
 #[test]
 fn should_not_leak_realm_existence_in_errors() {
+    // Arrange
     // This test documents a security principle:
     // Error messages must not reveal whether a realm exists or not.
     //
@@ -500,6 +515,7 @@ fn should_not_leak_realm_existence_in_errors() {
     // or information about realm existence.
     let mut actor = create_kv_actor();
 
+    // Act
     // Attempt to access with a realm that wasn't authorized
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -510,6 +526,7 @@ fn should_not_leak_realm_existence_in_errors() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
+    // Assert
     // Realm validation occurs BEFORE touching storage
     // Response should be generic error, not revealing realm status
     assert!(

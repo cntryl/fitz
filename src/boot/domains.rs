@@ -383,20 +383,22 @@ impl MailboxSink for NoticeDomainSink {
             "Notice: parsing request"
         );
 
-        let notice_msg =
-            match crate::protocol::notice_codec::parse_request(
-                &frame_ctx,
-                &frame_ctx.payload,
-                *envelope.destination().family(),
-                crate::session::SessionId(frame_ctx.session_id),
-                envelope.source().cloned().unwrap_or_else(|| envelope.destination().clone()),
-            ) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
-                    return Err(DeliveryError::ActorStopped);
-                }
-            };
+        let notice_msg = match crate::protocol::notice_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+            crate::session::SessionId(frame_ctx.session_id),
+            envelope
+                .source()
+                .cloned()
+                .unwrap_or_else(|| envelope.destination().clone()),
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
 
         use crate::domains::notice::protocol::NotificationMessage;
         use crate::protocol::notice_codec::NoticeResponse;
@@ -441,10 +443,14 @@ impl MailboxSink for NoticeDomainSink {
                     });
 
                 // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
-                let existing_sub_id = state.subscriptions.iter().find(|s| {
-                    s.session_id == sub_msg.session_id.0
-                        && s.pattern.route() == sub_msg.pattern.as_str()
-                }).map(|s| s.subscription_id);
+                let existing_sub_id = state
+                    .subscriptions
+                    .iter()
+                    .find(|s| {
+                        s.session_id == sub_msg.session_id.0
+                            && s.pattern.route() == sub_msg.pattern.as_str()
+                    })
+                    .map(|s| s.subscription_id);
 
                 let sub_id = if let Some(id) = existing_sub_id {
                     tracing::debug!(
@@ -620,18 +626,17 @@ impl MailboxSink for RpcDomainSink {
             "RPC: parsing request"
         );
 
-        let rpc_msg =
-            match crate::protocol::rpc_codec::parse_request(
-                &frame_ctx,
-                &frame_ctx.payload,
-                *envelope.destination().family(),
-            ) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
-                    return Err(DeliveryError::ActorStopped);
-                }
-            };
+        let rpc_msg = match crate::protocol::rpc_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
 
         use crate::domains::rpc::protocol::RpcMessage;
         use crate::protocol::rpc_codec::RpcResponseMsg;
@@ -1125,28 +1130,30 @@ impl MailboxSink for StreamDomainSink {
             }
         };
 
-        let stream_msg =
-            match crate::protocol::stream_codec::parse_request(
-                &frame_ctx,
-                &frame_ctx.payload,
-                *envelope.destination().family(),
-                crate::session::SessionId(frame_ctx.session_id),
-                envelope.source().cloned().unwrap_or_else(|| envelope.destination().clone()),
-            ) {
-                Ok(msg) => {
-                    tracing::debug!(
-                        domain = "stream",
-                        session = frame_ctx.session_id,
-                        msg_type = frame_ctx.msg_type.as_u16(),
-                        "Stream: parsed message successfully"
-                    );
-                    msg
-                }
-                Err(e) => {
-                    tracing::warn!(domain = "stream", error = %e, "Failed to parse stream message");
-                    return Err(DeliveryError::ActorStopped);
-                }
-            };
+        let stream_msg = match crate::protocol::stream_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+            crate::session::SessionId(frame_ctx.session_id),
+            envelope
+                .source()
+                .cloned()
+                .unwrap_or_else(|| envelope.destination().clone()),
+        ) {
+            Ok(msg) => {
+                tracing::debug!(
+                    domain = "stream",
+                    session = frame_ctx.session_id,
+                    msg_type = frame_ctx.msg_type.as_u16(),
+                    "Stream: parsed message successfully"
+                );
+                msg
+            }
+            Err(e) => {
+                tracing::warn!(domain = "stream", error = %e, "Failed to parse stream message");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
 
         use crate::domains::stream::protocol::StreamMessage;
         use crate::protocol::stream_codec::StreamResponse;
@@ -1161,42 +1168,30 @@ impl MailboxSink for StreamDomainSink {
                     data: vec![],
                 }
             }
-            StreamMessage::Append { .. } => {
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
-            }
-            StreamMessage::Commit { .. } => {
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
-            }
-            StreamMessage::Rollback { .. } => {
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
-            }
-            StreamMessage::Read { .. } => {
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
-            }
-            StreamMessage::Last { .. } => {
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
-            }
-            StreamMessage::GetMetadata { .. } => {
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
-            }
+            StreamMessage::Append { .. } => StreamResponse::Ok {
+                session_id: None,
+                data: vec![],
+            },
+            StreamMessage::Commit { .. } => StreamResponse::Ok {
+                session_id: None,
+                data: vec![],
+            },
+            StreamMessage::Rollback { .. } => StreamResponse::Ok {
+                session_id: None,
+                data: vec![],
+            },
+            StreamMessage::Read { .. } => StreamResponse::Ok {
+                session_id: None,
+                data: vec![],
+            },
+            StreamMessage::Last { .. } => StreamResponse::Ok {
+                session_id: None,
+                data: vec![],
+            },
+            StreamMessage::GetMetadata { .. } => StreamResponse::Ok {
+                session_id: None,
+                data: vec![],
+            },
             StreamMessage::Subscribe {
                 family_id,
                 pattern,
@@ -1206,16 +1201,16 @@ impl MailboxSink for StreamDomainSink {
                 let fam_id = family_id.as_u64();
 
                 let mut families = self.families.lock();
-                let state = families
-                    .entry(fam_id)
-                    .or_insert_with(|| StreamFamilyState {
-                        subscriptions: Vec::new(),
-                    });
+                let state = families.entry(fam_id).or_insert_with(|| StreamFamilyState {
+                    subscriptions: Vec::new(),
+                });
 
                 // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
-                let existing_sub_id = state.subscriptions.iter().find(|s| {
-                    s.session_id == session_id && s.pattern.route() == pattern.as_str()
-                }).map(|s| s.subscription_id);
+                let existing_sub_id = state
+                    .subscriptions
+                    .iter()
+                    .find(|s| s.session_id == session_id && s.pattern.route() == pattern.as_str())
+                    .map(|s| s.subscription_id);
 
                 let sub_id = if let Some(id) = existing_sub_id {
                     tracing::debug!(
@@ -1262,8 +1257,7 @@ impl MailboxSink for StreamDomainSink {
                 let mut families = self.families.lock();
                 if let Some(state) = families.get_mut(&fam_id) {
                     state.subscriptions.retain(|s| {
-                        !(s.session_id == session_id
-                            && s.pattern.route() == pattern.as_str())
+                        !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
                     });
                 }
                 StreamResponse::Ok {
@@ -1271,10 +1265,7 @@ impl MailboxSink for StreamDomainSink {
                     data: vec![],
                 }
             }
-            StreamMessage::UnsubscribeAll {
-                session_id,
-                ..
-            } => {
+            StreamMessage::UnsubscribeAll { session_id, .. } => {
                 self.unsubscribe_all(session_id);
                 StreamResponse::Ok {
                     session_id: None,
@@ -1523,26 +1514,25 @@ impl MailboxSink for LeaseDomainSink {
             }
         };
 
-        let lease_msg =
-            match crate::protocol::lease_codec::parse_request(
-                &frame_ctx,
-                &frame_ctx.payload,
-                *envelope.destination().family(),
-            ) {
-                Ok(msg) => {
-                    tracing::debug!(
-                        domain = "lease",
-                        session = frame_ctx.session_id,
-                        msg_type = frame_ctx.msg_type.as_u16(),
-                        "Lease: parsed message successfully"
-                    );
-                    msg
-                }
-                Err(e) => {
-                    tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
-                    return Err(DeliveryError::ActorStopped);
-                }
-            };
+        let lease_msg = match crate::protocol::lease_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+        ) {
+            Ok(msg) => {
+                tracing::debug!(
+                    domain = "lease",
+                    session = frame_ctx.session_id,
+                    msg_type = frame_ctx.msg_type.as_u16(),
+                    "Lease: parsed message successfully"
+                );
+                msg
+            }
+            Err(e) => {
+                tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
 
         use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 
@@ -1798,24 +1788,26 @@ impl MailboxSink for ScheduleDomainSink {
             }
         };
 
-        let schedule_msg =
-            match crate::protocol::schedule_codec::parse_request(
-                &frame_ctx,
-                &frame_ctx.payload,
-                *envelope.destination().family(),
-                crate::session::SessionId(frame_ctx.session_id),
-                envelope.source().cloned().unwrap_or_else(|| envelope.destination().clone()),
-            ) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    tracing::warn!(
-                        domain = "schedule",
-                        error = %e,
-                        "Failed to parse schedule message"
-                    );
-                    return Err(DeliveryError::ActorStopped);
-                }
-            };
+        let schedule_msg = match crate::protocol::schedule_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+            crate::session::SessionId(frame_ctx.session_id),
+            envelope
+                .source()
+                .cloned()
+                .unwrap_or_else(|| envelope.destination().clone()),
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!(
+                    domain = "schedule",
+                    error = %e,
+                    "Failed to parse schedule message"
+                );
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
 
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
@@ -1858,9 +1850,7 @@ impl MailboxSink for ScheduleDomainSink {
                         ScheduleResponse::Error(format!("Invalid schedule ID: {}", schedule_id))
                     }
                 },
-                ScheduleMessage::List => {
-                    ScheduleResponse::Ok { schedule_id: None }
-                }
+                ScheduleMessage::List => ScheduleResponse::Ok { schedule_id: None },
                 ScheduleMessage::Subscribe {
                     family_id,
                     pattern,
@@ -1877,9 +1867,13 @@ impl MailboxSink for ScheduleDomainSink {
                         });
 
                     // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
-                    let existing_sub_id = state.subscriptions.iter().find(|s| {
-                        s.session_id == session_id && s.pattern.route() == pattern.as_str()
-                    }).map(|s| s.subscription_id);
+                    let existing_sub_id = state
+                        .subscriptions
+                        .iter()
+                        .find(|s| {
+                            s.session_id == session_id && s.pattern.route() == pattern.as_str()
+                        })
+                        .map(|s| s.subscription_id);
 
                     let sub_id = if let Some(id) = existing_sub_id {
                         tracing::debug!(
@@ -1925,16 +1919,12 @@ impl MailboxSink for ScheduleDomainSink {
                     let mut families = self.sub_families.lock();
                     if let Some(state) = families.get_mut(&fam_id) {
                         state.subscriptions.retain(|s| {
-                            !(s.session_id == session_id
-                                && s.pattern.route() == pattern.as_str())
+                            !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
                         });
                     }
                     ScheduleResponse::Ok { schedule_id: None }
                 }
-                ScheduleMessage::UnsubscribeAll {
-                    session_id,
-                    ..
-                } => {
+                ScheduleMessage::UnsubscribeAll { session_id, .. } => {
                     self.unsubscribe_all(session_id);
                     ScheduleResponse::Ok { schedule_id: None }
                 }

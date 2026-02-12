@@ -133,9 +133,11 @@ mod tests {
     #[test]
     fn should_create_boot_config_for_test_storage() {
         // Arrange
+
+        // Act
         let config = BootConfig::with_memory_storage();
 
-        // Act & Assert
+        // Assert
         match &config.storage_mode {
             crate::boot::runtime::StorageMode::Memory => {
                 // Expected
@@ -147,9 +149,11 @@ mod tests {
     #[test]
     fn should_detect_local_storage_by_default() {
         // Arrange
+
+        // Act
         let config = BootConfig::new();
 
-        // Act & Assert
+        // Assert
         match &config.storage_mode {
             crate::boot::runtime::StorageMode::LocalDisk { db_path } => {
                 assert_eq!(db_path, "./.fitz");
@@ -161,9 +165,11 @@ mod tests {
     #[test]
     fn should_support_memory_storage_mode() {
         // Arrange
+
+        // Act
         let config = BootConfig::with_memory_storage();
 
-        // Act & Assert
+        // Assert
         assert!(matches!(
             config.storage_mode,
             crate::boot::runtime::StorageMode::Memory
@@ -173,9 +179,11 @@ mod tests {
     #[test]
     fn should_support_local_storage_mode() {
         // Arrange
+
+        // Act
         let config = BootConfig::with_local_storage("/data/fitz");
 
-        // Act & Assert
+        // Assert
         match &config.storage_mode {
             crate::boot::runtime::StorageMode::LocalDisk { db_path } => {
                 assert_eq!(db_path, "/data/fitz");
@@ -187,6 +195,8 @@ mod tests {
     #[test]
     fn should_support_cloud_storage_mode() {
         // Arrange
+
+        // Act
         let config = BootConfig::default().with_storage_mode(
             crate::boot::runtime::StorageMode::CloudBacked {
                 provider: "s3".to_string(),
@@ -195,7 +205,7 @@ mod tests {
             },
         );
 
-        // Act & Assert
+        // Assert
         match &config.storage_mode {
             crate::boot::runtime::StorageMode::CloudBacked {
                 provider,

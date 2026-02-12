@@ -38,6 +38,7 @@ fn should_include_realm_in_lease_key_identity() {
         resource: "database".to_string(),
     };
 
+    // Act
     let key_evil = LeaseKey {
         family,
         realm: "evil".to_string(),
@@ -104,6 +105,7 @@ fn should_treat_realm_as_opaque_in_lease_keys() {
         resource: "task".to_string(),
     };
 
+    // Act
     let key_uppercase = LeaseKey {
         family,
         realm: "PRODUCTION".to_string(), // Different case
@@ -215,6 +217,7 @@ fn should_rely_on_auth_layer_for_lease_realm_validation() {
     // Arrange: Create lease actor
     let (_actor, _) = make_lease_actor();
 
+    // Act
     // Note: Lease actor stores all leases in shared HashMap.
     // The SessionActor layer (in session.rs) performs authorization checks
     // based on token grants and route patterns before dispatching to LeaseActor.
@@ -225,6 +228,7 @@ fn should_rely_on_auth_layer_for_lease_realm_validation() {
     // 3. SessionActor checks: permissions.allows(route, Write) = true
     // 4. SessionActor forwards to LeaseActor, which stores in LeaseKey with that realm
     //
+    // Assert
     // If client tries:
     // 1. Token grants access to "lease://authenticated-realm/**"
     // 2. Client sends route "lease://other-realm/locks/database"
@@ -266,6 +270,7 @@ fn should_support_lease_operations_within_realm() {
     };
     actor.receive(msg_query, &mut ctx);
 
+    // Assert
     // Note: All operations succeed within same realm
 }
 
@@ -287,6 +292,7 @@ fn should_require_explicit_realm_in_lease_routes() {
     };
     actor.receive(msg, &mut ctx);
 
+    // Assert
     // Note: Lease is stored under LeaseKey with explicit realm.
     // There's no implicit realm default or fallback.
     // Every operation requires the realm to be explicitly provided in the route.

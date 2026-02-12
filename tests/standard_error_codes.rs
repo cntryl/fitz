@@ -19,14 +19,17 @@
 
 #[test]
 fn should_document_kv_error_code_range() {
+    // Arrange
     // Documentation test: KV domain errors should be in 1000-1099 range
     // See src/domains/kv/protocol.rs for KvError enum
-    //
+
+    // Act
     // Standard errors (all domains):
     // - 1001 = ERR_UNAUTHORIZED (realm/area/scope mismatch)
     // - 1002 = ERR_INVALID_SCOPE (insufficient permissions)
     // - 1003 = ERR_REALM_MISMATCH (explicit realm check)
-    //
+
+    // Assert
     // KV-specific errors:
     // - 1010 = ERR_INVALID_TRANSACTION
     // - 1011 = ERR_TRANSACTION_CONFLICT
@@ -37,14 +40,17 @@ fn should_document_kv_error_code_range() {
 
 #[test]
 fn should_document_stream_error_code_range() {
+    // Arrange
     // Documentation test: Stream domain errors should be in 2000-2099 range
     // See src/domains/stream/ for error definitions
-    //
+
+    // Act
     // Standard errors (all domains):
     // - 2001 = ERR_UNAUTHORIZED
     // - 2002 = ERR_INVALID_SCOPE
     // - 2003 = ERR_REALM_MISMATCH
-    //
+
+    // Assert
     // Stream-specific errors:
     // - 2010 = ERR_INVALID_OFFSET
     // - 2011 = ERR_CONCURRENT_WRITE
@@ -53,14 +59,17 @@ fn should_document_stream_error_code_range() {
 
 #[test]
 fn should_document_notice_error_code_range() {
+    // Arrange
     // Documentation test: Notice domain errors should be in 3000-3099 range
     // See src/domains/notice/ for error definitions
-    //
+
+    // Act
     // Standard errors (all domains):
     // - 3001 = ERR_UNAUTHORIZED
     // - 3002 = ERR_INVALID_SCOPE
     // - 3003 = ERR_REALM_MISMATCH
-    //
+
+    // Assert
     // Notice-specific errors:
     // - 3010 = ERR_PATTERN_INVALID
     // - 3011 = ERR_SUBSCRIPTION_NOT_FOUND
@@ -68,14 +77,17 @@ fn should_document_notice_error_code_range() {
 
 #[test]
 fn should_document_queue_error_code_range() {
+    // Arrange
     // Documentation test: Queue domain errors should be in 4000-4099 range
     // See src/domains/queue/ for error definitions
-    //
+
+    // Act
     // Standard errors (all domains):
     // - 4001 = ERR_UNAUTHORIZED
     // - 4002 = ERR_INVALID_SCOPE
     // - 4003 = ERR_REALM_MISMATCH
-    //
+
+    // Assert
     // Queue-specific errors:
     // - 4010 = ERR_MESSAGE_NOT_FOUND
     // - 4011 = ERR_LEASE_EXPIRED
@@ -84,14 +96,17 @@ fn should_document_queue_error_code_range() {
 
 #[test]
 fn should_document_lease_error_code_range() {
+    // Arrange
     // Documentation test: Lease domain errors should be in 5000-5099 range
     // See src/domains/lease/ for error definitions
-    //
+
+    // Act
     // Standard errors (all domains):
     // - 5001 = ERR_UNAUTHORIZED
     // - 5002 = ERR_INVALID_SCOPE
     // - 5003 = ERR_REALM_MISMATCH
-    //
+
+    // Assert
     // Lease-specific errors:
     // - 5010 = ERR_LEASE_NOT_HELD
     // - 5011 = ERR_STALE_FENCING_TOKEN
@@ -100,6 +115,7 @@ fn should_document_lease_error_code_range() {
 
 #[test]
 fn should_document_rpc_error_code_range() {
+    // Arrange
     // Documentation test: RPC domain errors should be in 6000-6099 range
     // See src/domains/rpc/errors.rs for RpcErrorCode enum
     //
@@ -114,9 +130,11 @@ fn should_document_rpc_error_code_range() {
     // - 6012 = ERR_RPC_BACKPRESSURE
     // - 6013 = ERR_ROUTE_NOT_REGISTERED
 
+    // Act
     // Verify RPC error codes are defined
     use fitz::domains::rpc::RpcErrorCode;
 
+    // Assert
     // These error codes should be convertible to numeric codes
     let _timeout = RpcErrorCode::Timeout;
     let _backpressure = RpcErrorCode::Backpressure;
@@ -125,14 +143,17 @@ fn should_document_rpc_error_code_range() {
 
 #[test]
 fn should_document_schedule_error_code_range() {
+    // Arrange
     // Documentation test: Schedule domain errors should be in 7000-7099 range
     // See src/domains/schedule/ for error definitions
-    //
+
+    // Act
     // Standard errors (all domains):
     // - 7001 = ERR_UNAUTHORIZED
     // - 7002 = ERR_INVALID_SCOPE
     // - 7003 = ERR_REALM_MISMATCH
-    //
+
+    // Assert
     // Schedule-specific errors:
     // - 7010 = ERR_INVALID_CRON_SYNTAX
     // - 7011 = ERR_SCHEDULE_NOT_FOUND
@@ -145,6 +166,7 @@ fn should_document_schedule_error_code_range() {
 
 #[test]
 fn should_use_consistent_unauthorized_code_across_domains() {
+    // Arrange
     // All domains should use *001 for unauthorized (realm/area/scope mismatch)
     // This ensures consistent error handling in clients
     //
@@ -155,14 +177,18 @@ fn should_use_consistent_unauthorized_code_across_domains() {
     // Lease: 5001 = ERR_UNAUTHORIZED
     // RPC: 6001 = ERR_UNAUTHORIZED
     // Schedule: 7001 = ERR_UNAUTHORIZED
-
-    // Verify RPC error codes match pattern
     use fitz::domains::rpc::RpcErrorCode;
+
+    // Act
+    // Verify RPC error codes match pattern
+
+    // Assert
     assert_eq!(RpcErrorCode::Unauthorized.as_str(), "RPC_UNAUTHORIZED");
 }
 
 #[test]
 fn should_not_have_error_code_collisions_across_domains() {
+    // Arrange
     // Each domain's error codes should be completely isolated:
     // - KV: 1000-1099
     // - Stream: 2000-2099
@@ -175,7 +201,10 @@ fn should_not_have_error_code_collisions_across_domains() {
     // No domain should use error codes outside its range.
     // This ensures that error code → domain mapping is unique.
 
+    // Act
     // This test documents the invariant.
+
+    // Assert
     // Verify at implementation time that:
     // - No error in KvError maps to codes outside 1000-1099
     // - No error in StreamError maps to codes outside 2000-2099
@@ -184,16 +213,19 @@ fn should_not_have_error_code_collisions_across_domains() {
 
 #[test]
 fn should_allow_error_code_range_expansion_within_bounds() {
+    // Arrange
     // Error codes within each 100-block range can be expanded:
     // - KV: 1000-1099 (100 codes available)
     // - Each domain has 100 codes for current and future use
-    //
+
+    // Act
     // Expansion strategy:
     // 1. Use codes sequentially (1001, 1002, 1003, ...)
     // 2. Reserve codes 1050-1099 for future extensions
     // 3. Never use codes outside 1000-1099 range
     // 4. Never steal codes from other domains
 
+    // Assert
     // This test documents the expansion policy.
 }
 
@@ -203,8 +235,10 @@ fn should_allow_error_code_range_expansion_within_bounds() {
 
 #[test]
 fn should_document_standard_error_code_semantics() {
+    // Arrange
     // Standard error codes (present in ALL domains):
-    //
+
+    // Act
     // *001 = ERR_UNAUTHORIZED
     //   Returned when: Realm mismatch, area not in JWT, or scope insufficient
     //   Client action: Check JWT claims, verify realm/area/scope match
@@ -214,7 +248,8 @@ fn should_document_standard_error_code_semantics() {
     //   Returned when: Requested operation not permitted by JWT scope
     //   Client action: Request different scopes or different operation
     //   Retryable: No (auth error)
-    //
+
+    // Assert
     // *003 = ERR_REALM_MISMATCH
     //   Returned when: Operation tried to cross realm boundary
     //   Client action: Ensure all operations stay within realm
@@ -223,8 +258,10 @@ fn should_document_standard_error_code_semantics() {
 
 #[test]
 fn should_document_domain_specific_error_codes() {
+    // Arrange
     // Domain-specific error codes (vary by domain):
-    //
+
+    // Act
     // KV 1010 = ERR_INVALID_TRANSACTION
     //   Returned when: Transaction ID is invalid or expired
     //   Client action: Start a new transaction
@@ -234,7 +271,8 @@ fn should_document_domain_specific_error_codes() {
     //   Returned when: Offset is out of valid range
     //   Client action: Use valid offset range
     //   Retryable: No (wrong offset)
-    //
+
+    // Assert
     // Queue 4010 = ERR_MESSAGE_NOT_FOUND
     //   Returned when: Message ID doesn't exist or was completed
     //   Client action: Verify message ID
@@ -247,13 +285,17 @@ fn should_document_domain_specific_error_codes() {
 
 #[test]
 fn should_map_rpc_error_codes_correctly() {
+    // Arrange
     // Verify RPC error codes follow the standard mapping:
     // RpcErrorCode enum → string representation → numeric code
 
     use fitz::domains::rpc::RpcErrorCode;
 
+    // Act
     // All RPC errors should have string representations
     let timeout_str = RpcErrorCode::Timeout.as_str();
+
+    // Assert
     assert!(
         timeout_str.starts_with("RPC_"),
         "RPC codes should be prefixed with RPC_"
@@ -274,17 +316,20 @@ fn should_map_rpc_error_codes_correctly() {
 
 #[test]
 fn should_define_error_codes_with_numeric_identifiers() {
+    // Arrange
     // Each error code should map to a numeric identifier for wire format:
     //
     // Format: {base_code}{offset}
     // - KV base: 1000 → 1001 (unauthorized), 1002, etc.
     // - RPC base: 6000 → 6001 (unauthorized), 6002, etc.
-    //
+
+    // Act
     // Numeric codes MUST be:
     // - Unique across all domains
     // - Consistent across protocol versions
     // - Documented in error enum
 
+    // Assert
     // This test documents the mapping requirement.
     // Implement as:
     // pub fn code(&self) -> u16 {
@@ -302,12 +347,15 @@ fn should_define_error_codes_with_numeric_identifiers() {
 
 #[test]
 fn should_encode_error_codes_in_response_tlv() {
+    // Arrange
     // Error responses MUST include numeric error code in TLV:
-    //
+
+    // Act
     // TLV format:
     //   TAG_ERROR_CODE (u16): numeric error code
     //   TAG_ERROR_MESSAGE (string): human-readable message
-    //
+
+    // Assert
     // Example for KV unauthorized:
     //   [TAG_ERROR_CODE] [0x03, 0xe9] (1001 in big-endian)
     //   [TAG_ERROR_MESSAGE] "Realm mismatch"
@@ -317,13 +365,16 @@ fn should_encode_error_codes_in_response_tlv() {
 
 #[test]
 fn should_allow_error_code_extension_without_conflict() {
+    // Arrange
     // Future error codes can be added by:
     // 1. Using the next available code in the domain's range
     // 2. Never exceeding the 100-code limit per domain
     // 3. Never overlapping with another domain
-    //
+
+    // Act
     // Example: If KV uses 1001-1020, next code is 1021
-    //
+
+    // Assert
     // This preserves backward compatibility because:
     // - Unknown error codes can be logged/reported
     // - Client doesn't need to understand all codes

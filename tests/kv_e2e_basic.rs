@@ -18,7 +18,7 @@ fn should_complete_transaction_begin_put_get_sequence() {
     // Arrange
     let mut actor = create_kv_actor();
 
-    // Act & Assert - Begin
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
@@ -32,7 +32,7 @@ fn should_complete_transaction_begin_put_get_sequence() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act & Assert - Put
+    // Step 2: Put and verify
     let response = actor.handle(KvMessage::Put {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -42,7 +42,7 @@ fn should_complete_transaction_begin_put_get_sequence() {
     });
     assert!(matches!(response, KvResponse::PutOk));
 
-    // Act & Assert - Get
+    // Step 3: Get and verify
     let response = actor.handle(KvMessage::Get {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -54,12 +54,12 @@ fn should_complete_transaction_begin_put_get_sequence() {
             found: true,
             value: Some(v),
         } => {
-            assert!(v.starts_with(b"{\"name\":\"Alice\""));
+            assert_eq!(&*v, b"{\"name\":\"Alice\",\"email\":\"alice@acme.com\"}");
         }
         _ => panic!("Expected to find user"),
     }
 
-    // Act & Assert - Rollback to cleanup
+    // Assert
     let response = actor.handle(KvMessage::Rollback { tx_id });
     assert!(matches!(response, KvResponse::RollbackOk));
 }
@@ -165,7 +165,7 @@ fn should_isolate_transactions_across_column_families() {
         value: Bytes::from_static(b"value_from_family_2"),
     });
 
-    // Get from Family 2
+    // Act
     let response = actor.handle(KvMessage::Get {
         tx_id: tx_id2,
         route_family: RouteFamily::new(2),
@@ -336,7 +336,7 @@ fn should_allow_multiple_sequential_transactions() {
 
     actor.handle(KvMessage::Rollback { tx_id: tx_id1 });
 
-    // Transaction 2
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),

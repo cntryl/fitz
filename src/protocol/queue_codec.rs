@@ -50,11 +50,11 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         }
         QueueResponse::Extended => {
             buf.put_u8(0); // status: success
-            // Empty response
+                           // Empty response
         }
         QueueResponse::Completed => {
             buf.put_u8(0); // status: success
-            // Empty response
+                           // Empty response
         }
         QueueResponse::InvalidToken => {
             buf.put_u8(1); // status: error
@@ -115,10 +115,7 @@ fn parse_route_string(payload: &[u8], offset: &mut usize) -> Result<String, Stri
     Ok(route_str)
 }
 
-fn parse_enqueue(
-    family_id: RouteFamily,
-    payload: &[u8],
-) -> Result<QueueMessage, String> {
+fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
     // Wire format per CLIENT_SPEC: [u32 route_len][route][u32 body_len][body][u8 has_delay][u64 delay?]
     let mut offset = 0;
 
@@ -177,10 +174,7 @@ fn parse_enqueue(
     })
 }
 
-fn parse_reserve(
-    family_id: RouteFamily,
-    payload: &[u8],
-) -> Result<QueueMessage, String> {
+fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
     // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 lease_seconds][u8 has_batch_size][u32 batch?][u8 has_wait][u64 wait?]
     let mut offset = 0;
 
@@ -258,10 +252,7 @@ fn parse_reserve(
     })
 }
 
-fn parse_extend(
-    family_id: RouteFamily,
-    payload: &[u8],
-) -> Result<QueueMessage, String> {
+fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
     // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 lease_token][u64 lease_seconds]
     let mut offset = 0;
 
@@ -324,10 +315,7 @@ fn parse_extend(
     })
 }
 
-fn parse_complete(
-    family_id: RouteFamily,
-    payload: &[u8],
-) -> Result<QueueMessage, String> {
+fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
     // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 lease_token]
     let mut offset = 0;
 
@@ -380,6 +368,7 @@ mod tests {
 
     #[test]
     fn should_parse_enqueue_message() {
+        // Arrange
         let route = "queue://realm/area/test";
         let body = b"test message";
         let mut payload = Vec::new();
@@ -389,17 +378,16 @@ mod tests {
         payload.extend_from_slice(body);
         payload.push(0); // No delay
 
-        let result = parse_request(
-            msg_type::ENQUEUE,
-            RouteFamily::new(2),
-            &payload,
-        );
+        // Act
+        let result = parse_request(msg_type::ENQUEUE, RouteFamily::new(2), &payload);
 
+        // Assert
         assert!(result.is_ok());
     }
 
     #[test]
     fn should_parse_reserve_message() {
+        // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
         payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
@@ -409,17 +397,16 @@ mod tests {
         payload.extend_from_slice(&5u32.to_be_bytes()); // batch_size = 5
         payload.push(0); // No wait_seconds
 
-        let result = parse_request(
-            msg_type::RESERVE,
-            RouteFamily::new(2),
-            &payload,
-        );
+        // Act
+        let result = parse_request(msg_type::RESERVE, RouteFamily::new(2), &payload);
 
+        // Assert
         assert!(result.is_ok());
     }
 
     #[test]
     fn should_parse_complete_message() {
+        // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
         payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
@@ -427,22 +414,24 @@ mod tests {
         payload.extend_from_slice(&123u64.to_be_bytes()); // id
         payload.extend_from_slice(&456u64.to_be_bytes()); // token
 
-        let result = parse_request(
-            msg_type::COMPLETE,
-            RouteFamily::new(2),
-            &payload,
-        );
+        // Act
+        let result = parse_request(msg_type::COMPLETE, RouteFamily::new(2), &payload);
 
+        // Assert
         assert!(result.is_ok());
     }
 
     #[test]
     fn should_encode_enqueued_response() {
+        // Arrange
         let response = QueueResponse::Enqueued {
             id: MessageId::new(42),
         };
 
+        // Act
         let encoded = encode_response(&response);
+
+        // Assert
         assert_eq!(encoded.len(), 9); // 1 status byte + 8 bytes for u64
         assert_eq!(encoded[0], 0); // status: success
         assert_eq!(u64::from_be_bytes(encoded[1..9].try_into().unwrap()), 42);
@@ -452,6 +441,7 @@ mod tests {
     fn should_encode_reserved_response() {
         use crate::domains::queue::ReservedMessage;
 
+        // Arrange
         let response = QueueResponse::Reserved {
             messages: vec![ReservedMessage {
                 id: MessageId::new(1),
@@ -462,7 +452,10 @@ mod tests {
             }],
         };
 
+        // Act
         let encoded = encode_response(&response);
+
+        // Assert
         assert!(!encoded.is_empty());
     }
 }

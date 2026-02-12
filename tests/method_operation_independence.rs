@@ -30,7 +30,7 @@ fn should_select_handler_by_method_not_route_operation() {
     // Arrange
     let mut actor = create_kv_actor();
 
-    // Act: Issue a KV_BEGIN (method 101) to the actor
+    // Act
     // The route contains operation="create_table" (application-level data)
     // If the bug existed, route.operation would influence which handler runs
     let response = actor.handle(KvMessage::Begin {
@@ -42,7 +42,7 @@ fn should_select_handler_by_method_not_route_operation() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    // Assert: Handler was selected by TLV method (Begin = 101), not by route
+    // Assert
     // If operation was being used for dispatch, this would be vulnerable
     assert!(matches!(response, KvResponse::BeginOk { tx_id: _ }));
 }
@@ -57,7 +57,7 @@ fn should_dispatch_different_methods_on_same_route() {
     let mut actor = create_kv_actor();
     let resource = "users".to_string();
 
-    // Act & Assert 1: Begin transaction (method = KvMessage::Begin)
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
@@ -71,12 +71,12 @@ fn should_dispatch_different_methods_on_same_route() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act & Assert 2: Commit transaction (method = KvMessage::Commit)
+    // Step 2: Commit transaction (method = KvMessage::Commit)
     // SAME route path, DIFFERENT method
     let response = actor.handle(KvMessage::Commit { tx_id });
     assert!(matches!(response, KvResponse::CommitOk));
 
-    // Arrange 2: Start a new transaction
+    // Setup: Start a new transaction
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
@@ -90,7 +90,7 @@ fn should_dispatch_different_methods_on_same_route() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act & Assert 3: Rollback transaction (method = KvMessage::Rollback)
+    // Assert
     // SAME route path, yet ANOTHER different method
     let response = actor.handle(KvMessage::Rollback { tx_id });
     assert!(matches!(response, KvResponse::RollbackOk));
@@ -102,7 +102,7 @@ fn should_dispatch_different_methods_on_same_route() {
 /// Tests that changing route.operation doesn't change the method behavior.
 #[test]
 fn should_execute_identical_method_regardless_of_route_context() {
-    // Arrange: Create two separate transactions on different resources
+    // Arrange
     let mut actor = create_kv_actor();
 
     // Transaction 1: resource="users" (different from transaction 2)
@@ -119,6 +119,7 @@ fn should_execute_identical_method_regardless_of_route_context() {
         _ => panic!("Expected BeginOk"),
     };
 
+    // Act
     let put_response_1 = actor.handle(KvMessage::Put {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -150,7 +151,7 @@ fn should_execute_identical_method_regardless_of_route_context() {
         value: Bytes::from_static(b"value2"),
     });
 
-    // Assert: Both PUT methods (same TLV method) succeeded in their respective resources.
+    // Assert
     // If method were confused with operation/route context, one would fail.
     assert!(matches!(put_response_1, KvResponse::PutOk));
     assert!(matches!(put_response_2, KvResponse::PutOk));
@@ -165,7 +166,7 @@ fn should_ignore_route_operation_segment_for_method_selection() {
     // Arrange
     let mut actor = create_kv_actor();
 
-    // Act: Begin transaction. The resource path might conceptually have an operation segment,
+    // Act
     // but the ONLY thing that selects the handler is KvMessage::Begin
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -176,7 +177,7 @@ fn should_ignore_route_operation_segment_for_method_selection() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    // Assert: Succeeded because method (Begin) is correct
+    // Assert
     // Would fail if code tried to extract operation from route and match on it
     assert!(matches!(response, KvResponse::BeginOk { tx_id: _ }));
 
@@ -196,6 +197,7 @@ fn should_ignore_route_operation_segment_for_method_selection() {
 /// should reject it.
 #[test]
 fn should_reject_missing_method_at_protocol_level() {
+    // Arrange
     // This test documents the expected behavior:
     // If a frame arrived with NO TLV method field, it should be rejected
     // at the protocol layer (mux level), not at domain level.
@@ -203,11 +205,13 @@ fn should_reject_missing_method_at_protocol_level() {
     // Currently this is enforced by requiring msg_type in TLV records.
     // The test serves as documentation of this invariant.
 
-    // Act: The only way to send to the actor is via KvMessage enum,
+    // Act
+    // The only way to send to the actor is via KvMessage enum,
     // which enforces that every request has an explicit method.
     // In real code, this would be enforced by the Mux layer.
 
-    // Assert: This test documents the invariant.
+    // Assert
+    // This test documents the invariant.
     // Actual enforcement happens at Session/Mux layer where TlvRecord
     // is required to have a msg_type field.
 }

@@ -328,11 +328,8 @@ impl ScheduleActor {
                     };
 
                     let target_route = Route::new(target_path.clone());
-                    let exec_event = DomainPublishEvent::new(
-                        self.family,
-                        target_route,
-                        def.payload.clone(),
-                    );
+                    let exec_event =
+                        DomainPublishEvent::new(self.family, target_route, def.payload.clone());
                     let _ = ctx.publish_event(exec_event);
                     info!(
                         "schedule {} fired -> schedule subscribers + target at {}",
@@ -721,7 +718,8 @@ mod tests {
         // Arrange
         let cron = CronSchedule::parse("0 9,12,18 * * *").unwrap();
 
-        // Act & Assert
+        // Act
+        // Assert
         assert!(cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap()));
         assert!(cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap()));
         assert!(cron.matches_dt(&Utc.with_ymd_and_hms(2025, 1, 15, 18, 0, 0).unwrap()));
@@ -733,7 +731,8 @@ mod tests {
         // Arrange
         let cron = CronSchedule::parse("0 9,10,11,12,13,14,15,16,17 * * *").unwrap();
 
-        // Act & Assert
+        // Act
+        // Assert
         for hour in 9..=17 {
             let dt = Utc.with_ymd_and_hms(2025, 1, 15, hour, 0, 0).unwrap();
             assert!(cron.matches_dt(&dt), "Should match hour {}", hour);
@@ -784,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_mixed_csv_and_ranges() {
+    fn should_parse_mixed_csv_with_ranges() {
         // Arrange
         let expr = "0,15-20,30 * * * *"; // 0, 15-20, 30
 

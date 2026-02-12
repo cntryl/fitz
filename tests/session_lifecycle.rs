@@ -34,11 +34,11 @@ fn should_create_unique_session_id_on_connect() {
         exp: 9999999999,
     };
 
-    // Act - Create first session
+    // Act
     let mut actor1 = SessionActor::new(SessionId(1), perms.clone());
     actor1.authenticate(claims.clone(), perms.clone());
 
-    // Act - Create second session (should have different ID)
+    // Continue: Create second session (should have different ID)
     let mut actor2 = SessionActor::new(SessionId(2), perms.clone());
     actor2.authenticate(claims, perms);
 
@@ -161,8 +161,10 @@ fn should_reject_unauthorized_requests_on_new_session() {
 
 #[test]
 fn should_document_session_cleanup_on_disconnect() {
+    // Arrange
     // Documentation test: When client disconnects, server MUST cleanup:
     //
+    // Act
     // 1. KV: Rollback all active transactions
     //    - Session tracked in KvActor.active_transactions
     //    - Each KvTransaction tied to session_id
@@ -189,6 +191,7 @@ fn should_document_session_cleanup_on_disconnect() {
     //    - Session tracked in QueueActor.active_reservations
     //    - On disconnect: clear any queued notifications
     //
+    // Assert
     // This test documents the cleanup requirements.
     // Each domain MUST implement cleanup on session close.
 }
@@ -217,6 +220,7 @@ fn should_cleanup_permissions_on_disconnect() {
         "session should be active before disconnect"
     );
 
+    // Assert
     // When session closes (not directly testable in unit test, but documented):
     // - SessionActor is dropped
     // - Permissions are released
@@ -358,11 +362,11 @@ fn should_require_fresh_auth_on_reconnect() {
         exp: 9999999999,
     };
 
-    // Act - Initial session
+    // Act
     let mut session1 = SessionActor::new(SessionId(500), perms.clone());
     session1.authenticate(old_claims, perms.clone());
 
-    // Act - Reconnect with new claims (different roles)
+    // Continue: Reconnect with new claims (different roles)
     let mut session2 = SessionActor::new(SessionId(501), perms.clone());
     session2.authenticate(new_claims, perms);
 

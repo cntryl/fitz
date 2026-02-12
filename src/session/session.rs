@@ -459,21 +459,21 @@ mod tests {
         let part1 = data.slice(0..split);
         let part2 = data.slice(split..);
 
-        // Act - send first partial part (should not error)
+        // Act
         let ingress_ref: &dyn Ingress = &ingress;
         rt.block_on(async {
             session.on_frame(part1, ingress_ref).await.unwrap();
         });
 
-        // No frames processed yet
+        // Verify: no frames processed yet
         assert_eq!(frames.lock().unwrap().len(), 0);
 
-        // Act - send second part (completes message)
+        // Step 2: send second part (completes message)
         rt.block_on(async {
             session.on_frame(part2, ingress_ref).await.unwrap();
         });
 
-        // Assert - now one frame processed
+        // Assert
         assert_eq!(frames.lock().unwrap().len(), 1);
         let f = &frames.lock().unwrap()[0];
         assert_eq!(f.session_id, 42);

@@ -140,39 +140,41 @@ fn should_support_wildcard_patterns_for_schedule_realms() {
 }
 
 #[test]
-fn should_distinguish_between_read_and_write_permissions() {
-    // Arrange - Session with only read permission
+fn should_distinguish_between_read_write_permissions() {
+    // Arrange
     let read_perms = vec![Permission::parse("schedule://monitoring/**#read").unwrap()];
     let session_read = SessionPermissions::from_permissions(read_perms);
 
     let route = Route::new("schedule://monitoring/jobs/alert".to_string());
 
+    // Act
+    let can_read = session_read.allows(&route, fitz::auth::Access::Read);
+    let can_write = session_read.allows(&route, fitz::auth::Access::Write);
+
     // Assert
+    assert!(can_read, "Should allow read access");
     assert!(
-        session_read.allows(&route, fitz::auth::Access::Read),
-        "Should allow read access"
-    );
-    assert!(
-        !session_read.allows(&route, fitz::auth::Access::Write),
+        !can_write,
         "Should NOT allow write access with read-only permission"
     );
 }
 
 #[test]
 fn should_support_write_permission_level() {
-    // Arrange - Session with "write" permission
+    // Arrange
     let write_perms = vec![Permission::parse("schedule://admin/**#write").unwrap()];
     let session_write = SessionPermissions::from_permissions(write_perms);
 
     let route = Route::new("schedule://admin/jobs/critical".to_string());
 
+    // Act
+    let can_write = session_write.allows(&route, fitz::auth::Access::Write);
+    let can_read = session_write.allows(&route, fitz::auth::Access::Read);
+
     // Assert
+    assert!(can_write, "Should allow write with write permission");
     assert!(
-        session_write.allows(&route, fitz::auth::Access::Write),
-        "Should allow write with write permission"
-    );
-    assert!(
-        !session_write.allows(&route, fitz::auth::Access::Read),
+        !can_read,
         "Should NOT allow read with write-only permission"
     );
 }

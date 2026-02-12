@@ -1,4 +1,4 @@
-﻿//! Stream E2E Basic Tests
+//! Stream E2E Basic Tests
 //!
 //! Tests the golden path for stream operations:
 //! - Basic append-commit flow with session
@@ -300,12 +300,7 @@ fn should_abort_session_without_committing() {
     );
 
     // Abort instead of commit
-    actor.receive(
-        StreamMessage::Rollback {
-            session_id: 6,
-        },
-        &mut ctx,
-    );
+    actor.receive(StreamMessage::Rollback { session_id: 6 }, &mut ctx);
 
     // Assert - Stream still at offset 0
     actor.receive(

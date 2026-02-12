@@ -176,20 +176,28 @@ mod tests {
 
     #[test]
     fn should_detect_operation_timeout() {
+        // Arrange
         let config = TimeoutConfig::default();
         let tracker = TimeoutTracker::with_timeout(config, Duration::from_millis(10));
-
         assert!(!tracker.is_expired());
+
+        // Act
         thread::sleep(Duration::from_millis(20));
+
+        // Assert
         assert!(tracker.is_expired());
     }
 
     #[test]
     fn should_report_remaining_time() {
+        // Arrange
         let config = TimeoutConfig::default();
         let tracker = TimeoutTracker::with_timeout(config, Duration::from_secs(10));
 
+        // Act
         let remaining = tracker.remaining();
+
+        // Assert
         assert!(remaining.is_some());
         // Allow full 10 seconds since test runs very quickly
         assert!(remaining.unwrap() <= Duration::from_secs(10));
@@ -198,19 +206,24 @@ mod tests {
 
     #[test]
     fn should_reject_oversized_buffer() {
+        // Arrange
         let config = TimeoutConfig::default();
         let mut buffer = FrameBuffer::new(100, config);
 
         let result = buffer.add(&[0u8; 50]);
         assert!(result.is_ok());
 
+        // Act
         let result = buffer.add(&[0u8; 60]);
+
+        // Assert
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("overflow"));
     }
 
     #[test]
     fn should_detect_idle_timeout() {
+        // Arrange
         let config = TimeoutConfig {
             operation_timeout: Duration::from_secs(30),
             partial_frame_timeout: Duration::from_millis(10),
@@ -218,11 +231,13 @@ mod tests {
             session_timeout: Duration::from_secs(3600),
         };
         let mut buffer = FrameBuffer::new(1000, config);
-
         buffer.add(b"data").unwrap();
         assert!(!buffer.is_idle_timeout());
 
+        // Act
         thread::sleep(Duration::from_millis(20));
+
+        // Assert
         assert!(buffer.is_idle_timeout());
     }
 }

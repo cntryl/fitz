@@ -13,13 +13,17 @@ use fitz::domains::schedule::CronSchedule;
 
 #[test]
 fn should_compute_next_fire_time_correctly() {
+    // Arrange
     // Test next_fire_after computation
     let cron = CronSchedule::parse("0 9 * * 1-5").unwrap(); // 9:00 AM weekdays
 
     // Start from a time way in the past
     let from = Utc.with_ymd_and_hms(2025, 1, 10, 8, 0, 0).unwrap(); // Friday 8 AM
+
+    // Act
     let next = cron.next_fire_after(from);
 
+    // Assert
     // Should find 9 AM same day (Friday)
     assert_eq!(next.hour(), 9);
     assert_eq!(next.minute(), 0);
@@ -28,12 +32,16 @@ fn should_compute_next_fire_time_correctly() {
 
 #[test]
 fn should_find_next_matching_time() {
+    // Arrange
     let cron = CronSchedule::parse("0 9 * * 1-5").unwrap(); // 9 AM Mon-Fri
 
     // Friday 8 AM - haven't reached 9 AM yet
     let from = Utc.with_ymd_and_hms(2025, 1, 10, 8, 0, 0).unwrap();
+
+    // Act
     let next = cron.next_fire_after(from);
 
+    // Assert
     // Should find 9 AM same day (Friday)
     assert_eq!(next.hour(), 9);
     assert_eq!(next.minute(), 0);
@@ -41,6 +49,7 @@ fn should_find_next_matching_time() {
 
 #[test]
 fn should_handle_never_matching_cron() {
+    // Arrange
     // Impossible cron: Feb 30
     let cron = CronSchedule {
         minute: vec![0],
@@ -51,8 +60,11 @@ fn should_handle_never_matching_cron() {
     };
 
     let from = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+
+    // Act
     let next = cron.next_fire_after(from);
 
+    // Assert
     // Should return ~24 hours in future
     let diff = next.signed_duration_since(from);
     assert!(diff.num_hours() >= 20); // At least 20 hours ahead
@@ -61,11 +73,13 @@ fn should_handle_never_matching_cron() {
 
 #[test]
 fn should_have_efficient_bucket_distribution() {
+    // Arrange
     // Verify that schedules spread across time buckets don't cluster
     const BUCKET_SIZE_SECS: i64 = 10;
 
     let base = Utc.with_ymd_and_hms(2025, 1, 1, 12, 0, 0).unwrap();
 
+    // Act
     // Create schedules at various times
     let times = vec![
         base,
@@ -75,6 +89,7 @@ fn should_have_efficient_bucket_distribution() {
         base + Duration::seconds(100),
     ];
 
+    // Assert
     for t in times {
         let bucket = (t.timestamp() / BUCKET_SIZE_SECS) as u64;
         let _ = bucket; // Use in real implementation for key generation
@@ -83,6 +98,7 @@ fn should_have_efficient_bucket_distribution() {
 
 #[test]
 fn should_window_scan_contain_all_due_schedules() {
+    // Arrange
     // Verify window parameters catch schedules correctly
     // Window = [now - grace, now + lookahead]
     // grace_period = 2s, lookahead = 5s
@@ -94,27 +110,31 @@ fn should_window_scan_contain_all_due_schedules() {
     let window_start = now - grace;
     let window_end = now + lookahead;
 
+    // Act
     // Schedules that should be in window:
     // 1. Due 1 second ago (within grace)
     let due_recently = now - Duration::seconds(1);
-    assert!(due_recently >= window_start && due_recently <= window_end);
 
     // 2. Due 3 seconds in future (within lookahead)
     let due_soon = now + Duration::seconds(3);
-    assert!(due_soon >= window_start && due_soon <= window_end);
 
     // Schedules that should NOT be in window:
     // 1. Due 10 seconds ago (outside grace)
     let due_long_ago = now - Duration::seconds(10);
-    assert!(due_long_ago < window_start);
 
     // 2. Due 10 seconds in future (outside lookahead)
     let due_far_future = now + Duration::seconds(10);
+
+    // Assert
+    assert!(due_recently >= window_start && due_recently <= window_end);
+    assert!(due_soon >= window_start && due_soon <= window_end);
+    assert!(due_long_ago < window_start);
     assert!(due_far_future > window_end);
 }
 
 #[test]
 fn should_handle_multiple_schedules_in_same_bucket() {
+    // Arrange
     // All three schedules should hash to same 10-second bucket
     const BUCKET_SIZE_SECS: i64 = 10;
 
@@ -124,10 +144,12 @@ fn should_handle_multiple_schedules_in_same_bucket() {
     let t2 = base + Duration::seconds(3);
     let t3 = base + Duration::seconds(7);
 
+    // Act
     let bucket1 = (t1.timestamp() / BUCKET_SIZE_SECS) as u64;
     let bucket2 = (t2.timestamp() / BUCKET_SIZE_SECS) as u64;
     let bucket3 = (t3.timestamp() / BUCKET_SIZE_SECS) as u64;
 
+    // Assert
     // All should map to same bucket
     assert_eq!(bucket1, bucket2);
     assert_eq!(bucket2, bucket3);
@@ -135,11 +157,13 @@ fn should_handle_multiple_schedules_in_same_bucket() {
 
 #[test]
 fn should_span_multiple_buckets_with_long_interval() {
+    // Arrange
     // Verify that schedules far in the future use different buckets
     const BUCKET_SIZE_SECS: i64 = 10;
 
     let base = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
 
+    // Act
     let current_fire = base;
     let current_bucket = (current_fire.timestamp() / BUCKET_SIZE_SECS) as u64;
 
@@ -147,6 +171,7 @@ fn should_span_multiple_buckets_with_long_interval() {
     let far_next = base + Duration::seconds(60);
     let far_bucket = (far_next.timestamp() / BUCKET_SIZE_SECS) as u64;
 
+    // Assert
     // Buckets should definitely be different
     assert_ne!(current_bucket, far_bucket);
     assert!(far_bucket > current_bucket);
@@ -154,11 +179,13 @@ fn should_span_multiple_buckets_with_long_interval() {
 
 #[test]
 fn should_scale_to_millions_with_windowed_scan() {
+    // Arrange
     // Simulated scaling test: verify O(due) not O(total)
 
     const TOTAL_SCHEDULES: usize = 1_000_000;
     const DUE_IN_WINDOW: usize = 10;
 
+    // Act
     // In real implementation:
     // - Total schedules spread across all time buckets
     // - Due schedules only in [now - grace, now + lookahead]
@@ -171,18 +198,23 @@ fn should_scale_to_millions_with_windowed_scan() {
     let expected_scan_cost = DUE_IN_WINDOW;
     let full_scan_cost = TOTAL_SCHEDULES;
 
+    // Assert
     let ratio = full_scan_cost / expected_scan_cost;
     assert!(ratio > 50_000); // Windowed is at least 50k times better
 }
 
 #[test]
 fn should_preserve_next_fire_time_across_cron_computation() {
+    // Arrange
     // Verify that next_fire_time is set correctly and isn't lost
     let cron = CronSchedule::parse("0 * * * *").unwrap(); // Every hour
 
     let start = Utc.with_ymd_and_hms(2025, 1, 15, 12, 30, 0).unwrap();
+
+    // Act
     let next = cron.next_fire_after(start);
 
+    // Assert
     // Should be 13:00
     assert_eq!(next.hour(), 13);
     assert_eq!(next.minute(), 0);
@@ -195,12 +227,16 @@ fn should_preserve_next_fire_time_across_cron_computation() {
 
 #[test]
 fn should_handle_cron_with_multiple_times_per_day() {
+    // Arrange
     // Cron: every hour from 9-5
     let cron = CronSchedule::parse("0 9-17 * * 1-5").unwrap();
 
     let start = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap(); // Wed 8 AM
+
+    // Act
     let next = cron.next_fire_after(start);
 
+    // Assert
     // Should be 9 AM same day
     assert_eq!(next.hour(), 9);
     assert_eq!(next.day(), 15);
@@ -213,17 +249,20 @@ fn should_handle_cron_with_multiple_times_per_day() {
 
 #[test]
 fn should_gracefully_handle_clock_skew() {
+    // Arrange
     // If system clock goes backward by a few seconds, window still catches schedules
 
     let now = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
-    let skewed_back = now - Duration::seconds(3); // Clock went back 3 seconds
-
     let grace = Duration::seconds(2);
     let lookahead = Duration::seconds(5);
+
+    // Act
+    let skewed_back = now - Duration::seconds(3); // Clock went back 3 seconds
 
     let window_start = skewed_back - grace;
     let _window_end = skewed_back + lookahead;
 
+    // Assert
     // A schedule that was due at 'now' should still be in the skewed window
     // because grace_period covers it
     assert!(now > window_start);
@@ -231,8 +270,10 @@ fn should_gracefully_handle_clock_skew() {
 
 #[test]
 fn should_batch_updates_for_efficiency() {
+    // Arrange
     // Verify batching reduces write operations
 
+    // Act
     // Simulate 100 schedules firing in same tick
     let updates: Vec<(u64, DateTime<Utc>, DateTime<Utc>)> = (0..100)
         .map(|i| {
@@ -243,6 +284,7 @@ fn should_batch_updates_for_efficiency() {
         })
         .collect();
 
+    // Assert
     // In real implementation, these 100 updates would be:
     // - 100 index deletes
     // - 100 index inserts

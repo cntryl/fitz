@@ -121,14 +121,14 @@ fn should_increment_attempts_on_redelivery() {
     let queue_key = unique_queue_key("redelivery");
     let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
 
-    // Act 1: Enqueue a message
+    // Act
     let body = Bytes::from("test message");
     let msg_id = match actor.handle_enqueue(body.clone(), None) {
         QueueResponse::Enqueued { id } => id,
         _ => panic!("Expected Enqueued response"),
     };
 
-    // Act 2: Reserve it (marks as inflight)
+    // Continue: Reserve message (marks as inflight)
     let msg = match actor.handle_reserve(30, Some(1)) {
         QueueResponse::Reserved { messages } => {
             assert_eq!(messages.len(), 1);
@@ -137,7 +137,7 @@ fn should_increment_attempts_on_redelivery() {
         _ => panic!("Expected Reserved response"),
     };
 
-    // Assert: Message was reserved with correct ID and structure
+    // Assert
     assert_eq!(msg.id, msg_id);
     assert_eq!(msg.body, body);
     // In production, lease expiration would increment attempts.

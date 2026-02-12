@@ -185,7 +185,7 @@ fn should_allow_subsequent_operations_after_begin() {
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Begin with authorized realm
+    // Act
     let begin_msg = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "authed".to_string(),
@@ -211,7 +211,7 @@ fn should_allow_subsequent_operations_after_begin() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - Subsequent Put operation (realm already validated)
+    // Continue: Subsequent Put operation (realm already validated)
     let put_msg = KvMessage::Put {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -263,7 +263,7 @@ fn should_enforce_realm_isolation_across_sessions() {
     let mut actor1 = create_kv_actor();
     let mut actor2 = create_kv_actor();
 
-    // Act - Session1 writes to acme realm
+    // Act
     let msg1 = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),
@@ -276,7 +276,7 @@ fn should_enforce_realm_isolation_across_sessions() {
     let result1 = session1.begin(msg1, &mut actor1);
     assert!(result1.is_ok(), "Session1 should access acme");
 
-    // Act - Session2 tries to access acme realm (not authorized)
+    // Continue: Session2 tries to access acme realm (not authorized)
     let msg2 = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),

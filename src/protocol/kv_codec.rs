@@ -50,11 +50,11 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         }
         KvResponse::CommitOk => {
             buf.put_u8(0); // status: success
-            // Empty response for commit ok
+                           // Empty response for commit ok
         }
         KvResponse::RollbackOk => {
             buf.put_u8(0); // status: success
-            // Empty response for rollback ok
+                           // Empty response for rollback ok
         }
         KvResponse::GetResult { found, value } => {
             buf.put_u8(0); // status: success
@@ -68,19 +68,19 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         }
         KvResponse::PutOk => {
             buf.put_u8(0); // status: success
-            // Empty response for put ok
+                           // Empty response for put ok
         }
         KvResponse::InsertOk => {
             buf.put_u8(0); // status: success
-            // Empty response for insert ok
+                           // Empty response for insert ok
         }
         KvResponse::DeleteOk => {
             buf.put_u8(0); // status: success
-            // Empty response for delete ok
+                           // Empty response for delete ok
         }
         KvResponse::DeleteRangeOk => {
             buf.put_u8(0); // status: success
-            // Empty response for delete range ok
+                           // Empty response for delete range ok
         }
         KvResponse::ScanResult { items, has_more } => {
             buf.put_u8(0); // status: success
@@ -222,10 +222,7 @@ fn parse_rollback(_route_family: RouteFamily, payload: &[u8]) -> Result<KvMessag
     Ok(KvMessage::Rollback { tx_id })
 }
 
-fn parse_begin(
-    route_family: RouteFamily,
-    payload: &[u8],
-) -> Result<KvMessage, String> {
+fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u32 route_len][route][u8 mode][u8 durability]
     if payload.len() < 6 {
         return Err("BEGIN payload too short".to_string());
@@ -853,11 +850,7 @@ mod tests {
         payload.put_u8(0); // buffered (per CLIENT_SPEC: 0=buffered, 1=sync)
 
         // Act
-        let result = parse_request(
-            msg_type::BEGIN,
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
 
         // Assert
         assert!(matches!(result, Ok(KvMessage::Begin { .. })));
@@ -876,11 +869,7 @@ mod tests {
         payload.put_slice(key);
 
         // Act
-        let result = parse_request(
-            msg_type::GET,
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = parse_request(msg_type::GET, RouteFamily::new(1), &payload);
 
         // Assert
         assert!(matches!(result, Ok(KvMessage::Get { tx_id: 1, .. })));
@@ -931,19 +920,16 @@ mod tests {
         payload.put_u8(1); // sync durability (per CLIENT_SPEC: 1=sync)
 
         // Act
-        let result = parse_request(
-            msg_type::BEGIN,
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
 
         // Assert
         match result {
-            Ok(KvMessage::Begin {
-                write_options, ..
-            }) => {
+            Ok(KvMessage::Begin { write_options, .. }) => {
                 // Verify that durability byte 1 maps to sync
-                assert!(write_options.is_sync(), "Durability byte 1 should map to sync");
+                assert!(
+                    write_options.is_sync(),
+                    "Durability byte 1 should map to sync"
+                );
             }
             _ => panic!("Expected KvMessage::Begin with sync write options"),
         }
@@ -960,19 +946,16 @@ mod tests {
         payload.put_u8(0); // buffered durability (per CLIENT_SPEC: 0=buffered)
 
         // Act
-        let result = parse_request(
-            msg_type::BEGIN,
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
 
         // Assert
         match result {
-            Ok(KvMessage::Begin {
-                write_options, ..
-            }) => {
+            Ok(KvMessage::Begin { write_options, .. }) => {
                 // Verify that durability byte 0 maps to buffered
-                assert!(!write_options.is_sync(), "Durability byte 0 should map to buffered");
+                assert!(
+                    !write_options.is_sync(),
+                    "Durability byte 0 should map to buffered"
+                );
             }
             _ => panic!("Expected KvMessage::Begin with buffered write options"),
         }

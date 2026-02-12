@@ -281,13 +281,16 @@ mod tests {
 
     #[test]
     fn should_parse_bearer_token() {
+        // Arrange
         let req = Request::builder()
             .header("Authorization", "Bearer test-token-123")
             .body(Body::empty())
             .unwrap();
 
+        // Act
         if let Some(auth_header) = req.headers().get("Authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
+                // Assert
                 assert!(auth_str.starts_with("Bearer "));
                 let token = &auth_str[7..];
                 assert_eq!(token, "test-token-123");

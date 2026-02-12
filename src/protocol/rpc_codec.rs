@@ -75,7 +75,10 @@ fn parse_subscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<Rp
 }
 
 /// Wire format: `[string worker_addr]`
-fn parse_unsubscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
+fn parse_unsubscribe(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+) -> Result<RpcMessage, String> {
     let worker_addr_str = dec.get_string()?;
     let worker_addr = RouteAddress::new(route_family, Route::new(worker_addr_str));
 
@@ -87,7 +90,10 @@ fn parse_unsubscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<
 }
 
 /// Wire format: `[bytes correlation_id][string route][string reply_route][bytes body]`
-fn parse_rpc_request(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
+fn parse_rpc_request(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+) -> Result<RpcMessage, String> {
     let correlation_id_bytes = dec.get_bytes()?;
     if correlation_id_bytes.len() != 16 {
         return Err("Correlation ID must be 16 bytes (UUID)".to_string());

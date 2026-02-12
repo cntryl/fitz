@@ -99,7 +99,7 @@ fn should_classify_notice_unknown_as_non_idempotent() {
 
 #[test]
 fn should_allow_retry_of_idempotent_operations() {
-    // Arrangement test: Client can safely retry idempotent ops
+    // Arrange
     //
     // Scenario:
     // 1. Client sends GET
@@ -117,10 +117,20 @@ fn should_allow_retry_of_idempotent_operations() {
 
 #[test]
 fn should_track_idempotent_classification_per_domain() {
+    // Arrange
+    let cases = [
+        (Domain::Kv, 103),     // GET
+        (Domain::Stream, 604), // READ
+        (Domain::Queue, 202),  // RESERVE
+    ];
+
+    // Act
+    let results: Vec<_> = cases.iter().map(|(d, m)| classify(*d, *m)).collect();
+
     // Assert
-    assert_eq!(classify(Domain::Kv, 103), Idempotency::Idempotent); // GET
-    assert_eq!(classify(Domain::Stream, 604), Idempotency::Idempotent); // READ
-    assert_eq!(classify(Domain::Queue, 202), Idempotency::Idempotent); // RESERVE
+    assert_eq!(results[0], Idempotency::Idempotent);
+    assert_eq!(results[1], Idempotency::Idempotent);
+    assert_eq!(results[2], Idempotency::Idempotent);
 }
 
 // ============================================================================
@@ -220,7 +230,7 @@ fn should_classify_kv_commit_as_non_idempotent() {
 
 #[test]
 fn should_prevent_retry_of_non_idempotent_operations() {
-    // Arrangement test: Retry of non-idempotent ops causes problems
+    // Arrange
     //
     // Scenario:
     // 1. Client sends PUT(key, "value1")
@@ -238,10 +248,20 @@ fn should_prevent_retry_of_non_idempotent_operations() {
 
 #[test]
 fn should_document_non_idempotent_ops_per_domain() {
+    // Arrange
+    let cases = [
+        (Domain::Kv, 104),     // PUT
+        (Domain::Stream, 601), // APPEND
+        (Domain::Notice, 500), // PUBLISH
+    ];
+
+    // Act
+    let results: Vec<_> = cases.iter().map(|(d, m)| classify(*d, *m)).collect();
+
     // Assert
-    assert_eq!(classify(Domain::Kv, 104), Idempotency::NonIdempotent); // PUT
-    assert_eq!(classify(Domain::Stream, 601), Idempotency::NonIdempotent); // APPEND
-    assert_eq!(classify(Domain::Notice, 500), Idempotency::NonIdempotent); // PUBLISH
+    assert_eq!(results[0], Idempotency::NonIdempotent);
+    assert_eq!(results[1], Idempotency::NonIdempotent);
+    assert_eq!(results[2], Idempotency::NonIdempotent);
 }
 
 // ============================================================================
@@ -329,7 +349,7 @@ fn should_classify_request_as_context_dependent() {
 // ============================================================================
 
 #[test]
-fn should_deduplicate_queue_complete_by_message_id_and_token() {
+fn should_deduplicate_queue_complete_by_message_id_with_token() {
     // Arrange
     let store = DedupStore::new(Duration::from_secs(3600));
     let key = DedupKey {
@@ -434,6 +454,8 @@ fn should_log_deduplicated_requests_for_debugging() {
 
 #[test]
 fn should_communicate_idempotency_in_operation_metadata() {
+    // Arrange
+
     // Act
     let kv_get = classify(Domain::Kv, 103); // GET
     let kv_put = classify(Domain::Kv, 104); // PUT
@@ -452,6 +474,8 @@ fn should_communicate_idempotency_in_operation_metadata() {
 
 #[test]
 fn should_document_deduplication_keys_per_operation() {
+    // Arrange
+
     // Act
     let queue_complete = classify(Domain::Queue, 204); // COMPLETE
     let rpc_request = classify(Domain::Rpc, 302); // REQUEST

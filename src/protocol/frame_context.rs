@@ -69,6 +69,9 @@ mod tests {
 
     #[test]
     fn should_create_frame_context() {
+        // Arrange
+
+        // Act
         let ctx = FrameContext::new(
             123,
             ChannelId::Pub,
@@ -76,6 +79,7 @@ mod tests {
             Bytes::from("test payload"),
         );
 
+        // Assert
         assert_eq!(ctx.session_id, 123);
         assert_eq!(ctx.channel_id, ChannelId::Pub);
         assert_eq!(ctx.msg_type.as_u16(), 103);

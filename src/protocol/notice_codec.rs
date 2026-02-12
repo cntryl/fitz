@@ -40,17 +40,12 @@ pub fn parse_request(
 
     match ctx.msg_type.0 {
         500 => parse_publish(&mut dec, route_family).map(NotificationMessage::Publish),
-        501 => {
-            parse_subscribe(&mut dec, route_family, session_id, subscriber)
-                .map(NotificationMessage::Subscribe)
-        }
-        502 => {
-            parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
-                .map(NotificationMessage::Unsubscribe)
-        }
+        501 => parse_subscribe(&mut dec, route_family, session_id, subscriber)
+            .map(NotificationMessage::Subscribe),
+        502 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
+            .map(NotificationMessage::Unsubscribe),
         503 => {
-            parse_unsubscribe_all(session_id, subscriber)
-                .map(NotificationMessage::UnsubscribeAll)
+            parse_unsubscribe_all(session_id, subscriber).map(NotificationMessage::UnsubscribeAll)
         }
         504 => parse_notify(&mut dec).map(NotificationMessage::Notify),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
@@ -78,7 +73,10 @@ pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
 // ===== Helper Parsers =====
 
 /// Wire format: `[string route][bytes payload]`
-fn parse_publish(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<PublishMessage, String> {
+fn parse_publish(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+) -> Result<PublishMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let payload = dec.get_bytes()?;

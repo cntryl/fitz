@@ -43,8 +43,10 @@ fn make_queue_actor(realm: &str, area: &str, resource: &str) -> (QueueActor, Con
 
 #[test]
 fn should_create_distinct_queue_actors_per_realm() {
-    // Arrange & Act: Create actors for different realms
+    // Arrange
     let (actor_acme, _) = make_queue_actor("acme", "tasks", "inbox");
+
+    // Act
     let (actor_evil, _) = make_queue_actor("evil", "tasks", "inbox");
 
     // Assert: Actors are completely separate instances
@@ -61,6 +63,8 @@ fn should_create_distinct_queue_actors_per_realm() {
 fn should_bind_queue_realm_immutably_at_construction() {
     // Arrange: Create a queue actor for specific realm
     let (_actor, _) = make_queue_actor("production-realm", "jobs", "pending");
+
+    // Act
 
     // Assert: Realm is bound in the constructor and cannot be changed
     // The actor's message handling uses the bound realm for storage keys
@@ -113,6 +117,8 @@ fn should_prevent_runtime_queue_realm_changes() {
     // Arrange: Create queue with specific realm
     let (_actor, _) = make_queue_actor("locked-realm", "area", "resource");
 
+    // Act
+
     // Assert: QueueActor takes realm as part of QueueKey constructor parameter
     // There is no method to change realm after creation
 }
@@ -127,6 +133,8 @@ fn should_achieve_queue_isolation_through_actor_design() {
     let (actor_red, _) = make_queue_actor("red", "events", "processing");
     let (actor_blue, _) = make_queue_actor("blue", "events", "processing");
     let (actor_green, _) = make_queue_actor("green", "events", "processing");
+
+    // Act
 
     // Assert: Three completely separate actors, no shared state
     let addr_red = &actor_red as *const _;
@@ -171,6 +179,8 @@ fn should_use_independent_queue_storage_per_realm() {
     let (queue_sandbox, _) = make_queue_actor("sandbox", "test", "ephemeral");
     let (queue_prod, _) = make_queue_actor("production", "test", "persistent");
 
+    // Act
+
     // Assert: Each actor has its own Midge storage handle
     // (Store is passed per actor instance with realm-scoped keys)
     // This prevents any cross-realm message leakage
@@ -187,6 +197,8 @@ fn should_route_to_correct_realm_queue() {
     // Arrange: Create separate realm queues
     let (queue_us, _) = make_queue_actor("us-east-1", "data", "stream");
     let (queue_eu, _) = make_queue_actor("eu-west-1", "data", "stream");
+
+    // Act
 
     // Assert: Each actor exists independently
     // Router layer ensures route "queue://us-east-1/..." goes to us queue
@@ -205,6 +217,8 @@ fn should_route_to_correct_realm_queue() {
 fn should_rely_on_auth_layer_for_queue_realm_validation() {
     // Arrange: Create queue actor
     let (_actor, _) = make_queue_actor("authenticated-realm", "secure", "work");
+
+    // Act
 
     // Assert: Queue actor exists for a single realm
     // The SessionActor layer (in session.rs) performs authorization checks

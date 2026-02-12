@@ -193,8 +193,11 @@ mod tests {
 
     #[test]
     fn should_calculate_exponential_backoff_correctly() {
+        // Arrange
         let backoff = ExponentialBackoff::default();
 
+        // Act
+        // Assert
         assert_eq!(backoff.delay(0), Duration::from_millis(100));
         assert_eq!(backoff.delay(1), Duration::from_millis(200));
         assert_eq!(backoff.delay(2), Duration::from_millis(400));
@@ -211,6 +214,9 @@ mod tests {
 
     #[test]
     fn should_classify_retryable_errors() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             default_error_classification("ECONNREFUSED"),
             ErrorClassification::Retryable
@@ -231,6 +237,9 @@ mod tests {
 
     #[test]
     fn should_classify_fatal_errors() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             default_error_classification("ERR_FRAME_TOO_LARGE"),
             ErrorClassification::Fatal
@@ -247,7 +256,11 @@ mod tests {
 
     #[test]
     fn should_respect_max_retries() {
+        // Arrange
         let config = RetryConfig::default();
+
+        // Act
+        // Assert
         assert!(config.should_retry(0));
         assert!(config.should_retry(9));
         assert!(!config.should_retry(10));

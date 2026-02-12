@@ -275,8 +275,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_accept_empty_keys_and_values() {
+    fn should_accept_empty_key_value_pairs() {
+        // Arrange
         let limits = SizeLimits::default();
+
+        // Act
+        // Assert
         assert!(limits.validate_key(b"").is_ok());
         assert!(limits.validate_value(b"").is_ok());
         assert!(limits.validate_event(b"").is_ok());
@@ -284,32 +288,42 @@ mod tests {
 
     #[test]
     fn should_reject_oversized_keys() {
+        // Arrange
         let limits = SizeLimits::new(
             NonZeroUsize::new(10).unwrap(),
             NonZeroUsize::new(100).unwrap(),
             NonZeroUsize::new(100).unwrap(),
         );
 
+        // Act
         let result = limits.validate_key(&[0u8; 20]);
+
+        // Assert
         assert!(matches!(result, Err(SizeError::KeyTooLarge { .. })));
     }
 
     #[test]
     fn should_reject_oversized_values() {
+        // Arrange
         let limits = SizeLimits::new(
             NonZeroUsize::new(100).unwrap(),
             NonZeroUsize::new(10).unwrap(),
             NonZeroUsize::new(100).unwrap(),
         );
 
+        // Act
         let result = limits.validate_value(&[0u8; 20]);
+
+        // Assert
         assert!(matches!(result, Err(SizeError::ValueTooLarge { .. })));
     }
 
     #[test]
     fn should_enforce_storage_quota() {
+        // Arrange
         let quota = ResourceQuota::default();
 
+        // Act
         // Check within quota
         assert!(quota.check_storage(100, 200).is_ok());
 
@@ -318,6 +332,8 @@ mod tests {
             1024 * 1024 * 1024 * 1000, // 1000 GB
             100 * 1024 * 1024 * 1024,  // 100 GB more
         );
+
+        // Assert
         assert!(matches!(
             result,
             Err(QuotaError::StorageQuotaExceeded { .. })
@@ -326,14 +342,18 @@ mod tests {
 
     #[test]
     fn should_enforce_connection_limit() {
+        // Arrange
         let quota = ResourceQuota::new(
             NonZeroUsize::new(1024).unwrap(),
             NonZeroUsize::new(10).unwrap(),
             NonZeroUsize::new(100).unwrap(),
         );
 
+        // Act
         assert!(quota.check_connection(9).is_ok());
         let result = quota.check_connection(10);
+
+        // Assert
         assert!(matches!(
             result,
             Err(QuotaError::ConnectionLimitReached { .. })
@@ -342,10 +362,14 @@ mod tests {
 
     #[test]
     fn should_calculate_crc32() {
+        // Arrange
         let checker = IntegrityChecker::default();
         let data = b"hello world";
 
+        // Act
         let crc = checker.crc32(data);
+
+        // Assert
         assert!(crc != 0);
         assert!(checker.verify_crc32(data, crc));
         assert!(!checker.verify_crc32(data, crc ^ 1));

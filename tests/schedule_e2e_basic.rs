@@ -1,4 +1,4 @@
-﻿//! Schedule domain E2E integration tests
+//! Schedule domain E2E integration tests
 //!
 //! Tests schedule protocol encoding/decoding and cron parsing validation
 //! Note: Persistence tests skipped due to Midge commit() bug with writes
@@ -8,7 +8,7 @@ use bytes::Bytes;
 use fitz::domains::schedule::protocol::SchedulePayload;
 
 #[test]
-fn should_encode_and_decode_schedule_payload() {
+fn should_roundtrip_schedule_payload() {
     // Arrange
     let original = SchedulePayload {
         cron: "0 9 * * 1-5".to_string(),
@@ -190,10 +190,12 @@ fn should_preserve_payload_through_roundtrip() {
         },
     ];
 
-    // Act & Assert
+    // Act
     for original in payloads {
         let encoded = original.encode();
         let decoded = SchedulePayload::decode(&encoded).unwrap();
+
+        // Assert
         assert_eq!(original.cron, decoded.cron);
         assert_eq!(original.target_resource, decoded.target_resource);
         assert_eq!(original.target_operation, decoded.target_operation);
@@ -201,7 +203,7 @@ fn should_preserve_payload_through_roundtrip() {
 }
 
 #[test]
-fn should_handle_unicode_in_resource_and_operation() {
+fn should_handle_unicode_in_resource_operation() {
     // Arrange
     let payload = SchedulePayload {
         cron: "0 0 * * *".to_string(),
@@ -221,7 +223,7 @@ fn should_handle_unicode_in_resource_and_operation() {
 }
 
 #[test]
-fn should_handle_long_resource_and_operation_names() {
+fn should_handle_long_resource_operation_names() {
     // Arrange
     let long_name = "a".repeat(256);
     let payload = SchedulePayload {

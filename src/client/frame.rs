@@ -87,14 +87,17 @@ mod tests {
 
     #[test]
     fn should_reject_oversized_frames() {
+        // Arrange
         let limits = FrameLimits {
             max_frame_size: 100,
             max_buffer_size: 500,
         };
         let data = vec![0u8; 200];
 
+        // Act
         match validate_frame(&data, &limits) {
             FrameValidation::TooLarge { size, limit } => {
+                // Assert
                 assert_eq!(size, 200);
                 assert_eq!(limit, 100);
             }
@@ -104,18 +107,26 @@ mod tests {
 
     #[test]
     fn should_validate_utf8() {
+        // Arrange
         let valid = b"hello";
+
+        // Act
         assert!(validate_utf8(valid).is_ok());
 
+        // Assert
         let invalid = b"\xFF\xFE";
         assert_eq!(validate_utf8(invalid), Err(FrameValidation::InvalidUtf8));
     }
 
     #[test]
     fn should_validate_utf8_owned() {
+        // Arrange
         let valid = "hello".as_bytes().to_vec();
+
+        // Act
         assert!(validate_utf8_owned(valid).is_ok());
 
+        // Assert
         let invalid = vec![0xFF, 0xFE];
         assert_eq!(
             validate_utf8_owned(invalid),

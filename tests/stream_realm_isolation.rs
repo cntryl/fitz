@@ -51,8 +51,10 @@ fn make_stream_actor(
 
 #[test]
 fn should_create_distinct_actors_per_realm() {
-    // Arrange & Act: Create actors for different realms
+    // Arrange
     let (actor_acme, _) = make_stream_actor("acme", "events", "data");
+
+    // Act
     let (actor_evil, _) = make_stream_actor("evil", "events", "data");
 
     // Assert: Actors are completely separate instances
@@ -70,6 +72,8 @@ fn should_create_distinct_actors_per_realm() {
 fn should_bind_realm_immutably_at_construction() {
     // Arrange: Create a stream actor for specific realm
     let (_actor, _) = make_stream_actor("production-realm", "logs", "errors");
+
+    // Act
 
     // Assert: Realm is bound in the constructor and cannot be changed
     // (We verify this by successful construction with specific realm)
@@ -119,6 +123,8 @@ fn should_prevent_runtime_realm_changes() {
     // Arrange: Create stream with specific realm
     let (_actor, _) = make_stream_actor("locked-realm", "area", "resource");
 
+    // Act
+
     // Assert: StreamActor takes realm as constructor parameter
     // There is no method to change realm after creation
     // This is verified by the constructor signature and API
@@ -134,6 +140,8 @@ fn should_achieve_isolation_through_actor_design() {
     let (actor_red, _) = make_stream_actor("red", "events", "updates");
     let (actor_blue, _) = make_stream_actor("blue", "events", "updates");
     let (actor_green, _) = make_stream_actor("green", "events", "updates");
+
+    // Act
 
     // Assert: Three completely separate actors, no shared state
     let addr_red = &actor_red as *const _;
@@ -177,6 +185,8 @@ fn should_use_independent_storage_per_realm() {
     let (_actor_sandbox, _) = make_stream_actor("sandbox", "test", "ephemeral");
     let (_actor_prod, _) = make_stream_actor("production", "test", "persistent");
 
+    // Act
+
     // Assert: Each actor has its own StreamStore instance
     // (Store is created per actor instance)
     // This prevents any cross-realm data leakage
@@ -191,6 +201,8 @@ fn should_route_to_correct_realm_actor() {
     // Arrange: Create separate realm actors
     let (actor_us, _) = make_stream_actor("us-east-1", "data", "stream");
     let (actor_eu, _) = make_stream_actor("eu-west-1", "data", "stream");
+
+    // Act
 
     // Assert: Each actor exists independently
     // Router layer ensures route "stream://us-east-1/..." goes to us actor
@@ -209,6 +221,8 @@ fn should_route_to_correct_realm_actor() {
 fn should_rely_on_auth_layer_for_realm_validation() {
     // Arrange: Create stream actor
     let (_actor, _) = make_stream_actor("authenticated-realm", "secure", "data");
+
+    // Act
 
     // Assert: Stream actor exists for a single realm
     // The SessionActor layer (in session.rs) performs authorization checks

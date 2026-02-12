@@ -111,7 +111,7 @@ fn should_have_stream_end_flag_for_final_chunk() {
 }
 
 #[test]
-fn should_have_payload_in_request_and_response() {
+fn should_include_payload_in_request_response() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://acme/auth/user/create");
@@ -155,10 +155,13 @@ fn should_define_error_code_6001_rpc_timeout() {
 
 #[test]
 fn should_define_error_code_6002_worker_not_found() {
+    // Arrange
     // Documentation test: 6002 = ERR_WORKER_NOT_FOUND
     // Returned when: No worker registered for the requested route
 
+    // Act
     let error_code = RpcErrorCode::InvalidRoute;
+    // Assert
     assert!(
         !error_code.as_str().is_empty(),
         "error codes must have string representation"
@@ -215,6 +218,7 @@ fn should_define_error_code_6001_unauthorized() {
 
 #[test]
 fn should_have_all_rpc_error_codes_in_range_6000_6099() {
+    // Arrange
     // Documentation test: All RPC error codes MUST be in 6000-6099 range
     //
     // Current defined codes:
@@ -226,11 +230,13 @@ fn should_have_all_rpc_error_codes_in_range_6000_6099() {
     // - ClientDisconnected (6013 as_str: "RPC_CLIENT_DISCONNECTED")
     // - WorkerCrashed (6014 as_str: "RPC_WORKER_CRASHED")
 
+    // Act
     // All variants have string representations
     let timeout_str = RpcErrorCode::Timeout.as_str();
     let backpressure_str = RpcErrorCode::Backpressure.as_str();
     let unauthorized_str = RpcErrorCode::Unauthorized.as_str();
 
+    // Assert
     // All should be prefixed with RPC_
     assert!(
         timeout_str.starts_with("RPC_"),
@@ -258,7 +264,7 @@ fn should_complete_single_request_response_cycle() {
     let route = Route::new("rpc://acme/auth/user/create");
     let reply_route = Route::new("inbox://session/123");
 
-    // Act - Request phase
+    // Act
     let request = RpcRequest::new(
         family,
         correlation_id,
@@ -267,7 +273,7 @@ fn should_complete_single_request_response_cycle() {
         Bytes::from("create user"),
     );
 
-    // Act - Response phase (single chunk)
+    // Continue: Response phase (single chunk)
     let response = RpcResponse::single(correlation_id, Bytes::from("user created"));
 
     // Assert
@@ -427,18 +433,23 @@ fn should_include_target_route_in_request() {
 
 #[test]
 fn should_handle_worker_registration() {
+    // Arrange
     // Documentation test: Worker subscribes to handle requests
+    // Act
     // Subscribe wire format: SUBSCRIBE_WORKER request
     // - family_id: RouteFamily
     // - route: Route (e.g., "rpc://acme/auth/user/create")
     // - reply_route: Inbox for responses
     //
+    // Assert
     // Server response: SUBSCRIBE_WORKER_OK or error
 }
 
 #[test]
 fn should_handle_client_request_to_worker() {
+    // Arrange
     // Documentation test: Client sends REQUEST
+    // Act
     // REQUEST wire format:
     // - correlation_id: UUID (16 bytes)
     // - family_id: RouteFamily
@@ -446,50 +457,66 @@ fn should_handle_client_request_to_worker() {
     // - reply_route: Inbox for response
     // - body: Request payload
     //
+    // Assert
     // Server routes REQUEST to available worker
     // If no worker available: return BACKPRESSURE error
 }
 
 #[test]
 fn should_handle_worker_response_to_client() {
+    // Arrange
     // Documentation test: Worker sends RESPONSE
+    // Act
     // RESPONSE wire format:
     // - correlation_id: UUID (echoed from request)
     // - seq: u64 (0-based sequence for streaming)
     // - stream_end: bool (true only for final chunk)
     // - body: Response payload
     //
+    // Assert
     // Server forwards RESPONSE to client's reply_route
 }
 
 #[test]
 fn should_timeout_request_if_worker_not_responding() {
+    // Arrange
     // Documentation test: If worker doesn't respond within lease timeout:
+    // Act
     // - Return RpcError::timeout() with correlation_id
+    // Assert
     // - Error code: RPC_TIMEOUT
     // - Client can retry with new request
 }
 
 #[test]
 fn should_return_backpressure_when_route_queue_full() {
+    // Arrange
     // Documentation test: If route queue at capacity:
+    // Act
     // - Return RpcError::backpressure() with correlation_id
+    // Assert
     // - Error code: RPC_BACKPRESSURE
     // - Client should retry with exponential backoff
 }
 
 #[test]
 fn should_return_unauthorized_when_client_lacks_permission() {
+    // Arrange
     // Documentation test: If client has insufficient scope:
+    // Act
     // - Return RpcError::unauthorized() with correlation_id
+    // Assert
     // - Error code: RPC_UNAUTHORIZED
     // - Client should request different scopes
 }
 
 #[test]
 fn should_return_invalid_route_when_no_worker_registered() {
+    // Arrange
     // Documentation test: If no worker registered for route:
+    // Act
     // - Return RpcError::invalid_route() with correlation_id
+    // Assert
     // - Error code: RPC_INVALID_ROUTE
     // - Client should verify route and retry
 }

@@ -222,16 +222,19 @@ mod tests {
     use bytes::Bytes;
 
     #[test]
-    fn should_encode_and_decode_scalars() {
+    fn should_roundtrip_scalars() {
+        // Arrange
         let mut enc = TlvEncoder::new();
         enc.put_u8(42);
         enc.put_u16(1000);
         enc.put_u32(100000);
         enc.put_u64(9999999999);
 
+        // Act
         let buf = enc.finish();
         let mut dec = TlvDecoder::new(&buf);
 
+        // Assert
         assert_eq!(dec.get_u8().unwrap(), 42);
         assert_eq!(dec.get_u16().unwrap(), 1000);
         assert_eq!(dec.get_u32().unwrap(), 100000);
@@ -240,42 +243,51 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_and_decode_strings() {
+    fn should_roundtrip_strings() {
+        // Arrange
         let mut enc = TlvEncoder::new();
         enc.put_string("hello");
         enc.put_string("world");
 
+        // Act
         let buf = enc.finish();
         let mut dec = TlvDecoder::new(&buf);
 
+        // Assert
         assert_eq!(dec.get_string().unwrap(), "hello");
         assert_eq!(dec.get_string().unwrap(), "world");
         assert!(dec.is_complete());
     }
 
     #[test]
-    fn should_encode_and_decode_bytes() {
+    fn should_roundtrip_bytes() {
+        // Arrange
         let mut enc = TlvEncoder::new();
         enc.put_bytes(b"test data");
 
+        // Act
         let buf = enc.finish();
         let mut dec = TlvDecoder::new(&buf);
 
+        // Assert
         assert_eq!(dec.get_bytes().unwrap(), Bytes::from("test data"));
         assert!(dec.is_complete());
     }
 
     #[test]
-    fn should_encode_and_decode_optional() {
+    fn should_roundtrip_optional() {
+        // Arrange
         let mut enc = TlvEncoder::new();
         enc.put_optional_u64(Some(42));
         enc.put_optional_u64(None);
         enc.put_optional_string(Some("hello"));
         enc.put_optional_string(None);
 
+        // Act
         let buf = enc.finish();
         let mut dec = TlvDecoder::new(&buf);
 
+        // Assert
         assert_eq!(dec.get_optional_u64().unwrap(), Some(42));
         assert_eq!(dec.get_optional_u64().unwrap(), None);
         assert_eq!(
@@ -288,20 +300,28 @@ mod tests {
 
     #[test]
     fn should_error_on_incomplete_data() {
+        // Arrange
         let buf = vec![1, 2]; // incomplete u32
+
+        // Act
         let mut dec = TlvDecoder::new(&buf);
 
+        // Assert
         assert!(dec.get_u32().is_err());
     }
 
     #[test]
     fn should_validate_utf8() {
+        // Arrange
         let mut enc = TlvEncoder::new();
         enc.put_u32(4); // length
         let mut buf = enc.finish();
         buf.extend_from_slice(&[255, 255, 255, 255]); // invalid UTF-8
 
+        // Act
         let mut dec = TlvDecoder::new(&buf);
+
+        // Assert
         assert!(dec.get_string().is_err());
     }
 }

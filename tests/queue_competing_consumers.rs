@@ -1,4 +1,4 @@
-﻿//! Competing consumer integration tests for queue domain
+//! Competing consumer integration tests for queue domain
 //!
 //! Tests multi-consumer scenarios, crash recovery with in-flight messages,
 //! and atomicity guarantees across process restarts.
@@ -281,6 +281,7 @@ fn should_redelivery_message_on_lease_expiration() {
     let queue_key = unique_queue_key("lease-expire");
     let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
 
+    // Act
     // Enqueue and reserve message
     actor.handle_enqueue(Bytes::from("work"), None);
     match actor.handle_reserve(30, Some(1)) {
@@ -290,6 +291,7 @@ fn should_redelivery_message_on_lease_expiration() {
         _ => panic!("Expected Reserved"),
     };
 
+    // Assert
     // Verify message is inflight
     assert_eq!(actor.inflight.len(), 1);
     assert_eq!(actor.ready.len(), 0);

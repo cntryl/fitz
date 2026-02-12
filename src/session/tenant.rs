@@ -195,7 +195,9 @@ mod tests {
 
     #[test]
     fn should_resolve_family_zero_for_no_auth() {
-        // Arrange & Act
+        // Arrange
+
+        // Act
         let family = resolve_route_family(None, None);
 
         // Assert

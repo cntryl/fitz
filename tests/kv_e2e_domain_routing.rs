@@ -10,6 +10,7 @@ mod tests {
 
     #[test]
     fn should_parse_kv_get_message() {
+        // Arrange
         // Test the codec GET parser
         // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "test_key";
@@ -23,17 +24,20 @@ mod tests {
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
 
+        // Act
         let result = kv::parse_request(
             103, // GET
             RouteFamily::new(1),
             &payload,
         );
 
+        // Assert
         assert!(result.is_ok(), "Failed to parse KV GET message");
     }
 
     #[test]
     fn should_parse_kv_put_message() {
+        // Arrange
         // Test the codec PUT parser
         // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "my_key";
@@ -50,17 +54,20 @@ mod tests {
         payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
         payload.extend_from_slice(value.as_bytes());
 
+        // Act
         let result = kv::parse_request(
             104, // PUT
             RouteFamily::new(1),
             &payload,
         );
 
+        // Assert
         assert!(result.is_ok(), "Failed to parse KV PUT message");
     }
 
     #[test]
     fn should_parse_kv_begin_message() {
+        // Arrange
         // Test the codec BEGIN parser
         let route = "kv://realm/area/my_resource";
 
@@ -70,17 +77,20 @@ mod tests {
         payload.push(0); // ReadWrite mode
         payload.push(0); // Buffered write option
 
+        // Act
         let result = kv::parse_request(
             100, // BEGIN
             RouteFamily::new(1),
             &payload,
         );
 
+        // Assert
         assert!(result.is_ok(), "Failed to parse KV BEGIN message");
     }
 
     #[test]
     fn should_encode_kv_get_result_found() {
+        // Arrange
         // Test response encoding
         use fitz::domains::kv::KvResponse;
 
@@ -89,7 +99,10 @@ mod tests {
             value: Some(Bytes::from("test_value")),
         };
 
+        // Act
         let encoded = kv::encode_response(&response);
+
+        // Assert
         assert!(
             !encoded.is_empty(),
             "Response encoding should produce bytes"
@@ -98,6 +111,7 @@ mod tests {
 
     #[test]
     fn should_encode_kv_get_result_not_found() {
+        // Arrange
         // Test response encoding for not-found case
         use fitz::domains::kv::KvResponse;
 
@@ -106,24 +120,33 @@ mod tests {
             value: None,
         };
 
+        // Act
         let encoded = kv::encode_response(&response);
+
+        // Assert
         assert!(!encoded.is_empty(), "Not-found response should encode");
     }
 
     #[test]
     fn should_encode_kv_put_ok() {
+        // Arrange
         // Test response encoding for PutOk
         // Note: PutOk is an empty response (which is correct in the protocol)
         use fitz::domains::kv::KvResponse;
 
         let response = KvResponse::PutOk;
+
+        // Act
         let encoded = kv::encode_response(&response);
+
+        // Assert
         // Empty response is valid - just verify it encodes without error
         let _ = encoded;
     }
 
     #[test]
     fn should_roundtrip_kv_message() {
+        // Arrange
         // Test parsing and the fact that it completes successfully
         // Per CLIENT_SPEC: resource is implicit from transaction context (established at BEGIN)
         let key = "test_key";
@@ -137,6 +160,7 @@ mod tests {
         payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
         payload.extend_from_slice(key.as_bytes());
 
+        // Act
         // Parse the message
         let parse_result = kv::parse_request(
             103, // GET
@@ -155,6 +179,8 @@ mod tests {
 
         // Encode response
         let encoded = kv::encode_response(&response);
+
+        // Assert
         assert!(!encoded.is_empty());
     }
 }

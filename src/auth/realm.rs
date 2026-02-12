@@ -121,6 +121,9 @@ mod tests {
 
     #[test]
     fn should_enforce_strict_equality() {
+        // Arrange
+        // Act
+        // Assert
         assert!(realm_matches("acme", "acme"));
         assert!(!realm_matches("acme", "ACME")); // Case-sensitive
         assert!(!realm_matches("acme", "acme1")); // No prefix match

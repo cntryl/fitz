@@ -503,16 +503,26 @@ impl Ingress for RuntimeIngress {
                         604..=608 => crate::auth::Access::Read, // READ/LAST/GET_METADATA/SUBSCRIBE/UNSUBSCRIBE
                         609 => {
                             // STREAM_NOTIFY is Server->Client only, reject inbound
-                            warn!(session_id = session_id, "Ingress: client sent Server->Client-only STREAM_NOTIFY (609)");
-                            return IngressDecision::Close("invalid message type: 609 is server-to-client only".to_string());
+                            warn!(
+                                session_id = session_id,
+                                "Ingress: client sent Server->Client-only STREAM_NOTIFY (609)"
+                            );
+                            return IngressDecision::Close(
+                                "invalid message type: 609 is server-to-client only".to_string(),
+                            );
                         }
                         // Schedule (700s)
                         700 | 701 => crate::auth::Access::Write,
                         702..=704 => crate::auth::Access::Read, // LIST/SUBSCRIBE/UNSUBSCRIBE
                         705 => {
                             // SCHEDULE_NOTIFY is Server->Client only, reject inbound
-                            warn!(session_id = session_id, "Ingress: client sent Server->Client-only SCHEDULE_NOTIFY (705)");
-                            return IngressDecision::Close("invalid message type: 705 is server-to-client only".to_string());
+                            warn!(
+                                session_id = session_id,
+                                "Ingress: client sent Server->Client-only SCHEDULE_NOTIFY (705)"
+                            );
+                            return IngressDecision::Close(
+                                "invalid message type: 705 is server-to-client only".to_string(),
+                            );
                         }
                         _ => crate::auth::Access::Write,
                     };
@@ -707,15 +717,45 @@ impl RuntimeIngress {
                     payload.as_ref(),
                 ) {
                     Ok(kmsg) => match kmsg {
-                        crate::domains::kv::KvMessage::Begin { realm, area, resource, .. } => {
-                            Ok(Some(Route::new(format!("kv://{}/{}/{}", realm, area, resource))))
+                        crate::domains::kv::KvMessage::Begin {
+                            realm,
+                            area,
+                            resource,
+                            ..
+                        } => Ok(Some(Route::new(format!(
+                            "kv://{}/{}/{}",
+                            realm, area, resource
+                        )))),
+                        crate::domains::kv::KvMessage::Get {
+                            route_family: _,
+                            resource: _,
+                            ..
                         }
-                        crate::domains::kv::KvMessage::Get { route_family: _, resource: _, .. }
-                        | crate::domains::kv::KvMessage::Put { route_family: _, resource: _, .. }
-                        | crate::domains::kv::KvMessage::Insert { route_family: _, resource: _, .. }
-                        | crate::domains::kv::KvMessage::Delete { route_family: _, resource: _, .. }
-                        | crate::domains::kv::KvMessage::DeleteRange { route_family: _, resource: _, ..  }
-                        | crate::domains::kv::KvMessage::Scan { route_family: _, resource: _, .. } => {
+                        | crate::domains::kv::KvMessage::Put {
+                            route_family: _,
+                            resource: _,
+                            ..
+                        }
+                        | crate::domains::kv::KvMessage::Insert {
+                            route_family: _,
+                            resource: _,
+                            ..
+                        }
+                        | crate::domains::kv::KvMessage::Delete {
+                            route_family: _,
+                            resource: _,
+                            ..
+                        }
+                        | crate::domains::kv::KvMessage::DeleteRange {
+                            route_family: _,
+                            resource: _,
+                            ..
+                        }
+                        | crate::domains::kv::KvMessage::Scan {
+                            route_family: _,
+                            resource: _,
+                            ..
+                        } => {
                             // Operations now include full route; authorization was checked at BEGIN time
                             Ok(None)
                         }
@@ -807,7 +847,8 @@ impl RuntimeIngress {
                     pattern, ..
                 }) => Ok(Some(pattern.clone())),
                 Ok(crate::domains::stream::protocol::StreamMessage::Unsubscribe {
-                    pattern, ..
+                    pattern,
+                    ..
                 }) => Ok(Some(pattern.clone())),
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
@@ -830,10 +871,12 @@ impl RuntimeIngress {
                         realm, pay.target_resource
                     )))),
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Subscribe {
-                        pattern, ..
+                        pattern,
+                        ..
                     }) => Ok(Some(pattern.clone())),
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Unsubscribe {
-                        pattern, ..
+                        pattern,
+                        ..
                     }) => Ok(Some(pattern.clone())),
                     Ok(_) => Ok(None),
                     Err(e) => Err(e),

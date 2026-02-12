@@ -175,7 +175,10 @@ fn parse_last(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamM
 }
 
 /// Wire format: `[string route]`
-fn parse_get_metadata(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamMessage, String> {
+fn parse_get_metadata(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+) -> Result<StreamMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
 

@@ -686,7 +686,7 @@ mod tests {
         // Arrange
         let mut actor = test_actor();
 
-        // Act & Assert - Get
+        // Act
         let response = actor.handle(KvMessage::Get {
             tx_id: 999,
             route_family: RouteFamily::new(1),
@@ -700,7 +700,7 @@ mod tests {
             }
         ));
 
-        // Act & Assert - Put
+        // Verify: Put also rejected without active transaction
         let response = actor.handle(KvMessage::Put {
             tx_id: 999,
             route_family: RouteFamily::new(1),
@@ -708,6 +708,8 @@ mod tests {
             key: Bytes::from("key"),
             value: Bytes::from("value"),
         });
+
+        // Assert
         assert!(matches!(
             response,
             KvResponse::Error {
@@ -717,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn should_put_and_get_value_within_transaction() {
+    fn should_roundtrip_value_within_transaction() {
         // Arrange
         let mut actor = test_actor();
         let begin_response = actor.handle(KvMessage::Begin {
@@ -737,7 +739,7 @@ mod tests {
         let key = Bytes::from("testkey");
         let value = Bytes::from("testvalue");
 
-        // Act - Put
+        // Act
         let put_response = actor.handle(KvMessage::Put {
             tx_id,
             route_family: RouteFamily::new(1),
@@ -747,7 +749,7 @@ mod tests {
         });
         assert!(matches!(put_response, KvResponse::PutOk));
 
-        // Act - Get
+        // Step 2: retrieve the value
         let get_response = actor.handle(KvMessage::Get {
             tx_id,
             route_family: RouteFamily::new(1),

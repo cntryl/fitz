@@ -346,98 +346,125 @@ mod tests {
 
     #[test]
     fn should_track_storage_readiness() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
+        // Act
         assert!(!runtime.is_storage_ready());
         runtime.mark_storage_ready();
+
+        // Assert
         assert!(runtime.is_storage_ready());
     }
 
     #[test]
     fn should_track_domains_readiness() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
+        // Act
         assert!(!runtime.are_domains_ready());
         runtime.mark_domains_ready();
+
+        // Assert
         assert!(runtime.are_domains_ready());
     }
 
     #[test]
     fn should_track_startup_completion() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
+        // Act
         assert!(!runtime.is_startup_complete());
         runtime.mark_startup_complete();
+
+        // Assert
         assert!(runtime.is_startup_complete());
     }
 
     #[test]
     fn should_track_connections() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
+        // Act
         assert_eq!(runtime.connection_count(), 0);
         runtime.increment_connections();
         assert_eq!(runtime.connection_count(), 1);
         runtime.decrement_connections();
+
+        // Assert
         assert_eq!(runtime.connection_count(), 0);
     }
 
     #[test]
     fn should_track_sessions() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
+        // Act
         assert_eq!(runtime.session_count(), 0);
         runtime.increment_sessions();
         assert_eq!(runtime.session_count(), 1);
         runtime.decrement_sessions();
+
+        // Assert
         assert_eq!(runtime.session_count(), 0);
     }
 
     #[test]
     fn should_track_messages() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
-
         assert_eq!(runtime.messages_received(), 0);
         assert_eq!(runtime.messages_sent(), 0);
 
+        // Act
         runtime.increment_messages_received();
         runtime.increment_messages_sent();
 
+        // Assert
         assert_eq!(runtime.messages_received(), 1);
         assert_eq!(runtime.messages_sent(), 1);
     }
 
     #[test]
     fn should_calculate_messages_per_second() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
         // At startup, should be 0
         assert_eq!(runtime.messages_per_second(), 0.0);
 
-        // After some messages, should compute rate
+        // Act
         runtime.increment_messages_received();
         runtime.increment_messages_sent();
         std::thread::sleep(std::time::Duration::from_millis(10));
 
+        // Assert
         let mps = runtime.messages_per_second();
         assert!(mps >= 0.0); // Just check it's non-negative, timing is unpredictable
     }
 
     #[test]
     fn should_report_uptime() {
+        // Arrange
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
-
         std::thread::sleep(std::time::Duration::from_millis(50));
 
+        // Act
         let uptime = runtime.uptime();
+
+        // Assert
         assert!(uptime.as_millis() >= 50);
         // Uptime seconds is always valid, no assertion needed
         let _uptime_secs = runtime.uptime_seconds();

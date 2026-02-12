@@ -32,7 +32,7 @@ fn should_complete_full_kv_transaction_cycle() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - BEGIN
+    // Act
     let begin_response = actor.handle(KvMessage::Begin {
         route_family,
         realm: "test-realm".to_string(),
@@ -47,7 +47,7 @@ fn should_complete_full_kv_transaction_cycle() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT
+    // Execute: PUT operation
     let put_response = actor.handle(KvMessage::Put {
         tx_id,
         route_family,
@@ -58,7 +58,7 @@ fn should_complete_full_kv_transaction_cycle() {
 
     assert!(matches!(put_response, KvResponse::PutOk));
 
-    // Act - GET
+    // Execute: GET operation
     let get_response = actor.handle(KvMessage::Get {
         tx_id,
         route_family,
@@ -71,7 +71,7 @@ fn should_complete_full_kv_transaction_cycle() {
         KvResponse::GetResult { found: true, .. }
     ));
 
-    // Act - COMMIT
+    // Execute: COMMIT operation
     let commit_response = actor.handle(KvMessage::Commit { tx_id });
 
     // Assert - Should succeed (Midge behavior dependent)
@@ -89,7 +89,7 @@ fn should_support_kv_rollback() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - BEGIN
+    // Act
     let begin_response = actor.handle(KvMessage::Begin {
         route_family,
         realm: "test-realm".to_string(),
@@ -104,7 +104,7 @@ fn should_support_kv_rollback() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT
+    // Execute: PUT operation
     actor.handle(KvMessage::Put {
         tx_id,
         route_family,
@@ -113,7 +113,7 @@ fn should_support_kv_rollback() {
         value: Bytes::from_static(b"alice"),
     });
 
-    // Act - ROLLBACK
+    // Execute: ROLLBACK operation
     let rollback_response = actor.handle(KvMessage::Rollback { tx_id });
 
     // Assert
@@ -220,7 +220,7 @@ fn should_maintain_realm_isolation_across_transactions() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - Realm A transaction
+    // Act
     let begin_a = actor.handle(KvMessage::Begin {
         route_family,
         realm: "realm-a".to_string(),
@@ -245,7 +245,7 @@ fn should_maintain_realm_isolation_across_transactions() {
 
     actor.handle(KvMessage::Commit { tx_id: tx_a });
 
-    // Act - Realm B transaction (different realm, same key)
+    // Continue: Realm B transaction (different realm, same key)
     let begin_b = actor.handle(KvMessage::Begin {
         route_family,
         realm: "realm-b".to_string(),

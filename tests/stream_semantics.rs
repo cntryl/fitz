@@ -143,12 +143,7 @@ fn should_allow_new_session_after_abort() {
         },
         &mut ctx,
     );
-    actor.receive(
-        StreamMessage::Rollback {
-            session_id: 1,
-        },
-        &mut ctx,
-    );
+    actor.receive(StreamMessage::Rollback { session_id: 1 }, &mut ctx);
     // New session (should succeed with same offset)
     actor.receive(
         StreamMessage::Begin {
@@ -252,12 +247,12 @@ fn should_track_committed_ranges_for_gap_detection() {
 #[test]
 fn should_debounce_area_watermark_notifications() {
     use crossbeam_channel::bounded;
-    use fitz::runtime::DomainPublishEvent;
     use fitz::prelude::Actor as PreActor;
     use fitz::runtime::routing::Route;
     use fitz::runtime::routing::RouteAddress;
     use fitz::runtime::routing::RouteFamily;
     use fitz::runtime::scheduler::Scheduler;
+    use fitz::runtime::DomainPublishEvent;
     use std::thread;
 
     // Arrange
