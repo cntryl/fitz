@@ -7,9 +7,12 @@ import (
 
 // Wire opcodes for Schedule domain (per CLIENT_SPEC.md). Values are message type identifiers.
 const (
-	ScheduleCreate uint16 = 700
-	ScheduleCancel uint16 = 701
-	ScheduleList   uint16 = 702
+	ScheduleCreate      uint16 = 700
+	ScheduleCancel      uint16 = 701
+	ScheduleList        uint16 = 702
+	ScheduleSubscribe   uint16 = 703
+	ScheduleUnsubscribe uint16 = 704
+	ScheduleNotify      uint16 = 705 // Server -> Client only
 )
 
 // Domain-specific errors.

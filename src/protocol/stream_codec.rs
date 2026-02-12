@@ -9,7 +9,8 @@
 use crate::domains::stream::protocol::{IngestMetadata, StreamMessage, StreamWriteMode};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
-use crate::runtime::routing::{Route, RouteFamily};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::session::SessionId;
 
 /// Response from stream operations
 #[derive(Debug, Clone)]
@@ -25,12 +26,14 @@ pub enum StreamResponse {
 
 /// Parse incoming message from TLV-encoded bytes.
 ///
-/// `route_family` is injected by the session layer — it is never read
-/// from the wire payload.
+/// `route_family`, `session_id`, and `subscriber` are injected by the
+/// session layer — they are never read from the wire payload.
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
     route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
 ) -> Result<StreamMessage, String> {
     let mut dec = TlvDecoder::new(payload);
 
@@ -42,6 +45,8 @@ pub fn parse_request(
         604 => parse_read(&mut dec, route_family),
         605 => parse_last(&mut dec, route_family),
         606 => parse_get_metadata(&mut dec, route_family),
+        607 => parse_subscribe(&mut dec, route_family, session_id, subscriber),
+        608 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -182,4 +187,59 @@ fn parse_get_metadata(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result
         family_id: route_family,
         route,
     })
+}
+
+/// Wire format: `[string pattern]`
+fn parse_subscribe(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<StreamMessage, String> {
+    let pattern_str = dec.get_string()?;
+    let pattern = Route::new(pattern_str);
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(StreamMessage::Subscribe {
+        family_id: route_family,
+        pattern,
+        session_id: session_id.0,
+        subscriber,
+    })
+}
+
+/// Wire format: `[string pattern]`
+fn parse_unsubscribe(
+    dec: &mut TlvDecoder,
+    route_family: RouteFamily,
+    session_id: SessionId,
+    subscriber: RouteAddress,
+) -> Result<StreamMessage, String> {
+    let pattern_str = dec.get_string()?;
+    let pattern = Route::new(pattern_str);
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(StreamMessage::Unsubscribe {
+        family_id: route_family,
+        pattern,
+        session_id: session_id.0,
+        subscriber,
+    })
+}
+
+/// Encode a STREAM_NOTIFY (609) payload.
+///
+/// Wire format: `[u64 subscription_id][string route][bytes payload]`
+pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
+    let mut enc = TlvEncoder::new();
+    enc.put_u64(subscription_id);
+    enc.put_string(route.as_str());
+    enc.put_bytes(payload);
+    enc.finish()
 }

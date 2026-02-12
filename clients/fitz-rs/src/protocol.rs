@@ -51,11 +51,17 @@ pub mod message_type {
     pub const STREAM_READ: u16 = 604;
     pub const STREAM_LAST: u16 = 605;
     pub const STREAM_GET_METADATA: u16 = 606;
+    pub const STREAM_SUBSCRIBE: u16 = 607;
+    pub const STREAM_UNSUBSCRIBE: u16 = 608;
+    pub const STREAM_NOTIFY: u16 = 609; // Server -> Client only
 
     // Schedule domain (700-799)
     pub const SCHEDULE_CREATE: u16 = 700;
     pub const SCHEDULE_CANCEL: u16 = 701;
     pub const SCHEDULE_LIST: u16 = 702;
+    pub const SCHEDULE_SUBSCRIBE: u16 = 703;
+    pub const SCHEDULE_UNSUBSCRIBE: u16 = 704;
+    pub const SCHEDULE_NOTIFY: u16 = 705; // Server -> Client only
 }
 
 /// Transaction mode for KV operations.

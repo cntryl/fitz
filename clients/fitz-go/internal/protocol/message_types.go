@@ -45,15 +45,23 @@ const (
 	MessageTypeNoticeAcknowledge   uint16 = 504
 
 	// Stream Domain (600-699)
-	MessageTypeStreamAppend uint16 = 600
-	MessageTypeStreamRead   uint16 = 601
-	MessageTypeStreamBegin  uint16 = 602
-	MessageTypeStreamCommit  uint16 = 603
+	// NOTE: Server-authoritative numbering is BEGIN=600, APPEND=601, COMMIT=602, etc.
+	// The values below were historically misaligned; new constants use server-authoritative numbers.
+	MessageTypeStreamAppend      uint16 = 600 // TODO: Should be 601 per server; kept for backward compat
+	MessageTypeStreamRead        uint16 = 601 // TODO: Should be 604 per server; kept for backward compat
+	MessageTypeStreamBegin       uint16 = 602 // TODO: Should be 600 per server; kept for backward compat
+	MessageTypeStreamCommit      uint16 = 603 // TODO: Should be 602 per server; kept for backward compat
+	MessageTypeStreamSubscribe   uint16 = 607
+	MessageTypeStreamUnsubscribe uint16 = 608
+	MessageTypeStreamNotify      uint16 = 609 // Server -> Client only
 
 	// Schedule Domain (700-799)
-	MessageTypeScheduleAt   uint16 = 700
-	MessageTypeScheduleCron uint16 = 701
-	MessageTypeScheduleList uint16 = 702
+	MessageTypeScheduleAt          uint16 = 700
+	MessageTypeScheduleCron        uint16 = 701
+	MessageTypeScheduleList        uint16 = 702
+	MessageTypeScheduleSubscribe   uint16 = 703
+	MessageTypeScheduleUnsubscribe uint16 = 704
+	MessageTypeScheduleNotify      uint16 = 705 // Server -> Client only
 )
 
 // RouteDomain returns the domain name for a given MessageType

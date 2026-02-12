@@ -23,6 +23,7 @@
 pub mod actor;
 pub mod cf_validation;
 pub mod context;
+pub mod domain_event;
 pub mod envelope;
 pub mod mailbox;
 pub mod matcher;
@@ -35,6 +36,7 @@ pub mod supervision;
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
 pub use context::{Timer, TimerId, TimerManager};
+pub use domain_event::{DomainPublishEvent, SessionCleanup};
 pub use envelope::{Envelope, MessageId};
 pub use mailbox::Mailbox;
 pub use matcher::{Pattern, PatternSegment};

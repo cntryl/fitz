@@ -4,10 +4,10 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::domain_event::DomainPublishEvent;
+use crate::runtime::routing::{Route, RouteFamily};
 
 use super::protocol::{LeaseGrant, StreamMessage};
 use super::store::StreamStore;
@@ -41,8 +41,8 @@ pub struct RealmActor {
     /// Debounce timer id for realm watermark notification
     notification_timer: Option<crate::runtime::context::TimerId>,
 
-    /// Pending realm watermark publish message (debounced)
-    pending_publish: Option<crate::domains::notice::protocol::PublishMessage>,
+    /// Pending realm watermark publish event (debounced)
+    pending_publish: Option<DomainPublishEvent>,
 }
 
 impl RealmActor {
@@ -111,7 +111,7 @@ impl RealmActor {
                 self.store
                     .set_realm_watermark(self.family_id.as_u64(), &self.realm, new_watermark);
 
-            let route_str = format!("notice://{}/*/*/watermark", self.realm);
+            let route_str = format!("stream://{}/*/*/watermark", self.realm);
             let route = Route::new(route_str);
             let payload_json = serde_json::json!({
                 "previous": old_watermark,
@@ -122,10 +122,10 @@ impl RealmActor {
                     .as_secs(),
             });
             let payload = Bytes::from(payload_json.to_string());
-            let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
+            let publish_event = DomainPublishEvent::new(self.family_id, route, payload);
 
             // Debounce realm watermark publish (do not send immediately)
-            self.pending_publish = Some(publish_msg);
+            self.pending_publish = Some(publish_event);
             if self.notification_timer.is_none() {
                 let timer_id = ctx
                     .timer_manager()
@@ -166,10 +166,8 @@ impl Actor for RealmActor {
 
     fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
         if self.notification_timer.is_some() && Some(timer_id) == self.notification_timer {
-            if let Some(publish_msg) = self.pending_publish.take() {
-                let route = publish_msg.route.clone();
-                let notice_addr = RouteAddress::new(self.family_id, route);
-                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+            if let Some(event) = self.pending_publish.take() {
+                let _ = ctx.publish_event(event);
             }
             self.notification_timer = None;
         }
@@ -179,7 +177,7 @@ impl Actor for RealmActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::routing::Route;
+    use crate::runtime::routing::{Route, RouteAddress};
 
     fn make_test_actor() -> (RealmActor, Context<RealmActor>) {
         let router = Arc::new(crate::runtime::router::Router::new());

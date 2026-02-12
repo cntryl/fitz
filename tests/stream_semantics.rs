@@ -1,4 +1,4 @@
-﻿//! Stream Semantics Tests
+//! Stream Semantics Tests
 //!
 //! Tests core stream invariants and error conditions:
 //! - Optimistic concurrency control with expected_offset
@@ -252,7 +252,7 @@ fn should_track_committed_ranges_for_gap_detection() {
 #[test]
 fn should_debounce_area_watermark_notifications() {
     use crossbeam_channel::bounded;
-    use fitz::domains::notification::protocol::NotificationMessage;
+    use fitz::runtime::DomainPublishEvent;
     use fitz::prelude::Actor as PreActor;
     use fitz::runtime::routing::Route;
     use fitz::runtime::routing::RouteAddress;
@@ -273,20 +273,18 @@ fn should_debounce_area_watermark_notifications() {
     }
 
     impl PreActor for Collector {
-        type Message = NotificationMessage;
+        type Message = DomainPublishEvent;
 
         fn receive(&mut self, msg: Self::Message, _ctx: &mut fitz::runtime::actor::Context<Self>) {
-            if let NotificationMessage::Publish(p) = msg {
-                if let Some(tx) = &self.tx {
-                    let _ = tx.send(p.payload.clone());
-                }
+            if let Some(tx) = &self.tx {
+                let _ = tx.send(msg.payload.clone());
             }
         }
     }
 
     let collector_addr = RouteAddress::new(
         family,
-        Route::new("notice://realm1/area1/*/watermark".to_string()),
+        Route::new("stream://realm1/area1/*/watermark".to_string()),
     );
     let collector = Collector { tx: Some(tx) };
     let _ = scheduler.spawn(collector, collector_addr.clone(), 16);

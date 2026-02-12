@@ -422,6 +422,10 @@ impl QueueActor {
     /// 3. RPC waits up to wait_seconds for notice or timeout
     /// 4. RPC retries reserve on notice or timeout
     ///
+    /// NOTE: The notice:// reference above is a runtime convention handled entirely
+    /// within the RPC domain layer -- it does NOT create a compile-time dependency
+    /// between the Queue domain and the Notice domain.
+    ///
     /// QueueActor never stores waiters or blocks on empty queues.
     pub fn handle_reserve(
         &mut self,

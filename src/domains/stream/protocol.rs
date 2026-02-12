@@ -167,6 +167,28 @@ pub enum StreamMessage {
         route: Route,
     },
 
+    /// Subscribe to stream change notifications (client -> server)
+    Subscribe {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    },
+
+    /// Unsubscribe from stream change notifications (client -> server)
+    Unsubscribe {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    },
+
+    /// Unsubscribe all stream subscriptions for a session (called on disconnect)
+    UnsubscribeAll {
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    },
+
     // Internal actor messages
     /// Request paired area+realm offsets from AreaActor (StreamActor -> AreaActor)
     RequestLease {

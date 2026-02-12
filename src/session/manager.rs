@@ -500,10 +500,20 @@ impl Ingress for RuntimeIngress {
                         500..=504 => crate::auth::Access::Write,
                         // Stream (600s)
                         600..=603 => crate::auth::Access::Write,
-                        604..=606 => crate::auth::Access::Read,
+                        604..=608 => crate::auth::Access::Read, // READ/LAST/GET_METADATA/SUBSCRIBE/UNSUBSCRIBE
+                        609 => {
+                            // STREAM_NOTIFY is Server->Client only, reject inbound
+                            warn!(session_id = session_id, "Ingress: client sent Server->Client-only STREAM_NOTIFY (609)");
+                            return IngressDecision::Close("invalid message type: 609 is server-to-client only".to_string());
+                        }
                         // Schedule (700s)
                         700 | 701 => crate::auth::Access::Write,
-                        702 => crate::auth::Access::Read,
+                        702..=704 => crate::auth::Access::Read, // LIST/SUBSCRIBE/UNSUBSCRIBE
+                        705 => {
+                            // SCHEDULE_NOTIFY is Server->Client only, reject inbound
+                            warn!(session_id = session_id, "Ingress: client sent Server->Client-only SCHEDULE_NOTIFY (705)");
+                            return IngressDecision::Close("invalid message type: 705 is server-to-client only".to_string());
+                        }
                         _ => crate::auth::Access::Write,
                     };
 
@@ -606,6 +616,49 @@ impl Ingress for RuntimeIngress {
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
         info!(session_id = session_id, reason = %reason, "Ingress: session closing");
+
+        // Dispatch cleanup to all subscribable domains BEFORE removing session state.
+        // This ensures subscriptions are cleaned up for Notice, Stream, and Schedule.
+        if let Some(router) = &self.router {
+            let cleanup = crate::runtime::SessionCleanup { session_id };
+
+            // Get the session's route family for routing (default to 0 if session already removed)
+            let route_family = self
+                .sessions
+                .get(&session_id)
+                .map(|s| s.route_family)
+                .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(0));
+
+            // Send cleanup to Notice domain
+            let notice_addr = crate::runtime::routing::RouteAddress::new(
+                route_family,
+                crate::runtime::routing::Route::new("notice://cleanup"),
+            );
+            let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
+            let _ = router.route(notice_envelope);
+
+            // Send cleanup to Stream domain
+            let stream_addr = crate::runtime::routing::RouteAddress::new(
+                route_family,
+                crate::runtime::routing::Route::new("stream://cleanup"),
+            );
+            let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
+            let _ = router.route(stream_envelope);
+
+            // Send cleanup to Schedule domain
+            let schedule_addr = crate::runtime::routing::RouteAddress::new(
+                route_family,
+                crate::runtime::routing::Route::new("schedule://cleanup"),
+            );
+            let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup);
+            let _ = router.route(schedule_envelope);
+
+            tracing::debug!(
+                session_id = session_id,
+                "Ingress: dispatched cleanup to Notice, Stream, and Schedule domains"
+            );
+        }
+
         // Remove session and associated actor
         self.sessions.remove(&session_id);
         self.session_actors.remove(&session_id);
@@ -732,6 +785,11 @@ impl RuntimeIngress {
                 &ctx,
                 payload.as_ref(),
                 session_info.route_family,
+                crate::session::SessionId(session_info.session_id),
+                crate::runtime::routing::RouteAddress::new(
+                    session_info.route_family,
+                    Route::new(""),
+                ),
             ) {
                 Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => {
                     Ok(Some(route.clone()))
@@ -745,18 +803,38 @@ impl RuntimeIngress {
                 Ok(crate::domains::stream::protocol::StreamMessage::GetMetadata {
                     route, ..
                 }) => Ok(Some(route.clone())),
+                Ok(crate::domains::stream::protocol::StreamMessage::Subscribe {
+                    pattern, ..
+                }) => Ok(Some(pattern.clone())),
+                Ok(crate::domains::stream::protocol::StreamMessage::Unsubscribe {
+                    pattern, ..
+                }) => Ok(Some(pattern.clone())),
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
             700..=799 => {
-                match crate::protocol::schedule_codec::parse_request(&ctx, payload.as_ref()) {
+                match crate::protocol::schedule_codec::parse_request(
+                    &ctx,
+                    payload.as_ref(),
+                    session_info.route_family,
+                    crate::session::SessionId(session_info.session_id),
+                    crate::runtime::routing::RouteAddress::new(
+                        session_info.route_family,
+                        Route::new(""),
+                    ),
+                ) {
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Create {
                         payload: pay,
                     }) => Ok(Some(Route::new(format!(
                         "schedule://{}/{}",
                         realm, pay.target_resource
                     )))),
-
+                    Ok(crate::protocol::schedule_codec::ScheduleMessage::Subscribe {
+                        pattern, ..
+                    }) => Ok(Some(pattern.clone())),
+                    Ok(crate::protocol::schedule_codec::ScheduleMessage::Unsubscribe {
+                        pattern, ..
+                    }) => Ok(Some(pattern.clone())),
                     Ok(_) => Ok(None),
                     Err(e) => Err(e),
                 }

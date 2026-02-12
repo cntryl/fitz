@@ -14,6 +14,9 @@ const (
 	StreamRead        uint16 = 604
 	StreamLast        uint16 = 605
 	StreamGetMetadata uint16 = 606
+	StreamSubscribe   uint16 = 607
+	StreamUnsubscribe uint16 = 608
+	StreamNotify      uint16 = 609 // Server -> Client only
 )
 
 // Domain-specific errors.

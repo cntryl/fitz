@@ -53,6 +53,7 @@ pub struct StreamStats {
     pub streams_active: usize,
     pub events_total: usize,
     pub operations_per_second: f64,
+    pub subscriptions_active: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +86,7 @@ pub struct LeaseStats {
 pub struct ScheduleStats {
     pub schedules_active: usize,
     pub executions_per_minute: f64,
+    pub subscriptions_active: usize,
 }
 
 /// Handle /admin/stats endpoint
@@ -107,6 +109,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 streams_active: runtime.stream_active(),
                 events_total: runtime.stream_events_total(),
                 operations_per_second: runtime.stream_operations_per_second(),
+                subscriptions_active: runtime.stream_subscriptions_active(),
             },
             notice: NoticeStats {
                 subscriptions_active: runtime.notice_subscriptions_active(),
@@ -129,6 +132,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             schedule: ScheduleStats {
                 schedules_active: runtime.schedule_active(),
                 executions_per_minute: runtime.schedule_executions_per_minute(),
+                subscriptions_active: runtime.schedule_subscriptions_active(),
             },
         },
     };
@@ -167,6 +171,7 @@ async fn handle_stream_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, In
         streams_active: runtime.stream_active(),
         events_total: runtime.stream_events_total(),
         operations_per_second: runtime.stream_operations_per_second(),
+        subscriptions_active: runtime.stream_subscriptions_active(),
     };
     crate::api::admin::json_response(stats)
 }
@@ -209,6 +214,7 @@ async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, 
     let stats = ScheduleStats {
         schedules_active: runtime.schedule_active(),
         executions_per_minute: runtime.schedule_executions_per_minute(),
+        subscriptions_active: runtime.schedule_subscriptions_active(),
     };
     crate::api::admin::json_response(stats)
 }

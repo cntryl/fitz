@@ -98,6 +98,8 @@ pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
         "queue.write" => Some("queue://**#write"),
         "lease.read" => Some("lease://**#read"),
         "lease.write" => Some("lease://**#write"),
+        "schedule.read" => Some("schedule://**#read"),
+        "schedule.write" => Some("schedule://**#write"),
         _ => None,
     }
 }

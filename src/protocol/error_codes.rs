@@ -32,6 +32,8 @@ pub mod stream {
     pub const ERR_INVALID_READ_BOUND: u16 = 2003;
     pub const ERR_READ_BEYOND_WATERMARK: u16 = 2004;
     pub const ERR_RESOURCE_NOT_FOUND: u16 = 2005;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2010;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 2011;
 }
 
 /// Notice domain error codes (per CLIENT_SPEC Notice Domain section)
@@ -75,4 +77,6 @@ pub mod schedule {
     pub const ERR_SCHEDULE_LIMIT: u16 = 7003;
     pub const ERR_PARSE_ERROR: u16 = 7004;
     pub const ERR_INVALID_TARGET: u16 = 7005;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 7006;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 7007;
 }

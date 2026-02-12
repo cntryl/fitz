@@ -3,9 +3,9 @@
 use bytes::Bytes;
 use std::sync::Arc;
 
-use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
+use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::protocol::{
@@ -58,8 +58,8 @@ pub struct StreamActor {
     /// Debounce timer id for commit notification
     commit_timer: Option<crate::runtime::context::TimerId>,
 
-    /// Pending commit publish message (debounced)
-    pending_publish: Option<PublishMessage>,
+    /// Pending commit publish event (debounced)
+    pending_publish: Option<DomainPublishEvent>,
 }
 
 impl StreamActor {
@@ -88,7 +88,7 @@ impl StreamActor {
 
         let area_actor_route = Route::new(format!("stream://{}/{}/__area__", realm, area));
         let commit_notification_route = Route::new(format!(
-            "notice://{}/{}/{}/committed",
+            "stream://{}/{}/{}/committed",
             realm, area, resource
         ));
 
@@ -246,7 +246,7 @@ impl StreamActor {
         let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
         let _ = ctx.send(area_addr, notification);
 
-        // Publish notification: notice://realm/area/resource/committed
+        // Publish notification: stream://realm/area/resource/committed
         let route = self.commit_notification_route.clone();
 
         let payload_json = serde_json::json!({
@@ -260,10 +260,10 @@ impl StreamActor {
         });
         let payload = Bytes::from(payload_json.to_string());
 
-        let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
+        let publish_event = DomainPublishEvent::new(self.family_id, route, payload);
 
         // Debounce commit notifications (do not send immediately)
-        self.pending_publish = Some(publish_msg);
+        self.pending_publish = Some(publish_event);
         if self.commit_timer.is_none() {
             let timer_id = ctx
                 .timer_manager()
@@ -428,10 +428,8 @@ impl Actor for StreamActor {
     fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
         // If commit debounce timer fired, send pending publish
         if self.commit_timer.is_some() && Some(timer_id) == self.commit_timer {
-            if let Some(publish_msg) = self.pending_publish.take() {
-                let route = publish_msg.route.clone();
-                let notice_addr = RouteAddress::new(self.family_id, route);
-                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+            if let Some(event) = self.pending_publish.take() {
+                let _ = ctx.publish_event(event);
             }
             self.commit_timer = None;
         }

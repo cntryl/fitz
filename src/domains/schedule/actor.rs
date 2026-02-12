@@ -1,8 +1,8 @@
-use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::domains::schedule::protocol::SchedulePayload;
 use crate::domains::schedule::store::ScheduleStore;
 use crate::runtime::actor::{Actor, Context};
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::domain_event::DomainPublishEvent;
+use crate::runtime::routing::{Route, RouteFamily};
 use bytes::Bytes;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use std::collections::HashMap;
@@ -290,7 +290,10 @@ impl ScheduleActor {
                 continue; // Not actually due yet
             }
 
-            // Emit notice (best-effort, non-blocking, OUTSIDE transaction)
+            // Emit events (best-effort, non-blocking, OUTSIDE transaction)
+            // Two events are emitted:
+            // 1. schedule:// route -> for own subscribers (SCHEDULE_NOTIFY)
+            // 2. target resource route -> for cross-domain execution (e.g. notice://)
             match SchedulePayload::decode(&def.payload) {
                 Ok(sp) => {
                     let realm_area = Self::extract_realm_and_area(&def.route);
@@ -302,7 +305,20 @@ impl ScheduleActor {
                         continue;
                     };
 
-                    let notice_path = if sp.target_operation.is_empty() {
+                    // 1. Emit to own schedule subscribers (schedule:// route)
+                    let schedule_fire_route = Route::new(format!(
+                        "schedule://{}/{}/{}/fired",
+                        realm, area, sp.target_resource
+                    ));
+                    let own_event = DomainPublishEvent::new(
+                        self.family,
+                        schedule_fire_route,
+                        def.payload.clone(),
+                    );
+                    let _ = ctx.publish_event(own_event);
+
+                    // 2. Execute target resource (cross-domain via DomainPublishEvent)
+                    let target_path = if sp.target_operation.is_empty() {
                         format!("notice://{}/{}/{}", realm, area, sp.target_resource)
                     } else {
                         format!(
@@ -311,17 +327,19 @@ impl ScheduleActor {
                         )
                     };
 
-                    let notice_route = Route::new(notice_path.clone());
-                    let publish =
-                        PublishMessage::new(self.family, notice_route.clone(), def.payload.clone());
-                    let notice_addr = RouteAddress::new(self.family, notice_route);
-                    let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish));
+                    let target_route = Route::new(target_path.clone());
+                    let exec_event = DomainPublishEvent::new(
+                        self.family,
+                        target_route,
+                        def.payload.clone(),
+                    );
+                    let _ = ctx.publish_event(exec_event);
                     info!(
-                        "schedule {} fired -> notice at {}",
-                        schedule_id, notice_path
+                        "schedule {} fired -> schedule subscribers + target at {}",
+                        schedule_id, target_path
                     );
 
-                    // Compute next fire time AFTER dispatching notice
+                    // Compute next fire time AFTER dispatching events
                     let next_fire = def.cron.next_fire_after(now_dt);
 
                     // Queue index update: will batch persist after all dispatches
@@ -340,8 +358,8 @@ impl ScheduleActor {
         }
 
         // BATCHED INDEX UPDATE: persist all next_fire_time changes atomically
-        // Crash after dispatch but before this commit = duplicate notice (acceptable)
-        // Crash before dispatch = missed notice (would happen next matching time)
+        // Crash after dispatch but before this commit = duplicate event (acceptable)
+        // Crash before dispatch = missed event (would happen next matching time)
         if !index_updates.is_empty() {
             if let Err(e) = self.store.batch_update_index(
                 self.family.as_u64(),

@@ -1283,8 +1283,10 @@ A request is valid **only if**:
   | `CREATE` | `{realm}/{area}/{resource}` |
   | `CANCEL` | `{realm}/{area}/{resource}` |
   | `LIST` | `{realm}/{area}`, `{realm}/{area}/*` |
+  | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
+  | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
-  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST as documented in the wire format section. LIST is fully documented with streaming protocol.
+  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST, SUBSCRIBE, UNSUBSCRIBE as documented in the wire format section. LIST is fully documented with streaming protocol.
 
 ### Lease Domain
 
@@ -1391,9 +1393,15 @@ Clients MUST:
 | Stream   | READ               |       604 | Data          | Read range              |
 | Stream   | LAST               |       605 | Data          | Get last record         |
 | Stream   | GET_METADATA       |       606 | Data          | Get metadata            |
+| Stream   | SUBSCRIBE          |       607 | Data          | Subscribe to changes    |
+| Stream   | UNSUBSCRIBE        |       608 | Data          | Unsubscribe             |
+| Stream   | NOTIFY             |       609 | Server→Client | Change notification     |
 | Schedule | CREATE             |       700 | Data          | Create schedule         |
 | Schedule | CANCEL             |       701 | Data          | Cancel schedule         |
 | Schedule | LIST               |       702 | Data          | List schedules          |
+| Schedule | SUBSCRIBE          |       703 | Data          | Subscribe to fires      |
+| Schedule | UNSUBSCRIBE        |       704 | Data          | Unsubscribe             |
+| Schedule | NOTIFY             |       705 | Server→Client | Fire notification       |
 
 ### MessageType Ranges Are Non-Overlapping
 
@@ -2228,15 +2236,18 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 #### Message Types
 
-| Type | Name         |
-| ---: | ------------ |
-|  600 | BEGIN        |
-|  601 | APPEND       |
-|  602 | COMMIT       |
-|  603 | ROLLBACK     |
-|  604 | READ         |
-|  605 | LAST         |
-|  606 | GET_METADATA |
+| Type | Name         | Direction                  |
+| ---: | ------------ | -------------------------- |
+|  600 | BEGIN        | Client → Server            |
+|  601 | APPEND       | Client → Server            |
+|  602 | COMMIT       | Client → Server            |
+|  603 | ROLLBACK     | Client → Server            |
+|  604 | READ         | Client → Server            |
+|  605 | LAST         | Client → Server            |
+|  606 | GET_METADATA | Client → Server            |
+|  607 | SUBSCRIBE    | Client → Server            |
+|  608 | UNSUBSCRIBE  | Client → Server            |
+|  609 | NOTIFY       | Server → Client (delivery) |
 
 #### BEGIN Request
 
@@ -2448,6 +2459,8 @@ Every session operation includes **both session_id AND route** on the wire:
 - 2003 = ERR_INVALID_READ_BOUND
 - 2004 = ERR_READ_BEYOND_WATERMARK
 - 2005 = ERR_RESOURCE_NOT_FOUND
+- 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 2011 = ERR_SUBSCRIPTION_LIMIT
 
 #### Acceptance Tests
 
@@ -2457,6 +2470,91 @@ Every session operation includes **both session_id AND route** on the wire:
 - append with mismatched expected_offset fails
 - rollback discards uncommitted appends
 - multiple sessions can read concurrently
+
+#### Stream SUBSCRIBE (607)
+
+Subscribe to stream change notifications for a route pattern.
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern (supports * and ** wildcards)
+Response (status=0):
+  [u8]     0
+  [u64 BE] subscription_id
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+**Pattern Examples:**
+- `stream://realm/area/resource` — specific resource changes
+- `stream://realm/area/*` — area-level (all resources in area)
+- `stream://realm/**` — realm-level (all areas and resources in realm)
+
+**Semantics:**
+- Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
+- Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
+- Server tracks subscriptions by `(session_id, route_pattern)` tuple
+- Wildcard patterns follow the same matching rules as Notice domain
+
+#### Stream UNSUBSCRIBE (608)
+
+Unsubscribe from stream change notifications.
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+**Design Notes:**
+- Client sends the original pattern string used in SUBSCRIBE
+- Idempotent: unsubscribing a non-existent pattern returns success
+
+#### Stream NOTIFY (609) — Server to Client
+
+Server pushes a stream change notification to a subscriber.
+
+```
+[u64 BE]  subscription_id
+[u32 BE]  route_len
+[bytes]   route (exact resource route, not subscription pattern)
+[u32 BE]  payload_len
+[bytes]   payload (JSON)
+```
+
+**Payload Schemas:**
+
+Commit notification (one or more records committed):
+```json
+{
+  "event": "committed",
+  "first_resource_offset": <u64>,
+  "last_resource_offset": <u64>,
+  "batch_size": <u32>
+}
+```
+
+Watermark advance notification:
+```json
+{
+  "event": "watermark_advanced",
+  "previous": <u64>,
+  "watermark": <u64>
+}
+```
+
+**Delivery Semantics:**
+- **Best-effort**: notifications may be dropped under backpressure
+- **Debounced**: commit notifications are batched per 25ms window — multiple rapid commits to the same resource produce a single notification covering the full offset range
+- **Session-scoped**: all subscriptions lost on disconnect; clients must re-subscribe after reconnecting
+- `subscription_id` tells the client which subscription matched; client demultiplexes to local handlers
 
 ### Queue Domain (Durable At-Least-Once Delivery)
 
@@ -3337,11 +3435,14 @@ else:
 
 #### Message Types
 
-| Type | Name   |
-| ---: | ------ |
-|  700 | CREATE |
-|  701 | CANCEL |
-|  702 | LIST   |
+| Type | Name        | Direction                  |
+| ---: | ----------- | -------------------------- |
+|  700 | CREATE      | Client → Server            |
+|  701 | CANCEL      | Client → Server            |
+|  702 | LIST        | Client → Server            |
+|  703 | SUBSCRIBE   | Client → Server            |
+|  704 | UNSUBSCRIBE | Client → Server            |
+|  705 | NOTIFY      | Server → Client (delivery) |
 
 #### CREATE Request
 
@@ -3508,14 +3609,24 @@ Every operation includes route:
 - **Cancellation**: Cancels future runs; already-running tasks may not abort
 - **Route Scoped**: Independent schedules per route
 
-##### Execution Model
+##### Execution Model (Dual-Emit)
 
-When a schedule fires, the broker performs the `target_operation` on the `target_resource` internally. For example:
+When a schedule fires, the broker performs **two actions**:
 
-- `target_resource="notice://prod/app/notifications"` + `target_operation="PUBLISH"` → broker publishes a Notice to that route
-- `target_resource="queue://prod/app/tasks"` + `target_operation="ENQUEUE"` → broker enqueues a message to that queue
+1. **SCHEDULE_NOTIFY (705):** The broker emits a `SCHEDULE_NOTIFY` to all clients subscribed to the schedule's route pattern via `SCHEDULE_SUBSCRIBE (703)`. This delivers the schedule's configured payload bytes directly to subscribers.
 
-**Client observability:** To observe schedule execution, clients should subscribe to the target resource via the appropriate domain (e.g., Notice SUBSCRIBE for Notice targets, Queue RESERVE for Queue targets). The broker acts as an internal client when executing scheduled operations.
+2. **DomainPublishEvent (target execution):** The broker executes the `target_operation` on the `target_resource` internally via the DomainPublishEvent system. For example:
+   - `target_resource="notice://prod/app/notifications"` + `target_operation="PUBLISH"` → broker publishes a Notice to that route
+   - `target_resource="queue://prod/app/tasks"` + `target_operation="ENQUEUE"` → broker enqueues a message to that queue
+
+Both actions occur on every fire. They serve complementary purposes:
+
+- **SCHEDULE_NOTIFY** provides direct, low-latency observability of schedule fires — clients learn *that* a schedule fired and receive its payload without needing to poll or subscribe to a secondary domain.
+- **DomainPublishEvent** performs the schedule's intended side effect in the target domain (enqueue a message, publish a notice, etc.).
+
+**Client observability:** Clients have two options for observing schedule execution:
+- **Direct:** Subscribe to the schedule route via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when the schedule fires
+- **Indirect:** Subscribe to the target resource via the appropriate domain (e.g., Notice SUBSCRIBE for Notice targets, Queue RESERVE for Queue targets)
 
 #### Error Codes (7xxx)
 
@@ -3524,6 +3635,8 @@ When a schedule fires, the broker performs the `target_operation` on the `target
 - 7003 = ERR_SCHEDULE_LIMIT
 - 7004 = ERR_PARSE_ERROR
 - 7005 = ERR_INVALID_TARGET
+- 7006 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 7007 = ERR_SUBSCRIPTION_LIMIT
 
 #### Acceptance Tests
 
@@ -3532,6 +3645,70 @@ When a schedule fires, the broker performs the `target_operation` on the `target
 - cancel prevents future runs
 - list returns created schedules
 - schedule persists across restart
+
+#### Schedule SUBSCRIBE (703)
+
+Subscribe to schedule fire notifications for a route pattern.
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern (supports * wildcard)
+Response (status=0):
+  [u8]     0
+  [u8]     has_schedule_id (1)
+  [u32 BE] schedule_id_len
+  [bytes]  schedule_id (subscription_id returned as string in schedule_id field)
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+**Pattern Examples:**
+- `schedule://realm/area/resource` — specific schedule fires
+- `schedule://realm/area/*` — area-level (all schedules in area)
+
+**Semantics:**
+- Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
+- Idempotent: re-subscribing to the same pattern returns the same subscription
+- The `subscription_id` is returned as a string in the `schedule_id` response field, following the Schedule domain's existing response codec
+
+#### Schedule UNSUBSCRIBE (704)
+
+Unsubscribe from schedule fire notifications.
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+**Design Notes:**
+- Client sends the original pattern string used in SUBSCRIBE
+- Idempotent: unsubscribing a non-existent pattern returns success
+
+#### Schedule NOTIFY (705) — Server to Client
+
+Server pushes a schedule fire notification to a subscriber.
+
+```
+[u64 BE]  subscription_id
+[u32 BE]  route_len
+[bytes]   route (exact schedule route, not subscription pattern)
+[u32 BE]  payload_len
+[bytes]   payload (the schedule's configured payload bytes)
+```
+
+**Design Notes:**
+- `subscription_id` tells the client which subscription matched
+- Payload is the raw payload bytes configured when the schedule was created
+- Client demultiplexes to local handlers registered for that `subscription_id`
+- Delivery is best-effort; notifications may be dropped under backpressure
 
 ## Constants & TLV Registry
 
@@ -3584,7 +3761,7 @@ When a schedule fires, the broker performs the `target_operation` on the `target
 | 502 | UNSUBSCRIBE |
 | 503 | UNSUBSCRIBE_ALL |
 | 504 | NOTIFY |
-**Stream Domain (600–606):**
+**Stream Domain (600–609):**
 | Value | Name |
 |---:|---|
 | 600 | BEGIN |
@@ -3594,12 +3771,18 @@ When a schedule fires, the broker performs the `target_operation` on the `target
 | 604 | READ |
 | 605 | LAST |
 | 606 | GET_METADATA |
-**Schedule Domain (700–702):**
+| 607 | SUBSCRIBE |
+| 608 | UNSUBSCRIBE |
+| 609 | NOTIFY |
+**Schedule Domain (700–705):**
 | Value | Name |
 |---:|---|
 | 700 | CREATE |
 | 701 | CANCEL |
 | 702 | LIST |
+| 703 | SUBSCRIBE |
+| 704 | UNSUBSCRIBE |
+| 705 | NOTIFY |
 
 ### MessageType Routing
 

@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::domains::notice::protocol::{NotificationMessage, PublishMessage};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
+use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::protocol::{LeaseGrant, StreamMessage, DEFAULT_REALM_LEASE_BLOCK};
@@ -51,8 +51,8 @@ pub struct AreaActor {
     /// Debounce timer id for area watermark notification
     notification_timer: Option<crate::runtime::context::TimerId>,
 
-    /// Pending area watermark publish message (debounced)
-    pending_publish: Option<PublishMessage>,
+    /// Pending area watermark publish event (debounced)
+    pending_publish: Option<DomainPublishEvent>,
 }
 
 impl AreaActor {
@@ -165,7 +165,7 @@ impl AreaActor {
             );
 
             // Build area watermark publish message (debounced, best-effort)
-            let route_str = format!("notice://{}/{}/*/watermark", self.realm, self.area);
+            let route_str = format!("stream://{}/{}/*/watermark", self.realm, self.area);
             let route = Route::new(route_str);
             let payload_json = serde_json::json!({
                 "previous": old_watermark,
@@ -176,10 +176,10 @@ impl AreaActor {
                     .as_secs(),
             });
             let payload = Bytes::from(payload_json.to_string());
-            let publish_msg = PublishMessage::new(self.family_id, route.clone(), payload);
+            let publish_event = DomainPublishEvent::new(self.family_id, route, payload);
 
             // Store and debounce the publish (do not send immediately)
-            self.pending_publish = Some(publish_msg);
+            self.pending_publish = Some(publish_event);
             if self.notification_timer.is_none() {
                 let timer_id = ctx
                     .timer_manager()
@@ -316,10 +316,8 @@ impl Actor for AreaActor {
     fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
         // If our debounce timer fired, send the pending publish
         if self.notification_timer.is_some() && Some(timer_id) == self.notification_timer {
-            if let Some(publish_msg) = self.pending_publish.take() {
-                let route = publish_msg.route.clone();
-                let notice_addr = RouteAddress::new(self.family_id, route);
-                let _ = ctx.send(notice_addr, NotificationMessage::Publish(publish_msg));
+            if let Some(event) = self.pending_publish.take() {
+                let _ = ctx.publish_event(event);
             }
             self.notification_timer = None;
         }

@@ -149,6 +149,20 @@ fn parse_unsubscribe_all(
     })
 }
 
+/// Encode a NOTICE NOTIFY (504) payload.
+///
+/// Wire format: `[u64 subscription_id][string route][bytes payload]`
+///
+/// The subscription_id allows client-side demultiplexing to the correct handler.
+/// The route and payload carry the actual notification content.
+pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
+    let mut enc = TlvEncoder::new();
+    enc.put_u64(subscription_id);
+    enc.put_string(route.as_str());
+    enc.put_bytes(payload);
+    enc.finish()
+}
+
 fn parse_notify(dec: &mut TlvDecoder) -> Result<NotifyMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);

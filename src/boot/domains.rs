@@ -296,10 +296,67 @@ impl NoticeDomainSink {
     }
 }
 
+impl NoticeDomainSink {
+    /// Handle a DomainPublishEvent from another domain (e.g. Schedule target_resource execution).
+    /// Matches the event route against notice subscription patterns and fans out
+    /// NOTICE NOTIFY (504) frames to matching subscribers.
+    fn handle_domain_publish(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+    ) -> Result<(), DeliveryError> {
+        let family_id = event.family_id.as_u64();
+        let families = self.families.lock();
+        if let Some(state) = families.get(&family_id) {
+            for sub in &state.subscriptions {
+                if sub.pattern.matches(&event.route) {
+                    let notify_payload = crate::protocol::notice_codec::encode_notify(
+                        sub.subscription_id,
+                        &event.route,
+                        &event.payload,
+                    );
+                    let notify_ctx = FrameContext::new(
+                        sub.session_id,
+                        crate::protocol::frame::ChannelId::Sub, // notification channel
+                        crate::protocol::tlv::MessageType::new(504), // NOTICE NOTIFY
+                        bytes::Bytes::from(notify_payload),
+                    );
+                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                    let _ = self.router.route(notify_envelope);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all subscriptions for a given session (called on disconnect cleanup).
+    pub fn unsubscribe_all_for_session(&self, session_id: u64) {
+        let mut families = self.families.lock();
+        for state in families.values_mut() {
+            state.subscriptions.retain(|s| s.session_id != session_id);
+        }
+        tracing::debug!(
+            domain = "notice",
+            session = session_id,
+            "All notice subscriptions removed for session (disconnect cleanup)"
+        );
+    }
+}
+
 impl MailboxSink for NoticeDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
+        }
+
+        // PATH 1: DomainPublishEvent from another domain (e.g. Schedule target_resource)
+        if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            return self.handle_domain_publish(event);
+        }
+
+        // PATH 1b: SessionCleanup from disconnect handler
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all_for_session(cleanup.session_id);
+            return Ok(());
         }
 
         tracing::debug!(
@@ -309,6 +366,7 @@ impl MailboxSink for NoticeDomainSink {
             "Notice domain sink: received envelope"
         );
 
+        // PATH 2: FrameContext from client wire frames
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -350,26 +408,19 @@ impl MailboxSink for NoticeDomainSink {
                 let families = self.families.lock();
                 if let Some(state) = families.get(&family_id) {
                     let route = pub_msg.route.clone();
-                    let payload_arc = std::sync::Arc::new(pub_msg.payload.clone());
-                    let route_arc = std::sync::Arc::new(route.clone());
 
                     for sub in &state.subscriptions {
                         if sub.pattern.matches(&route) {
-                            // Build notification envelope for subscriber
-                            let _notify_msg =
-                                crate::domains::notice::protocol::NotifyMessage::new_shared(
-                                    route_arc.clone(),
-                                    payload_arc.clone(),
-                                );
+                            let notify_payload = crate::protocol::notice_codec::encode_notify(
+                                sub.subscription_id,
+                                &route,
+                                &pub_msg.payload,
+                            );
                             let notify_ctx = FrameContext::new(
                                 sub.session_id,
-                                frame_ctx.channel_id,
-                                crate::protocol::tlv::MessageType::new(504), // Notify msg_type
-                                bytes::Bytes::from(crate::protocol::notice_codec::encode_response(
-                                    &NoticeResponse::Ok {
-                                        subscription_id: Some(sub.subscription_id),
-                                    },
-                                )),
+                                crate::protocol::frame::ChannelId::Sub,
+                                crate::protocol::tlv::MessageType::new(504), // NOTICE NOTIFY
+                                bytes::Bytes::from(notify_payload),
                             );
                             let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
                             let _ = self.router.route(notify_envelope);
@@ -381,8 +432,6 @@ impl MailboxSink for NoticeDomainSink {
             }
             NotificationMessage::Subscribe(sub_msg) => {
                 let family_id = sub_msg.family_id.as_u64();
-                let sub_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
 
                 let mut families = self.families.lock();
                 let state = families
@@ -391,20 +440,41 @@ impl MailboxSink for NoticeDomainSink {
                         subscriptions: Vec::new(),
                     });
 
-                state.subscriptions.push(NoticeSubscription {
-                    pattern,
-                    session_id: sub_msg.session_id.0,
-                    subscription_id: sub_id,
-                    subscriber: sub_msg.subscriber.clone(),
-                });
+                // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
+                let existing_sub_id = state.subscriptions.iter().find(|s| {
+                    s.session_id == sub_msg.session_id.0
+                        && s.pattern.route() == sub_msg.pattern.as_str()
+                }).map(|s| s.subscription_id);
 
-                tracing::debug!(
-                    domain = "notice",
-                    session = sub_msg.session_id.0,
-                    subscription_id = sub_id,
-                    pattern = sub_msg.pattern.as_str(),
-                    "Subscription added"
-                );
+                let sub_id = if let Some(id) = existing_sub_id {
+                    tracing::debug!(
+                        domain = "notice",
+                        session = sub_msg.session_id.0,
+                        subscription_id = id,
+                        pattern = sub_msg.pattern.as_str(),
+                        "Notice subscription already exists (idempotent)"
+                    );
+                    id
+                } else {
+                    let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                    let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
+
+                    state.subscriptions.push(NoticeSubscription {
+                        pattern,
+                        session_id: sub_msg.session_id.0,
+                        subscription_id: new_id,
+                        subscriber: sub_msg.subscriber.clone(),
+                    });
+
+                    tracing::debug!(
+                        domain = "notice",
+                        session = sub_msg.session_id.0,
+                        subscription_id = new_id,
+                        pattern = sub_msg.pattern.as_str(),
+                        "Notice subscription added"
+                    );
+                    new_id
+                };
 
                 Some(NoticeResponse::Ok {
                     subscription_id: Some(sub_id),
@@ -922,16 +992,34 @@ impl MailboxSink for QueueDomainSink {
 // STREAM DOMAIN SINK
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Stream domain sink: append-only streaming operations
+/// Subscription entry for stream change notifications
+struct StreamSubscription {
+    pattern: crate::runtime::matcher::Pattern,
+    session_id: u64,
+    subscription_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+}
+
+/// Per-family stream subscription state
+struct StreamFamilyState {
+    subscriptions: Vec<StreamSubscription>,
+}
+
+/// Stream domain sink: append-only streaming operations with subscription tracking
 ///
-/// TODO: Full implementation with StreamActor per resource.
-/// Currently a placeholder that parses messages and returns stub responses.
+/// Supports dual-path delivery:
+/// - PATH 1: `DomainPublishEvent` from stream actors (subscription matching + fanout)
+/// - PATH 2: `FrameContext` from client wire frames (BEGIN/APPEND/COMMIT/READ/SUBSCRIBE/UNSUBSCRIBE)
 pub struct StreamDomainSink {
     /// Midge storage engine (for future StreamStore usage)
     #[allow(dead_code)]
     store: Arc<cntryl_midge::Engine>,
     /// Session ID counter for Begin operations
     next_session_id: AtomicU64,
+    /// Per-family subscription state for stream change notifications
+    families: Mutex<HashMap<u64, StreamFamilyState>>,
+    /// Monotonic subscription ID counter
+    next_sub_id: AtomicU64,
     /// Router for routing response envelopes back
     router: Arc<Router>,
     active: AtomicBool,
@@ -942,6 +1030,8 @@ impl StreamDomainSink {
         Self {
             store,
             next_session_id: AtomicU64::new(1),
+            families: Mutex::new(HashMap::new()),
+            next_sub_id: AtomicU64::new(1),
             router,
             active: AtomicBool::new(true),
         }
@@ -949,6 +1039,56 @@ impl StreamDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    /// Handle a DomainPublishEvent from stream actors.
+    /// Matches the event route against subscription patterns and fans out
+    /// STREAM_NOTIFY (609) frames to matching subscribers.
+    fn handle_domain_publish(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+    ) -> Result<(), DeliveryError> {
+        let family_id = event.family_id.as_u64();
+        let families = self.families.lock();
+        if let Some(state) = families.get(&family_id) {
+            for sub in &state.subscriptions {
+                if sub.pattern.matches(&event.route) {
+                    let notify_payload = crate::protocol::stream_codec::encode_notify(
+                        sub.subscription_id,
+                        &event.route,
+                        &event.payload,
+                    );
+                    let notify_ctx = FrameContext::new(
+                        sub.session_id,
+                        crate::protocol::frame::ChannelId::Sub, // notification channel
+                        crate::protocol::tlv::MessageType::new(609), // STREAM_NOTIFY
+                        bytes::Bytes::from(notify_payload),
+                    );
+                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                    let _ = self.router.route(notify_envelope);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all subscriptions for a given session (called on disconnect cleanup).
+    pub fn unsubscribe_all(&self, session_id: u64) {
+        let mut families = self.families.lock();
+        for state in families.values_mut() {
+            state.subscriptions.retain(|s| s.session_id != session_id);
+        }
+        tracing::debug!(
+            domain = "stream",
+            session = session_id,
+            "All stream subscriptions removed for session"
+        );
+    }
+
+    /// Get the total number of active stream subscriptions (for stats).
+    pub fn subscription_count(&self) -> usize {
+        let families = self.families.lock();
+        families.values().map(|s| s.subscriptions.len()).sum()
     }
 }
 
@@ -958,6 +1098,17 @@ impl MailboxSink for StreamDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        // PATH 1: DomainPublishEvent from internal domain actors
+        if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            return self.handle_domain_publish(event);
+        }
+
+        // PATH 1b: SessionCleanup from disconnect handler
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all(cleanup.session_id);
+            return Ok(());
+        }
+
         tracing::debug!(
             domain = "stream",
             destination = %envelope.destination(),
@@ -965,6 +1116,7 @@ impl MailboxSink for StreamDomainSink {
             "Stream domain sink: received envelope"
         );
 
+        // PATH 2: FrameContext from client wire frames
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -978,6 +1130,8 @@ impl MailboxSink for StreamDomainSink {
                 &frame_ctx,
                 &frame_ctx.payload,
                 *envelope.destination().family(),
+                crate::session::SessionId(frame_ctx.session_id),
+                envelope.source().cloned().unwrap_or_else(|| envelope.destination().clone()),
             ) {
                 Ok(msg) => {
                     tracing::debug!(
@@ -998,7 +1152,7 @@ impl MailboxSink for StreamDomainSink {
         use crate::protocol::stream_codec::StreamResponse;
 
         // TODO: Implement full StreamActor dispatch with per-resource actors.
-        // Currently returns stub responses for all operations.
+        // Currently returns stub responses for data operations.
         let response = match stream_msg {
             StreamMessage::Begin { .. } => {
                 let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
@@ -1008,42 +1162,120 @@ impl MailboxSink for StreamDomainSink {
                 }
             }
             StreamMessage::Append { .. } => {
-                // TODO: buffer append in session state
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
                 }
             }
             StreamMessage::Commit { .. } => {
-                // TODO: commit buffered appends to storage
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
                 }
             }
             StreamMessage::Rollback { .. } => {
-                // TODO: discard buffered appends
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
                 }
             }
             StreamMessage::Read { .. } => {
-                // TODO: read from StreamStore
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
                 }
             }
             StreamMessage::Last { .. } => {
-                // TODO: get last entry from StreamStore
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
                 }
             }
             StreamMessage::GetMetadata { .. } => {
-                // TODO: get stream metadata
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::Subscribe {
+                family_id,
+                pattern,
+                session_id,
+                subscriber,
+            } => {
+                let fam_id = family_id.as_u64();
+
+                let mut families = self.families.lock();
+                let state = families
+                    .entry(fam_id)
+                    .or_insert_with(|| StreamFamilyState {
+                        subscriptions: Vec::new(),
+                    });
+
+                // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
+                let existing_sub_id = state.subscriptions.iter().find(|s| {
+                    s.session_id == session_id && s.pattern.route() == pattern.as_str()
+                }).map(|s| s.subscription_id);
+
+                let sub_id = if let Some(id) = existing_sub_id {
+                    tracing::debug!(
+                        domain = "stream",
+                        session = session_id,
+                        subscription_id = id,
+                        pattern = pattern.as_str(),
+                        "Stream subscription already exists (idempotent)"
+                    );
+                    id
+                } else {
+                    let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                    let pat = crate::runtime::matcher::Pattern::new(pattern.as_str());
+
+                    state.subscriptions.push(StreamSubscription {
+                        pattern: pat,
+                        session_id,
+                        subscription_id: new_id,
+                        subscriber,
+                    });
+
+                    tracing::debug!(
+                        domain = "stream",
+                        session = session_id,
+                        subscription_id = new_id,
+                        pattern = pattern.as_str(),
+                        "Stream subscription added"
+                    );
+                    new_id
+                };
+
+                StreamResponse::Ok {
+                    session_id: Some(sub_id),
+                    data: vec![],
+                }
+            }
+            StreamMessage::Unsubscribe {
+                family_id,
+                pattern,
+                session_id,
+                ..
+            } => {
+                let fam_id = family_id.as_u64();
+                let mut families = self.families.lock();
+                if let Some(state) = families.get_mut(&fam_id) {
+                    state.subscriptions.retain(|s| {
+                        !(s.session_id == session_id
+                            && s.pattern.route() == pattern.as_str())
+                    });
+                }
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::UnsubscribeAll {
+                session_id,
+                ..
+            } => {
+                self.unsubscribe_all(session_id);
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
@@ -1432,10 +1664,24 @@ impl MailboxSink for LeaseDomainSink {
 // SCHEDULE DOMAIN SINK
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Schedule domain sink: delayed/recurring task management
+/// Subscription entry for schedule fire notifications
+struct ScheduleSubscription {
+    pattern: crate::runtime::matcher::Pattern,
+    session_id: u64,
+    subscription_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+}
+
+/// Per-family schedule subscription state
+struct ScheduleFamilyState {
+    subscriptions: Vec<ScheduleSubscription>,
+}
+
+/// Schedule domain sink: delayed/recurring task management with subscription tracking
 ///
-/// Manages per-family ScheduleActor instances. Each actor handles
-/// schedule creation, cancellation, and listing for its route family.
+/// Supports dual-path delivery:
+/// - PATH 1: `DomainPublishEvent` from schedule actors (subscription matching + fanout)
+/// - PATH 2: `FrameContext` from client wire frames (CREATE/CANCEL/LIST/SUBSCRIBE/UNSUBSCRIBE)
 pub struct ScheduleDomainSink {
     /// Midge storage engine (for ScheduleStore)
     store: Arc<cntryl_midge::Engine>,
@@ -1443,6 +1689,10 @@ pub struct ScheduleDomainSink {
     actors: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
     >,
+    /// Per-family subscription state for schedule fire notifications
+    sub_families: Mutex<HashMap<u64, ScheduleFamilyState>>,
+    /// Monotonic subscription ID counter
+    next_sub_id: AtomicU64,
     /// Router for routing response envelopes back
     router: Arc<Router>,
     active: AtomicBool,
@@ -1453,6 +1703,8 @@ impl ScheduleDomainSink {
         Self {
             store,
             actors: Mutex::new(HashMap::new()),
+            sub_families: Mutex::new(HashMap::new()),
+            next_sub_id: AtomicU64::new(1),
             router,
             active: AtomicBool::new(true),
         }
@@ -1460,6 +1712,56 @@ impl ScheduleDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    /// Handle a DomainPublishEvent from schedule actors.
+    /// Matches the event route against subscription patterns and fans out
+    /// SCHEDULE_NOTIFY (705) frames to matching subscribers.
+    fn handle_domain_publish(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+    ) -> Result<(), DeliveryError> {
+        let family_id = event.family_id.as_u64();
+        let families = self.sub_families.lock();
+        if let Some(state) = families.get(&family_id) {
+            for sub in &state.subscriptions {
+                if sub.pattern.matches(&event.route) {
+                    let notify_payload = crate::protocol::schedule_codec::encode_notify(
+                        sub.subscription_id,
+                        &event.route,
+                        &event.payload,
+                    );
+                    let notify_ctx = FrameContext::new(
+                        sub.session_id,
+                        crate::protocol::frame::ChannelId::Sub, // notification channel
+                        crate::protocol::tlv::MessageType::new(705), // SCHEDULE_NOTIFY
+                        bytes::Bytes::from(notify_payload),
+                    );
+                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                    let _ = self.router.route(notify_envelope);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all subscriptions for a given session (called on disconnect cleanup).
+    pub fn unsubscribe_all(&self, session_id: u64) {
+        let mut families = self.sub_families.lock();
+        for state in families.values_mut() {
+            state.subscriptions.retain(|s| s.session_id != session_id);
+        }
+        tracing::debug!(
+            domain = "schedule",
+            session = session_id,
+            "All schedule subscriptions removed for session"
+        );
+    }
+
+    /// Get the total number of active schedule subscriptions (for stats).
+    pub fn subscription_count(&self) -> usize {
+        let families = self.sub_families.lock();
+        families.values().map(|s| s.subscriptions.len()).sum()
     }
 }
 
@@ -1469,6 +1771,17 @@ impl MailboxSink for ScheduleDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        // PATH 1: DomainPublishEvent from internal domain actors
+        if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            return self.handle_domain_publish(event);
+        }
+
+        // PATH 1b: SessionCleanup from disconnect handler
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all(cleanup.session_id);
+            return Ok(());
+        }
+
         tracing::debug!(
             domain = "schedule",
             destination = %envelope.destination(),
@@ -1476,6 +1789,7 @@ impl MailboxSink for ScheduleDomainSink {
             "Schedule domain sink: received envelope"
         );
 
+        // PATH 2: FrameContext from client wire frames
         let frame_ctx = match envelope.payload::<FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => {
@@ -1485,7 +1799,13 @@ impl MailboxSink for ScheduleDomainSink {
         };
 
         let schedule_msg =
-            match crate::protocol::schedule_codec::parse_request(&frame_ctx, &frame_ctx.payload) {
+            match crate::protocol::schedule_codec::parse_request(
+                &frame_ctx,
+                &frame_ctx.payload,
+                *envelope.destination().family(),
+                crate::session::SessionId(frame_ctx.session_id),
+                envelope.source().cloned().unwrap_or_else(|| envelope.destination().clone()),
+            ) {
                 Ok(msg) => msg,
                 Err(e) => {
                     tracing::warn!(
@@ -1515,7 +1835,6 @@ impl MailboxSink for ScheduleDomainSink {
 
             match schedule_msg {
                 ScheduleMessage::Create { payload } => {
-                    // Build route from payload's target resource and operation
                     let route_str = format!(
                         "schedule://default/default/{}/{}",
                         payload.target_resource, payload.target_operation
@@ -1540,7 +1859,83 @@ impl MailboxSink for ScheduleDomainSink {
                     }
                 },
                 ScheduleMessage::List => {
-                    // TODO: Implement schedule listing via store.list()
+                    ScheduleResponse::Ok { schedule_id: None }
+                }
+                ScheduleMessage::Subscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    subscriber,
+                } => {
+                    let fam_id = family_id.as_u64();
+
+                    let mut families = self.sub_families.lock();
+                    let state = families
+                        .entry(fam_id)
+                        .or_insert_with(|| ScheduleFamilyState {
+                            subscriptions: Vec::new(),
+                        });
+
+                    // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
+                    let existing_sub_id = state.subscriptions.iter().find(|s| {
+                        s.session_id == session_id && s.pattern.route() == pattern.as_str()
+                    }).map(|s| s.subscription_id);
+
+                    let sub_id = if let Some(id) = existing_sub_id {
+                        tracing::debug!(
+                            domain = "schedule",
+                            session = session_id,
+                            subscription_id = id,
+                            pattern = pattern.as_str(),
+                            "Schedule subscription already exists (idempotent)"
+                        );
+                        id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        let pat = crate::runtime::matcher::Pattern::new(pattern.as_str());
+
+                        state.subscriptions.push(ScheduleSubscription {
+                            pattern: pat,
+                            session_id,
+                            subscription_id: new_id,
+                            subscriber,
+                        });
+
+                        tracing::debug!(
+                            domain = "schedule",
+                            session = session_id,
+                            subscription_id = new_id,
+                            pattern = pattern.as_str(),
+                            "Schedule subscription added"
+                        );
+                        new_id
+                    };
+
+                    ScheduleResponse::Ok {
+                        schedule_id: Some(sub_id.to_string()),
+                    }
+                }
+                ScheduleMessage::Unsubscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    ..
+                } => {
+                    let fam_id = family_id.as_u64();
+                    let mut families = self.sub_families.lock();
+                    if let Some(state) = families.get_mut(&fam_id) {
+                        state.subscriptions.retain(|s| {
+                            !(s.session_id == session_id
+                                && s.pattern.route() == pattern.as_str())
+                        });
+                    }
+                    ScheduleResponse::Ok { schedule_id: None }
+                }
+                ScheduleMessage::UnsubscribeAll {
+                    session_id,
+                    ..
+                } => {
+                    self.unsubscribe_all(session_id);
                     ScheduleResponse::Ok { schedule_id: None }
                 }
             }

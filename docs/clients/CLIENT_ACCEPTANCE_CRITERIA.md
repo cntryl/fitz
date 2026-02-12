@@ -78,11 +78,11 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 ### AC-CONN-006: Re-subscribe on reconnect
 
 **MUST** re-establish subscriptions after reconnect; clients **MUST NOT** assume subscriptions persist across disconnects
-**Given:** Client had active Notice or RPC subscriptions before disconnect  
+**Given:** Client had active Notice, RPC, Stream, or Schedule subscriptions before disconnect  
 **When:** Connection is lost and client reconnects and re-authenticates  
 **Then:**
 
-- Client **MUST** re-send SUBSCRIBE frames for Notice/RPC subscriptions
+- Client **MUST** re-send SUBSCRIBE frames for Notice/RPC/Stream/Schedule subscriptions
 - Subscription state is **NOT** preserved by broker across disconnects
 - SUBSCRIBE is idempotent - duplicate subscription to same pattern returns same subscription_id
 - Client resumes receiving notifications/requests only after re-subscription confirmed
@@ -278,6 +278,54 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 - Server returns error code `2009` (Unauthorized)
 - Message NOT appended to stream
+
+### AC-STREAM-010: Subscribe to resource commit notifications
+
+**MUST** receive notifications when events are committed to a subscribed resource
+**Given:** Session with `stream://realm/area/resource#read` permission  
+**When:**
+
+1. Client sends `STREAM_SUBSCRIBE` (607) with pattern `stream://realm/area/resource`
+2. Server responds with `subscription_id`
+3. Another client commits events to that resource
+   **Then:**
+
+- Client receives `STREAM_NOTIFY` (609) with event details
+- Subscription is session-scoped (lost on disconnect)
+
+### AC-STREAM-011: Subscribe with area wildcard
+
+**MUST** receive notifications for any resource committed within a subscribed area
+**Given:** Session with `stream://realm/area/**#read` permission  
+**When:**
+
+1. Client sends `STREAM_SUBSCRIBE` (607) with pattern `stream://realm/area/*`
+2. Events are committed to `stream://realm/area/resource-a` and `stream://realm/area/resource-b`
+   **Then:**
+
+- Client receives `STREAM_NOTIFY` (609) for both resources
+
+### AC-STREAM-012: Unsubscribe stops delivery
+
+**MUST** stop receiving notifications after unsubscribe
+**Given:** Client subscribed with pattern `stream://realm/area/resource`  
+**When:**
+
+1. Client sends `STREAM_UNSUBSCRIBE` (608) with the same pattern
+2. Events are committed to that resource
+   **Then:**
+
+- Client does NOT receive `STREAM_NOTIFY` for that pattern
+
+### AC-STREAM-013: Session-scoped cleanup
+
+**MUST** clean up all stream subscriptions on disconnect
+**Given:** Client has active `STREAM_SUBSCRIBE` subscriptions  
+**When:** Client disconnects (graceful or ungraceful)  
+**Then:**
+
+- All `STREAM_SUBSCRIBE` subscriptions for that session are removed
+- No `STREAM_NOTIFY` frames are sent after disconnect
 
 ## Queue Domain
 
@@ -735,16 +783,17 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 - Server returns error code `7002` (Invalid Cron)
 - Job is NOT created
 
-### AC-SCHEDULE-003: Job Execution Notification
+### AC-SCHEDULE-003: Job Execution Notification via SCHEDULE_SUBSCRIBE / SCHEDULE_NOTIFY
 
-**MUST** receive notification when job fires
+**MUST** receive notification when schedule fires
 **Given:**
 
-- Job created with cron `"*/1 * * * *"` (every minute)
-- Client subscribed to job's route
+- Job created with cron `"*/1 * * * *"` (every minute) on route `schedule://prod/app/reminders`
+- Client sends `SCHEDULE_SUBSCRIBE` (703) to `schedule://prod/app/reminders`
   **When:** Time advances to next minute boundary  
   **Then:**
-- Client receives notification on subscribed channel
+- Client receives `SCHEDULE_NOTIFY` (705) with the job's configured payload
+- The broker also executes the schedule's `target_resource` via the `DomainPublishEvent` system
 - Payload matches job's configured payload
 - Notification arrives within 1 second of scheduled time
 
@@ -948,9 +997,10 @@ Use this checklist to verify client implementation completeness:
 
 - [ ] AC-KV-001 through AC-KV-011
 
-### Stream Domain (5 criteria)
+### Stream Domain (9 criteria)
 
 - [ ] AC-STREAM-001 through AC-STREAM-005
+- [ ] AC-STREAM-010 through AC-STREAM-013
 
 ### Queue Domain (8 criteria)
 
@@ -980,7 +1030,7 @@ Use this checklist to verify client implementation completeness:
 
 - [ ] AC-PERF-001 through AC-PERF-005
 
-**Total:** 74 explicit acceptance criteria
+**Total:** 78 explicit acceptance criteria
 
 ## Compliance Levels
 

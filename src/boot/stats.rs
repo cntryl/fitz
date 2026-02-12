@@ -226,6 +226,11 @@ impl Runtime {
         0.0
     }
 
+    pub fn stream_subscriptions_active(&self) -> usize {
+        // TODO: Query StreamDomainSink subscription_count() via router
+        0
+    }
+
     pub fn notice_publishes_per_second(&self) -> f64 {
         // TODO: Calculate from domain metrics
         0.0
@@ -254,6 +259,11 @@ impl Runtime {
     pub fn schedule_executions_per_minute(&self) -> f64 {
         // TODO: Calculate from domain metrics
         0.0
+    }
+
+    pub fn schedule_subscriptions_active(&self) -> usize {
+        // TODO: Query ScheduleDomainSink subscription_count() via router
+        0
     }
 
     // List methods for admin API

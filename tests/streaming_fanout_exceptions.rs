@@ -455,6 +455,45 @@ fn should_implement_notice_subscribe_fanout_pattern() {
 }
 
 #[test]
+fn should_implement_stream_subscribe_fanout_pattern() {
+    // Summary: Stream SUBSCRIBE (607) has fanout pattern
+    // Identical two-phase model to Notice SUBSCRIBE:
+    //
+    // Phase 1 (sync):
+    //   Client:   STREAM_SUBSCRIBE(pattern="stream://acme/app/events")
+    //   Server:   SUBSCRIBE_OK(subscription_id=42)
+    //
+    // Phase 2 (async):
+    //   Server:   STREAM_NOTIFY(subscription_id=42, route="stream://acme/app/events/committed",
+    //             payload={"event":"committed","first_resource_offset":0,...})
+    //   Server:   STREAM_NOTIFY(subscription_id=42, route="stream://acme/app/events/committed",
+    //             payload={"event":"watermark_advanced","previous":0,"watermark":100})
+    //
+    // - Correlation by subscription_id (same as Notice)
+    // - Session-scoped: lost on disconnect, must re-subscribe
+    // - Best-effort delivery, debounced per 25ms window
+    // - Wildcards supported: stream://realm/area/*, stream://realm/**
+}
+
+#[test]
+fn should_implement_schedule_subscribe_fanout_pattern() {
+    // Summary: Schedule SUBSCRIBE (703) has fanout pattern
+    // Same two-phase model as Notice and Stream SUBSCRIBE:
+    //
+    // Phase 1 (sync):
+    //   Client:   SCHEDULE_SUBSCRIBE(pattern="schedule://acme/app/reminders")
+    //   Server:   SUBSCRIBE_OK(subscription_id=55)
+    //
+    // Phase 2 (async):
+    //   Server:   SCHEDULE_NOTIFY(subscription_id=55, route="schedule://acme/app/reminders/fired",
+    //             payload=<schedule payload bytes>)
+    //
+    // Dual-emit behavior: when a schedule fires, the broker:
+    //   1. Sends SCHEDULE_NOTIFY (705) to all schedule:// subscribers
+    //   2. Executes the target_resource (e.g. notice://) via DomainPublishEvent
+}
+
+#[test]
 fn should_implement_rpc_request_streaming_pattern() {
     // Summary: RPC REQUEST has streaming pattern
     // - ACCEPTED response (phase 1)
@@ -497,10 +536,11 @@ fn should_not_have_fanout_in_queue_domain() {
 }
 
 #[test]
-fn should_not_have_fanout_in_schedule_domain() {
-    // Documentation: Schedule domain has no fanout
-    // - All operations are pure sync request/response
-    // - CREATE, LIST, DELETE, UPDATE all sync
-    // - Job execution is async, but job management is sync
+fn should_have_fanout_in_schedule_domain() {
+    // Documentation: Schedule domain now has fanout via SUBSCRIBE/NOTIFY
+    // - CREATE, LIST, DELETE operations are pure sync request/response
+    // - SUBSCRIBE (703) enables async SCHEDULE_NOTIFY (705) on fire events
+    // - Dual-emit: fires go to both schedule:// subscribers and target_resource
+    // - Job management is sync, but observation of job fires is async
     // - Scheduled job notifications come via Notice domain
 }

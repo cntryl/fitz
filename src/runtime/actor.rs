@@ -235,6 +235,24 @@ impl<A: Actor + ?Sized> Context<A> {
         })
     }
 
+    /// Publish a domain event to the router.
+    ///
+    /// This is a convenience method for emitting `DomainPublishEvent`s.
+    /// The event is routed based on its route field to the appropriate domain sink,
+    /// which performs subscription matching and fanout internally.
+    ///
+    /// # Semantics
+    ///
+    /// Same as `send()`: synchronous best-effort with no retries.
+    /// The route in the event determines which domain sink receives it.
+    pub fn publish_event(
+        &self,
+        event: crate::runtime::domain_event::DomainPublishEvent,
+    ) -> Result<(), SendError> {
+        let addr = RouteAddress::new(event.family_id, event.route.clone());
+        self.send(addr, event)
+    }
+
     /// Reply to the sender of the current message
     ///
     /// This creates a reply envelope that:
