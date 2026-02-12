@@ -31,17 +31,17 @@ func TestShouldAppendRecordsGivenValidSessionWhenAppendCalled(t *testing.T) {
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route, 0)
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err, "Begin should succeed")
 
-		// Act — append two records.
-		offset1, err := f.Client().Stream().Append(ctx, route, []byte("record-1"), nil)
+		// Act — append two records on the session.
+		offset1, err := sess.Append(ctx, []byte("record-1"))
 		require.NoError(t, err, "first Append should succeed")
 
-		offset2, err := f.Client().Stream().Append(ctx, route, []byte("record-2"), nil)
+		offset2, err := sess.Append(ctx, []byte("record-2"))
 		require.NoError(t, err, "second Append should succeed")
 
-		err = f.Client().Stream().Commit(ctx, route)
+		err = sess.Commit(ctx)
 
 		// Assert
 		require.NoError(t, err, "Commit should succeed")
@@ -65,14 +65,14 @@ func TestShouldReadRecordsInOrderGivenOffsetRangeWhenReadCalled(t *testing.T) {
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route, 0)
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
 
 		for i := 0; i < 3; i++ {
-			_, err := f.Client().Stream().Append(ctx, route, []byte{byte(i)}, nil)
+			_, err := sess.Append(ctx, []byte{byte(i)})
 			require.NoError(t, err)
 		}
-		require.NoError(t, f.Client().Stream().Commit(ctx, route))
+		require.NoError(t, sess.Commit(ctx))
 
 		// Act — read from offset 0, limit 10.
 		iter, err := f.Client().Stream().ReadResource(ctx, route, 0, 10)
@@ -104,11 +104,11 @@ func TestShouldRejectBeginGivenMismatchedExpectedOffsetWhenOptimisticConcurrency
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route, 0)
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
-		_, err = f.Client().Stream().Append(ctx, route, []byte("first"), nil)
+		_, err = sess.Append(ctx, []byte("first"))
 		require.NoError(t, err)
-		require.NoError(t, f.Client().Stream().Commit(ctx, route))
+		require.NoError(t, sess.Commit(ctx))
 
 		// Act — Begin with wrong expected_offset (server's next offset is 1).
 		_, err = f.Client().Stream().Begin(ctx, route, 99999)
@@ -131,14 +131,14 @@ func TestShouldRollbackUncommittedAppendsGivenActiveSessionWhenRollbackCalled(t 
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route, 0)
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
 
-		_, err = f.Client().Stream().Append(ctx, route, []byte("ephemeral"), nil)
+		_, err = sess.Append(ctx, []byte("ephemeral"))
 		require.NoError(t, err)
 
 		// Act
-		err = f.Client().Stream().Rollback(ctx, route)
+		err = sess.Rollback(ctx)
 
 		// Assert
 		require.NoError(t, err, "Rollback should succeed")
@@ -169,13 +169,13 @@ func TestShouldReturnLastRecordGivenExistingStreamWhenLastCalled(t *testing.T) {
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route, 0)
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
-		_, err = f.Client().Stream().Append(ctx, route, []byte("first"), nil)
+		_, err = sess.Append(ctx, []byte("first"))
 		require.NoError(t, err)
-		_, err = f.Client().Stream().Append(ctx, route, []byte("last-one"), nil)
+		_, err = sess.Append(ctx, []byte("last-one"))
 		require.NoError(t, err)
-		require.NoError(t, f.Client().Stream().Commit(ctx, route))
+		require.NoError(t, sess.Commit(ctx))
 
 		// Act
 		rec, err := f.Client().Stream().Last(ctx, route)
@@ -203,11 +203,11 @@ func TestShouldGetMetadataGivenExistingStreamWhenGetMetadataCalled(t *testing.T)
 		route := f.UniqueRoute("stream")
 
 		// Ensure stream exists.
-		_, err := f.Client().Stream().Begin(ctx, route, 0)
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
-		_, err = f.Client().Stream().Append(ctx, route, []byte("data"), nil)
+		_, err = sess.Append(ctx, []byte("data"))
 		require.NoError(t, err)
-		require.NoError(t, f.Client().Stream().Commit(ctx, route))
+		require.NoError(t, sess.Commit(ctx))
 
 		// Act
 		meta, err := f.Client().Stream().GetMetadata(ctx, route)

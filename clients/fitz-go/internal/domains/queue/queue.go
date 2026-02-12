@@ -10,26 +10,76 @@ import (
 	"github.com/cntryl/fitz-go/internal/protocol"
 )
 
-// ReservationItem represents a reserved queue message.
-type ReservationItem struct {
+// QueueItem represents a received (reserved) queue message.
+// Extend and Complete are called on the item; route and token are tracked internally.
+type QueueItem struct {
 	ID    uint64
 	Token uint64
 	Body  []byte
+
+	route string
+	conn  *connection.Connection
+}
+
+// Extend extends the lease on this queue item.
+func (q *QueueItem) Extend(ctx context.Context, leaseSecs uint64) error {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteString(buf, q.route)
+	connection.WriteU64BE(buf, q.ID)
+	connection.WriteU64BE(buf, q.Token)
+	connection.WriteU64BE(buf, leaseSecs)
+
+	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueExtend, buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("EXTEND request failed: %w", err)
+	}
+	success, _, err := parseQueueResponse(resp)
+	if err != nil {
+		return fmt.Errorf("EXTEND failed: %w", err)
+	}
+	if !success {
+		return fmt.Errorf("EXTEND failed: unexpected status")
+	}
+	return nil
+}
+
+// Complete acknowledges processing of this queue item and removes it from the queue.
+func (q *QueueItem) Complete(ctx context.Context) error {
+	return q.CompleteWithToken(ctx, q.Token)
+}
+
+// CompleteWithToken completes the item using an explicit token (e.g. for testing invalid token).
+// Normally use Complete(ctx) which uses the item's token.
+func (q *QueueItem) CompleteWithToken(ctx context.Context, token uint64) error {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteString(buf, q.route)
+	connection.WriteU64BE(buf, q.ID)
+	connection.WriteU64BE(buf, token)
+
+	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueComplete, buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("COMPLETE request failed: %w", err)
+	}
+	success, _, err := parseQueueResponse(resp)
+	if err != nil {
+		return fmt.Errorf("COMPLETE failed: %w", err)
+	}
+	if !success {
+		return fmt.Errorf("COMPLETE failed: unexpected status")
+	}
+	return nil
 }
 
 // Client is the Queue domain client interface.
 type Client interface {
-	// Enqueue adds a message to the queue. Returns the server-assigned message ID.
-	Enqueue(ctx context.Context, route string, body []byte) (msgID uint64, err error)
+	// Send adds a message to the queue. Returns the server-assigned message ID.
+	Send(ctx context.Context, route string, body []byte) (msgID uint64, err error)
 
-	// Reserve reserves up to batchSize messages with the given lease duration.
-	Reserve(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]ReservationItem, error)
-
-	// Extend extends the lease on a reserved message.
-	Extend(ctx context.Context, route string, msgID uint64, token uint64, leaseSecs uint64) error
-
-	// Complete acknowledges processing of a reserved message.
-	Complete(ctx context.Context, route string, msgID uint64, token uint64) error
+	// Receive reserves up to batchSize messages with the given lease duration.
+	// Each returned QueueItem has Extend and Complete methods.
+	Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error)
 }
 
 type client struct {
@@ -41,10 +91,10 @@ func NewClient(conn *connection.Connection) Client {
 	return &client{conn: conn}
 }
 
-// Enqueue per CLIENT_SPEC.md:
+// Send per CLIENT_SPEC.md:
 // Request: [route_len][route][body_len][body][has_delay(u8)][delay_secs?]
 // Response: [status][message_id (u64 BE)]
-func (c *client) Enqueue(ctx context.Context, route string, body []byte) (uint64, error) {
+func (c *client) Send(ctx context.Context, route string, body []byte) (uint64, error) {
 	payload := EncodeEnqueue(route, body, 0)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeQueueEnqueue, payload)
@@ -72,10 +122,10 @@ func (c *client) Enqueue(ctx context.Context, route string, body []byte) (uint64
 	return msgID, nil
 }
 
-// Reserve per CLIENT_SPEC.md:
+// Receive per CLIENT_SPEC.md:
 // Request: [route_len][route][lease_seconds][has_batch_size][batch_size?][has_wait_seconds][wait_seconds?]
 // Response: [status][lease_count(u32)][{message_id, lease_token, body_len, body}...]
-func (c *client) Reserve(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]ReservationItem, error) {
+func (c *client) Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error) {
 	payload := EncodeReserve(route, leaseSecs, batchSize, 0)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeQueueReserve, payload)
@@ -91,9 +141,8 @@ func (c *client) Reserve(ctx context.Context, route string, leaseSecs uint64, ba
 		return nil, fmt.Errorf("RESERVE failed: unexpected status")
 	}
 
-	// Parse lease_count
 	if len(remaining) < 4 {
-		return nil, nil // No items
+		return nil, nil
 	}
 
 	count, offset, err := connection.ReadU32BE(remaining, 0)
@@ -101,23 +150,20 @@ func (c *client) Reserve(ctx context.Context, route string, leaseSecs uint64, ba
 		return nil, fmt.Errorf("parse lease_count: %w", err)
 	}
 
-	items := make([]ReservationItem, 0, count)
+	items := make([]*QueueItem, 0, count)
 	for i := uint32(0); i < count; i++ {
-		var item ReservationItem
+		item := &QueueItem{route: route, conn: c.conn}
 
-		// message_id (u64)
 		item.ID, offset, err = connection.ReadU64BE(remaining, offset)
 		if err != nil {
 			return nil, fmt.Errorf("parse message_id at item %d: %w", i, err)
 		}
 
-		// lease_token (u64)
 		item.Token, offset, err = connection.ReadU64BE(remaining, offset)
 		if err != nil {
 			return nil, fmt.Errorf("parse lease_token at item %d: %w", i, err)
 		}
 
-		// body_len + body
 		var bodyData []byte
 		bodyData, offset, err = connection.ReadBytes(remaining, offset)
 		if err != nil {
@@ -130,59 +176,4 @@ func (c *client) Reserve(ctx context.Context, route string, leaseSecs uint64, ba
 	}
 
 	return items, nil
-}
-
-// Extend per CLIENT_SPEC.md:
-// Request: [route_len][route][message_id(u64)][lease_token(u64)][lease_seconds(u64)]
-// Response: [status]
-func (c *client) Extend(ctx context.Context, route string, msgID uint64, token uint64, leaseSecs uint64) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-	connection.WriteU64BE(buf, msgID)
-	connection.WriteU64BE(buf, token)
-	connection.WriteU64BE(buf, leaseSecs)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeQueueExtend, buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("EXTEND request failed: %w", err)
-	}
-
-	success, _, err := parseQueueResponse(resp)
-	if err != nil {
-		return fmt.Errorf("EXTEND failed: %w", err)
-	}
-	if !success {
-		return fmt.Errorf("EXTEND failed: unexpected status")
-	}
-
-	return nil
-}
-
-// Complete per CLIENT_SPEC.md:
-// Request: [route_len][route][message_id(u64)][lease_token(u64)]
-// Response: [status]
-func (c *client) Complete(ctx context.Context, route string, msgID uint64, token uint64) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-	connection.WriteU64BE(buf, msgID)
-	connection.WriteU64BE(buf, token)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeQueueComplete, buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("COMPLETE request failed: %w", err)
-	}
-
-	success, _, err := parseQueueResponse(resp)
-	if err != nil {
-		return fmt.Errorf("COMPLETE failed: %w", err)
-	}
-	if !success {
-		return fmt.Errorf("COMPLETE failed: unexpected status")
-	}
-
-	return nil
 }

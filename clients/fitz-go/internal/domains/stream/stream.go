@@ -5,7 +5,6 @@ package stream
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
@@ -25,21 +24,26 @@ type Metadata struct {
 	RecordCount uint64
 }
 
+// StreamSession is a write session for appending to a stream.
+// Obtained from Begin; use Append, then Commit or Rollback.
+// Expected offset (OCC) is established at Begin and tracked by the session/server;
+// Append does not take or send expected_offset.
+// Per CLIENT_SPEC.md, operations on a session MUST be sequential.
+type StreamSession interface {
+	// Append adds a record to the stream. Returns the assigned offset when available.
+	Append(ctx context.Context, body []byte) (offset uint64, err error)
+	// Commit finalizes the write session and makes appends durable.
+	Commit(ctx context.Context) error
+	// Rollback discards uncommitted appends.
+	Rollback(ctx context.Context) error
+}
+
 // Client is the Stream domain client interface.
 type Client interface {
 	// Begin starts a write session on the given route.
 	// expectedOffset is the client's view of the stream's next offset; server rejects on mismatch (OCC).
-	Begin(ctx context.Context, route string, expectedOffset uint64) (sessionID uint64, err error)
-
-	// Append adds a record to the stream.
-	// expectedOffset is optional; pass nil to skip optimistic concurrency check.
-	Append(ctx context.Context, route string, body []byte, expectedOffset *uint64) (offset uint64, err error)
-
-	// Commit finalizes the write session.
-	Commit(ctx context.Context, route string) error
-
-	// Rollback discards uncommitted appends.
-	Rollback(ctx context.Context, route string) error
+	// Returns a session on which to call Append, then Commit or Rollback.
+	Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error)
 
 	// ReadResource reads records from the given route starting at fromOffset.
 	ReadResource(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
@@ -53,23 +57,25 @@ type Client interface {
 
 type client struct {
 	conn *connection.Connection
-	mu   sync.Mutex
-	// Track active session per route
-	sessions map[string]uint64
+}
+
+// session is the concrete implementation of StreamSession.
+type session struct {
+	route     string
+	sessionID uint64
+	conn      *connection.Connection
 }
 
 // NewClient creates a new Stream domain client.
 func NewClient(conn *connection.Connection) Client {
-	return &client{
-		conn:     conn,
-		sessions: make(map[string]uint64),
-	}
+	return &client{conn: conn}
 }
 
 // Begin per server stream_codec.rs:
 // Request: [string route][u64 expected_offset][optional bytes ingest_metadata]
 // Response: [status][u8 has_session_id][u64 session_id if has=1][bytes data]
-func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64) (uint64, error) {
+// Expected offset (OCC) is sent only here; the session tracks it internally on the server.
+func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
@@ -79,59 +85,44 @@ func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamBegin, buf.Bytes())
 	if err != nil {
-		return 0, fmt.Errorf("BEGIN request failed: %w", err)
+		return nil, fmt.Errorf("BEGIN request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
-		return 0, fmt.Errorf("BEGIN failed: %w", mapStreamError(err.Error()))
+		return nil, fmt.Errorf("BEGIN failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
-		return 0, fmt.Errorf("BEGIN failed: unexpected status")
+		return nil, fmt.Errorf("BEGIN failed: unexpected status")
 	}
 
-	// Parse optional session_id: [u8 has_session_id][u64 session_id if has=1]
 	if len(remaining) < 1 {
-		return 0, fmt.Errorf("BEGIN response too short")
+		return nil, fmt.Errorf("BEGIN response too short")
 	}
 	hasSessionID := remaining[0]
 	if hasSessionID != 1 || len(remaining) < 9 {
-		return 0, fmt.Errorf("BEGIN response missing session_id")
+		return nil, fmt.Errorf("BEGIN response missing session_id")
 	}
 
 	sessionID, _, err := connection.ReadU64BE(remaining, 1)
 	if err != nil {
-		return 0, fmt.Errorf("parse session_id: %w", err)
+		return nil, fmt.Errorf("parse session_id: %w", err)
 	}
 
-	// Store session for this route
-	c.mu.Lock()
-	c.sessions[route] = sessionID
-	c.mu.Unlock()
-
-	return sessionID, nil
+	return &session{route: route, sessionID: sessionID, conn: c.conn}, nil
 }
 
-// Append per server stream_codec.rs:
+// Append per server stream_codec.rs. Expected offset is tracked by the session (established at Begin).
 // Request: [u64 session_id][bytes body][optional bytes metadata]
-// Response: [status][optional u64 session_id][bytes data]
-func (c *client) Append(ctx context.Context, route string, body []byte, expectedOffset *uint64) (uint64, error) {
-	c.mu.Lock()
-	sessionID, ok := c.sessions[route]
-	c.mu.Unlock()
-
-	if !ok {
-		return 0, fmt.Errorf("no active session for route %s; call Begin first", route)
-	}
-
+func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteU64BE(buf, sessionID)
+	connection.WriteU64BE(buf, s.sessionID)
 	connection.WriteBytes(buf, body)
 	connection.WriteU8(buf, 0) // no metadata (optional bytes flag=0)
 
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamAppend, buf.Bytes())
+	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamAppend, buf.Bytes())
 	if err != nil {
 		return 0, fmt.Errorf("APPEND request failed: %w", err)
 	}
@@ -144,17 +135,14 @@ func (c *client) Append(ctx context.Context, route string, body []byte, expected
 		return 0, fmt.Errorf("APPEND failed: unexpected status")
 	}
 
-	// Response: [u8 has_session_id][u64 session_id?][u32 data_len][data]
 	offset := 0
 	if offset < len(remaining) {
 		hasSessionID := remaining[offset]
 		offset++
 		if hasSessionID == 1 && offset+8 <= len(remaining) {
-			offset += 8 // skip session_id
+			offset += 8
 		}
 	}
-
-	// Parse data blob which may contain the assigned offset
 	if offset+4 <= len(remaining) {
 		dataLen, newOffset, err := connection.ReadU32BE(remaining, offset)
 		if err == nil && dataLen >= 8 && newOffset+int(dataLen) <= len(remaining) {
@@ -162,30 +150,19 @@ func (c *client) Append(ctx context.Context, route string, body []byte, expected
 			return assignedOffset, nil
 		}
 	}
-
-	// If we can't parse a specific offset, return 0 (server managed)
 	return 0, nil
 }
 
 // Commit per server stream_codec.rs:
 // Request: [u64 session_id][u8 mode] where mode: 0=Buffered, 1=Sync
-// Response: [status][optional u64 session_id][bytes data]
-func (c *client) Commit(ctx context.Context, route string) error {
-	c.mu.Lock()
-	sessionID, ok := c.sessions[route]
-	c.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("no active session for route %s", route)
-	}
-
+func (s *session) Commit(ctx context.Context) error {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteU64BE(buf, sessionID)
+	connection.WriteU64BE(buf, s.sessionID)
 	connection.WriteU8(buf, 0) // mode = Buffered
 
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamCommit, buf.Bytes())
+	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamCommit, buf.Bytes())
 	if err != nil {
 		return fmt.Errorf("COMMIT request failed: %w", err)
 	}
@@ -197,33 +174,18 @@ func (c *client) Commit(ctx context.Context, route string) error {
 	if !success {
 		return fmt.Errorf("COMMIT failed: unexpected status")
 	}
-
-	// Clear session
-	c.mu.Lock()
-	delete(c.sessions, route)
-	c.mu.Unlock()
-
 	return nil
 }
 
 // Rollback per server stream_codec.rs:
 // Request: [u64 session_id]
-// Response: [status][optional u64 session_id][bytes data]
-func (c *client) Rollback(ctx context.Context, route string) error {
-	c.mu.Lock()
-	sessionID, ok := c.sessions[route]
-	c.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("no active session for route %s", route)
-	}
-
+func (s *session) Rollback(ctx context.Context) error {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
-	connection.WriteU64BE(buf, sessionID)
+	connection.WriteU64BE(buf, s.sessionID)
 
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamRollback, buf.Bytes())
+	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamRollback, buf.Bytes())
 	if err != nil {
 		return fmt.Errorf("ROLLBACK request failed: %w", err)
 	}
@@ -235,11 +197,6 @@ func (c *client) Rollback(ctx context.Context, route string) error {
 	if !success {
 		return fmt.Errorf("ROLLBACK failed: unexpected status")
 	}
-
-	c.mu.Lock()
-	delete(c.sessions, route)
-	c.mu.Unlock()
-
 	return nil
 }
 

@@ -13,20 +13,88 @@ import (
 	"github.com/cntryl/fitz-go/internal/protocol"
 )
 
+// Lease is a handle representing an acquired lease. Renew and Release are called on it.
+type Lease struct {
+	Token     []byte
+	ExpiresAt int64
+
+	route string
+	conn  *connection.Connection
+}
+
+// Renew extends the lease TTL. Returns the new expiry timestamp.
+func (l *Lease) Renew(ctx context.Context, ttlSecs uint64) (int64, error) {
+	return l.renewWithToken(ctx, l.Token, ttlSecs)
+}
+
+// RenewWithToken renews using an explicit token (e.g. for testing invalid token).
+func (l *Lease) RenewWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
+	return l.renewWithToken(ctx, token, ttlSecs)
+}
+
+func (l *Lease) renewWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteString(buf, l.route)
+	connection.WriteString(buf, "")
+	connection.WriteU64BE(buf, tokenToU64(token))
+	connection.WriteU64BE(buf, ttlSecs)
+
+	resp, err := l.conn.SendRequest(ctx, protocol.MessageTypeLeaseRenew, buf.Bytes())
+	if err != nil {
+		return 0, fmt.Errorf("RENEW request failed: %w", err)
+	}
+	success, _, err := connection.ParseStandardResponse(resp)
+	if err != nil {
+		return 0, fmt.Errorf("RENEW failed: %w", mapLeaseError(err.Error()))
+	}
+	if !success {
+		return 0, fmt.Errorf("RENEW failed: unexpected status")
+	}
+	newExpiry := time.Now().Unix() + int64(ttlSecs)
+	l.ExpiresAt = newExpiry
+	return newExpiry, nil
+}
+
+// Release frees the lease.
+func (l *Lease) Release(ctx context.Context) error {
+	return l.releaseWithToken(ctx, l.Token)
+}
+
+// ReleaseWithToken releases using an explicit token (e.g. for testing invalid token).
+func (l *Lease) ReleaseWithToken(ctx context.Context, token []byte) error {
+	return l.releaseWithToken(ctx, token)
+}
+
+func (l *Lease) releaseWithToken(ctx context.Context, token []byte) error {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteString(buf, l.route)
+	connection.WriteString(buf, "")
+	connection.WriteU64BE(buf, tokenToU64(token))
+
+	resp, err := l.conn.SendRequest(ctx, protocol.MessageTypeLeaseRelease, buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("RELEASE request failed: %w", err)
+	}
+	success, _, err := connection.ParseStandardResponse(resp)
+	if err != nil {
+		return fmt.Errorf("RELEASE failed: %w", mapLeaseError(err.Error()))
+	}
+	if !success {
+		return fmt.Errorf("RELEASE failed: unexpected status")
+	}
+	return nil
+}
+
 // Client is the Lease domain client interface.
 type Client interface {
 	// Acquire attempts to acquire a lease on the given route.
-	// Returns (token, expiresAt, held, err). held=true if acquisition succeeded.
-	Acquire(ctx context.Context, route string, ttlSecs uint64) (token []byte, expiresAt int64, held bool, err error)
+	// Returns a Lease handle on success; use Renew and Release on it.
+	// Returns ErrLeaseHeld when the lease is already held by another owner.
+	Acquire(ctx context.Context, route string, ttlSecs uint64) (*Lease, error)
 
-	// Renew extends an existing lease with valid fencing token.
-	// Returns the new expiry timestamp.
-	Renew(ctx context.Context, route string, token []byte, ttlSecs uint64) (newExpiry int64, err error)
-
-	// Release frees the lease with valid fencing token.
-	Release(ctx context.Context, route string, token []byte) error
-
-	// Query returns current lease status.
+	// Query returns current lease status for the route.
 	Query(ctx context.Context, route string) (*LeaseInfo, error)
 }
 
@@ -49,102 +117,49 @@ func NewClient(conn *connection.Connection) Client {
 // Acquire per CLIENT_SPEC.md:
 // Request: [route_len][route][owner_id_len][owner_id][ttl_secs]
 // Response: [status][u8 has_token][u64 token if has=1] (optional u64)
-func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) ([]byte, int64, bool, error) {
+func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) (*Lease, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
 	connection.WriteString(buf, route)
-	// owner_id: use empty for auto-assigned
 	connection.WriteString(buf, "")
 	connection.WriteU64BE(buf, ttlSecs)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeLeaseAcquire, buf.Bytes())
 	if err != nil {
-		return nil, 0, false, fmt.Errorf("ACQUIRE request failed: %w", err)
+		return nil, fmt.Errorf("ACQUIRE request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
 		if isLeaseHeldError(err) {
-			return nil, 0, false, ErrLeaseHeld
+			return nil, ErrLeaseHeld
 		}
-		return nil, 0, false, fmt.Errorf("ACQUIRE failed: %w", mapLeaseError(err.Error()))
+		return nil, fmt.Errorf("ACQUIRE failed: %w", mapLeaseError(err.Error()))
 	}
 	if !success {
-		return nil, 0, false, nil
+		return nil, ErrLeaseHeld
 	}
 
-	// Parse optional fencing_token: [u8 has_token][u64 token if has=1]
 	if len(remaining) < 1 {
-		return nil, 0, false, fmt.Errorf("ACQUIRE response too short: got %d bytes", len(remaining))
+		return nil, fmt.Errorf("ACQUIRE response too short: got %d bytes", len(remaining))
 	}
 	hasToken := remaining[0]
 	if hasToken != 1 || len(remaining) < 9 {
-		return nil, 0, false, fmt.Errorf("ACQUIRE response missing token")
+		return nil, fmt.Errorf("ACQUIRE response missing token")
 	}
 	fencingToken := binary.BigEndian.Uint64(remaining[1:9])
 
-	// Convert token to bytes
 	tokenBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(tokenBytes, fencingToken)
-
 	expiresAt := time.Now().Unix() + int64(ttlSecs)
-	return tokenBytes, expiresAt, true, nil
-}
 
-// Renew per CLIENT_SPEC.md:
-// Request: [route_len][route][owner_id_len][owner_id][fencing_token (u64)][ttl_secs]
-// Response: [status][u8 has_token][u64 token if has=1]
-func (c *client) Renew(ctx context.Context, route string, token []byte, ttlSecs uint64) (int64, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-	connection.WriteString(buf, "")
-	connection.WriteU64BE(buf, tokenToU64(token))
-	connection.WriteU64BE(buf, ttlSecs)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeLeaseRenew, buf.Bytes())
-	if err != nil {
-		return 0, fmt.Errorf("RENEW request failed: %w", err)
-	}
-
-	success, _, err := connection.ParseStandardResponse(resp)
-	if err != nil {
-		return 0, fmt.Errorf("RENEW failed: %w", mapLeaseError(err.Error()))
-	}
-	if !success {
-		return 0, fmt.Errorf("RENEW failed: unexpected status")
-	}
-
-	// Response includes optional new token but we just need the new expiry
-	return time.Now().Unix() + int64(ttlSecs), nil
-}
-
-// Release per CLIENT_SPEC.md:
-// Request: [route_len][route][owner_id_len][owner_id][fencing_token (u64)]
-func (c *client) Release(ctx context.Context, route string, token []byte) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-	connection.WriteString(buf, "")
-	connection.WriteU64BE(buf, tokenToU64(token))
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeLeaseRelease, buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("RELEASE request failed: %w", err)
-	}
-
-	success, _, err := connection.ParseStandardResponse(resp)
-	if err != nil {
-		return fmt.Errorf("RELEASE failed: %w", mapLeaseError(err.Error()))
-	}
-	if !success {
-		return fmt.Errorf("RELEASE failed: unexpected status")
-	}
-
-	return nil
+	return &Lease{
+		Token:     tokenBytes,
+		ExpiresAt: expiresAt,
+		route:     route,
+		conn:      c.conn,
+	}, nil
 }
 
 // Query per CLIENT_SPEC.md:

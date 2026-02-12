@@ -19,9 +19,9 @@ import (
 // - batch reserve returns up to specified count
 // - multiple consumers can reserve from same queue
 
-// TestShouldEnqueueAndReserveMessageGivenValidQueueWhenBasicWorkflow verifies
-// the basic queue lifecycle: ENQUEUE → RESERVE → COMPLETE.
-func TestShouldEnqueueAndReserveMessageGivenValidQueueWhenBasicWorkflow(t *testing.T) {
+// TestShouldSendAndReceiveMessageGivenValidQueueWhenBasicWorkflow verifies
+// the basic queue lifecycle: Send → Receive → Complete.
+func TestShouldSendAndReceiveMessageGivenValidQueueWhenBasicWorkflow(t *testing.T) {
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
 		// Arrange
 		f := fixture.NewTestFixture(t, transport)
@@ -32,19 +32,19 @@ func TestShouldEnqueueAndReserveMessageGivenValidQueueWhenBasicWorkflow(t *testi
 
 		route := f.UniqueRoute("queue")
 
-		// Act — enqueue a message.
-		msgID, err := f.Client().Queue().Enqueue(ctx, route, []byte("task-payload"))
+		// Act — send a message.
+		msgID, err := f.Client().Queue().Send(ctx, route, []byte("task-payload"))
 		require.NoError(t, err)
-		assert.NotEmpty(t, msgID, "enqueue should return a message ID")
+		assert.NotZero(t, msgID, "Send should return a message ID")
 
-		// Reserve the message.
-		items, err := f.Client().Queue().Reserve(ctx, route, 30, 1)
+		// Receive the message.
+		items, err := f.Client().Queue().Receive(ctx, route, 30, 1)
 		require.NoError(t, err)
-		require.Len(t, items, 1, "should reserve exactly one message")
+		require.Len(t, items, 1, "should receive exactly one message")
 		assert.Equal(t, []byte("task-payload"), items[0].Body)
 
-		// Complete the message.
-		err = f.Client().Queue().Complete(ctx, route, items[0].ID, items[0].Token)
+		// Complete the message (on the item).
+		err = items[0].Complete(ctx)
 
 		// Assert
 		require.NoError(t, err, "Complete should succeed with valid token")
@@ -63,19 +63,19 @@ func TestShouldReturnMessageToQueueGivenExpiredLeaseWhenLeaseExpires(t *testing.
 		f.ConnectOrSkip(ctx)
 		route := f.UniqueRoute("queue")
 
-		_, err := f.Client().Queue().Enqueue(ctx, route, []byte("expire-me"))
+		_, err := f.Client().Queue().Send(ctx, route, []byte("expire-me"))
 		require.NoError(t, err)
 
-		// Reserve with short lease (2s)
-		items, err := f.Client().Queue().Reserve(ctx, route, 2, 1)
+		// Receive with short lease (2s)
+		items, err := f.Client().Queue().Receive(ctx, route, 2, 1)
 		require.NoError(t, err)
 		require.Len(t, items, 1)
 
 		// Wait for lease to expire (server processes timers lazily on next op; allow margin)
 		time.Sleep(4 * time.Second)
 
-		// Act — reserve again; message should be re-queued and available
-		items2, err := f.Client().Queue().Reserve(ctx, route, 30, 1)
+		// Act — receive again; message should be re-queued and available
+		items2, err := f.Client().Queue().Receive(ctx, route, 30, 1)
 		require.NoError(t, err)
 
 		// Assert — should get at least one message again (re-queued after lease expiry)
@@ -100,15 +100,15 @@ func TestShouldExtendLeaseGivenValidTokenWhenExtendCalled(t *testing.T) {
 
 		route := f.UniqueRoute("queue")
 
-		_, err := f.Client().Queue().Enqueue(ctx, route, []byte("extend-me"))
+		_, err := f.Client().Queue().Send(ctx, route, []byte("extend-me"))
 		require.NoError(t, err)
 
-		items, err := f.Client().Queue().Reserve(ctx, route, 5, 1)
+		items, err := f.Client().Queue().Receive(ctx, route, 5, 1)
 		require.NoError(t, err)
 		require.Len(t, items, 1)
 
-		// Act — extend lease.
-		err = f.Client().Queue().Extend(ctx, route, items[0].ID, items[0].Token, 60)
+		// Act — extend lease on the item.
+		err = items[0].Extend(ctx, 60)
 
 		// Assert
 		require.NoError(t, err, "Extend should succeed with valid token")
@@ -128,15 +128,15 @@ func TestShouldRejectCompleteGivenInvalidTokenWhenTokenMismatch(t *testing.T) {
 
 		route := f.UniqueRoute("queue")
 
-		_, err := f.Client().Queue().Enqueue(ctx, route, []byte("token-check"))
+		_, err := f.Client().Queue().Send(ctx, route, []byte("token-check"))
 		require.NoError(t, err)
 
-		items, err := f.Client().Queue().Reserve(ctx, route, 30, 1)
+		items, err := f.Client().Queue().Receive(ctx, route, 30, 1)
 		require.NoError(t, err)
 		require.Len(t, items, 1)
 
-		// Act — complete with wrong token.
-		err = f.Client().Queue().Complete(ctx, route, items[0].ID, 9999999)
+		// Act — complete with wrong token (use CompleteWithToken to simulate invalid token).
+		err = items[0].CompleteWithToken(ctx, 9999999)
 
 		// Assert
 		assert.ErrorIs(t, err, queue.ErrInvalidToken, "complete with wrong token should fail")
@@ -156,14 +156,14 @@ func TestShouldReserveBatchGivenMultipleMessagesWhenBatchSizeSpecified(t *testin
 
 		route := f.UniqueRoute("queue")
 
-		// Enqueue 5 messages.
+		// Send 5 messages.
 		for i := 0; i < 5; i++ {
-			_, err := f.Client().Queue().Enqueue(ctx, route, []byte("batch-msg"))
+			_, err := f.Client().Queue().Send(ctx, route, []byte("batch-msg"))
 			require.NoError(t, err)
 		}
 
-		// Act — reserve batch of 3.
-		items, err := f.Client().Queue().Reserve(ctx, route, 30, 3)
+		// Act — receive batch of 3.
+		items, err := f.Client().Queue().Receive(ctx, route, 30, 3)
 
 		// Assert
 		require.NoError(t, err)
@@ -187,15 +187,15 @@ func TestShouldDistributeMessagesGivenMultipleConsumersWhenConcurrentReserve(t *
 
 		route := f1.UniqueRoute("queue")
 
-		// Enqueue 2 messages.
+		// Send 2 messages.
 		for i := 0; i < 2; i++ {
-			_, err := f1.Client().Queue().Enqueue(ctx, route, []byte("concurrent-msg"))
+			_, err := f1.Client().Queue().Send(ctx, route, []byte("concurrent-msg"))
 			require.NoError(t, err)
 		}
 
-		// Act — each consumer reserves 1.
-		items1, err1 := f1.Client().Queue().Reserve(ctx, route, 30, 1)
-		items2, err2 := f2.Client().Queue().Reserve(ctx, route, 30, 1)
+		// Act — each consumer receives 1.
+		items1, err1 := f1.Client().Queue().Receive(ctx, route, 30, 1)
+		items2, err2 := f2.Client().Queue().Receive(ctx, route, 30, 1)
 
 		// Assert
 		require.NoError(t, err1)
