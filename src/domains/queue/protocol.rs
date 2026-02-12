@@ -75,7 +75,8 @@ impl QueueKey {
             .split('/')
             .collect();
 
-        if parts.len() >= 4 {
+        // Accept both 3-segment (realm/area/resource) and 4+ segment (realm/area/resource/...) for queue identity
+        if parts.len() >= 3 {
             Some(QueueKey {
                 family,
                 realm: parts[0].to_string(),

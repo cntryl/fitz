@@ -305,6 +305,17 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 - Client receives `STREAM_NOTIFY` (609) for both resources
 
+### AC-STREAM-013: Optimistic concurrency (expected_offset) at Begin
+
+**MUST** reject Begin when expected_offset does not match server's next offset
+**Given:** Stream with at least one committed record (server's next offset = 1)  
+**When:** Client sends `Begin(route, expected_offset=99999)`  
+**Then:**
+
+- Server returns error (status=1) with message indicating concurrency conflict (e.g. containing "conflict")
+- No new session is created
+- Clients MUST send expected_offset on every Begin; servers MUST enforce it
+
 ### AC-STREAM-012: Unsubscribe stops delivery
 
 **MUST** stop receiving notifications after unsubscribe
@@ -317,7 +328,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 
 - Client does NOT receive `STREAM_NOTIFY` for that pattern
 
-### AC-STREAM-013: Session-scoped cleanup
+### AC-STREAM-014: Session-scoped cleanup
 
 **MUST** clean up all stream subscriptions on disconnect
 **Given:** Client has active `STREAM_SUBSCRIBE` subscriptions  
@@ -379,12 +390,12 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **Given:** Message reserved with 5s lease, client does not complete  
 **When:**
 
-1. Client waits 6 seconds (lease expired)
-2. Another client sends `Reserve()`
+1. Client waits for lease TTL to expire (e.g. 5s) plus a short margin (servers may process expiry lazily on the next operation)
+2. Same or another client sends `Reserve()` on that queue
    **Then:**
 
-- Second client receives the same message
-- Message has new lease token
+- The message is returned to the ready queue and can be reserved again
+- New reserve returns the same message with a new lease token
 
 ### AC-QUEUE-006: Invalid Token Rejection (renumbered)
 

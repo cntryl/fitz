@@ -31,7 +31,7 @@ func TestShouldAppendRecordsGivenValidSessionWhenAppendCalled(t *testing.T) {
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route)
+		_, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err, "Begin should succeed")
 
 		// Act — append two records.
@@ -65,7 +65,7 @@ func TestShouldReadRecordsInOrderGivenOffsetRangeWhenReadCalled(t *testing.T) {
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route)
+		_, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
 
 		for i := 0; i < 3; i++ {
@@ -91,10 +91,9 @@ func TestShouldReadRecordsInOrderGivenOffsetRangeWhenReadCalled(t *testing.T) {
 	})
 }
 
-// TestShouldRejectAppendGivenMismatchedOffsetWhenOptimisticConcurrency verifies
-// optimistic concurrency control using expected_offset.
-func TestShouldRejectAppendGivenMismatchedOffsetWhenOptimisticConcurrency(t *testing.T) {
-	t.Skip("Server does not yet enforce optimistic concurrency on expected_offset")
+// TestShouldRejectBeginGivenMismatchedExpectedOffsetWhenOptimisticConcurrency verifies
+// optimistic concurrency control: server rejects Begin when expected_offset does not match.
+func TestShouldRejectBeginGivenMismatchedExpectedOffsetWhenOptimisticConcurrency(t *testing.T) {
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
 		// Arrange
 		f := fixture.NewTestFixture(t, transport)
@@ -105,22 +104,17 @@ func TestShouldRejectAppendGivenMismatchedOffsetWhenOptimisticConcurrency(t *tes
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route)
+		_, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
-
 		_, err = f.Client().Stream().Append(ctx, route, []byte("first"), nil)
 		require.NoError(t, err)
 		require.NoError(t, f.Client().Stream().Commit(ctx, route))
 
-		// Act — append with a wrong expected_offset.
-		_, err = f.Client().Stream().Begin(ctx, route)
-		require.NoError(t, err)
-
-		wrongOffset := uint64(99999)
-		_, err = f.Client().Stream().Append(ctx, route, []byte("conflict"), &wrongOffset)
+		// Act — Begin with wrong expected_offset (server's next offset is 1).
+		_, err = f.Client().Stream().Begin(ctx, route, 99999)
 
 		// Assert
-		assert.Error(t, err, "append with mismatched expected_offset should fail")
+		assert.Error(t, err, "Begin with mismatched expected_offset should fail")
 	})
 }
 
@@ -137,7 +131,7 @@ func TestShouldRollbackUncommittedAppendsGivenActiveSessionWhenRollbackCalled(t 
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route)
+		_, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
 
 		_, err = f.Client().Stream().Append(ctx, route, []byte("ephemeral"), nil)
@@ -175,7 +169,7 @@ func TestShouldReturnLastRecordGivenExistingStreamWhenLastCalled(t *testing.T) {
 
 		route := f.UniqueRoute("stream")
 
-		_, err := f.Client().Stream().Begin(ctx, route)
+		_, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
 		_, err = f.Client().Stream().Append(ctx, route, []byte("first"), nil)
 		require.NoError(t, err)
@@ -209,7 +203,7 @@ func TestShouldGetMetadataGivenExistingStreamWhenGetMetadataCalled(t *testing.T)
 		route := f.UniqueRoute("stream")
 
 		// Ensure stream exists.
-		_, err := f.Client().Stream().Begin(ctx, route)
+		_, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err)
 		_, err = f.Client().Stream().Append(ctx, route, []byte("data"), nil)
 		require.NoError(t, err)

@@ -28,7 +28,8 @@ type Metadata struct {
 // Client is the Stream domain client interface.
 type Client interface {
 	// Begin starts a write session on the given route.
-	Begin(ctx context.Context, route string) (sessionID uint64, err error)
+	// expectedOffset is the client's view of the stream's next offset; server rejects on mismatch (OCC).
+	Begin(ctx context.Context, route string, expectedOffset uint64) (sessionID uint64, err error)
 
 	// Append adds a record to the stream.
 	// expectedOffset is optional; pass nil to skip optimistic concurrency check.
@@ -68,13 +69,13 @@ func NewClient(conn *connection.Connection) Client {
 // Begin per server stream_codec.rs:
 // Request: [string route][u64 expected_offset][optional bytes ingest_metadata]
 // Response: [status][u8 has_session_id][u64 session_id if has=1][bytes data]
-func (c *client) Begin(ctx context.Context, route string) (uint64, error) {
+func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64) (uint64, error) {
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 
 	connection.WriteString(buf, route)
-	connection.WriteU64BE(buf, 0) // expected_offset = 0 (any)
-	connection.WriteU8(buf, 0)    // no ingest metadata (optional bytes flag=0)
+	connection.WriteU64BE(buf, expectedOffset)
+	connection.WriteU8(buf, 0) // no ingest metadata (optional bytes flag=0)
 
 	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamBegin, buf.Bytes())
 	if err != nil {

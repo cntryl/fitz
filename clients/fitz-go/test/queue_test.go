@@ -71,8 +71,8 @@ func TestShouldReturnMessageToQueueGivenExpiredLeaseWhenLeaseExpires(t *testing.
 		require.NoError(t, err)
 		require.Len(t, items, 1)
 
-		// Wait for lease to expire (server processes timers on next op)
-		time.Sleep(3 * time.Second)
+		// Wait for lease to expire (server processes timers lazily on next op; allow margin)
+		time.Sleep(4 * time.Second)
 
 		// Act — reserve again; message should be re-queued and available
 		items2, err := f.Client().Queue().Reserve(ctx, route, 30, 1)

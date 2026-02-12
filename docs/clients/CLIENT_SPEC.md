@@ -1259,6 +1259,11 @@ A request is valid **only if**:
 - `queue://{realm}/{area}/{resource}`
 - `queue://{realm}/{area}/*`
 - `queue://{realm}/*/*`
+
+**Route format:** For per-resource isolation, use the 3-segment form `queue://{realm}/{area}/{resource}`. Each distinct resource has its own queue and lease state.
+
+**Lease expiry:** Servers process lease expiry lazily (e.g. when the next RESERVE or other operation runs). A reserved message whose lease has expired is returned to the ready queue on the next operation that touches that queue. Clients that rely on lease expiry (e.g. to re-reserve) should allow for this delay (e.g. wait a few seconds after lease TTL before re-reserving).
+
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
   | ---------- | ----------------------------------------------- |
@@ -2269,6 +2274,8 @@ Response (status=1):
   [bytes]  error_msg
 ```
 
+**expected_offset (OCC):** Clients MUST send `expected_offset` on every BEGIN. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the request with status=1 and an error message (e.g. containing "conflict"). This provides optimistic concurrency control; clients that receive a conflict should re-read the stream and retry with the correct offset.
+
 **Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 
 #### APPEND Request
@@ -2758,8 +2765,8 @@ Every operation includes route:
 | ---: | ------------------ | --------------- |
 |  300 | SUBSCRIBE_WORKER   | Client → Server |
 |  301 | UNSUBSCRIBE_WORKER | Client → Server |
-|  302 | REQUEST            | Client → Server |
-|  303 | RESPONSE           | Server ↔ Client |
+|  302 | REQUEST            | Client → Server (sync: client sends request, broker delivers to worker) |
+|  303 | RESPONSE           | Server ↔ Client (sync or async: worker sends response(s) back to caller) |
 |  304 | ACK                | Client ↔ Server |
 
 #### SUBSCRIBE_WORKER Request
@@ -2839,6 +2846,8 @@ Response from broker:
   [u32 BE] data_len
   [bytes]  data
 ```
+
+**Design Note:** `stream_end` is a flag within the RESPONSE (303) frame payload, not a separate user frame type. It indicates whether this RESPONSE frame is the last one for that correlation_id (1=end, 0=more frames may follow).
 
 #### ACK (Acknowledge receipt)
 

@@ -74,6 +74,7 @@ impl MailboxSink for DomainSink {
 /// - Parses TLV frames to KvMessage
 /// - Dispatches to actor
 /// - Returns responses
+///
 /// Key for pessimistic resource lock: (route_family_id, resource_key)
 type KvResourceLockKey = (u64, String);
 
@@ -201,17 +202,21 @@ impl MailboxSink for KvDomainSink {
                         if holder != session_id {
                             drop(locks);
                             KvResponse::Error {
-                                error: KvError::Conflict("resource locked by another session".to_string()),
+                                error: KvError::Conflict(
+                                    "resource locked by another session".to_string(),
+                                ),
                             }
                         } else {
                             drop(locks);
                             let mut actors = self.actors.lock();
-                            let actor = actors
-                                .entry(session_id)
-                                .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                            let actor = actors.entry(session_id).or_insert_with(|| {
+                                crate::domains::kv::KvActor::new(self.store.clone())
+                            });
                             let resp = actor.handle(kv_message.clone());
                             if let KvResponse::BeginOk { tx_id } = resp {
-                                self.resource_locks.lock().insert(lock_key.clone(), session_id);
+                                self.resource_locks
+                                    .lock()
+                                    .insert(lock_key.clone(), session_id);
                                 self.tx_to_resource
                                     .lock()
                                     .insert((session_id, tx_id), lock_key);
@@ -221,12 +226,14 @@ impl MailboxSink for KvDomainSink {
                     } else {
                         drop(locks);
                         let mut actors = self.actors.lock();
-                        let actor = actors
-                            .entry(session_id)
-                            .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                        let actor = actors.entry(session_id).or_insert_with(|| {
+                            crate::domains::kv::KvActor::new(self.store.clone())
+                        });
                         let resp = actor.handle(kv_message.clone());
                         if let KvResponse::BeginOk { tx_id } = resp {
-                            self.resource_locks.lock().insert(lock_key.clone(), session_id);
+                            self.resource_locks
+                                .lock()
+                                .insert(lock_key.clone(), session_id);
                             self.tx_to_resource
                                 .lock()
                                 .insert((session_id, tx_id), lock_key);
@@ -655,13 +662,7 @@ struct RpcState {
     /// Round-robin index per route pattern
     rr_index: HashMap<String, usize>,
     /// Pending requests: correlation_id -> (caller session_id, caller route_family) for response routing to inbox
-    pending: HashMap<
-        uuid::Uuid,
-        (
-            u64,
-            crate::runtime::routing::RouteFamily,
-        ),
-    >,
+    pending: HashMap<uuid::Uuid, (u64, crate::runtime::routing::RouteFamily)>,
 }
 
 /// RPC domain sink: request/response worker pool routing
@@ -758,7 +759,8 @@ impl MailboxSink for RpcDomainSink {
                 let route_key = worker_addr.route().as_str().to_string();
                 let mut state = self.state.lock();
                 if let Some(workers) = state.workers.get_mut(&route_key) {
-                    workers.retain(|w| w.addr != worker_addr || w.session_id != frame_ctx.session_id);
+                    workers
+                        .retain(|w| w.addr != worker_addr || w.session_id != frame_ctx.session_id);
                 }
                 tracing::debug!(
                     domain = "rpc",
@@ -789,7 +791,10 @@ impl MailboxSink for RpcDomainSink {
                     let worker = &state.workers[&route_key][pick];
                     let worker_inbox_addr = crate::runtime::routing::RouteAddress::new(
                         worker.route_family,
-                        crate::runtime::routing::Route::new(format!("inbox://session/{}", worker.session_id)),
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            worker.session_id
+                        )),
                     );
 
                     // Store pending: caller session_id and family for response routing to caller inbox
@@ -835,7 +840,10 @@ impl MailboxSink for RpcDomainSink {
                     // Forward response to caller's session inbox (avoids RPC domain re-entry)
                     let caller_inbox_addr = crate::runtime::routing::RouteAddress::new(
                         caller_family_id,
-                        crate::runtime::routing::Route::new(format!("inbox://session/{}", caller_session_id)),
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            caller_session_id
+                        )),
                     );
                     let forward_ctx = FrameContext::new(
                         frame_ctx.session_id,
@@ -1131,17 +1139,28 @@ struct StreamFamilyState {
     subscriptions: Vec<StreamSubscription>,
 }
 
+/// Per-route next offset and session tracking for expected_offset enforcement
+struct StreamWriteState {
+    next_offset_by_route: HashMap<String, u64>,
+    session_to_route: HashMap<u64, String>,
+}
+
 /// Stream domain sink: append-only streaming operations with subscription tracking
 ///
 /// Supports dual-path delivery:
 /// - PATH 1: `DomainPublishEvent` from stream actors (subscription matching + fanout)
 /// - PATH 2: `FrameContext` from client wire frames (BEGIN/APPEND/COMMIT/READ/SUBSCRIBE/UNSUBSCRIBE)
+///
+/// Enforces expected_offset at Begin: rejects with concurrency error when client's
+/// expected_offset does not match the stream's next offset for that route.
 pub struct StreamDomainSink {
     /// Midge storage engine (for future StreamStore usage)
     #[allow(dead_code)]
     store: Arc<cntryl_midge::Engine>,
     /// Session ID counter for Begin operations
     next_session_id: AtomicU64,
+    /// Per-route next offset and session->route for expected_offset enforcement
+    write_state: Mutex<StreamWriteState>,
     /// Per-family subscription state for stream change notifications
     families: Mutex<HashMap<u64, StreamFamilyState>>,
     /// Monotonic subscription ID counter
@@ -1156,6 +1175,10 @@ impl StreamDomainSink {
         Self {
             store,
             next_session_id: AtomicU64::new(1),
+            write_state: Mutex::new(StreamWriteState {
+                next_offset_by_route: HashMap::new(),
+                session_to_route: HashMap::new(),
+            }),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             router,
@@ -1279,11 +1302,39 @@ impl MailboxSink for StreamDomainSink {
         use crate::domains::stream::protocol::StreamMessage;
         use crate::protocol::stream_codec::StreamResponse;
 
-        // TODO: Implement full StreamActor dispatch with per-resource actors.
-        // Currently returns stub responses for data operations.
+        // Enforce expected_offset at Begin; track session->route for Commit (advance next_offset).
         let response = match stream_msg {
-            StreamMessage::Begin { .. } => {
+            StreamMessage::Begin {
+                route,
+                expected_offset,
+                ..
+            } => {
+                let route_key = route.as_str().to_string();
+                let mut state = self.write_state.lock();
+                let next = state
+                    .next_offset_by_route
+                    .entry(route_key.clone())
+                    .or_insert(0);
+                if expected_offset != *next {
+                    return {
+                        drop(state);
+                        let response_bytes = crate::protocol::stream_codec::encode_response(
+                            &StreamResponse::Error("concurrency conflict".to_string()),
+                        );
+                        let response_ctx = FrameContext::new(
+                            frame_ctx.session_id,
+                            frame_ctx.channel_id,
+                            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                            bytes::Bytes::from(response_bytes),
+                        );
+                        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                            let _ = self.router.route(response_envelope);
+                        }
+                        Ok(())
+                    };
+                }
                 let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+                state.session_to_route.insert(session_id, route_key);
                 StreamResponse::Ok {
                     session_id: Some(session_id),
                     data: vec![],
@@ -1293,14 +1344,27 @@ impl MailboxSink for StreamDomainSink {
                 session_id: None,
                 data: vec![],
             },
-            StreamMessage::Commit { .. } => StreamResponse::Ok {
-                session_id: None,
-                data: vec![],
-            },
-            StreamMessage::Rollback { .. } => StreamResponse::Ok {
-                session_id: None,
-                data: vec![],
-            },
+            StreamMessage::Commit { session_id, .. } => {
+                let mut state = self.write_state.lock();
+                if let Some(route_key) = state.session_to_route.remove(&session_id) {
+                    state
+                        .next_offset_by_route
+                        .entry(route_key)
+                        .and_modify(|n| *n += 1)
+                        .or_insert(1);
+                }
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
+            StreamMessage::Rollback { session_id, .. } => {
+                self.write_state.lock().session_to_route.remove(&session_id);
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
             StreamMessage::Read { .. } => StreamResponse::Ok {
                 session_id: None,
                 data: vec![],
@@ -1684,7 +1748,9 @@ impl MailboxSink for LeaseDomainSink {
                 fencing_token,
                 ttl_secs,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_renew(key, effective_owner(owner_id), fencing_token, ttl_secs),
+                Some(key) => {
+                    self.handle_renew(key, effective_owner(owner_id), fencing_token, ttl_secs)
+                }
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Release {
