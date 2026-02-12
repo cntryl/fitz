@@ -259,7 +259,7 @@ func TestShouldScanKeysInOrderGivenRangeWhenScanCalled(t *testing.T) {
 		// Act
 		rtx, err := f.Client().KV().BeginRead(ctx, route)
 		require.NoError(t, err)
-		it, err := rtx.Scan(ctx, []byte("a"), []byte("d"), 10)
+		it, _, err := rtx.Scan(ctx, kv.ScanQuery{StartKey: []byte("a"), EndKey: []byte("d"), Limit: 10})
 
 		// Assert
 		require.NoError(t, err)

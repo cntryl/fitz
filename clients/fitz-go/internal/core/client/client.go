@@ -10,6 +10,14 @@ import (
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/transport"
+	"github.com/cntryl/fitz-go/internal/core/types"
+	"github.com/cntryl/fitz-go/internal/domains/kv"
+	"github.com/cntryl/fitz-go/internal/domains/lease"
+	"github.com/cntryl/fitz-go/internal/domains/notice"
+	"github.com/cntryl/fitz-go/internal/domains/queue"
+	"github.com/cntryl/fitz-go/internal/domains/rpc"
+	"github.com/cntryl/fitz-go/internal/domains/schedule"
+	"github.com/cntryl/fitz-go/internal/domains/stream"
 )
 
 // TransportType specifies the transport protocol.
@@ -24,17 +32,19 @@ const (
 // Client implements the Fitz client with connection management.
 // Per CLIENT_SPEC.md: Handles authentication, request/response correlation, and domain routing.
 type Client struct {
-	conn   *connection.Connection
-	config *Config
+	addr          string
+	tokenProvider types.TokenProvider
+	conn          *connection.Connection
+	config        *Config
 
-	// Domain clients (to be added as domain implementations are completed)
-	// kv       *kv.Client
-	// notice   *notice.Client
-	// queue    *queue.Client
-	// rpc      *rpc.Client
-	// stream   *stream.Client
-	// lease    *lease.Client
-	// schedule *schedule.Client
+	// Domain clients
+	kvClient       kv.Client
+	noticeClient   notice.Client
+	queueClient    queue.Client
+	rpcClient      rpc.Client
+	streamClient   stream.Client
+	leaseClient    lease.Client
+	scheduleClient schedule.Client
 
 	closeOnce sync.Once
 }
@@ -110,6 +120,89 @@ func WithTransport(transportType TransportType) Option {
 	return func(c *Config) { c.TransportType = transportType }
 }
 
+// NewClient creates a new Fitz client targeting the given address.
+// Call Connect() to establish the connection.
+func NewClient(addr string, tokenProvider types.TokenProvider) *Client {
+	return &Client{
+		addr:          addr,
+		tokenProvider: tokenProvider,
+		config:        defaultConfig(),
+	}
+}
+
+// Connect establishes a connection to the broker using the address and
+// TokenProvider configured during client construction.
+func (c *Client) Connect(ctx context.Context) error {
+	// Get JWT from token provider
+	jwt := ""
+	if c.tokenProvider != nil {
+		var err error
+		jwt, err = c.tokenProvider(ctx)
+		if err != nil {
+			return fmt.Errorf("get token: %w", err)
+		}
+	}
+
+	c.config.URL = c.addr
+	c.config.JWT = jwt
+
+	if err := c.config.validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+
+	// Determine transport type from URL if auto
+	transportType := c.config.TransportType
+	if transportType == TransportAuto {
+		transportType = detectTransport(c.config.URL)
+	}
+
+	// Dial transport
+	var trans transport.Transport
+	var err error
+
+	switch transportType {
+	case TransportWebSocket:
+		trans, err = transport.DialWebSocket(ctx, c.config.URL)
+	case TransportTCP:
+		trans, err = transport.DialTCP(ctx, c.config.URL)
+	default:
+		return fmt.Errorf("unsupported transport type: %d", transportType)
+	}
+
+	if err != nil {
+		return fmt.Errorf("dial transport: %w", err)
+	}
+
+	// Create connection
+	connCfg := connection.Config{
+		JWT:          c.config.JWT,
+		AuthTimeout:  c.config.AuthTimeout,
+		ReadTimeout:  c.config.ReadTimeout,
+		WriteTimeout: c.config.WriteTimeout,
+	}
+
+	conn := connection.New(trans, connCfg)
+
+	// Start connection (dispatch loop + CONNECT handshake per CLIENT_SPEC.md)
+	if err := conn.Start(ctx); err != nil {
+		trans.Close()
+		return fmt.Errorf("start connection: %w", err)
+	}
+
+	c.conn = conn
+
+	// Initialize domain clients
+	c.kvClient = kv.NewClient(conn)
+	c.noticeClient = notice.NewClient(conn)
+	c.queueClient = queue.NewClient(conn)
+	c.rpcClient = rpc.NewClient(conn)
+	c.streamClient = stream.NewClient(conn)
+	c.leaseClient = lease.NewClient(conn)
+	c.scheduleClient = schedule.NewClient(conn)
+
+	return nil
+}
+
 // Dial connects to a Fitz server and returns a ready-to-use client.
 // Per CLIENT_SPEC.md: Performs CONNECT handshake and waits for authentication confirmation.
 func Dial(ctx context.Context, opts ...Option) (*Client, error) {
@@ -121,6 +214,13 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
+
+	c := &Client{
+		addr:   cfg.URL,
+		config: cfg,
+	}
+
+	c.config = cfg
 
 	// Determine transport type from URL if auto
 	transportType := cfg.TransportType
@@ -161,17 +261,18 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("start connection: %w", err)
 	}
 
-	client := &Client{
-		conn:   conn,
-		config: cfg,
-	}
+	c.conn = conn
 
-	// Initialize domain clients (when domain implementations are ready)
-	// client.kv = kv.NewClient(conn)
-	// client.notice = notice.NewClient(conn)
-	// ... etc
+	// Initialize domain clients
+	c.kvClient = kv.NewClient(conn)
+	c.noticeClient = notice.NewClient(conn)
+	c.queueClient = queue.NewClient(conn)
+	c.rpcClient = rpc.NewClient(conn)
+	c.streamClient = stream.NewClient(conn)
+	c.leaseClient = lease.NewClient(conn)
+	c.scheduleClient = schedule.NewClient(conn)
 
-	return client, nil
+	return c, nil
 }
 
 // detectTransport determines transport type from URL scheme.
@@ -195,7 +296,9 @@ func (c *Config) validate() error {
 func (c *Client) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		err = c.conn.Close()
+		if c.conn != nil {
+			err = c.conn.Close()
+		}
 	})
 	return err
 }
@@ -224,39 +327,39 @@ func (c *Client) Metrics() connection.MultiplexerMetrics {
 	return c.conn.Metrics()
 }
 
-// Domain client accessors (to be uncommented as domain implementations are added)
+// Domain client accessors (implements fitz.Client interface)
 
 // KV returns the KV domain client.
-// func (c *Client) KV() *kv.Client {
-// 	return c.kv
-// }
+func (c *Client) KV() kv.Client {
+	return c.kvClient
+}
 
 // Notice returns the Notice domain client.
-// func (c *Client) Notice() *notice.Client {
-// 	return c.notice
-// }
+func (c *Client) Notice() notice.Client {
+	return c.noticeClient
+}
 
 // Queue returns the Queue domain client.
-// func (c *Client) Queue() *queue.Client {
-// 	return c.queue
-// }
+func (c *Client) Queue() queue.Client {
+	return c.queueClient
+}
 
 // RPC returns the RPC domain client.
-// func (c *Client) RPC() *rpc.Client {
-// 	return c.rpc
-// }
+func (c *Client) RPC() rpc.Client {
+	return c.rpcClient
+}
 
 // Stream returns the Stream domain client.
-// func (c *Client) Stream() *stream.Client {
-// 	return c.stream
-// }
+func (c *Client) Stream() stream.Client {
+	return c.streamClient
+}
 
 // Lease returns the Lease domain client.
-// func (c *Client) Lease() *lease.Client {
-// 	return c.lease
-// }
+func (c *Client) Lease() lease.Client {
+	return c.leaseClient
+}
 
 // Schedule returns the Schedule domain client.
-// func (c *Client) Schedule() *schedule.Client {
-// 	return c.schedule
-// }
+func (c *Client) Schedule() schedule.Client {
+	return c.scheduleClient
+}

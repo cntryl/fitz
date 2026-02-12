@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cntryl/fitz-go/internal/core/debug"
 	"github.com/cntryl/fitz-go/internal/core/transport"
 	"github.com/cntryl/fitz-go/internal/protocol"
 )
@@ -176,6 +177,8 @@ func (c *Connection) sendConnect(ctx context.Context) error {
 	payload := []byte(c.jwt)
 	frame := protocol.EncodeFrame(protocol.MessageTypeConnect, payload)
 
+	debug.FrameSend(protocol.MessageTypeConnect, payload)
+
 	writeCtx := ctx
 	if c.cfg.WriteTimeout > 0 {
 		var cancel context.CancelFunc
@@ -184,12 +187,14 @@ func (c *Connection) sendConnect(ctx context.Context) error {
 	}
 
 	if err := c.transport.Write(writeCtx, frame); err != nil {
+		debug.Log("CONNECT write failed: %v", err)
 		return err
 	}
 
 	// For anonymous mode (empty JWT), confirm immediately
 	// Per CLIENT_SPEC.md: Server stays silent on valid JWT
 	if c.jwt == "" {
+		debug.Log("Anonymous mode — confirming auth immediately")
 		c.confirmAuthentication()
 	}
 
@@ -232,19 +237,28 @@ func (c *Connection) dispatchLoop() {
 
 		frame, err := c.transport.Read(readCtx)
 		if err != nil {
+			if debug.Enabled {
+				debug.Log("Transport read error: %v", err)
+			}
 			c.handleReadError(err)
 			return
 		}
 
+		debug.FrameRecvRaw(frame)
+
 		// Decode frame (MessageType + payload)
 		msgType, payload, err := protocol.DecodeFrame(frame)
 		if err != nil {
+			debug.DecodeError(frame, err)
 			c.setConnError(fmt.Errorf("decode frame: %w", err))
 			return
 		}
 
+		debug.FrameRecv(msgType, payload)
+
 		// First valid response confirms authentication
 		if firstResponse {
+			debug.Log("First response received — auth confirmed")
 			c.confirmAuthentication()
 			firstResponse = false
 		}
@@ -290,6 +304,8 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	// Encode frame
 	frame := protocol.EncodeFrame(msgType, payload)
 
+	debug.FrameSend(msgType, payload)
+
 	// Send request
 	writeCtx := ctx
 	if c.cfg.WriteTimeout > 0 {
@@ -299,6 +315,7 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	}
 
 	if err := c.transport.Write(writeCtx, frame); err != nil {
+		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
@@ -329,14 +346,16 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 
 // Close cleanly shuts down the connection.
 func (c *Connection) Close() error {
-	// Cancel context (stops dispatch loop)
+	// Cancel context (signals dispatch loop to stop)
 	c.cancel()
 
-	// Wait for dispatch loop to exit
-	<-c.done
-
-	// Close transport
+	// Close transport FIRST to unblock any pending Read() calls.
+	// Without this, the dispatch loop would block forever on transport.Read()
+	// because the TCP read is a blocking I/O call that ignores context cancellation.
 	err := c.transport.Close()
+
+	// Wait for dispatch loop to exit (now guaranteed to return since transport is closed)
+	<-c.done
 
 	c.setState(StateClosed)
 
@@ -373,7 +392,9 @@ func (c *Connection) isAuthenticated() bool {
 }
 
 func (c *Connection) setConnError(err error) {
-	c.connError.Store(err)
+	if err != nil {
+		c.connError.Store(err)
+	}
 }
 
 func (c *Connection) getConnError() error {

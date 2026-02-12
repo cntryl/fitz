@@ -68,11 +68,29 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
         }
     }
 
-    // TODO: Once Midge supports CF pre-registration via MidgeOptions,
-    // configure them here. For now, we rely on Midge's auto-creation behavior.
-    Arc::new(
+    let engine = Arc::new(
         Engine::open_with_options(MidgeOptions::default()).expect("Failed to create test engine"),
-    )
+    );
+
+    // Explicitly create each requested column family.
+    // Midge assigns IDs sequentially starting from 1, so creating CFs in
+    // order (1, 2, 3, ...) produces the expected CF IDs.
+    for cf_id in &cf_ids {
+        let name = format!("cf_{}", cf_id);
+        let handle = engine
+            .create_column_family(&name)
+            .unwrap_or_else(|e| panic!("Failed to create column family {}: {}", cf_id, e));
+        assert_eq!(
+            handle.id(),
+            *cf_id,
+            "Column family ID mismatch: expected {} but got {} for CF '{}'",
+            cf_id,
+            handle.id(),
+            name
+        );
+    }
+
+    engine
 }
 
 /// Create a test engine with default configuration

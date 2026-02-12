@@ -35,6 +35,28 @@ pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> 
     }
 }
 
+/// Ensure required column families exist.
+///
+/// RouteFamily IDs map 1:1 to Midge ColumnFamilyIds. CF 0 is reserved
+/// (default column family) and must never be used for tenant data.
+/// For single-tenant / development mode we need at least CF 1 (the
+/// default dev tenant). Column family creation is idempotent in Midge,
+/// so calling this on every startup is safe.
+fn ensure_column_families(engine: &cntryl_midge::Engine) -> BootResult<()> {
+    // Create the default dev-tenant column family (RouteFamily 1 → CF 1).
+    let cf = engine
+        .create_column_family("tenant_default")
+        .map_err(|e| format!("Failed to create default tenant CF: {}", e))?;
+
+    info!(
+        cf_id = cf.id(),
+        cf_name = "tenant_default",
+        "Ensured default tenant column family exists"
+    );
+
+    Ok(())
+}
+
 /// Initialize in-memory storage
 ///
 /// Data is ephemeral and lost on shutdown. Useful for testing and development.
@@ -43,6 +65,8 @@ async fn init_memory(_config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engin
 
     let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
         .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
+
+    ensure_column_families(&store)?;
 
     info!("In-memory storage ready (data lost on shutdown)");
     Ok(Arc::new(store))
@@ -64,6 +88,8 @@ async fn init_local_disk(
 
     let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
         .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
+
+    ensure_column_families(&store)?;
 
     info!("Local disk storage ready at {}", db_path);
     Ok(Arc::new(store))
@@ -118,6 +144,8 @@ async fn init_cloud(
     // This would be implemented when Midge adds cloud backend support
     let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
         .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
+
+    ensure_column_families(&store)?;
 
     info!(
         "Cloud storage ready: {} bucket={} prefix={:?}",

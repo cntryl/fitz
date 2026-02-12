@@ -637,7 +637,7 @@ impl Ingress for RuntimeIngress {
                 .sessions
                 .get(&session_id)
                 .map(|s| s.route_family)
-                .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(0));
+                .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
 
             // Send cleanup to Notice domain
             let notice_addr = crate::runtime::routing::RouteAddress::new(

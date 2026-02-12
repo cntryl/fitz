@@ -38,26 +38,27 @@ const (
 	MessageTypeLeaseQuery   uint16 = 403
 
 	// Notice Domain (500-599)
-	MessageTypeNoticePublish       uint16 = 500
-	MessageTypeNoticeSubscribe     uint16 = 501
-	MessageTypeNoticeUnsubscribe   uint16 = 502
-	MessageTypeNoticeNotification  uint16 = 503
-	MessageTypeNoticeAcknowledge   uint16 = 504
+	MessageTypeNoticePublish        uint16 = 500
+	MessageTypeNoticeSubscribe      uint16 = 501
+	MessageTypeNoticeUnsubscribe    uint16 = 502
+	MessageTypeNoticeUnsubscribeAll uint16 = 503
+	MessageTypeNoticeNotify         uint16 = 504 // Server -> Client only
 
-	// Stream Domain (600-699)
-	// NOTE: Server-authoritative numbering is BEGIN=600, APPEND=601, COMMIT=602, etc.
-	// The values below were historically misaligned; new constants use server-authoritative numbers.
-	MessageTypeStreamAppend      uint16 = 600 // TODO: Should be 601 per server; kept for backward compat
-	MessageTypeStreamRead        uint16 = 601 // TODO: Should be 604 per server; kept for backward compat
-	MessageTypeStreamBegin       uint16 = 602 // TODO: Should be 600 per server; kept for backward compat
-	MessageTypeStreamCommit      uint16 = 603 // TODO: Should be 602 per server; kept for backward compat
+	// Stream Domain (600-699) — server-authoritative numbering
+	MessageTypeStreamBegin       uint16 = 600
+	MessageTypeStreamAppend      uint16 = 601
+	MessageTypeStreamCommit      uint16 = 602
+	MessageTypeStreamRollback    uint16 = 603
+	MessageTypeStreamRead        uint16 = 604
+	MessageTypeStreamLast        uint16 = 605
+	MessageTypeStreamGetMetadata uint16 = 606
 	MessageTypeStreamSubscribe   uint16 = 607
 	MessageTypeStreamUnsubscribe uint16 = 608
 	MessageTypeStreamNotify      uint16 = 609 // Server -> Client only
 
 	// Schedule Domain (700-799)
-	MessageTypeScheduleAt          uint16 = 700
-	MessageTypeScheduleCron        uint16 = 701
+	MessageTypeScheduleCreate      uint16 = 700
+	MessageTypeScheduleCancel      uint16 = 701
 	MessageTypeScheduleList        uint16 = 702
 	MessageTypeScheduleSubscribe   uint16 = 703
 	MessageTypeScheduleUnsubscribe uint16 = 704

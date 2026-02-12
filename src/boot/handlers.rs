@@ -102,13 +102,13 @@ async fn handle_tcp_connection(
     use crate::api::tcp::create_session;
     use tokio::io::AsyncWriteExt;
 
-    // Create session and handler
+    // Create session and handler (stream is split into read/write halves)
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
-    let handler = create_session(ingress.clone(), config.clone(), stream, frame_tx).await?;
+    let (handler, write_half) =
+        create_session(ingress.clone(), config.clone(), stream, frame_tx).await?;
 
-    // Get session_id and stream from handler
+    // Get session_id from handler
     let session_id = handler.session_id;
-    let stream = handler.stream.clone();
 
     // Create outbound channel for responses
     let (outbound_tx, mut outbound_rx) =
@@ -119,7 +119,7 @@ async fn handle_tcp_connection(
         outbound_tx.clone(),
     ));
     let inbox_route = crate::runtime::routing::RouteAddress::new(
-        crate::runtime::routing::RouteFamily::new(0),
+        crate::runtime::routing::RouteFamily::new(1),
         crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
     );
     tracing::debug!(
@@ -132,9 +132,9 @@ async fn handle_tcp_connection(
         sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
     );
 
-    // Spawn task to send outbound frames through TCP
+    // Spawn task to send outbound frames through TCP (owns the write half)
     let tcp_session_id = session_id;
-    let stream_clone = stream.clone();
+    let mut write_half = write_half;
     tokio::spawn(async move {
         tracing::debug!(
             session_id = tcp_session_id,
@@ -146,18 +146,17 @@ async fn handle_tcp_connection(
                 frame_len = frame.len(),
                 "TCP outbound: sending frame to wire"
             );
-            let mut stream_guard = stream_clone.lock().await;
-            // Write length-prefixed frame
+            // Write length-prefixed frame directly to the owned write half (no mutex)
             let len = frame.len() as u32;
-            if let Err(e) = stream_guard.write_all(&len.to_be_bytes()).await {
+            if let Err(e) = write_half.write_all(&len.to_be_bytes()).await {
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (header)");
                 break;
             }
-            if let Err(e) = stream_guard.write_all(&frame).await {
+            if let Err(e) = write_half.write_all(&frame).await {
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (payload)");
                 break;
             }
-            if let Err(e) = stream_guard.flush().await {
+            if let Err(e) = write_half.flush().await {
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound flush error");
                 break;
             }
@@ -180,7 +179,7 @@ async fn handle_tcp_connection(
             crate::session::SessionMetadata::new(),
             config_clone.channel_capacity,
             None,
-            crate::runtime::routing::RouteFamily::new(0),
+            crate::runtime::routing::RouteFamily::new(1),
         );
 
         let mut session = crate::session::Session::new(session_id, session_config);
@@ -350,7 +349,7 @@ where
         SessionMetadata::new(),
         config.channel_capacity,
         None,
-        crate::runtime::routing::RouteFamily::new(0), // No auth = family 0
+        crate::runtime::routing::RouteFamily::new(1), // Default dev family = 1
     );
     let mut session = Session::new(session_id, session_config);
 

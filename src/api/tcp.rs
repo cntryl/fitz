@@ -13,6 +13,7 @@ use crate::session::{CloseReason, Session, SessionMetadata, SessionPermissions, 
 use bytes::{Buf, Bytes, BytesMut};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
@@ -23,6 +24,10 @@ use tracing::{debug, error, info, trace, warn};
 /// - Frame format: [u32 BE length][payload]
 /// - Length field includes only the payload (4 bytes)
 /// - Normalizes frames and forwards them through the runtime ingress boundary.
+///
+/// The handler owns the read half of the TCP stream. The write half is
+/// returned separately from `create_session` so an independent outbound
+/// writer task can send response frames without contending on a shared mutex.
 pub struct TcpHandler {
     /// Ingress trait implementation (runtime boundary)
     ingress: Arc<dyn Ingress>,
@@ -32,8 +37,8 @@ pub struct TcpHandler {
     pub session_id: u64,
     /// Channel for sending frames to runtime
     tx: mpsc::Sender<(u64, Bytes)>,
-    /// TCP stream (wrapped for shared access between reader and writer)
-    pub stream: Arc<tokio::sync::Mutex<TcpStream>>,
+    /// Read half of the TCP stream (writer half is owned by the outbound task)
+    read_half: OwnedReadHalf,
 }
 
 impl TcpHandler {
@@ -45,20 +50,20 @@ impl TcpHandler {
     /// * `config` - Ingress configuration
     /// * `session_id` - Session ID from ingress
     /// * `tx` - Channel for forwarding frames to runtime
-    /// * `stream` - TCP stream (wrapped in Arc<Mutex> for shared access)
+    /// * `read_half` - Read half of the TCP stream
     pub fn new(
         ingress: Arc<dyn Ingress>,
         config: IngressConfig,
         session_id: u64,
         tx: mpsc::Sender<(u64, Bytes)>,
-        stream: Arc<tokio::sync::Mutex<TcpStream>>,
+        read_half: OwnedReadHalf,
     ) -> Self {
         Self {
             ingress,
             config,
             session_id,
             tx,
-            stream,
+            read_half,
         }
     }
 
@@ -68,19 +73,16 @@ impl TcpHandler {
     /// to the runtime. Handles backpressure gracefully.
     ///
     /// Returns `Ok` on clean close, `Err` on error
-    pub async fn run(self) -> Result<(), String> {
+    pub async fn run(mut self) -> Result<(), String> {
         let mut buffer = BytesMut::with_capacity(4096);
         info!(session_id = self.session_id, "TCP handler run loop started");
 
         loop {
-            // Read more data (lock stream for reading)
-            let n = {
-                let mut stream_guard = self.stream.lock().await;
-                stream_guard.read_buf(&mut buffer).await.map_err(|e| {
-                    error!(session_id = self.session_id, error = %e, "TCP read error");
-                    format!("read error: {}", e)
-                })?
-            };
+            // Read more data from the owned read half (no mutex needed)
+            let n = self.read_half.read_buf(&mut buffer).await.map_err(|e| {
+                error!(session_id = self.session_id, error = %e, "TCP read error");
+                format!("read error: {}", e)
+            })?;
 
             // 0 bytes means EOF
             if n == 0 {
@@ -190,28 +192,32 @@ impl TcpHandler {
 
 /// Create a new TCP session and handler
 ///
+/// Splits the TCP stream into independent read and write halves to avoid
+/// mutex contention between the inbound reader and outbound writer.
+///
 /// # Arguments
 ///
 /// * `ingress` - Runtime boundary implementation
 /// * `config` - Ingress configuration
-/// * `stream` - TCP stream
+/// * `stream` - TCP stream (will be split)
 /// * `tx` - Channel for forwarding frames
 ///
 /// # Returns
 ///
-/// Handler if session accepted, error message if rejected
+/// `(handler, write_half)` if session accepted, error message if rejected.
+/// The caller should pass `write_half` to the outbound writer task.
 pub async fn create_session(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     stream: TcpStream,
     tx: mpsc::Sender<(u64, Bytes)>,
-) -> Result<TcpHandler, String> {
-    // Extract peer address
+) -> Result<(TcpHandler, OwnedWriteHalf), String> {
+    // Extract peer address before splitting
     let peer_addr = stream.peer_addr().ok();
     debug!(peer_addr = ?peer_addr, "Creating TCP session");
 
-    // Wrap stream in Arc<Mutex> for shared access between reader and writer
-    let stream = Arc::new(tokio::sync::Mutex::new(stream));
+    // Split stream into independent read/write halves (no shared mutex)
+    let (read_half, write_half) = stream.into_split();
 
     // Create transport-level session
     let session_config = crate::session::NewSessionConfig::unauthenticated(
@@ -221,7 +227,7 @@ pub async fn create_session(
         SessionMetadata::new(),
         config.channel_capacity,
         None,
-        crate::runtime::routing::RouteFamily::new(0), // No auth = family 0
+        crate::runtime::routing::RouteFamily::new(1), // Default dev family = 1
     );
     let session = Session::new(generate_session_id(), session_config);
 
@@ -229,8 +235,11 @@ pub async fn create_session(
     let session_id = ingress.on_open(session.info()).await?;
     info!(session_id = session_id, peer_addr = ?peer_addr, "TCP session created and accepted by ingress");
 
-    // Create handler
-    Ok(TcpHandler::new(ingress, config, session_id, tx, stream))
+    // Create handler with the read half
+    Ok((
+        TcpHandler::new(ingress, config, session_id, tx, read_half),
+        write_half,
+    ))
 }
 
 /// Generate a unique session ID

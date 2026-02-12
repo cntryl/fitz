@@ -119,7 +119,7 @@ impl TransportDriver {
             SessionMetadata::new(),
             config.channel_capacity,
             None,
-            crate::runtime::routing::RouteFamily::new(0), // No auth = family 0
+            crate::runtime::routing::RouteFamily::new(1), // Default dev family = 1
         );
         let session = Session::new(temp_session_id, session_config);
 

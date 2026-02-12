@@ -42,7 +42,7 @@
 //!
 //! # Stub Implementation
 //!
-//! For now, we stub the control plane and return RouteFamily(0) for all JWTs.
+//! For now, we stub the control plane and return RouteFamily(1) for all JWTs.
 
 use crate::runtime::routing::RouteFamily;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ use std::sync::Arc;
 ///
 /// - **Control plane owns assignments**: Route families are allocated by the control plane
 /// - **Fitz queries only**: Fitz looks up but never creates route family assignments
-/// - **Stub implementation**: Returns RouteFamily(0) until control plane integration is built
+/// - **Stub implementation**: Returns RouteFamily(1) until control plane integration is built
 ///
 /// # Future Implementation
 ///
@@ -94,7 +94,7 @@ impl ControlPlaneStub {
     ///
     /// # Stub Behavior
     ///
-    /// Currently returns `RouteFamily(0)` for all JWTs.
+    /// Currently returns `RouteFamily(1)` for all JWTs.
     /// This allows single-tenant development mode until control plane is integrated.
     ///
     /// # Future Implementation
@@ -124,12 +124,13 @@ impl ControlPlaneStub {
     /// }
     /// ```
     pub fn lookup_route_family(&self, _jwt: &str) -> RouteFamily {
-        // Stub: Always return family 0 until control plane is integrated
+        // Stub: Always return family 1 until control plane is integrated
+        // Family 0 is reserved (maps to default column family).
         // Control plane will parse JWT and make routing decision based on:
         // - iss, aud, custom claims
         // - signature verification
         // - tenant/org/env routing policies
-        RouteFamily::new(0)
+        RouteFamily::new(1)
     }
 }
 
@@ -143,7 +144,7 @@ impl Default for ControlPlaneStub {
 ///
 /// # Rules
 ///
-/// - **No auth**: Returns `RouteFamily(0)` (single-tenant mode)
+/// - **No auth**: Returns `RouteFamily(1)` (single-tenant dev mode)
 /// - **Authenticated**: Looks up JWT's route family from control plane
 ///
 /// # Control Plane Integration
@@ -171,8 +172,8 @@ pub fn resolve_route_family(
             family
         }
 
-        // No auth or no control plane: use family 0
-        _ => RouteFamily::new(0),
+        // No auth or no control plane: use family 1 (default dev tenant)
+        _ => RouteFamily::new(1),
     }
 }
 
@@ -181,7 +182,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_return_family_zero_from_stub() {
+    fn should_return_family_one_from_stub() {
         // Arrange
         let control_plane = ControlPlaneStub::new();
         let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
@@ -189,19 +190,19 @@ mod tests {
         // Act
         let family = control_plane.lookup_route_family(jwt);
 
-        // Assert - Stub always returns 0
-        assert_eq!(family.id(), 0);
+        // Assert - Stub always returns 1 (default dev tenant)
+        assert_eq!(family.id(), 1);
     }
 
     #[test]
-    fn should_resolve_family_zero_for_no_auth() {
+    fn should_resolve_family_one_for_no_auth() {
         // Arrange
 
         // Act
         let family = resolve_route_family(None, None);
 
-        // Assert
-        assert_eq!(family.id(), 0);
+        // Assert - Default dev tenant is family 1
+        assert_eq!(family.id(), 1);
     }
 
     #[test]
@@ -213,8 +214,8 @@ mod tests {
         // Act
         let family = resolve_route_family(Some(jwt), Some(&control_plane));
 
-        // Assert - Stub returns 0, but this tests the lookup path
-        assert_eq!(family.id(), 0);
+        // Assert - Stub returns 1, but this tests the lookup path
+        assert_eq!(family.id(), 1);
     }
 
     #[test]
@@ -232,10 +233,10 @@ mod tests {
         let family2 = control_plane.lookup_route_family(jwt_okta);
         let family3 = control_plane.lookup_route_family(jwt_custom);
 
-        // Assert - Stub returns 0, but in production each could route differently
+        // Assert - Stub returns 1, but in production each could route differently
         // based on iss, custom claims (org_id, env), etc.
-        assert_eq!(family1.id(), 0);
-        assert_eq!(family2.id(), 0);
-        assert_eq!(family3.id(), 0);
+        assert_eq!(family1.id(), 1);
+        assert_eq!(family2.id(), 1);
+        assert_eq!(family3.id(), 1);
     }
 }

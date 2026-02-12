@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cntryl/fitz-go/internal/core/debug"
 )
 
 // pendingRequest represents one in-flight request awaiting response.
@@ -105,10 +107,12 @@ func (m *Multiplexer) UnregisterRequest(msgType uint16, responseChan chan []byte
 func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	// Handle async deliveries (per CLIENT_SPEC.md MessageType ranges)
 	if msgType == 504 { // Notice NOTIFY
+		debug.MuxAsync("NOTICE_NOTIFY", msgType, len(payload))
 		m.handleNotify(payload)
 		return
 	}
 	if msgType == 303 { // RPC RESPONSE
+		debug.MuxAsync("RPC_RESPONSE", msgType, len(payload))
 		m.handleRpcResponse(payload)
 		return
 	}
@@ -120,6 +124,7 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 		m.mu.Unlock()
 		// Unexpected response (no pending request)
 		// This can happen if context was cancelled but response arrived
+		debug.MuxDispatch(msgType, len(payload), false)
 		m.responsesDropped.Add(1)
 		return
 	}
@@ -132,12 +137,15 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	m.requestsInFlight.Add(-1)
 	m.responsesTotal.Add(1)
 
+	debug.MuxDispatch(msgType, len(payload), true)
+
 	// Non-blocking send (prevents dispatch loop from stalling)
 	select {
 	case req.responseChan <- payload:
 		// Success - response delivered
 	case <-time.After(100 * time.Millisecond):
 		// Slow consumer - drop response and close channel
+		debug.Log("MUX   msg_type=%-4d SLOW CONSUMER — dropping response", msgType)
 		m.responsesDropped.Add(1)
 		close(req.responseChan)
 	}
@@ -147,6 +155,7 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 // Per CLIENT_SPEC.md: [u64 BE subscription_id][u32 route_len][route][u32 payload_len][payload]
 func (m *Multiplexer) handleNotify(payload []byte) {
 	if len(payload) < 8 {
+		debug.Log("NOTIFY malformed: payload_len=%d (need >= 8)", len(payload))
 		return // Malformed
 	}
 
@@ -191,6 +200,7 @@ func (m *Multiplexer) handleNotify(payload []byte) {
 // Per CLIENT_SPEC.md: [16 bytes correlation_id][u8 status][...]
 func (m *Multiplexer) handleRpcResponse(payload []byte) {
 	if len(payload) < 17 {
+		debug.Log("RPC_RESPONSE malformed: payload_len=%d (need >= 17)", len(payload))
 		return // Malformed (need at least correlation_id + status)
 	}
 
