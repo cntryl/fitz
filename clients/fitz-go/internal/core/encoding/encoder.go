@@ -6,6 +6,37 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/connection"
 )
 
+// OwnedBuffer wraps a pooled buffer with explicit release semantics.
+// Call Release() when the bytes are no longer needed.
+type OwnedBuffer struct {
+	buf *bytes.Buffer
+}
+
+// Bytes returns the underlying buffer bytes.
+func (o *OwnedBuffer) Bytes() []byte {
+	if o == nil || o.buf == nil {
+		return nil
+	}
+	return o.buf.Bytes()
+}
+
+// Len returns the length of the buffer bytes.
+func (o *OwnedBuffer) Len() int {
+	if o == nil || o.buf == nil {
+		return 0
+	}
+	return o.buf.Len()
+}
+
+// Release returns the buffer to the pool.
+func (o *OwnedBuffer) Release() {
+	if o == nil || o.buf == nil {
+		return
+	}
+	connection.PutBuffer(o.buf)
+	o.buf = nil
+}
+
 // EncodeWithBuffer provides a standard pattern for using buffer pools.
 // It handles Get/Put lifecycle and copies the result safely.
 //
@@ -17,14 +48,22 @@ import (
 //	    WriteBytes(buf, key)
 //	})
 func EncodeWithBuffer(fn func(*bytes.Buffer)) []byte {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	owned := EncodeWithBufferOwned(fn)
+	if owned == nil {
+		return nil
+	}
+	defer owned.Release()
 
-	fn(buf)
-
-	result := make([]byte, buf.Len())
-	copy(result, buf.Bytes())
+	result := make([]byte, owned.Len())
+	copy(result, owned.Bytes())
 	return result
+}
+
+// EncodeWithBufferOwned provides a pooled buffer with explicit release.
+func EncodeWithBufferOwned(fn func(*bytes.Buffer)) *OwnedBuffer {
+	buf := connection.GetBuffer()
+	fn(buf)
+	return &OwnedBuffer{buf: buf}
 }
 
 // WriteU64 writes a uint64 in big-endian format.

@@ -175,7 +175,11 @@ func (c *Connection) Start(ctx context.Context) error {
 // Empty JWT for anonymous mode.
 func (c *Connection) sendConnect(ctx context.Context) error {
 	payload := []byte(c.jwt)
-	frame := protocol.EncodeFrame(protocol.MessageTypeConnect, payload)
+	frame := protocol.EncodeFrameOwned(protocol.MessageTypeConnect, payload)
+	if frame == nil {
+		return fmt.Errorf("encode CONNECT frame")
+	}
+	defer frame.Release()
 
 	debug.FrameSend(protocol.MessageTypeConnect, payload)
 
@@ -186,7 +190,7 @@ func (c *Connection) sendConnect(ctx context.Context) error {
 		defer cancel()
 	}
 
-	if err := c.transport.Write(writeCtx, frame); err != nil {
+	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
 		debug.Log("CONNECT write failed: %v", err)
 		return err
 	}
@@ -333,7 +337,11 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	defer c.mux.UnregisterRequest(msgType, responseChan)
 
 	// Encode frame
-	frame := protocol.EncodeFrame(msgType, payload)
+	frame := protocol.EncodeFrameOwned(msgType, payload)
+	if frame == nil {
+		return nil, fmt.Errorf("encode frame")
+	}
+	defer frame.Release()
 
 	debug.FrameSend(msgType, payload)
 
@@ -345,7 +353,7 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 		defer cancel()
 	}
 
-	if err := c.transport.Write(writeCtx, frame); err != nil {
+	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
 		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return nil, fmt.Errorf("write request: %w", err)
 	}
@@ -382,7 +390,11 @@ func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []b
 		return ErrNotAuthenticated
 	}
 
-	frame := protocol.EncodeFrame(msgType, payload)
+	frame := protocol.EncodeFrameOwned(msgType, payload)
+	if frame == nil {
+		return fmt.Errorf("encode frame")
+	}
+	defer frame.Release()
 
 	debug.FrameSend(msgType, payload)
 
@@ -393,7 +405,7 @@ func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []b
 		defer cancel()
 	}
 
-	if err := c.transport.Write(writeCtx, frame); err != nil {
+	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
 		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return fmt.Errorf("write fire-and-forget: %w", err)
 	}

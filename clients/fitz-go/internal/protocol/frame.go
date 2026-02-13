@@ -14,6 +14,37 @@ var bufferPool = sync.Pool{
 	},
 }
 
+// FrameBuffer wraps a pooled frame buffer with explicit release.
+// Call Release() when done with the bytes.
+type FrameBuffer struct {
+	buf *bytes.Buffer
+}
+
+// Bytes returns the frame bytes.
+func (f *FrameBuffer) Bytes() []byte {
+	if f == nil || f.buf == nil {
+		return nil
+	}
+	return f.buf.Bytes()
+}
+
+// Len returns the frame length.
+func (f *FrameBuffer) Len() int {
+	if f == nil || f.buf == nil {
+		return 0
+	}
+	return f.buf.Len()
+}
+
+// Release returns the buffer to the pool.
+func (f *FrameBuffer) Release() {
+	if f == nil || f.buf == nil {
+		return
+	}
+	putBuffer(f.buf)
+	f.buf = nil
+}
+
 // getBuffer gets a buffer from the pool
 func getBuffer() *bytes.Buffer {
 	return bufferPool.Get().(*bytes.Buffer)
@@ -86,12 +117,25 @@ func DecodeMessageType(data []byte) (msgType uint16, bytesRead int, err error) {
 // EncodeFrame encodes a complete message frame using buffer pools
 // Format: [MessageType (variable)][Length (u16 BE)][Payload]
 func EncodeFrame(msgType uint16, payload []byte) []byte {
+	frame := EncodeFrameOwned(msgType, payload)
+	if frame == nil {
+		return nil
+	}
+	defer frame.Release()
+
+	result := make([]byte, frame.Len())
+	copy(result, frame.Bytes())
+	return result
+}
+
+// EncodeFrameOwned encodes a complete message frame using a pooled buffer.
+// Caller must Release() the returned FrameBuffer.
+func EncodeFrameOwned(msgType uint16, payload []byte) *FrameBuffer {
 	if len(payload) > MaxPayloadSize {
 		panic(fmt.Sprintf("payload too large: %d bytes (max %d)", len(payload), MaxPayloadSize))
 	}
 
 	buf := getBuffer()
-	defer putBuffer(buf)
 
 	// Write message type (variable length)
 	if msgType <= 254 {
@@ -107,10 +151,7 @@ func EncodeFrame(msgType uint16, payload []byte) []byte {
 	// Write payload
 	buf.Write(payload)
 
-	// Return copy
-	result := make([]byte, buf.Len())
-	copy(result, buf.Bytes())
-	return result
+	return &FrameBuffer{buf: buf}
 }
 
 // DecodeFrame decodes a message frame
@@ -144,12 +185,25 @@ func DecodeFrame(data []byte) (msgType uint16, payload []byte, err error) {
 // Format: [Frame Length (u32 BE)][MessageType][Length][Payload]
 // where Frame Length = total size of [MessageType][Length][Payload]
 func EncodeTCPFrame(msgType uint16, payload []byte) []byte {
+	frame := EncodeTCPFrameOwned(msgType, payload)
+	if frame == nil {
+		return nil
+	}
+	defer frame.Release()
+
+	final := make([]byte, frame.Len())
+	copy(final, frame.Bytes())
+	return final
+}
+
+// EncodeTCPFrameOwned encodes a TCP frame using a pooled buffer.
+// Caller must Release() the returned FrameBuffer.
+func EncodeTCPFrameOwned(msgType uint16, payload []byte) *FrameBuffer {
 	if len(payload) > MaxPayloadSize {
 		panic(fmt.Sprintf("payload too large: %d bytes (max %d)", len(payload), MaxPayloadSize))
 	}
 
 	buf := getBuffer()
-	defer putBuffer(buf)
 
 	// Reserve space for frame length (will write later)
 	lengthPos := buf.Len()
@@ -175,10 +229,7 @@ func EncodeTCPFrame(msgType uint16, payload []byte) []byte {
 	result := buf.Bytes()
 	binary.BigEndian.PutUint32(result[lengthPos:lengthPos+4], frameLength)
 
-	// Return copy
-	final := make([]byte, buf.Len())
-	copy(final, result)
-	return final
+	return &FrameBuffer{buf: buf}
 }
 
 // DecodeTCPFrameLength reads the frame length prefix from TCP stream
