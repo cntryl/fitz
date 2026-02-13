@@ -62,13 +62,8 @@ func (c *client) Begin(ctx context.Context, route string, opts ...BeginOption) (
 	}
 
 	// Encode BEGIN request per CLIENT_SPEC.md
-	payload, err := EncodeBegin(route, TxModeReadWrite, cfg.durability)
-	if err != nil {
-		return nil, fmt.Errorf("encode BEGIN: %w", err)
-	}
-
 	// Send request and wait for response
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeKvBegin, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvBegin, beginPayloadWriter(route, TxModeReadWrite, cfg.durability))
 	if err != nil {
 		return nil, fmt.Errorf("send BEGIN request: %w", err)
 	}
@@ -107,13 +102,8 @@ func (c *client) Begin(ctx context.Context, route string, opts ...BeginOption) (
 // Per CLIENT_SPEC.md: ReadOnly transactions must also call BEGIN on server.
 func (c *client) BeginRead(ctx context.Context, route string) (ReadTx, error) {
 	// Encode BEGIN request with ReadOnly mode
-	payload, err := EncodeBegin(route, TxModeReadOnly, DurabilityBuffered)
-	if err != nil {
-		return nil, fmt.Errorf("encode BEGIN: %w", err)
-	}
-
 	// Send request and wait for response
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeKvBegin, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvBegin, beginPayloadWriter(route, TxModeReadOnly, DurabilityBuffered))
 	if err != nil {
 		return nil, fmt.Errorf("send BEGIN request: %w", err)
 	}

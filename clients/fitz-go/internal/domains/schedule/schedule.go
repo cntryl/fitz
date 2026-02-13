@@ -112,12 +112,7 @@ func NewClient(conn *connection.Connection) Client {
 //
 // Response: [status][u8 has_schedule_id][string schedule_id if has=1]
 func (c *client) Create(ctx context.Context, route string, cronExpr string, payload []byte) (string, error) {
-	encoded, err := EncodeScheduleCreate(route, cronExpr, payload)
-	if err != nil {
-		return "", fmt.Errorf("encode CREATE: %w", err)
-	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCreate, encoded)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCreate, scheduleCreatePayloadWriter(route, cronExpr, payload))
 	if err != nil {
 		return "", fmt.Errorf("CREATE request failed: %w", err)
 	}
@@ -151,12 +146,7 @@ func (c *client) Create(ctx context.Context, route string, cronExpr string, payl
 // Request: [string schedule_id]
 // Response: [status][optional string schedule_id]
 func (c *client) Cancel(ctx context.Context, scheduleID string) error {
-	encoded, err := EncodeScheduleCancel(scheduleID)
-	if err != nil {
-		return fmt.Errorf("encode CANCEL: %w", err)
-	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCancel, encoded)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCancel, scheduleCancelPayloadWriter(scheduleID))
 	if err != nil {
 		return fmt.Errorf("CANCEL request failed: %w", err)
 	}
@@ -177,12 +167,7 @@ func (c *client) Cancel(ctx context.Context, scheduleID string) error {
 // Response: [status][optional string schedule_id]
 func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error) {
 	// Server expects empty payload for LIST
-	encoded, err := EncodeScheduleList()
-	if err != nil {
-		return nil, fmt.Errorf("encode LIST: %w", err)
-	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleList, encoded)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleList, scheduleListPayloadWriter())
 	if err != nil {
 		return nil, fmt.Errorf("LIST request failed: %w", err)
 	}

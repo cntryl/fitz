@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -332,6 +333,40 @@ func BenchmarkEncodeFrame(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = EncodeFrame(msgType, payload)
+		}
+	})
+}
+
+func BenchmarkEncodeFrameWithPayloadWriter(b *testing.B) {
+	b.Run("100 byte payload", func(b *testing.B) {
+		payload := make([]byte, 100)
+		msgType := uint16(100)
+		writer := func(buf *bytes.Buffer) {
+			buf.Write(payload)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			frame, err := EncodeFrameWithPayloadWriter(msgType, writer)
+			if err == nil {
+				frame.Release()
+			}
+		}
+	})
+
+	b.Run("10KB payload", func(b *testing.B) {
+		payload := make([]byte, 10240)
+		msgType := uint16(100)
+		writer := func(buf *bytes.Buffer) {
+			buf.Write(payload)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			frame, err := EncodeFrameWithPayloadWriter(msgType, writer)
+			if err == nil {
+				frame.Release()
+			}
 		}
 	})
 }

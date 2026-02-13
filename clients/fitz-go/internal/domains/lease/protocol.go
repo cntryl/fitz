@@ -80,3 +80,36 @@ func EncodeLeaseQuery(route string) ([]byte, error) {
 		encoding.WriteRoute(buf, route)
 	}), nil
 }
+
+// Payload writer helpers for zero-copy frame encoding
+
+func leaseAcquirePayloadWriter(route string, ttlSeconds uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteRoute(buf, "") // client_id (empty = server assigns)
+		encoding.WriteU64(buf, ttlSeconds)
+	}
+}
+
+func leaseRenewPayloadWriter(resource string, fenceToken uint64, ttlSeconds uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, resource)
+		encoding.WriteRoute(buf, "") // client_id (empty = use existing)
+		encoding.WriteU64(buf, fenceToken)
+		encoding.WriteU64(buf, ttlSeconds)
+	}
+}
+
+func leaseReleasePayloadWriter(resource string, fenceToken uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, resource)
+		encoding.WriteRoute(buf, "") // client_id (empty = use existing)
+		encoding.WriteU64(buf, fenceToken)
+	}
+}
+
+func leaseQueryPayloadWriter(route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+	}
+}

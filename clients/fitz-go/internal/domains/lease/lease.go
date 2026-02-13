@@ -33,14 +33,7 @@ func (l *Lease) RenewWithToken(ctx context.Context, token []byte, ttlSecs uint64
 }
 
 func (l *Lease) renewWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-	connection.WriteString(buf, l.route)
-	connection.WriteString(buf, "")
-	connection.WriteU64BE(buf, tokenToU64(token))
-	connection.WriteU64BE(buf, ttlSecs)
-
-	resp, err := l.conn.SendRequest(ctx, protocol.MessageTypeLeaseRenew, buf.Bytes())
+	resp, err := l.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseRenew, leaseRenewPayloadWriter(l.route, tokenToU64(token), ttlSecs))
 	if err != nil {
 		return 0, fmt.Errorf("RENEW request failed: %w", err)
 	}
@@ -67,13 +60,7 @@ func (l *Lease) ReleaseWithToken(ctx context.Context, token []byte) error {
 }
 
 func (l *Lease) releaseWithToken(ctx context.Context, token []byte) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-	connection.WriteString(buf, l.route)
-	connection.WriteString(buf, "")
-	connection.WriteU64BE(buf, tokenToU64(token))
-
-	resp, err := l.conn.SendRequest(ctx, protocol.MessageTypeLeaseRelease, buf.Bytes())
+	resp, err := l.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseRelease, leaseReleasePayloadWriter(l.route, tokenToU64(token)))
 	if err != nil {
 		return fmt.Errorf("RELEASE request failed: %w", err)
 	}
@@ -118,14 +105,7 @@ func NewClient(conn *connection.Connection) Client {
 // Request: [route_len][route][owner_id_len][owner_id][ttl_secs]
 // Response: [status][u8 has_token][u64 token if has=1] (optional u64)
 func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) (*Lease, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-	connection.WriteString(buf, "")
-	connection.WriteU64BE(buf, ttlSecs)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeLeaseAcquire, buf.Bytes())
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseAcquire, leaseAcquirePayloadWriter(route, ttlSecs))
 	if err != nil {
 		return nil, fmt.Errorf("ACQUIRE request failed: %w", err)
 	}
@@ -166,12 +146,7 @@ func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) (*Le
 // Request: [route_len][route]
 // Response: [status][u8 has_token][u64 token if has=1]
 func (c *client) Query(ctx context.Context, route string) (*LeaseInfo, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeLeaseQuery, buf.Bytes())
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseQuery, leaseQueryPayloadWriter(route))
 	if err != nil {
 		return nil, fmt.Errorf("QUERY request failed: %w", err)
 	}

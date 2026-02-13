@@ -99,9 +99,7 @@ func (c *client) handleNotify(subID uint64, route string, payload []byte) {
 // Request: [route_len][route][payload_len][payload]
 // Notice PUBLISH is fire-and-forget — the server does not send a response frame.
 func (c *client) Publish(ctx context.Context, route string, body []byte) error {
-	payload := encodePublish(route, body)
-
-	if err := c.conn.SendOneWay(ctx, protocol.MessageTypeNoticePublish, payload); err != nil {
+	if err := c.conn.SendOneWayWithWriter(ctx, protocol.MessageTypeNoticePublish, publishPayloadWriter(route, body)); err != nil {
 		return fmt.Errorf("PUBLISH failed: %w", err)
 	}
 
@@ -114,9 +112,7 @@ func (c *client) Publish(ctx context.Context, route string, body []byte) error {
 func (c *client) Subscribe(ctx context.Context, pattern string, handler NoticeHandler) (*Subscription, error) {
 	c.initNotifyHandler()
 
-	payload := encodeSubscribe(pattern)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeNoticeSubscribe, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeNoticeSubscribe, subscribePayloadWriter(pattern))
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
 	}
@@ -168,10 +164,8 @@ func (c *client) unsubscribe(sub *Subscription) {
 
 	// Send UNSUBSCRIBE to server (best-effort, ignore errors).
 	// Server expects [string pattern] (the original subscription pattern).
-	payload := encodeUnsubscribe(sub.route)
-
 	ctx := context.Background()
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeNoticeUnsubscribe, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeNoticeUnsubscribe, unsubscribePayloadWriter(sub.route))
 	if err != nil {
 		return
 	}

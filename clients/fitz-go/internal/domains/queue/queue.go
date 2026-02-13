@@ -23,12 +23,7 @@ type QueueItem struct {
 
 // Extend extends the lease on this queue item.
 func (q *QueueItem) Extend(ctx context.Context, leaseSecs uint64) error {
-	payload, err := EncodeExtend(q.route, q.ID, q.Token, leaseSecs)
-	if err != nil {
-		return fmt.Errorf("encode EXTEND: %w", err)
-	}
-
-	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueExtend, payload)
+	resp, err := q.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueExtend, extendPayloadWriter(q.route, q.ID, q.Token, leaseSecs))
 	if err != nil {
 		return fmt.Errorf("EXTEND request failed: %w", err)
 	}
@@ -50,12 +45,7 @@ func (q *QueueItem) Complete(ctx context.Context) error {
 // CompleteWithToken completes the item using an explicit token (e.g. for testing invalid token).
 // Normally use Complete(ctx) which uses the item's token.
 func (q *QueueItem) CompleteWithToken(ctx context.Context, token uint64) error {
-	payload, err := EncodeComplete(q.route, q.ID, token)
-	if err != nil {
-		return fmt.Errorf("encode COMPLETE: %w", err)
-	}
-
-	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueComplete, payload)
+	resp, err := q.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueComplete, completePayloadWriter(q.route, q.ID, token))
 	if err != nil {
 		return fmt.Errorf("COMPLETE request failed: %w", err)
 	}
@@ -92,9 +82,7 @@ func NewClient(conn *connection.Connection) Client {
 // Request: [route_len][route][body_len][body][has_delay(u8)][delay_secs?]
 // Response: [status][message_id (u64 BE)]
 func (c *client) Send(ctx context.Context, route string, body []byte) (uint64, error) {
-	payload := EncodeEnqueue(route, body, 0)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeQueueEnqueue, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueEnqueue, enqueuePayloadWriter(route, body, 0))
 	if err != nil {
 		return 0, fmt.Errorf("ENQUEUE request failed: %w", err)
 	}
@@ -123,9 +111,7 @@ func (c *client) Send(ctx context.Context, route string, body []byte) (uint64, e
 // Request: [route_len][route][lease_seconds][has_batch_size][batch_size?][has_wait_seconds][wait_seconds?]
 // Response: [status][lease_count(u32)][{message_id, lease_token, body_len, body}...]
 func (c *client) Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error) {
-	payload := EncodeReserve(route, leaseSecs, batchSize, 0)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeQueueReserve, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueReserve, reservePayloadWriter(route, leaseSecs, batchSize, 0))
 	if err != nil {
 		return nil, fmt.Errorf("RESERVE request failed: %w", err)
 	}

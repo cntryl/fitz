@@ -154,6 +154,43 @@ func EncodeFrameOwned(msgType uint16, payload []byte) *FrameBuffer {
 	return &FrameBuffer{buf: buf}
 }
 
+// EncodeFrameWithPayloadWriter encodes a frame using a payload writer callback.
+// This avoids intermediate payload allocations by writing directly into the frame buffer.
+func EncodeFrameWithPayloadWriter(msgType uint16, writePayload func(*bytes.Buffer)) (*FrameBuffer, error) {
+	if writePayload == nil {
+		return nil, fmt.Errorf("payload writer is nil")
+	}
+
+	buf := getBuffer()
+
+	// Write message type (variable length)
+	if msgType <= 254 {
+		buf.WriteByte(byte(msgType))
+	} else {
+		buf.WriteByte(MessageTypeEscape)
+		writeU16BE(buf, msgType)
+	}
+
+	// Write payload length placeholder
+	lengthPos := buf.Len()
+	writeU16BE(buf, 0)
+	payloadStart := buf.Len()
+
+	// Write payload directly into the frame buffer
+	writePayload(buf)
+
+	// Backfill payload length
+	payloadLen := buf.Len() - payloadStart
+	if payloadLen > MaxPayloadSize {
+		putBuffer(buf)
+		return nil, fmt.Errorf("payload too large: %d bytes (max %d)", payloadLen, MaxPayloadSize)
+	}
+	result := buf.Bytes()
+	binary.BigEndian.PutUint16(result[lengthPos:lengthPos+2], uint16(payloadLen))
+
+	return &FrameBuffer{buf: buf}, nil
+}
+
 // DecodeFrame decodes a message frame
 // Returns (messageType, payload, error)
 func DecodeFrame(data []byte) (msgType uint16, payload []byte, err error) {

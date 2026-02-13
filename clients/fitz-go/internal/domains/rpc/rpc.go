@@ -245,12 +245,7 @@ func (c *client) handleWorkerRequest(correlationID [16]byte, payload []byte) {
 func (c *client) Subscribe(ctx context.Context, route string, handler RPCHandler) (*Subscription, error) {
 	c.initRPCHandler()
 
-	payload, err := EncodeRPCSubscribeWorker(route)
-	if err != nil {
-		return nil, fmt.Errorf("encode SUBSCRIBE_WORKER: %w", err)
-	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcSubscribeWorker, payload)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeRpcSubscribeWorker, rpcSubscribeWorkerPayloadWriter(route))
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE_WORKER request failed: %w", err)
 	}
@@ -276,17 +271,10 @@ func (c *client) unsubscribeWorker(route string) {
 	delete(c.workers, route)
 	c.mu.Unlock()
 
-	payload, err := EncodeRPCUnsubscribeWorker(route)
-	if err != nil {
-		return
-	}
-
 	ctx := context.Background()
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcUnsubscribeWorker, payload)
-	if err != nil {
-		return
-	}
-	connection.ParseStandardResponse(resp)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeRpcUnsubscribeWorker, rpcUnsubscribeWorkerPayloadWriter(route))
+	_ = resp // ignore response
+	_ = err  // ignore errors
 }
 
 // Call per CLIENT_SPEC.md:
@@ -307,17 +295,8 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 	c.pendingRPCs[correlationID] = ch
 	c.mu.Unlock()
 
-	// Build request
-	payload, err := EncodeRPCRequest(correlationID, route, "", body) // reply_route empty = use connection
-	if err != nil {
-		c.mu.Lock()
-		delete(c.pendingRPCs, correlationID)
-		c.mu.Unlock()
-		close(ch)
-		return nil, fmt.Errorf("encode REQUEST: %w", err)
-	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcRequest, payload)
+	// Build request with writer path
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeRpcRequest, rpcRequestPayloadWriter(correlationID, route, "", body))
 	if err != nil {
 		c.mu.Lock()
 		delete(c.pendingRPCs, correlationID)
@@ -365,12 +344,7 @@ func (w *responseWriter) Send(body []byte) error {
 	w.seq++
 	w.mu.Unlock()
 
-	payload, err := EncodeRPCResponse(w.correlationID, seq, body, false)
-	if err != nil {
-		return err
-	}
-
-	_, err = w.conn.SendRequest(context.Background(), protocol.MessageTypeRpcResponse, payload)
+	_, err := w.conn.SendRequestWithWriter(context.Background(), protocol.MessageTypeRpcResponse, rpcResponsePayloadWriter(w.correlationID, seq, body, false))
 	return err
 }
 

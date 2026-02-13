@@ -222,3 +222,80 @@ func EncodeComplete(route string, messageID uint64, leaseToken uint64) ([]byte, 
 		encoding.WriteU64(buf, leaseToken)
 	}), nil
 }
+
+// Payload writer helpers for zero-copy frame encoding
+
+func enqueuePayloadWriter(route string, body []byte, delaySeconds uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		routeBytes := []byte(route)
+		hasDelay := uint8(0)
+		if delaySeconds > 0 {
+			hasDelay = 1
+		}
+		// [u32 BE] route_len
+		var routeLenBytes [4]byte
+		encoding.WriteU32(buf, uint32(len(routeBytes)))
+		_ = routeLenBytes // silence unused
+		// [bytes] route
+		buf.Write(routeBytes)
+		// [u32 BE] body_len
+		encoding.WriteU32(buf, uint32(len(body)))
+		// [bytes] body
+		buf.Write(body)
+		// [u8] has_delay
+		buf.WriteByte(hasDelay)
+		// [u64 BE] delay_seconds (if has_delay)
+		if hasDelay == 1 {
+			encoding.WriteU64(buf, delaySeconds)
+		}
+	}
+}
+
+func reservePayloadWriter(route string, leaseSeconds uint64, batchSize uint32, waitSeconds uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		routeBytes := []byte(route)
+		hasBatchSize := uint8(0)
+		if batchSize > 0 {
+			hasBatchSize = 1
+		}
+		hasWaitSeconds := uint8(0)
+		if waitSeconds > 0 {
+			hasWaitSeconds = 1
+		}
+		// [u32 BE] route_len
+		encoding.WriteU32(buf, uint32(len(routeBytes)))
+		// [bytes] route
+		buf.Write(routeBytes)
+		// [u64 BE] lease_seconds
+		encoding.WriteU64(buf, leaseSeconds)
+		// [u8] has_batch_size
+		buf.WriteByte(hasBatchSize)
+		// [u32 BE] batch_size (if has_batch_size)
+		if hasBatchSize == 1 {
+			encoding.WriteU32(buf, batchSize)
+		}
+		// [u8] has_wait_seconds
+		buf.WriteByte(hasWaitSeconds)
+		// [u64 BE] wait_seconds (if has_wait_seconds)
+		if hasWaitSeconds == 1 {
+			encoding.WriteU64(buf, waitSeconds)
+		}
+	}
+}
+
+func extendPayloadWriter(route string, messageID uint64, leaseToken uint64, leaseSeconds uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, messageID)
+		encoding.WriteU64(buf, leaseToken)
+		encoding.WriteU64(buf, leaseSeconds)
+	}
+}
+
+func completePayloadWriter(route string, messageID uint64, leaseToken uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, messageID)
+		encoding.WriteU64(buf, leaseToken)
+	}
+}

@@ -48,6 +48,14 @@ func EncodeBegin(route string, mode uint8, durability uint8) ([]byte, error) {
 	}), nil
 }
 
+func beginPayloadWriter(route string, mode uint8, durability uint8) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		buf.WriteByte(mode)
+		buf.WriteByte(durability)
+	}
+}
+
 // EncodePut encodes a KV PUT request payload per CLIENT_SPEC.md.
 // Spec: [tx_id (u64 BE)][route_len (u32 BE)][route][key_len (u32 BE)][key][value_len (u32 BE)][value]
 func EncodePut(txID uint64, route string, key, value []byte) ([]byte, error) {
@@ -67,6 +75,21 @@ func EncodePut(txID uint64, route string, key, value []byte) ([]byte, error) {
 	}), nil
 }
 
+func putPayloadWriter(txID uint64, route string, key, value []byte) (func(*bytes.Buffer), error) {
+	if err := ValidateKeySize(key); err != nil {
+		return nil, err
+	}
+	if err := ValidateValueSize(value); err != nil {
+		return nil, err
+	}
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, key)
+		encoding.WriteBytes(buf, value)
+	}, nil
+}
+
 // EncodeGet encodes a KV GET request payload per CLIENT_SPEC.md.
 // Spec: [tx_id (u64 BE)][route_len (u32 BE)][route][key_len (u32 BE)][key]
 func EncodeGet(txID uint64, route string, key []byte) ([]byte, error) {
@@ -82,10 +105,25 @@ func EncodeGet(txID uint64, route string, key []byte) ([]byte, error) {
 	}), nil
 }
 
+func getPayloadWriter(txID uint64, route string, key []byte) (func(*bytes.Buffer), error) {
+	if err := ValidateKeySize(key); err != nil {
+		return nil, err
+	}
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, key)
+	}, nil
+}
+
 // EncodeInsert encodes a KV INSERT request payload per CLIENT_SPEC.md.
 // Wire format is identical to PUT (server distinguishes by MessageType).
 func EncodeInsert(txID uint64, route string, key, value []byte) ([]byte, error) {
 	return EncodePut(txID, route, key, value)
+}
+
+func insertPayloadWriter(txID uint64, route string, key, value []byte) (func(*bytes.Buffer), error) {
+	return putPayloadWriter(txID, route, key, value)
 }
 
 // EncodeDelete encodes a KV DELETE request payload per CLIENT_SPEC.md.
@@ -101,6 +139,17 @@ func EncodeDelete(txID uint64, route string, key []byte) ([]byte, error) {
 		encoding.WriteRoute(buf, route)
 		encoding.WriteBytes(buf, key)
 	}), nil
+}
+
+func deletePayloadWriter(txID uint64, route string, key []byte) (func(*bytes.Buffer), error) {
+	if err := ValidateKeySize(key); err != nil {
+		return nil, err
+	}
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, key)
+	}, nil
 }
 
 // EncodeDeleteRange encodes a KV DELETE_RANGE request payload per CLIENT_SPEC.md.
@@ -120,6 +169,21 @@ func EncodeDeleteRange(txID uint64, route string, startKey, endKey []byte) ([]by
 		encoding.WriteBytes(buf, startKey)
 		encoding.WriteBytes(buf, endKey)
 	}), nil
+}
+
+func deleteRangePayloadWriter(txID uint64, route string, startKey, endKey []byte) (func(*bytes.Buffer), error) {
+	if err := ValidateKeySize(startKey); err != nil {
+		return nil, err
+	}
+	if err := ValidateKeySize(endKey); err != nil {
+		return nil, err
+	}
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, startKey)
+		encoding.WriteBytes(buf, endKey)
+	}, nil
 }
 
 // ScanQuery represents SCAN operation parameters.
@@ -184,6 +248,55 @@ func EncodeScan(txID uint64, route string, query ScanQuery) ([]byte, error) {
 	}), nil
 }
 
+func scanPayloadWriter(txID uint64, route string, query ScanQuery) (func(*bytes.Buffer), error) {
+	if query.StartKey != nil {
+		if err := ValidateKeySize(query.StartKey); err != nil {
+			return nil, err
+		}
+	}
+	if query.EndKey != nil {
+		if err := ValidateKeySize(query.EndKey); err != nil {
+			return nil, err
+		}
+	}
+
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+
+		// [u8] has_start + optional key
+		if query.StartKey != nil {
+			buf.WriteByte(1)
+			encoding.WriteBytes(buf, query.StartKey)
+		} else {
+			buf.WriteByte(0)
+		}
+
+		// [u8] has_end + optional key
+		if query.EndKey != nil {
+			buf.WriteByte(1)
+			encoding.WriteBytes(buf, query.EndKey)
+		} else {
+			buf.WriteByte(0)
+		}
+
+		// [u8] has_limit + optional limit
+		if query.Limit > 0 {
+			buf.WriteByte(1)
+			encoding.WriteU32(buf, query.Limit)
+		} else {
+			buf.WriteByte(0)
+		}
+
+		// [u8] reverse
+		if query.Reverse {
+			buf.WriteByte(1)
+		} else {
+			buf.WriteByte(0)
+		}
+	}, nil
+}
+
 // EncodeCommit encodes a KV COMMIT request payload per CLIENT_SPEC.md.
 // Spec: [tx_id (u64 BE)][route_len (u32 BE)][route]
 // Operations are self-contained per CLIENT_SPEC.md design.
@@ -194,6 +307,13 @@ func EncodeCommit(txID uint64, route string) ([]byte, error) {
 	}), nil
 }
 
+func commitPayloadWriter(txID uint64, route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+	}
+}
+
 // EncodeRollback encodes a KV ROLLBACK request payload per CLIENT_SPEC.md.
 // Spec: [tx_id (u64 BE)][route_len (u32 BE)][route]
 // Operations are self-contained per CLIENT_SPEC.md design.
@@ -202,6 +322,13 @@ func EncodeRollback(txID uint64, route string) ([]byte, error) {
 		encoding.WriteU64(buf, txID)
 		encoding.WriteRoute(buf, route)
 	}), nil
+}
+
+func rollbackPayloadWriter(txID uint64, route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+	}
 }
 
 // ValidateKeySize checks if key size is within limits.

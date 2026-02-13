@@ -39,14 +39,31 @@ func encodePublish(route string, body []byte) []byte {
 	return buf
 }
 
+func publishPayloadWriter(route string, body []byte) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, body)
+	}
+}
+
 func encodeSubscribe(route string) []byte {
 	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
 		encoding.WriteRoute(buf, route)
 	})
 }
 
+func subscribePayloadWriter(route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+	}
+}
+
 func encodeUnsubscribe(route string) []byte {
 	return encodeSubscribe(route)
+}
+
+func unsubscribePayloadWriter(route string) func(*bytes.Buffer) {
+	return subscribePayloadWriter(route)
 }
 
 func DecodeNotify(body []byte) (string, []byte, bool) {

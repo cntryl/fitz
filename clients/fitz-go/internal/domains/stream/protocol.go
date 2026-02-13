@@ -141,3 +141,83 @@ func EncodeStreamUnsubscribe(route string) ([]byte, error) {
 		encoding.WriteRoute(buf, route)
 	}), nil
 }
+
+// Payload writer helpers for zero-copy frame encoding
+
+func streamBeginPayloadWriter(route string, expectedOffset uint64, ingestMetadata []byte) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, expectedOffset)
+		if ingestMetadata != nil {
+			buf.WriteByte(1)
+			encoding.WriteBytes(buf, ingestMetadata)
+		} else {
+			buf.WriteByte(0)
+		}
+	}
+}
+
+func streamAppendPayloadWriter(sessionID uint64, body []byte, metadata []byte) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, sessionID)
+		encoding.WriteBytes(buf, body)
+		if metadata != nil {
+			buf.WriteByte(1)
+			encoding.WriteBytes(buf, metadata)
+		} else {
+			buf.WriteByte(0)
+		}
+	}
+}
+
+func streamCommitPayloadWriter(sessionID uint64, mode uint8) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, sessionID)
+		buf.WriteByte(mode)
+	}
+}
+
+func streamRollbackPayloadWriter(sessionID uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, sessionID)
+	}
+}
+
+func streamReadPayloadWriter(route string, fromOffset uint64, limit uint64, maxBytes *uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, fromOffset)
+		encoding.WriteU64(buf, limit)
+		if maxBytes != nil {
+			buf.WriteByte(1)
+			encoding.WriteU64(buf, *maxBytes)
+		} else {
+			buf.WriteByte(0)
+		}
+	}
+}
+
+func streamLastPayloadWriter(route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+	}
+}
+
+func streamGetMetadataPayloadWriter(route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+	}
+}
+
+func streamSubscribePayloadWriter(route string, fromOffset uint64) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, fromOffset)
+	}
+}
+
+func streamUnsubscribePayloadWriter(route string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+	}
+}

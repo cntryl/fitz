@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -383,6 +384,67 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	}
 }
 
+// SendRequestWithWriter sends a request using a payload writer to avoid allocations.
+func (c *Connection) SendRequestWithWriter(ctx context.Context, msgType uint16, writePayload func(*bytes.Buffer)) ([]byte, error) {
+	// Check connection state
+	if !c.isAuthenticated() {
+		return nil, ErrNotAuthenticated
+	}
+
+	// Create response channel
+	responseChan := make(chan []byte, 1)
+
+	// Register with multiplexer (FIFO queue)
+	c.mux.RegisterRequest(msgType, responseChan, nil)
+
+	// Cleanup on context cancel or completion
+	defer c.mux.UnregisterRequest(msgType, responseChan)
+
+	// Encode frame
+	frame, err := protocol.EncodeFrameWithPayloadWriter(msgType, writePayload)
+	if err != nil {
+		return nil, fmt.Errorf("encode frame: %w", err)
+	}
+	defer frame.Release()
+
+	// Send request
+	writeCtx := ctx
+	if c.cfg.WriteTimeout > 0 {
+		var cancel context.CancelFunc
+		writeCtx, cancel = context.WithTimeout(ctx, c.cfg.WriteTimeout)
+		defer cancel()
+	}
+
+	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
+		debug.Log("Write error for msg_type=%d: %v", msgType, err)
+		return nil, fmt.Errorf("write request: %w", err)
+	}
+
+	// Wait for response
+	select {
+	case resp, ok := <-responseChan:
+		if !ok {
+			// Channel closed (connection error or slow consumer timeout)
+			if err := c.getConnError(); err != nil {
+				return nil, err
+			}
+			return nil, ErrConnectionClosed
+		}
+		return resp, nil
+
+	case <-ctx.Done():
+		// Caller cancelled (UnregisterRequest called via defer)
+		return nil, ctx.Err()
+
+	case <-c.done:
+		// Connection closed
+		if err := c.getConnError(); err != nil {
+			return nil, err
+		}
+		return nil, ErrConnectionClosed
+	}
+}
+
 // SendOneWay sends a fire-and-forget frame (no response expected).
 // Used for operations like Notice PUBLISH where the server does not reply.
 func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []byte) error {
@@ -397,6 +459,33 @@ func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []b
 	defer frame.Release()
 
 	debug.FrameSend(msgType, payload)
+
+	writeCtx := ctx
+	if c.cfg.WriteTimeout > 0 {
+		var cancel context.CancelFunc
+		writeCtx, cancel = context.WithTimeout(ctx, c.cfg.WriteTimeout)
+		defer cancel()
+	}
+
+	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
+		debug.Log("Write error for msg_type=%d: %v", msgType, err)
+		return fmt.Errorf("write fire-and-forget: %w", err)
+	}
+
+	return nil
+}
+
+// SendOneWayWithWriter sends a fire-and-forget frame using a payload writer.
+func (c *Connection) SendOneWayWithWriter(ctx context.Context, msgType uint16, writePayload func(*bytes.Buffer)) error {
+	if !c.isAuthenticated() {
+		return ErrNotAuthenticated
+	}
+
+	frame, err := protocol.EncodeFrameWithPayloadWriter(msgType, writePayload)
+	if err != nil {
+		return fmt.Errorf("encode frame: %w", err)
+	}
+	defer frame.Release()
 
 	writeCtx := ctx
 	if c.cfg.WriteTimeout > 0 {

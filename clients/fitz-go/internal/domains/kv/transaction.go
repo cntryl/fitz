@@ -81,13 +81,13 @@ func (t *transaction) Get(ctx context.Context, key []byte) ([]byte, bool, error)
 	}
 
 	// Encode request per CLIENT_SPEC.md
-	payload, err := EncodeGet(t.txID, t.route, key)
+	writer, err := getPayloadWriter(t.txID, t.route, key)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode GET: %w", err)
 	}
 
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvGet, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvGet, writer)
 	if err != nil {
 		return nil, false, fmt.Errorf("GET request failed: %w", err)
 	}
@@ -148,13 +148,13 @@ func (t *transaction) Put(ctx context.Context, key, value []byte) error {
 	}
 
 	// Encode request
-	payload, err := EncodePut(t.txID, t.route, key, value)
+	writer, err := putPayloadWriter(t.txID, t.route, key, value)
 	if err != nil {
 		return fmt.Errorf("encode PUT: %w", err)
 	}
 
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvPut, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvPut, writer)
 	if err != nil {
 		return fmt.Errorf("PUT request failed: %w", err)
 	}
@@ -187,13 +187,13 @@ func (t *transaction) Insert(ctx context.Context, key, value []byte) error {
 	}
 
 	// Encode request (wire format same as PUT)
-	payload, err := EncodeInsert(t.txID, t.route, key, value)
+	writer, err := insertPayloadWriter(t.txID, t.route, key, value)
 	if err != nil {
 		return fmt.Errorf("encode INSERT: %w", err)
 	}
 
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvInsert, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvInsert, writer)
 	if err != nil {
 		return fmt.Errorf("INSERT request failed: %w", err)
 	}
@@ -223,13 +223,13 @@ func (t *transaction) Delete(ctx context.Context, key []byte) error {
 	}
 
 	// Encode request
-	payload, err := EncodeDelete(t.txID, t.route, key)
+	writer, err := deletePayloadWriter(t.txID, t.route, key)
 	if err != nil {
 		return fmt.Errorf("encode DELETE: %w", err)
 	}
 
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvDelete, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvDelete, writer)
 	if err != nil {
 		return fmt.Errorf("DELETE request failed: %w", err)
 	}
@@ -262,13 +262,13 @@ func (t *transaction) DeleteRange(ctx context.Context, startKey, endKey []byte) 
 	}
 
 	// Encode request
-	payload, err := EncodeDeleteRange(t.txID, t.route, startKey, endKey)
+	writer, err := deleteRangePayloadWriter(t.txID, t.route, startKey, endKey)
 	if err != nil {
 		return fmt.Errorf("encode DELETE_RANGE: %w", err)
 	}
 
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvDeleteRange, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvDeleteRange, writer)
 	if err != nil {
 		return fmt.Errorf("DELETE_RANGE request failed: %w", err)
 	}
@@ -297,13 +297,13 @@ func (t *transaction) Scan(ctx context.Context, query ScanQuery) (iter.Iterator[
 	}
 
 	// Encode request
-	payload, err := EncodeScan(t.txID, t.route, query)
+	writer, err := scanPayloadWriter(t.txID, t.route, query)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode SCAN: %w", err)
 	}
 
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvScan, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvScan, writer)
 	if err != nil {
 		return nil, false, fmt.Errorf("SCAN request failed: %w", err)
 	}
@@ -396,13 +396,8 @@ func (t *transaction) Commit(ctx context.Context) error {
 	}
 
 	// Encode request
-	payload, err := EncodeCommit(t.txID, t.route)
-	if err != nil {
-		return fmt.Errorf("encode COMMIT: %w", err)
-	}
-
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvCommit, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvCommit, commitPayloadWriter(t.txID, t.route))
 	if err != nil {
 		return fmt.Errorf("COMMIT request failed: %w", err)
 	}
@@ -430,13 +425,8 @@ func (t *transaction) Rollback(ctx context.Context) error {
 	}
 
 	// Encode request
-	payload, err := EncodeRollback(t.txID, t.route)
-	if err != nil {
-		return fmt.Errorf("encode ROLLBACK: %w", err)
-	}
-
 	// Send request
-	resp, err := t.conn.SendRequest(ctx, protocol.MessageTypeKvRollback, payload)
+	resp, err := t.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvRollback, rollbackPayloadWriter(t.txID, t.route))
 	if err != nil {
 		return fmt.Errorf("ROLLBACK request failed: %w", err)
 	}

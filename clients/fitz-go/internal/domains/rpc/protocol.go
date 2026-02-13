@@ -77,3 +77,39 @@ func EncodeRPCResponse(correlationID [16]byte, sequence uint64, body []byte, str
 		}
 	}), nil
 }
+
+// Payload writer helpers for zero-copy frame encoding
+
+func rpcSubscribeWorkerPayloadWriter(workerRoute string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, workerRoute)
+	}
+}
+
+func rpcUnsubscribeWorkerPayloadWriter(workerRoute string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, workerRoute)
+	}
+}
+
+func rpcRequestPayloadWriter(correlationID [16]byte, route string, replyRoute string, body []byte) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteBytes(buf, correlationID[:])
+		encoding.WriteRoute(buf, route)
+		encoding.WriteRoute(buf, replyRoute)
+		encoding.WriteBytes(buf, body)
+	}
+}
+
+func rpcResponsePayloadWriter(correlationID [16]byte, sequence uint64, body []byte, streamEnd bool) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteBytes(buf, correlationID[:])
+		encoding.WriteU64(buf, sequence)
+		encoding.WriteBytes(buf, body)
+		if streamEnd {
+			buf.WriteByte(1)
+		} else {
+			buf.WriteByte(0)
+		}
+	}
+}
