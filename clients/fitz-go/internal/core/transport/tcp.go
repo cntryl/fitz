@@ -52,6 +52,9 @@ func (t *TCPTransport) Write(ctx context.Context, frame []byte) error {
 	if t.closed.Load() {
 		return ErrTransportClosed
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
@@ -69,9 +72,15 @@ func (t *TCPTransport) Write(ctx context.Context, frame []byte) error {
 	// Atomic write (header + frame together)
 	// Note: We could optimize with writev/sendmsg, but simplicity preferred
 	if _, err := t.conn.Write(header); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("write tcp frame header: %w", err)
 	}
 	if _, err := t.conn.Write(frame); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("write tcp frame body: %w", err)
 	}
 

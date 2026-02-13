@@ -232,7 +232,38 @@ func (c *Connection) dispatchLoop() {
 		if c.cfg.ReadTimeout > 0 {
 			var cancel context.CancelFunc
 			readCtx, cancel = context.WithTimeout(c.ctx, c.cfg.ReadTimeout)
-			defer cancel()
+			frame, err := c.transport.Read(readCtx)
+			cancel()
+			if err != nil {
+				if debug.Enabled {
+					debug.Log("Transport read error: %v", err)
+				}
+				c.handleReadError(err)
+				return
+			}
+
+			debug.FrameRecvRaw(frame)
+
+			// Decode frame (MessageType + payload)
+			msgType, payload, err := protocol.DecodeFrame(frame)
+			if err != nil {
+				debug.DecodeError(frame, err)
+				c.setConnError(fmt.Errorf("decode frame: %w", err))
+				return
+			}
+
+			debug.FrameRecv(msgType, payload)
+
+			// First valid response confirms authentication
+			if firstResponse {
+				debug.Log("First response received — auth confirmed")
+				c.confirmAuthentication()
+				firstResponse = false
+			}
+
+			// Route to multiplexer (non-blocking dispatch)
+			c.mux.Dispatch(msgType, payload)
+			continue
 		}
 
 		frame, err := c.transport.Read(readCtx)

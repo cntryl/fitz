@@ -1,4 +1,4 @@
-package kv
+﻿package kv
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ import (
 // TestShouldEncodeBeginGivenValidRoute tests BEGIN request encoding with route and mode.
 func TestShouldEncodeBeginGivenValidRoute(t *testing.T) {
 	// Arrange
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	mode := TxModeReadOnly
 	durability := DurabilityBuffered
 
@@ -39,7 +39,7 @@ func TestShouldEncodeBeginGivenValidRoute(t *testing.T) {
 // TestShouldEncodeBeginGivenReadWriteMode tests BEGIN encoding with ReadWrite mode.
 func TestShouldEncodeBeginGivenReadWriteMode(t *testing.T) {
 	// Arrange
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	mode := TxModeReadWrite
 	durability := DurabilitySync
 
@@ -62,7 +62,7 @@ func TestShouldEncodeBeginGivenReadWriteMode(t *testing.T) {
 func TestShouldEncodeGetGivenValidKeyAndTxID(t *testing.T) {
 	// Arrange
 	txID := uint64(12345)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("user:123")
 
 	// Act
@@ -101,7 +101,7 @@ func TestShouldEncodeGetGivenValidKeyAndTxID(t *testing.T) {
 func TestShouldEncodePutGivenValidKeyAndValue(t *testing.T) {
 	// Arrange
 	txID := uint64(67890)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("user:456")
 	value := []byte(`{"name":"Alice"}`)
 
@@ -140,7 +140,7 @@ func TestShouldEncodePutGivenValidKeyAndValue(t *testing.T) {
 func TestShouldEncodeInsertGivenValidData(t *testing.T) {
 	// Arrange
 	txID := uint64(11111)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("new:key")
 	value := []byte("new value")
 
@@ -161,7 +161,7 @@ func TestShouldEncodeInsertGivenValidData(t *testing.T) {
 func TestShouldEncodeDeleteGivenValidKey(t *testing.T) {
 	// Arrange
 	txID := uint64(22222)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("del:key")
 
 	// Act
@@ -181,7 +181,7 @@ func TestShouldEncodeDeleteGivenValidKey(t *testing.T) {
 func TestShouldEncodeDeleteRangeGivenValidRange(t *testing.T) {
 	// Arrange
 	txID := uint64(33333)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	startKey := []byte("range:start")
 	endKey := []byte("range:end")
 
@@ -218,7 +218,7 @@ func TestShouldEncodeDeleteRangeGivenValidRange(t *testing.T) {
 func TestShouldEncodeScanGivenFullRangeQuery(t *testing.T) {
 	// Arrange
 	txID := uint64(44444)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	query := ScanQuery{
 		StartKey: []byte("scan:a"),
 		EndKey:   []byte("scan:z"),
@@ -247,7 +247,7 @@ func TestShouldEncodeScanGivenFullRangeQuery(t *testing.T) {
 func TestShouldEncodeScanGivenReverseQuery(t *testing.T) {
 	// Arrange
 	txID := uint64(55555)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	query := ScanQuery{
 		StartKey: nil,
 		EndKey:   nil,
@@ -270,7 +270,7 @@ func TestShouldEncodeScanGivenReverseQuery(t *testing.T) {
 func TestShouldEncodeCommitGivenValidTxID(t *testing.T) {
 	// Arrange
 	txID := uint64(66666)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 
 	// Act
 	payload, err := EncodeCommit(txID, route)
@@ -299,7 +299,7 @@ func TestShouldEncodeCommitGivenValidTxID(t *testing.T) {
 func TestShouldEncodeRollbackGivenValidTxID(t *testing.T) {
 	// Arrange
 	txID := uint64(77777)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 
 	// Act
 	payload, err := EncodeRollback(txID, route)
@@ -318,7 +318,7 @@ func TestShouldEncodeRollbackGivenValidTxID(t *testing.T) {
 func TestShouldRejectOversizedKeyGivenKeyTooLarge(t *testing.T) {
 	// Arrange
 	txID := uint64(88888)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := make([]byte, MaxKeySize+1) // Exceed limit
 
 	// Act
@@ -333,7 +333,7 @@ func TestShouldRejectOversizedKeyGivenKeyTooLarge(t *testing.T) {
 func TestShouldRejectOversizedValueGivenValueTooLarge(t *testing.T) {
 	// Arrange
 	txID := uint64(99999)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("user:999")
 	value := make([]byte, MaxValueSize+1) // Exceed limit
 
@@ -349,7 +349,7 @@ func TestShouldRejectOversizedValueGivenValueTooLarge(t *testing.T) {
 func TestShouldAcceptMaxSizeKeyGivenExactLimit(t *testing.T) {
 	// Arrange
 	txID := uint64(10101)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := make([]byte, MaxKeySize) // Exactly at limit
 
 	// Act
@@ -364,7 +364,7 @@ func TestShouldAcceptMaxSizeKeyGivenExactLimit(t *testing.T) {
 func TestShouldAcceptMaxSizeValueGivenExactLimit(t *testing.T) {
 	// Arrange
 	txID := uint64(20202)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("user:max")
 	value := make([]byte, MaxValueSize) // Exactly at limit
 
@@ -380,7 +380,7 @@ func TestShouldAcceptMaxSizeValueGivenExactLimit(t *testing.T) {
 func TestShouldRejectEmptyKeyGivenZeroLengthKey(t *testing.T) {
 	// Arrange
 	txID := uint64(30303)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte{} // Empty key
 
 	// Act
@@ -395,7 +395,7 @@ func TestShouldRejectEmptyKeyGivenZeroLengthKey(t *testing.T) {
 func TestShouldEncodeEmptyValueGivenZeroLengthValue(t *testing.T) {
 	// Arrange
 	txID := uint64(40404)
-	route := "ftz://1/kv/acme/app/users"
+	route := "kv://acme/app/users"
 	key := []byte("empty:value")
 	value := []byte{} // Empty value (allowed)
 
@@ -421,3 +421,109 @@ func TestShouldEncodeEmptyValueGivenZeroLengthValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint32(0), valueLen)
 }
+
+// Benchmarks
+
+func BenchmarkEncodeBegin(b *testing.B) {
+	route := "kv://acme/app/users"
+	mode := TxModeReadWrite
+	durability := DurabilitySync
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = EncodeBegin(route, mode, durability)
+	}
+}
+
+func BenchmarkEncodeGet(b *testing.B) {
+	txID := uint64(12345)
+	route := "kv://acme/app/users"
+	key := []byte("user:123")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = EncodeGet(txID, route, key)
+	}
+}
+
+func BenchmarkEncodePut(b *testing.B) {
+	b.Run("small value", func(b *testing.B) {
+		txID := uint64(12345)
+		route := "kv://acme/app/users"
+		key := []byte("user:456")
+		value := []byte(`{"name":"Alice"}`)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = EncodePut(txID, route, key, value)
+		}
+	})
+
+	b.Run("large value", func(b *testing.B) {
+		txID := uint64(12345)
+		route := "kv://acme/app/users"
+		key := []byte("user:456")
+		value := make([]byte, 10000)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = EncodePut(txID, route, key, value)
+		}
+	})
+}
+
+func BenchmarkEncodeDelete(b *testing.B) {
+	txID := uint64(22222)
+	route := "kv://acme/app/users"
+	key := []byte("del:key")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = EncodeDelete(txID, route, key)
+	}
+}
+
+func BenchmarkEncodeScan(b *testing.B) {
+	txID := uint64(44444)
+	route := "kv://acme/app/users"
+	query := ScanQuery{
+		StartKey: []byte("scan:a"),
+		EndKey:   []byte("scan:z"),
+		Limit:    100,
+		Reverse:  false,
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = EncodeScan(txID, route, query)
+	}
+}
+
+func BenchmarkEncodeCommit(b *testing.B) {
+	txID := uint64(66666)
+	route := "kv://acme/app/users"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = EncodeCommit(txID, route)
+	}
+}
+
+func BenchmarkEncodeRollback(b *testing.B) {
+	txID := uint64(77777)
+	route := "kv://acme/app/users"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = EncodeRollback(txID, route)
+	}
+}
+

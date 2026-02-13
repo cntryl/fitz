@@ -163,6 +163,9 @@ func (w *WebSocketTransport) Write(ctx context.Context, frame []byte) error {
 	if w.closed.Load() {
 		return ErrTransportClosed
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -174,7 +177,13 @@ func (w *WebSocketTransport) Write(ctx context.Context, frame []byte) error {
 	defer w.conn.SetWriteDeadline(time.Time{})
 
 	// Write binary frame with masking (client-to-server requires mask)
-	return w.writeFrame(opcodeBinary, frame, true)
+	if err := w.writeFrame(opcodeBinary, frame, true); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
+	}
+	return nil
 }
 
 // writeFrame writes a WebSocket frame with optional masking.

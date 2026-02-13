@@ -1,9 +1,36 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"sync"
 )
+
+// bufferPool provides buffer pooling for frame encoding
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
+// getBuffer gets a buffer from the pool
+func getBuffer() *bytes.Buffer {
+	return bufferPool.Get().(*bytes.Buffer)
+}
+
+// putBuffer returns a buffer to the pool
+func putBuffer(buf *bytes.Buffer) {
+	buf.Reset()
+	bufferPool.Put(buf)
+}
+
+// writeU16BE writes a u16 in big-endian format
+func writeU16BE(buf *bytes.Buffer, val uint16) {
+	var b [2]byte
+	binary.BigEndian.PutUint16(b[:], val)
+	buf.Write(b[:])
+}
 
 // Frame encoding/decoding per CLIENT_SPEC.md
 // Wire format: [MessageType (variable 1-3 bytes)][Length (u16 BE)][Payload]
@@ -56,25 +83,34 @@ func DecodeMessageType(data []byte) (msgType uint16, bytesRead int, err error) {
 	return msgType, 3, nil
 }
 
-// EncodeFrame encodes a complete message frame
+// EncodeFrame encodes a complete message frame using buffer pools
 // Format: [MessageType (variable)][Length (u16 BE)][Payload]
 func EncodeFrame(msgType uint16, payload []byte) []byte {
 	if len(payload) > MaxPayloadSize {
 		panic(fmt.Sprintf("payload too large: %d bytes (max %d)", len(payload), MaxPayloadSize))
 	}
 
-	msgTypeBytes := EncodeMessageType(msgType)
-	frame := make([]byte, 0, len(msgTypeBytes)+2+len(payload))
-	frame = append(frame, msgTypeBytes...)
+	buf := getBuffer()
+	defer putBuffer(buf)
 
-	// Length (u16 BE)
-	lengthBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(lengthBytes, uint16(len(payload)))
-	frame = append(frame, lengthBytes...)
+	// Write message type (variable length)
+	if msgType <= 254 {
+		buf.WriteByte(byte(msgType))
+	} else {
+		buf.WriteByte(MessageTypeEscape)
+		writeU16BE(buf, msgType)
+	}
 
-	// Payload
-	frame = append(frame, payload...)
-	return frame
+	// Write length (u16 BE)
+	writeU16BE(buf, uint16(len(payload)))
+
+	// Write payload
+	buf.Write(payload)
+
+	// Return copy
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	return result
 }
 
 // DecodeFrame decodes a message frame
@@ -104,19 +140,45 @@ func DecodeFrame(data []byte) (msgType uint16, payload []byte, err error) {
 	return msgType, payload, nil
 }
 
-// EncodeTCPFrame encodes a frame for TCP transport
+// EncodeTCPFrame encodes a frame for TCP transport using buffer pools
 // Format: [Frame Length (u32 BE)][MessageType][Length][Payload]
 // where Frame Length = total size of [MessageType][Length][Payload]
 func EncodeTCPFrame(msgType uint16, payload []byte) []byte {
-	// First encode the inner frame
-	innerFrame := EncodeFrame(msgType, payload)
+	if len(payload) > MaxPayloadSize {
+		panic(fmt.Sprintf("payload too large: %d bytes (max %d)", len(payload), MaxPayloadSize))
+	}
 
-	// Prepend u32 BE length
-	tcpFrame := make([]byte, 4+len(innerFrame))
-	binary.BigEndian.PutUint32(tcpFrame[0:4], uint32(len(innerFrame)))
-	copy(tcpFrame[4:], innerFrame)
+	buf := getBuffer()
+	defer putBuffer(buf)
 
-	return tcpFrame
+	// Reserve space for frame length (will write later)
+	lengthPos := buf.Len()
+	buf.Write([]byte{0, 0, 0, 0}) // Placeholder for u32 length
+
+	// Write message type (variable length)
+	if msgType <= 254 {
+		buf.WriteByte(byte(msgType))
+	} else {
+		buf.WriteByte(MessageTypeEscape)
+		writeU16BE(buf, msgType)
+	}
+
+	// Write payload length (u16 BE)
+	writeU16BE(buf, uint16(len(payload)))
+
+	// Write payload
+	buf.Write(payload)
+
+	// Calculate and write frame length
+	// Frame length = everything after the u32 length field
+	frameLength := uint32(buf.Len() - 4)
+	result := buf.Bytes()
+	binary.BigEndian.PutUint32(result[lengthPos:lengthPos+4], frameLength)
+
+	// Return copy
+	final := make([]byte, buf.Len())
+	copy(final, result)
+	return final
 }
 
 // DecodeTCPFrameLength reads the frame length prefix from TCP stream

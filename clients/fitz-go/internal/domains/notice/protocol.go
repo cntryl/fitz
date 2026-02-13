@@ -1,8 +1,11 @@
 package notice
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+
+	"github.com/cntryl/fitz-go/internal/core/encoding"
 )
 
 // Wire operation codes for Notice domain. Values are message type identifiers.
@@ -27,7 +30,8 @@ var (
 
 func encodePublish(route string, body []byte) []byte {
 	routeBytes := []byte(route)
-	buf := make([]byte, 0, 4+len(routeBytes)+4+len(body))
+	totalLen := 4 + len(routeBytes) + 4 + len(body)
+	buf := make([]byte, 0, totalLen)
 	buf = appendU32(buf, uint32(len(routeBytes)))
 	buf = append(buf, routeBytes...)
 	buf = appendU32(buf, uint32(len(body)))
@@ -36,11 +40,9 @@ func encodePublish(route string, body []byte) []byte {
 }
 
 func encodeSubscribe(route string) []byte {
-	pat := []byte(route)
-	buf := make([]byte, 0, 4+len(pat))
-	buf = appendU32(buf, uint32(len(pat)))
-	buf = append(buf, pat...)
-	return buf
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+	})
 }
 
 func encodeUnsubscribe(route string) []byte {

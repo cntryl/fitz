@@ -76,14 +76,12 @@ func NewClient(conn *connection.Connection) Client {
 // Response: [status][u8 has_session_id][u64 session_id if has=1][bytes data]
 // Expected offset (OCC) is sent only here; the session tracks it internally on the server.
 func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamBegin(route, expectedOffset, nil)
+	if err != nil {
+		return nil, fmt.Errorf("encode BEGIN: %w", err)
+	}
 
-	connection.WriteString(buf, route)
-	connection.WriteU64BE(buf, expectedOffset)
-	connection.WriteU8(buf, 0) // no ingest metadata (optional bytes flag=0)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamBegin, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamBegin, payload)
 	if err != nil {
 		return nil, fmt.Errorf("BEGIN request failed: %w", err)
 	}
@@ -115,14 +113,12 @@ func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64)
 // Append per server stream_codec.rs. Expected offset is tracked by the session (established at Begin).
 // Request: [u64 session_id][bytes body][optional bytes metadata]
 func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamAppend(s.sessionID, body, nil)
+	if err != nil {
+		return 0, fmt.Errorf("encode APPEND: %w", err)
+	}
 
-	connection.WriteU64BE(buf, s.sessionID)
-	connection.WriteBytes(buf, body)
-	connection.WriteU8(buf, 0) // no metadata (optional bytes flag=0)
-
-	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamAppend, buf.Bytes())
+	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamAppend, payload)
 	if err != nil {
 		return 0, fmt.Errorf("APPEND request failed: %w", err)
 	}
@@ -156,13 +152,12 @@ func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
 // Commit per server stream_codec.rs:
 // Request: [u64 session_id][u8 mode] where mode: 0=Buffered, 1=Sync
 func (s *session) Commit(ctx context.Context) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamCommit(s.sessionID, 0)
+	if err != nil {
+		return fmt.Errorf("encode COMMIT: %w", err)
+	}
 
-	connection.WriteU64BE(buf, s.sessionID)
-	connection.WriteU8(buf, 0) // mode = Buffered
-
-	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamCommit, buf.Bytes())
+	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamCommit, payload)
 	if err != nil {
 		return fmt.Errorf("COMMIT request failed: %w", err)
 	}
@@ -180,12 +175,12 @@ func (s *session) Commit(ctx context.Context) error {
 // Rollback per server stream_codec.rs:
 // Request: [u64 session_id]
 func (s *session) Rollback(ctx context.Context) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamRollback(s.sessionID)
+	if err != nil {
+		return fmt.Errorf("encode ROLLBACK: %w", err)
+	}
 
-	connection.WriteU64BE(buf, s.sessionID)
-
-	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamRollback, buf.Bytes())
+	resp, err := s.conn.SendRequest(ctx, protocol.MessageTypeStreamRollback, payload)
 	if err != nil {
 		return fmt.Errorf("ROLLBACK request failed: %w", err)
 	}
@@ -204,15 +199,12 @@ func (s *session) Rollback(ctx context.Context) error {
 // Request: [string route][u64 from_offset][u64 limit][optional u64 max_bytes]
 // Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamRead(route, fromOffset, limit, nil)
+	if err != nil {
+		return nil, fmt.Errorf("encode READ: %w", err)
+	}
 
-	connection.WriteString(buf, route)
-	connection.WriteU64BE(buf, fromOffset)
-	connection.WriteU64BE(buf, limit)
-	connection.WriteU8(buf, 0) // no max_bytes (optional u64 flag=0)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamRead, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamRead, payload)
 	if err != nil {
 		return nil, fmt.Errorf("READ request failed: %w", err)
 	}
@@ -241,12 +233,12 @@ func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint
 // Request: [string route]
 // Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) Last(ctx context.Context, route string) (*Record, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamLast(route)
+	if err != nil {
+		return nil, fmt.Errorf("encode LAST: %w", err)
+	}
 
-	connection.WriteString(buf, route)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamLast, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamLast, payload)
 	if err != nil {
 		return nil, fmt.Errorf("LAST request failed: %w", err)
 	}
@@ -279,12 +271,12 @@ func (c *client) Last(ctx context.Context, route string) (*Record, error) {
 // Request: [string route]
 // Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) GetMetadata(ctx context.Context, route string) (*Metadata, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeStreamGetMetadata(route)
+	if err != nil {
+		return nil, fmt.Errorf("encode GET_METADATA: %w", err)
+	}
 
-	connection.WriteString(buf, route)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamGetMetadata, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeStreamGetMetadata, payload)
 	if err != nil {
 		return nil, fmt.Errorf("GET_METADATA request failed: %w", err)
 	}

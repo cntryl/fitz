@@ -1,18 +1,21 @@
 package connection_test
 
 import (
-	"context"
 	"testing"
+	"time"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestShouldCreateConnectionGivenValidConfigWhenCalled tests basic connection creation.
-func TestShouldCreateConnectionGivenValidConfigWhenCalled(t *testing.T) {
+// Mock transport is now provided by testkit.MockTransport from internal/testkit package
+
+// TestShouldCreateConnectionGivenValidConfig tests basic connection creation.
+func TestShouldCreateConnectionGivenValidConfig(t *testing.T) {
 	// Arrange
-	transport := &mockTransport{}
+	transport := &testkit.MockTransport{}
 	cfg := connection.DefaultConfig()
 
 	// Act
@@ -22,33 +25,8 @@ func TestShouldCreateConnectionGivenValidConfigWhenCalled(t *testing.T) {
 	require.NotNil(t, conn)
 }
 
-// mockTransport is a simple mock for testing.
-type mockTransport struct {
-	readFrames  [][]byte
-	writeFrames [][]byte
-}
-
-func (m *mockTransport) Write(ctx context.Context, frame []byte) error {
-	m.writeFrames = append(m.writeFrames, frame)
-	return nil
-}
-
-func (m *mockTransport) Read(ctx context.Context) ([]byte, error) {
-	// Block until context cancelled for now
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func (m *mockTransport) Close() error {
-	return nil
-}
-
-func (m *mockTransport) RemoteAddr() string {
-	return "mock://test"
-}
-
-// TestShouldEncodeDecodeRequestResponseGivenValidPayloadWhenCalled tests response helpers.
-func TestShouldParseStandardResponseGivenSuccessStatusWhenCalled(t *testing.T) {
+// TestShouldParseStandardResponseGivenSuccessStatus tests success response parsing.
+func TestShouldParseStandardResponseGivenSuccessStatus(t *testing.T) {
 	// Arrange - Success response: [status=0][remaining data]
 	payload := []byte{0x00, 0x01, 0x02, 0x03}
 
@@ -61,8 +39,8 @@ func TestShouldParseStandardResponseGivenSuccessStatusWhenCalled(t *testing.T) {
 	assert.Equal(t, []byte{0x01, 0x02, 0x03}, remaining)
 }
 
-// TestShouldReturnErrorGivenErrorStatusWhenParsingResponse tests error response parsing.
-func TestShouldReturnErrorGivenErrorStatusWhenParsingResponse(t *testing.T) {
+// TestShouldParseStandardResponseGivenErrorStatus tests error response parsing.
+func TestShouldParseStandardResponseGivenErrorStatus(t *testing.T) {
 	// Arrange - Error response: [status=1][u32 BE len][error message]
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -74,14 +52,112 @@ func TestShouldReturnErrorGivenErrorStatusWhenParsingResponse(t *testing.T) {
 	// Act
 	success, _, err := connection.ParseStandardResponse(payload)
 
-	//Assert
+	// Assert
 	require.Error(t, err)
 	assert.False(t, success)
 	assert.Contains(t, err.Error(), "test error message")
 }
 
-// TestShouldMatchResponsesInFIFOOrderGivenMultiplexerWhenDispatched tests FIFO correlation.
-func TestShouldMatchResponsesInFIFOOrderGivenMultiplexerWhenDispatched(t *testing.T) {
+// TestShouldRejectParseGivenEmptyPayload tests edge case of empty payload.
+func TestShouldRejectParseGivenEmptyPayload(t *testing.T) {
+	_, _, err := connection.ParseStandardResponse([]byte{})
+
+	require.Error(t, err)
+}
+
+// TestShouldEncodeDecodeU32BE tests U32BE encoding/decoding.
+func TestShouldEncodeDecodeU32BE(t *testing.T) {
+	t.Run("value 0", func(t *testing.T) {
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		connection.WriteU32BE(buf, 0)
+		actual, _, err := connection.ReadU32BE(buf.Bytes(), 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, uint32(0), actual)
+	})
+
+	t.Run("value max uint32", func(t *testing.T) {
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		connection.WriteU32BE(buf, 0xFFFFFFFF)
+		actual, _, err := connection.ReadU32BE(buf.Bytes(), 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, uint32(0xFFFFFFFF), actual)
+	})
+}
+
+// TestShouldEncodeDecodeU64BE tests U64BE encoding/decoding.
+func TestShouldEncodeDecodeU64BE(t *testing.T) {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+
+	expectedValue := uint64(0x123456789ABCDEF0)
+
+	connection.WriteU64BE(buf, expectedValue)
+	actual, _, err := connection.ReadU64BE(buf.Bytes(), 0)
+
+	require.NoError(t, err)
+	assert.Equal(t, expectedValue, actual)
+}
+
+// TestShouldEncodeDecodeU8 tests U8 encoding/decoding.
+func TestShouldEncodeDecodeU8(t *testing.T) {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+
+	connection.WriteU8(buf, 42)
+	actual, _, err := connection.ReadU8(buf.Bytes(), 0)
+
+	require.NoError(t, err)
+	assert.Equal(t, uint8(42), actual)
+}
+
+// TestShouldEncodeDecodeString tests string encoding/decoding.
+func TestShouldEncodeDecodeString(t *testing.T) {
+	t.Run("simple ASCII", func(t *testing.T) {
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		expectedString := "hello world"
+
+		connection.WriteString(buf, expectedString)
+		actual, _, err := connection.ReadString(buf.Bytes(), 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, expectedString, actual)
+	})
+
+	t.Run("UTF-8 with special characters", func(t *testing.T) {
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		expectedString := "test string with special chars: ñ 测试"
+
+		connection.WriteString(buf, expectedString)
+		actual, _, err := connection.ReadString(buf.Bytes(), 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, expectedString, actual)
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		connection.WriteString(buf, "")
+		actual, _, err := connection.ReadString(buf.Bytes(), 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, "", actual)
+	})
+}
+
+// TestShouldMatchResponsesInFIFOOrder tests multiplexer FIFO ordering.
+func TestShouldMatchResponsesInFIFOOrder(t *testing.T) {
 	// Arrange
 	mux := connection.NewMultiplexer()
 	defer mux.Close()
@@ -106,46 +182,8 @@ func TestShouldMatchResponsesInFIFOOrderGivenMultiplexerWhenDispatched(t *testin
 	assert.Equal(t, []byte("response_3"), <-resp3)
 }
 
-// TestShouldReadAndWriteHelpersGivenValidDataWhenCalled tests encoding helpers.
-func TestShouldEncodeDecodeU32BEGivenValidValueWhenCalled(t *testing.T) {
-	// Arrange
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	expectedValue := uint32(0x12345678)
-
-	// Act - Write
-	connection.WriteU32BE(buf, expectedValue)
-
-	// Act - Read
-	actualValue, _, err := connection.ReadU32BE(buf.Bytes(), 0)
-
-	// Assert
-	require.NoError(t, err)
-	assert.Equal(t, expectedValue, actualValue)
-}
-
-// TestShouldEncodeDecodeStringGivenValidDataWhenCalled tests string encoding.
-func TestShouldEncodeDecodeStringGivenValidDataWhenCalled(t *testing.T) {
-	// Arrange
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	expectedString := "test string with special chars: ñ 测试"
-
-	// Act - Write
-	connection.WriteString(buf, expectedString)
-
-	// Act - Read
-	actualString, _, err := connection.ReadString(buf.Bytes(), 0)
-
-	// Assert
-	require.NoError(t, err)
-	assert.Equal(t, expectedString, actualString)
-}
-
-// TestShouldReturnMetricsGivenMultiplexerWhenCalled tests metrics collection.
-func TestShouldReturnMetricsGivenMultiplexerWhenCalled(t *testing.T) {
+// TestShouldReturnMetricsGivenMultiplexer tests metrics collection.
+func TestShouldReturnMetricsGivenMultiplexer(t *testing.T) {
 	// Arrange
 	mux := connection.NewMultiplexer()
 	defer mux.Close()
@@ -159,4 +197,101 @@ func TestShouldReturnMetricsGivenMultiplexerWhenCalled(t *testing.T) {
 	// Assert
 	assert.Equal(t, int64(1), metrics.RequestsInFlight)
 	assert.Equal(t, uint64(1), metrics.RequestsTotal)
+}
+
+// TestShouldDispatchToCorrectChannel tests response routing.
+func TestShouldDispatchToCorrectChannel(t *testing.T) {
+	mux := connection.NewMultiplexer()
+	defer mux.Close()
+
+	resp := make(chan []byte, 1)
+	mux.RegisterRequest(100, resp, nil)
+
+	mux.Dispatch(100, []byte("test response"))
+
+	select {
+	case data := <-resp:
+		assert.Equal(t, []byte("test response"), data)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("response not received")
+	}
+}
+
+// Benchmarks
+
+func BenchmarkEncodeDecodeU32BE(b *testing.B) {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		connection.WriteU32BE(buf, 0x12345678)
+		_, _, _ = connection.ReadU32BE(buf.Bytes(), 0)
+	}
+}
+
+func BenchmarkEncodeDecodeU64BE(b *testing.B) {
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		connection.WriteU64BE(buf, 0x123456789ABCDEF0)
+		_, _, _ = connection.ReadU64BE(buf.Bytes(), 0)
+	}
+}
+
+func BenchmarkEncodeDecodeString(b *testing.B) {
+	b.Run("small string", func(b *testing.B) {
+		testString := "hello world"
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			buf.Reset()
+			connection.WriteString(buf, testString)
+			_, _, _ = connection.ReadString(buf.Bytes(), 0)
+		}
+	})
+
+	b.Run("large string", func(b *testing.B) {
+		testString := "this is a much longer test string that might be used in real KV operations"
+		buf := connection.GetBuffer()
+		defer connection.PutBuffer(buf)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			buf.Reset()
+			connection.WriteString(buf, testString)
+			_, _, _ = connection.ReadString(buf.Bytes(), 0)
+		}
+	})
+}
+
+func BenchmarkDispatchResponse(b *testing.B) {
+	mux := connection.NewMultiplexer()
+	defer mux.Close()
+
+	// Pre-register channels to avoid registration overhead in benchmark
+	channels := make([]chan []byte, 100)
+	for i := 0; i < 100; i++ {
+		ch := make(chan []byte, 1)
+		channels[i] = ch
+		mux.RegisterRequest(uint16(100+i), ch, nil)
+	}
+
+	payload := []byte("test response")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mux.Dispatch(uint16(100+i%100), payload)
+	}
 }

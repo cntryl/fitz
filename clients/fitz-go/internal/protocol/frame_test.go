@@ -1,173 +1,364 @@
 package protocol
 
 import (
-	"bytes"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func Test_EncodeMessageType_SingleByte(t *testing.T) {
-	// Types 0-254 should encode as single byte
-	tests := []struct {
-		msgType  uint16
-		expected []byte
-	}{
-		{0, []byte{0x00}},
-		{1, []byte{0x01}},
-		{100, []byte{0x64}},
-		{254, []byte{0xFE}},
-	}
+func TestShouldEncodeMessageTypeSingleByte(t *testing.T) {
+	t.Run("type 0", func(t *testing.T) {
+		result := EncodeMessageType(0)
+		require.Len(t, result, 1)
+		assert.Equal(t, byte(0x00), result[0])
+	})
 
-	for _, tt := range tests {
-		result := EncodeMessageType(tt.msgType)
-		if !bytes.Equal(result, tt.expected) {
-			t.Errorf("EncodeMessageType(%d) = %v, want %v", tt.msgType, result, tt.expected)
-		}
-	}
+	t.Run("type 1", func(t *testing.T) {
+		result := EncodeMessageType(1)
+		require.Len(t, result, 1)
+		assert.Equal(t, byte(0x01), result[0])
+	})
+
+	t.Run("type 100", func(t *testing.T) {
+		result := EncodeMessageType(100)
+		require.Len(t, result, 1)
+		assert.Equal(t, byte(0x64), result[0])
+	})
+
+	t.Run("type 254 (max single byte)", func(t *testing.T) {
+		result := EncodeMessageType(254)
+		require.Len(t, result, 1)
+		assert.Equal(t, byte(0xFE), result[0])
+	})
 }
 
-func Test_EncodeMessageType_Escaped(t *testing.T) {
-	// Types 255+ should encode with escape byte
-	tests := []struct {
-		msgType  uint16
-		expected []byte
-	}{
-		{255, []byte{0xFF, 0x00, 0xFF}},
-		{500, []byte{0xFF, 0x01, 0xF4}},
-		{65535, []byte{0xFF, 0xFF, 0xFF}},
-	}
+func TestShouldEncodeMessageTypeEscaped(t *testing.T) {
+	t.Run("type 255 (min escaped)", func(t *testing.T) {
+		result := EncodeMessageType(255)
+		require.Len(t, result, 3)
+		assert.Equal(t, byte(0xFF), result[0])
+		assert.Equal(t, byte(0x00), result[1])
+		assert.Equal(t, byte(0xFF), result[2])
+	})
 
-	for _, tt := range tests {
-		result := EncodeMessageType(tt.msgType)
-		if !bytes.Equal(result, tt.expected) {
-			t.Errorf("EncodeMessageType(%d) = %v, want %v", tt.msgType, result, tt.expected)
-		}
-	}
+	t.Run("type 500", func(t *testing.T) {
+		result := EncodeMessageType(500)
+		require.Len(t, result, 3)
+		assert.Equal(t, byte(0xFF), result[0])
+		assert.Equal(t, byte(0x01), result[1])
+		assert.Equal(t, byte(0xF4), result[2])
+	})
+
+	t.Run("type 65535 (max uint16)", func(t *testing.T) {
+		result := EncodeMessageType(65535)
+		require.Len(t, result, 3)
+		assert.Equal(t, byte(0xFF), result[0])
+		assert.Equal(t, byte(0xFF), result[1])
+		assert.Equal(t, byte(0xFF), result[2])
+	})
 }
 
-func Test_DecodeMessageType_SingleByte(t *testing.T) {
-	tests := []struct {
-		data         []byte
-		expectedType uint16
-		expectedLen  int
-	}{
-		{[]byte{0x01}, 1, 1},
-		{[]byte{0x64}, 100, 1},
-		{[]byte{0xFE}, 254, 1},
-	}
+func TestShouldDecodeMessageTypeSingleByte(t *testing.T) {
+	t.Run("type 0", func(t *testing.T) {
+		msgType, bytesRead, err := DecodeMessageType([]byte{0x00})
+		require.NoError(t, err)
+		assert.Equal(t, uint16(0), msgType)
+		assert.Equal(t, 1, bytesRead)
+	})
 
-	for _, tt := range tests {
-		msgType, bytesRead, err := DecodeMessageType(tt.data)
-		if err != nil {
-			t.Errorf("DecodeMessageType(%v) unexpected error: %v", tt.data, err)
-			continue
-		}
-		if msgType != tt.expectedType {
-			t.Errorf("DecodeMessageType(%v) type = %d, want %d", tt.data, msgType, tt.expectedType)
-		}
-		if bytesRead != tt.expectedLen {
-			t.Errorf("DecodeMessageType(%v) bytesRead = %d, want %d", tt.data, bytesRead, tt.expectedLen)
-		}
-	}
+	t.Run("type 100", func(t *testing.T) {
+		msgType, bytesRead, err := DecodeMessageType([]byte{0x64})
+		require.NoError(t, err)
+		assert.Equal(t, uint16(100), msgType)
+		assert.Equal(t, 1, bytesRead)
+	})
+
+	t.Run("type 254", func(t *testing.T) {
+		msgType, bytesRead, err := DecodeMessageType([]byte{0xFE})
+		require.NoError(t, err)
+		assert.Equal(t, uint16(254), msgType)
+		assert.Equal(t, 1, bytesRead)
+	})
 }
 
-func Test_DecodeMessageType_Escaped(t *testing.T) {
-	tests := []struct {
-		data         []byte
-		expectedType uint16
-		expectedLen  int
-	}{
-		{[]byte{0xFF, 0x00, 0xFF}, 255, 3},
-		{[]byte{0xFF, 0x01, 0xF4}, 500, 3},
-		{[]byte{0xFF, 0x01, 0xF5}, 501, 3},
-	}
+func TestShouldDecodeMessageTypeEscaped(t *testing.T) {
+	t.Run("type 255", func(t *testing.T) {
+		msgType, bytesRead, err := DecodeMessageType([]byte{0xFF, 0x00, 0xFF})
+		require.NoError(t, err)
+		assert.Equal(t, uint16(255), msgType)
+		assert.Equal(t, 3, bytesRead)
+	})
 
-	for _, tt := range tests {
-		msgType, bytesRead, err := DecodeMessageType(tt.data)
-		if err != nil {
-			t.Errorf("DecodeMessageType(%v) unexpected error: %v", tt.data, err)
-			continue
-		}
-		if msgType != tt.expectedType {
-			t.Errorf("DecodeMessageType(%v) type = %d, want %d", tt.data, msgType, tt.expectedType)
-		}
-		if bytesRead != tt.expectedLen {
-			t.Errorf("DecodeMessageType(%v) bytesRead = %d, want %d", tt.data, bytesRead, tt.expectedLen)
-		}
-	}
+	t.Run("type 500", func(t *testing.T) {
+		msgType, bytesRead, err := DecodeMessageType([]byte{0xFF, 0x01, 0xF4})
+		require.NoError(t, err)
+		assert.Equal(t, uint16(500), msgType)
+		assert.Equal(t, 3, bytesRead)
+	})
+
+	t.Run("type 65535", func(t *testing.T) {
+		msgType, bytesRead, err := DecodeMessageType([]byte{0xFF, 0xFF, 0xFF})
+		require.NoError(t, err)
+		assert.Equal(t, uint16(65535), msgType)
+		assert.Equal(t, 3, bytesRead)
+	})
 }
 
-func Test_EncodeDecodeFrame_RoundTrip(t *testing.T) {
-	tests := []struct {
-		name    string
-		msgType uint16
-		payload []byte
-	}{
-		{"empty payload", 100, []byte{}},
-		{"small payload", 100, []byte("hello")},
-		{"KV BEGIN", 100, []byte{0x00, 0x00, 0x00, 0x15 /* route */}},
-		{"Notice SUBSCRIBE (escaped)", 501, []byte{0x00, 0x00, 0x00, 0x14 /* pattern */}},
-	}
+func TestShouldRejectDecodeMessageTypeGivenTruncatedData(t *testing.T) {
+	t.Run("empty data", func(t *testing.T) {
+		_, _, err := DecodeMessageType([]byte{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "insufficient")
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Encode
-			frame := EncodeFrame(tt.msgType, tt.payload)
+	t.Run("escape byte without type bytes", func(t *testing.T) {
+		_, _, err := DecodeMessageType([]byte{0xFF})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "insufficient")
+	})
 
-			// Decode
-			decodedType, decodedPayload, err := DecodeFrame(frame)
-			if err != nil {
-				t.Fatalf("DecodeFrame() error: %v", err)
-			}
-
-			if decodedType != tt.msgType {
-				t.Errorf("DecodeFrame() type = %d, want %d", decodedType, tt.msgType)
-			}
-
-			if !bytes.Equal(decodedPayload, tt.payload) {
-				t.Errorf("DecodeFrame() payload = %v, want %v", decodedPayload, tt.payload)
-			}
-		})
-	}
+	t.Run("escape byte with partial type", func(t *testing.T) {
+		_, _, err := DecodeMessageType([]byte{0xFF, 0x00})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "insufficient")
+	})
 }
 
-func Test_EncodeFrame_MatchesSpec(t *testing.T) {
-	// Test KV BEGIN (MessageType=100) from CLIENT_SPEC.md Example 3
-	// Payload: [route_len (4)][route (21)][mode (1)][durability (1)] = 27 bytes total
-	payload := []byte{
-		0x00, 0x00, 0x00, 0x15, // route_len=21
-		// "kv://prod/app/users" (21 bytes)
-		0x6b, 0x76, 0x3a, 0x2f, 0x2f, 0x70, 0x72, 0x6f,
-		0x64, 0x2f, 0x61, 0x70, 0x70, 0x2f, 0x75, 0x73,
-		0x65, 0x72, 0x73,
-		0x01, // mode=1 (ReadWrite)
-		0x01, // durability=1 (Sync)
-	}
+func TestShouldEncodeDecodeFrameRoundTrip(t *testing.T) {
+	t.Run("empty payload", func(t *testing.T) {
+		payload := []byte{}
+		msgType := uint16(100)
 
-	frame := EncodeFrame(100, payload)
+		encoded := EncodeFrame(msgType, payload)
+		decoded, decodedPayload, err := DecodeFrame(encoded)
 
-	// Expected frame:
-	// [0x64] (MessageType=100, single byte)
-	// [0x00 0x1B] (Length=27, which is 4+21+1+1)
-	// [payload 27 bytes]
-	if len(frame) < 3 {
-		t.Fatal("frame too short")
-	}
+		require.NoError(t, err)
+		assert.Equal(t, msgType, decoded)
+		assert.Equal(t, payload, decodedPayload)
+	})
 
-	if frame[0] != 0x64 {
-		t.Errorf("MessageType byte = 0x%02X, want 0x64", frame[0])
-	}
+	t.Run("small payload", func(t *testing.T) {
+		payload := []byte("hello world")
+		msgType := uint16(100)
 
-	payloadLen := int(frame[1])<<8 | int(frame[2])
-	if payloadLen != len(payload) {
-		t.Errorf("Length field = %d, want %d", payloadLen, len(payload))
-	}
+		encoded := EncodeFrame(msgType, payload)
+		decoded, decodedPayload, err := DecodeFrame(encoded)
 
-	if !bytes.Equal(frame[3:], payload) {
-		t.Errorf("Payload mismatch")
-	}
+		require.NoError(t, err)
+		assert.Equal(t, msgType, decoded)
+		assert.Equal(t, payload, decodedPayload)
+	})
+
+	t.Run("large payload", func(t *testing.T) {
+		// 10KB payload
+		payload := make([]byte, 10240)
+		for i := range payload {
+			payload[i] = byte(i % 256)
+		}
+		msgType := uint16(100)
+
+		encoded := EncodeFrame(msgType, payload)
+		decoded, decodedPayload, err := DecodeFrame(encoded)
+
+		require.NoError(t, err)
+		assert.Equal(t, msgType, decoded)
+		assert.Equal(t, payload, decodedPayload)
+	})
+
+	t.Run("binary payload with nulls", func(t *testing.T) {
+		payload := []byte{0x00, 0xFF, 0x00, 0x42, 0xAB, 0xCD}
+		msgType := uint16(200)
+
+		encoded := EncodeFrame(msgType, payload)
+		decoded, decodedPayload, err := DecodeFrame(encoded)
+
+		require.NoError(t, err)
+		assert.Equal(t, msgType, decoded)
+		assert.Equal(t, payload, decodedPayload)
+	})
+
+	t.Run("escaped message type", func(t *testing.T) {
+		payload := []byte("test")
+		msgType := uint16(500)
+
+		encoded := EncodeFrame(msgType, payload)
+		decoded, decodedPayload, err := DecodeFrame(encoded)
+
+		require.NoError(t, err)
+		assert.Equal(t, msgType, decoded)
+		assert.Equal(t, payload, decodedPayload)
+	})
 }
 
-func Test_RouteDomain(t *testing.T) {
+func TestShouldRejectFrameGivenTruncatedData(t *testing.T) {
+	t.Run("truncated in message type", func(t *testing.T) {
+		data := []byte{0xFF}
+		_, _, err := DecodeFrame(data)
+		require.Error(t, err)
+	})
+
+	t.Run("truncated in length field", func(t *testing.T) {
+		data := []byte{0x64, 0x00}
+		_, _, err := DecodeFrame(data)
+		require.Error(t, err)
+	})
+
+	t.Run("truncated in payload", func(t *testing.T) {
+		data := []byte{0x64, 0x00, 0x10} // Says 16 bytes payload but only 0
+		_, _, err := DecodeFrame(data)
+		require.Error(t, err)
+	})
+}
+
+func TestShouldHandleMaxSizePayload(t *testing.T) {
+	// Create exactly 65535 byte payload (max allowed)
+	payload := make([]byte, MaxPayloadSize)
+	msgType := uint16(100)
+
+	encoded := EncodeFrame(msgType, payload)
+	decoded, decodedPayload, err := DecodeFrame(encoded)
+
+	require.NoError(t, err)
+	assert.Equal(t, msgType, decoded)
+	assert.Equal(t, payload, decodedPayload)
+}
+
+func TestShouldRejectOversizePayload(t *testing.T) {
+	// Payload larger than max should panic
+	payload := make([]byte, MaxPayloadSize+1)
+
+	assert.Panics(t, func() {
+		EncodeFrame(100, payload)
+	})
+}
+
+func TestShouldPreserveBinaryData(t *testing.T) {
+	// Test that all byte values are preserved
+	payload := make([]byte, 256)
+	for i := 0; i < 256; i++ {
+		payload[i] = byte(i)
+	}
+
+	encoded := EncodeFrame(100, payload)
+	_, decodedPayload, err := DecodeFrame(encoded)
+
+	require.NoError(t, err)
+	assert.Equal(t, payload, decodedPayload)
+}
+
+func TestShouldEncodeFrameWithSingleByteType(t *testing.T) {
+	payload := []byte{0x01, 0x02, 0x03}
+	msgType := uint16(100)
+
+	frame := EncodeFrame(msgType, payload)
+
+	// Header should be: [0x64][0x00 0x03]
+	assert.Equal(t, byte(0x64), frame[0])
+	assert.Equal(t, byte(0x00), frame[1])
+	assert.Equal(t, byte(0x03), frame[2])
+	assert.Equal(t, payload, frame[3:])
+}
+
+func TestShouldEncodeFrameWithEscapedType(t *testing.T) {
+	payload := []byte{0x01, 0x02}
+	msgType := uint16(500)
+
+	frame := EncodeFrame(msgType, payload)
+
+	// Header should be: [0xFF][0x01 0xF4][0x00 0x02]
+	assert.Equal(t, byte(0xFF), frame[0])
+	assert.Equal(t, byte(0x01), frame[1])
+	assert.Equal(t, byte(0xF4), frame[2])
+	assert.Equal(t, byte(0x00), frame[3])
+	assert.Equal(t, byte(0x02), frame[4])
+	assert.Equal(t, payload, frame[5:])
+}
+
+// Benchmarks
+func BenchmarkEncodeMessageType(b *testing.B) {
+	b.Run("single byte", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeMessageType(100)
+		}
+	})
+
+	b.Run("escaped type", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeMessageType(500)
+		}
+	})
+}
+
+func BenchmarkDecodeMessageType(b *testing.B) {
+	b.Run("single byte", func(b *testing.B) {
+		data := []byte{0x64}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, _ = DecodeMessageType(data)
+		}
+	})
+
+	b.Run("escaped type", func(b *testing.B) {
+		data := []byte{0xFF, 0x01, 0xF4}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, _ = DecodeMessageType(data)
+		}
+	})
+}
+
+func BenchmarkEncodeFrame(b *testing.B) {
+	b.Run("100 byte payload", func(b *testing.B) {
+		payload := make([]byte, 100)
+		msgType := uint16(100)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeFrame(msgType, payload)
+		}
+	})
+
+	b.Run("10KB payload", func(b *testing.B) {
+		payload := make([]byte, 10240)
+		msgType := uint16(100)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeFrame(msgType, payload)
+		}
+	})
+}
+
+func BenchmarkDecodeFrame(b *testing.B) {
+	b.Run("100 byte payload", func(b *testing.B) {
+		payload := make([]byte, 100)
+		frame := EncodeFrame(100, payload)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, _ = DecodeFrame(frame)
+		}
+	})
+
+	b.Run("10KB payload", func(b *testing.B) {
+		payload := make([]byte, 10240)
+		frame := EncodeFrame(100, payload)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, _ = DecodeFrame(frame)
+		}
+	})
+}
+
+func TestShouldRouteDomain(t *testing.T) {
 	tests := []struct {
 		msgType uint16
 		domain  string
@@ -191,8 +382,6 @@ func Test_RouteDomain(t *testing.T) {
 
 	for _, tt := range tests {
 		domain := RouteDomain(tt.msgType)
-		if domain != tt.domain {
-			t.Errorf("RouteDomain(%d) = %s, want %s", tt.msgType, domain, tt.domain)
-		}
+		assert.Equal(t, tt.domain, domain)
 	}
 }

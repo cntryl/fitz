@@ -1,10 +1,13 @@
 package queue
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cntryl/fitz-go/internal/core/encoding"
 )
 
 // Wire opcodes for Queue domain (per CLIENT_SPEC.md). Values are message type identifiers.
@@ -197,4 +200,25 @@ func EncodeReserve(route string, leaseSeconds uint64, batchSize uint32, waitSeco
 	}
 
 	return payload
+}
+
+// EncodeExtend encodes a Queue EXTEND request payload per CLIENT_SPEC.md.
+// Spec: [route_len][route][message_id][lease_token][lease_seconds]
+func EncodeExtend(route string, messageID uint64, leaseToken uint64, leaseSeconds uint64) ([]byte, error) {
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, messageID)
+		encoding.WriteU64(buf, leaseToken)
+		encoding.WriteU64(buf, leaseSeconds)
+	}), nil
+}
+
+// EncodeComplete encodes a Queue COMPLETE request payload per CLIENT_SPEC.md.
+// Spec: [route_len][route][message_id][lease_token]
+func EncodeComplete(route string, messageID uint64, leaseToken uint64) ([]byte, error) {
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		encoding.WriteU64(buf, messageID)
+		encoding.WriteU64(buf, leaseToken)
+	}), nil
 }

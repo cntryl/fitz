@@ -112,16 +112,12 @@ func NewClient(conn *connection.Connection) Client {
 //
 // Response: [status][u8 has_schedule_id][string schedule_id if has=1]
 func (c *client) Create(ctx context.Context, route string, cronExpr string, payload []byte) (string, error) {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	encoded, err := EncodeScheduleCreate(route, cronExpr, payload)
+	if err != nil {
+		return "", fmt.Errorf("encode CREATE: %w", err)
+	}
 
-	// Build the inner nested TLV blob (SchedulePayload format)
-	innerTLV := encodeSchedulePayload(cronExpr, route, string(payload))
-
-	// Wrap with WriteBytes: [u32 BE len][inner_tlv_blob]
-	connection.WriteBytes(buf, innerTLV)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCreate, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCreate, encoded)
 	if err != nil {
 		return "", fmt.Errorf("CREATE request failed: %w", err)
 	}
@@ -155,12 +151,12 @@ func (c *client) Create(ctx context.Context, route string, cronExpr string, payl
 // Request: [string schedule_id]
 // Response: [status][optional string schedule_id]
 func (c *client) Cancel(ctx context.Context, scheduleID string) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	encoded, err := EncodeScheduleCancel(scheduleID)
+	if err != nil {
+		return fmt.Errorf("encode CANCEL: %w", err)
+	}
 
-	connection.WriteString(buf, scheduleID)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCancel, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleCancel, encoded)
 	if err != nil {
 		return fmt.Errorf("CANCEL request failed: %w", err)
 	}
@@ -181,7 +177,12 @@ func (c *client) Cancel(ctx context.Context, scheduleID string) error {
 // Response: [status][optional string schedule_id]
 func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error) {
 	// Server expects empty payload for LIST
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleList, nil)
+	encoded, err := EncodeScheduleList()
+	if err != nil {
+		return nil, fmt.Errorf("encode LIST: %w", err)
+	}
+
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleList, encoded)
 	if err != nil {
 		return nil, fmt.Errorf("LIST request failed: %w", err)
 	}
@@ -227,11 +228,12 @@ func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error
 func (c *client) Subscribe(ctx context.Context, pattern string, handler ScheduleHandler) (*Subscription, error) {
 	c.initScheduleNotifyHandler()
 
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-	connection.WriteString(buf, pattern)
+	encoded, err := EncodeScheduleSubscribe(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("encode SUBSCRIBE: %w", err)
+	}
 
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleSubscribe, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleSubscribe, encoded)
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
 	}
@@ -279,11 +281,12 @@ func (c *client) Unsubscribe(ctx context.Context, sub *Subscription) error {
 	delete(c.subscriptions, sub.subID)
 	c.mu.Unlock()
 
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-	connection.WriteString(buf, sub.pattern)
+	encoded, err := EncodeScheduleUnsubscribe(sub.pattern)
+	if err != nil {
+		return fmt.Errorf("encode UNSUBSCRIBE: %w", err)
+	}
 
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleUnsubscribe, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleUnsubscribe, encoded)
 	if err != nil {
 		return fmt.Errorf("UNSUBSCRIBE request failed: %w", err)
 	}

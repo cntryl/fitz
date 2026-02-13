@@ -23,14 +23,12 @@ type QueueItem struct {
 
 // Extend extends the lease on this queue item.
 func (q *QueueItem) Extend(ctx context.Context, leaseSecs uint64) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-	connection.WriteString(buf, q.route)
-	connection.WriteU64BE(buf, q.ID)
-	connection.WriteU64BE(buf, q.Token)
-	connection.WriteU64BE(buf, leaseSecs)
+	payload, err := EncodeExtend(q.route, q.ID, q.Token, leaseSecs)
+	if err != nil {
+		return fmt.Errorf("encode EXTEND: %w", err)
+	}
 
-	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueExtend, buf.Bytes())
+	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueExtend, payload)
 	if err != nil {
 		return fmt.Errorf("EXTEND request failed: %w", err)
 	}
@@ -52,13 +50,12 @@ func (q *QueueItem) Complete(ctx context.Context) error {
 // CompleteWithToken completes the item using an explicit token (e.g. for testing invalid token).
 // Normally use Complete(ctx) which uses the item's token.
 func (q *QueueItem) CompleteWithToken(ctx context.Context, token uint64) error {
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-	connection.WriteString(buf, q.route)
-	connection.WriteU64BE(buf, q.ID)
-	connection.WriteU64BE(buf, token)
+	payload, err := EncodeComplete(q.route, q.ID, token)
+	if err != nil {
+		return fmt.Errorf("encode COMPLETE: %w", err)
+	}
 
-	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueComplete, buf.Bytes())
+	resp, err := q.conn.SendRequest(ctx, protocol.MessageTypeQueueComplete, payload)
 	if err != nil {
 		return fmt.Errorf("COMPLETE request failed: %w", err)
 	}

@@ -1,9 +1,11 @@
 package kv
 
 import (
-	"encoding/binary"
+	"bytes"
 	"errors"
 	"strings"
+
+	"github.com/cntryl/fitz-go/internal/core/encoding"
 )
 
 // Wire opcodes for KV domain (per CLIENT_SPEC.md: 100+).
@@ -39,28 +41,11 @@ const (
 
 // EncodeBegin encodes a KV BEGIN request payload per CLIENT_SPEC.md.
 func EncodeBegin(route string, mode uint8, durability uint8) ([]byte, error) {
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-
-	// Calculate total payload size
-	payloadSize := 4 + len(routeBytes) + 1 + 1 // route_len(4) + route + mode(1) + durability(1)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	// [u8] mode
-	payload = append(payload, mode)
-
-	// [u8] durability
-	payload = append(payload, durability)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, route)
+		buf.WriteByte(mode)
+		buf.WriteByte(durability)
+	}), nil
 }
 
 // EncodePut encodes a KV PUT request payload per CLIENT_SPEC.md.
@@ -74,45 +59,12 @@ func EncodePut(txID uint64, route string, key, value []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-	keyLen := uint32(len(key))
-	valueLen := uint32(len(value))
-
-	// Calculate total payload size
-	payloadSize := 8 + 4 + len(routeBytes) + 4 + len(key) + 4 + len(value)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	// [u32 BE] key_len
-	keyLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(keyLenBytes, keyLen)
-	payload = append(payload, keyLenBytes...)
-
-	// [bytes] key
-	payload = append(payload, key...)
-
-	// [u32 BE] value_len
-	valueLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(valueLenBytes, valueLen)
-	payload = append(payload, valueLenBytes...)
-
-	// [bytes] value
-	payload = append(payload, value...)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, key)
+		encoding.WriteBytes(buf, value)
+	}), nil
 }
 
 // EncodeGet encodes a KV GET request payload per CLIENT_SPEC.md.
@@ -123,36 +75,11 @@ func EncodeGet(txID uint64, route string, key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-	keyLen := uint32(len(key))
-
-	// Calculate total payload size
-	payloadSize := 8 + 4 + len(routeBytes) + 4 + len(key)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	// [u32 BE] key_len
-	keyLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(keyLenBytes, keyLen)
-	payload = append(payload, keyLenBytes...)
-
-	// [bytes] key
-	payload = append(payload, key...)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, key)
+	}), nil
 }
 
 // EncodeInsert encodes a KV INSERT request payload per CLIENT_SPEC.md.
@@ -169,35 +96,11 @@ func EncodeDelete(txID uint64, route string, key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-	keyLen := uint32(len(key))
-
-	payloadSize := 8 + 4 + len(routeBytes) + 4 + len(key)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	// [u32 BE] key_len
-	keyLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(keyLenBytes, keyLen)
-	payload = append(payload, keyLenBytes...)
-
-	// [bytes] key
-	payload = append(payload, key...)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, key)
+	}), nil
 }
 
 // EncodeDeleteRange encodes a KV DELETE_RANGE request payload per CLIENT_SPEC.md.
@@ -211,44 +114,12 @@ func EncodeDeleteRange(txID uint64, route string, startKey, endKey []byte) ([]by
 		return nil, err
 	}
 
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-	startKeyLen := uint32(len(startKey))
-	endKeyLen := uint32(len(endKey))
-
-	payloadSize := 8 + 4 + len(routeBytes) + 4 + len(startKey) + 4 + len(endKey)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	// [u32 BE] start_key_len
-	startKeyLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(startKeyLenBytes, startKeyLen)
-	payload = append(payload, startKeyLenBytes...)
-
-	// [bytes] start_key
-	payload = append(payload, startKey...)
-
-	// [u32 BE] end_key_len
-	endKeyLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(endKeyLenBytes, endKeyLen)
-	payload = append(payload, endKeyLenBytes...)
-
-	// [bytes] end_key
-	payload = append(payload, endKey...)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+		encoding.WriteBytes(buf, startKey)
+		encoding.WriteBytes(buf, endKey)
+	}), nil
 }
 
 // ScanQuery represents SCAN operation parameters.
@@ -276,135 +147,61 @@ func EncodeScan(txID uint64, route string, query ScanQuery) ([]byte, error) {
 		}
 	}
 
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
 
-	// Start with fixed fields
-	payloadSize := 8 + 4 + len(routeBytes) + 1 + 1 + 1 + 1
-	if query.StartKey != nil {
-		payloadSize += 4 + len(query.StartKey)
-	}
-	if query.EndKey != nil {
-		payloadSize += 4 + len(query.EndKey)
-	}
-	if query.Limit > 0 {
-		payloadSize += 4
-	}
+		// [u8] has_start + optional key
+		if query.StartKey != nil {
+			buf.WriteByte(1)
+			encoding.WriteBytes(buf, query.StartKey)
+		} else {
+			buf.WriteByte(0)
+		}
 
-	payload := make([]byte, 0, payloadSize)
+		// [u8] has_end + optional key
+		if query.EndKey != nil {
+			buf.WriteByte(1)
+			encoding.WriteBytes(buf, query.EndKey)
+		} else {
+			buf.WriteByte(0)
+		}
 
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
+		// [u8] has_limit + optional limit
+		if query.Limit > 0 {
+			buf.WriteByte(1)
+			encoding.WriteU32(buf, query.Limit)
+		} else {
+			buf.WriteByte(0)
+		}
 
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	// [u8] has_start
-	if query.StartKey != nil {
-		payload = append(payload, 1)
-		// [u32 BE] start_key_len
-		startKeyLen := uint32(len(query.StartKey))
-		startKeyLenBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(startKeyLenBytes, startKeyLen)
-		payload = append(payload, startKeyLenBytes...)
-		// [bytes] start_key
-		payload = append(payload, query.StartKey...)
-	} else {
-		payload = append(payload, 0)
-	}
-
-	// [u8] has_end
-	if query.EndKey != nil {
-		payload = append(payload, 1)
-		// [u32 BE] end_key_len
-		endKeyLen := uint32(len(query.EndKey))
-		endKeyLenBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(endKeyLenBytes, endKeyLen)
-		payload = append(payload, endKeyLenBytes...)
-		// [bytes] end_key
-		payload = append(payload, query.EndKey...)
-	} else {
-		payload = append(payload, 0)
-	}
-
-	// [u8] has_limit
-	if query.Limit > 0 {
-		payload = append(payload, 1)
-		// [u32 BE] limit
-		limitBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(limitBytes, query.Limit)
-		payload = append(payload, limitBytes...)
-	} else {
-		payload = append(payload, 0)
-	}
-
-	// [u8] reverse
-	if query.Reverse {
-		payload = append(payload, 1)
-	} else {
-		payload = append(payload, 0)
-	}
-
-	return payload, nil
+		// [u8] reverse
+		if query.Reverse {
+			buf.WriteByte(1)
+		} else {
+			buf.WriteByte(0)
+		}
+	}), nil
 }
 
 // EncodeCommit encodes a KV COMMIT request payload per CLIENT_SPEC.md.
 // Spec: [tx_id (u64 BE)][route_len (u32 BE)][route]
 // Operations are self-contained per CLIENT_SPEC.md design.
 func EncodeCommit(txID uint64, route string) ([]byte, error) {
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-
-	payloadSize := 8 + 4 + len(routeBytes)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+	}), nil
 }
 
 // EncodeRollback encodes a KV ROLLBACK request payload per CLIENT_SPEC.md.
 // Spec: [tx_id (u64 BE)][route_len (u32 BE)][route]
 // Operations are self-contained per CLIENT_SPEC.md design.
 func EncodeRollback(txID uint64, route string) ([]byte, error) {
-	routeBytes := []byte(route)
-	routeLen := uint32(len(routeBytes))
-
-	payloadSize := 8 + 4 + len(routeBytes)
-	payload := make([]byte, 0, payloadSize)
-
-	// [u64 BE] tx_id
-	txIDBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(txIDBytes, txID)
-	payload = append(payload, txIDBytes...)
-
-	// [u32 BE] route_len
-	routeLenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(routeLenBytes, routeLen)
-	payload = append(payload, routeLenBytes...)
-
-	// [bytes] route
-	payload = append(payload, routeBytes...)
-
-	return payload, nil
+	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
+		encoding.WriteU64(buf, txID)
+		encoding.WriteRoute(buf, route)
+	}), nil
 }
 
 // ValidateKeySize checks if key size is within limits.

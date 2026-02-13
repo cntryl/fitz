@@ -1,0 +1,45 @@
+﻿=== PHASE 1 BENCHMARK RESULTS ===
+=== Date: 2026-02-13 ===
+=== After: Buffer Pool Optimization ===
+
+--- KV DOMAIN BENCHMARKS ---
+goos: windows
+goarch: amd64
+pkg: github.com/cntryl/fitz-go/internal/domains/kv
+cpu: 12th Gen Intel(R) Core(TM) i9-12900HK
+BenchmarkEncodeBegin-20       	63503318	        37.56 ns/op	      32 B/op	       1 allocs/op
+BenchmarkEncodeGet-20         	52698144	        47.79 ns/op	      48 B/op	       1 allocs/op
+BenchmarkEncodePut/small_value-20         	37164877	        59.15 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEncodePut/large_value-20         	 1632220	      1576 ns/op	   10250 B/op	       1 allocs/op
+BenchmarkEncodeDelete-20                  	51073718	        48.85 ns/op	      48 B/op	       1 allocs/op
+BenchmarkEncodeScan-20                    	32855782	        74.69 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEncodeCommit-20                  	56791963	        38.83 ns/op	      32 B/op	       1 allocs/op
+BenchmarkEncodeRollback-20                	62680695	        39.10 ns/op	      32 B/op	       1 allocs/op
+PASS
+ok  	github.com/cntryl/fitz-go/internal/domains/kv	21.618s
+
+
+
+--- NOTICE DOMAIN BENCHMARKS ---
+goos: windows
+goarch: amd64
+pkg: github.com/cntryl/fitz-go/internal/domains/notice
+cpu: 12th Gen Intel(R) Core(TM) i9-12900HK
+BenchmarkEncodeSubscribe/simple_pattern-20         	61969066	        37.85 ns/op	      48 B/op	       1 allocs/op
+BenchmarkEncodeSubscribe/wildcard_pattern-20       	69038324	        36.13 ns/op	      24 B/op	       1 allocs/op
+BenchmarkEncodeUnsubscribe-20                      	58549008	        40.69 ns/op	      48 B/op	       1 allocs/op
+PASS
+ok  	github.com/cntryl/fitz-go/internal/domains/notice	7.771s
+
+
+
+--- FRAME ENCODING BENCHMARKS ---
+goos: windows
+goarch: amd64
+pkg: github.com/cntryl/fitz-go/internal/protocol
+cpu: 12th Gen Intel(R) Core(TM) i9-12900HK
+BenchmarkEncodeFrame/100_byte_payload-20         	55142497	        47.72 ns/op	     112 B/op	       1 allocs/op
+BenchmarkEncodeFrame/10KB_payload-20             	 1000000	      2265 ns/op	   10891 B/op	       1 allocs/op
+PASS
+ok  	github.com/cntryl/fitz-go/internal/protocol	5.429s
+

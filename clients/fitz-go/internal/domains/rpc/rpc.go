@@ -245,12 +245,12 @@ func (c *client) handleWorkerRequest(correlationID [16]byte, payload []byte) {
 func (c *client) Subscribe(ctx context.Context, route string, handler RPCHandler) (*Subscription, error) {
 	c.initRPCHandler()
 
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeRPCSubscribeWorker(route)
+	if err != nil {
+		return nil, fmt.Errorf("encode SUBSCRIBE_WORKER: %w", err)
+	}
 
-	connection.WriteString(buf, route)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcSubscribeWorker, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcSubscribeWorker, payload)
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE_WORKER request failed: %w", err)
 	}
@@ -276,13 +276,13 @@ func (c *client) unsubscribeWorker(route string) {
 	delete(c.workers, route)
 	c.mu.Unlock()
 
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
-
-	connection.WriteString(buf, route)
+	payload, err := EncodeRPCUnsubscribeWorker(route)
+	if err != nil {
+		return
+	}
 
 	ctx := context.Background()
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcUnsubscribeWorker, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcUnsubscribeWorker, payload)
 	if err != nil {
 		return
 	}
@@ -308,15 +308,16 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 	c.mu.Unlock()
 
 	// Build request
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeRPCRequest(correlationID, route, "", body) // reply_route empty = use connection
+	if err != nil {
+		c.mu.Lock()
+		delete(c.pendingRPCs, correlationID)
+		c.mu.Unlock()
+		close(ch)
+		return nil, fmt.Errorf("encode REQUEST: %w", err)
+	}
 
-	connection.WriteBytes(buf, correlationID[:]) // TLV bytes format: [u32 16][16 bytes]
-	connection.WriteString(buf, route)
-	connection.WriteString(buf, "") // reply_route (empty = use connection)
-	connection.WriteBytes(buf, body)
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcRequest, buf.Bytes())
+	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeRpcRequest, payload)
 	if err != nil {
 		c.mu.Lock()
 		delete(c.pendingRPCs, correlationID)
@@ -364,15 +365,12 @@ func (w *responseWriter) Send(body []byte) error {
 	w.seq++
 	w.mu.Unlock()
 
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeRPCResponse(w.correlationID, seq, body, false)
+	if err != nil {
+		return err
+	}
 
-	connection.WriteBytes(buf, w.correlationID[:]) // TLV bytes format: [u32 16][16 bytes]
-	connection.WriteU64BE(buf, seq)
-	connection.WriteBytes(buf, body)
-	connection.WriteU8(buf, 0) // stream_end = false
-
-	_, err := w.conn.SendRequest(context.Background(), protocol.MessageTypeRpcResponse, buf.Bytes())
+	_, err = w.conn.SendRequest(context.Background(), protocol.MessageTypeRpcResponse, payload)
 	return err
 }
 
@@ -381,15 +379,12 @@ func (w *responseWriter) sendEnd() {
 	seq := w.seq
 	w.mu.Unlock()
 
-	buf := connection.GetBuffer()
-	defer connection.PutBuffer(buf)
+	payload, err := EncodeRPCResponse(w.correlationID, seq, nil, true)
+	if err != nil {
+		return
+	}
 
-	connection.WriteBytes(buf, w.correlationID[:]) // TLV bytes format: [u32 16][16 bytes]
-	connection.WriteU64BE(buf, seq)
-	connection.WriteBytes(buf, nil)
-	connection.WriteU8(buf, 1) // stream_end = true
-
-	w.conn.SendRequest(context.Background(), protocol.MessageTypeRpcResponse, buf.Bytes())
+	w.conn.SendRequest(context.Background(), protocol.MessageTypeRpcResponse, payload)
 }
 
 // rpcIterator iterates over response frames from a Call.
