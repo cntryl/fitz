@@ -66,12 +66,12 @@ func (t *TCPTransport) Write(ctx context.Context, frame []byte) error {
 	defer t.conn.SetWriteDeadline(time.Time{}) // Clear deadline
 
 	// Build length-prefixed frame: [u32 BE][frame]
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, uint32(len(frame)))
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], uint32(len(frame)))
 
 	// Atomic write (header + frame together)
 	// Note: We could optimize with writev/sendmsg, but simplicity preferred
-	if _, err := t.conn.Write(header); err != nil {
+	if _, err := t.conn.Write(header[:]); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

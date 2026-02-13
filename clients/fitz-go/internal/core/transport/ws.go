@@ -189,7 +189,8 @@ func (w *WebSocketTransport) Write(ctx context.Context, frame []byte) error {
 // writeFrame writes a WebSocket frame with optional masking.
 func (w *WebSocketTransport) writeFrame(opcode byte, payload []byte, mask bool) error {
 	// Build frame header
-	header := make([]byte, 0, 14) // Max header size
+	var headerBuf [14]byte
+	header := headerBuf[:0]
 
 	// Byte 0: FIN=1, RSV=0, opcode
 	header = append(header, 0x80|opcode)
@@ -233,12 +234,21 @@ func (w *WebSocketTransport) writeFrame(opcode byte, payload []byte, mask bool) 
 
 	// Write payload (masked if needed)
 	if mask {
-		masked := make([]byte, len(payload))
-		for i := range payload {
-			masked[i] = payload[i] ^ maskKey[i%4]
+		var scratch [1024]byte
+		for i := 0; i < len(payload); {
+			chunkLen := len(payload) - i
+			if chunkLen > len(scratch) {
+				chunkLen = len(scratch)
+			}
+			for j := 0; j < chunkLen; j++ {
+				scratch[j] = payload[i+j] ^ maskKey[(i+j)%4]
+			}
+			if _, err := w.conn.Write(scratch[:chunkLen]); err != nil {
+				return err
+			}
+			i += chunkLen
 		}
-		_, err := w.conn.Write(masked)
-		return err
+		return nil
 	}
 
 	_, err := w.conn.Write(payload)
@@ -306,8 +316,8 @@ func (w *WebSocketTransport) Read(ctx context.Context) ([]byte, error) {
 // readFrame reads a single WebSocket frame.
 func (w *WebSocketTransport) readFrame() (opcode byte, payload []byte, err error) {
 	// Read first two bytes
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(w.reader, header); err != nil {
+	var header [2]byte
+	if _, err := io.ReadFull(w.reader, header[:]); err != nil {
 		return 0, nil, err
 	}
 
@@ -321,17 +331,17 @@ func (w *WebSocketTransport) readFrame() (opcode byte, payload []byte, err error
 
 	// Read extended payload length if needed
 	if length == 126 {
-		extLen := make([]byte, 2)
-		if _, err := io.ReadFull(w.reader, extLen); err != nil {
+		var extLen [2]byte
+		if _, err := io.ReadFull(w.reader, extLen[:]); err != nil {
 			return 0, nil, err
 		}
-		length = uint64(binary.BigEndian.Uint16(extLen))
+		length = uint64(binary.BigEndian.Uint16(extLen[:]))
 	} else if length == 127 {
-		extLen := make([]byte, 8)
-		if _, err := io.ReadFull(w.reader, extLen); err != nil {
+		var extLen [8]byte
+		if _, err := io.ReadFull(w.reader, extLen[:]); err != nil {
 			return 0, nil, err
 		}
-		length = binary.BigEndian.Uint64(extLen)
+		length = binary.BigEndian.Uint64(extLen[:])
 	}
 
 	// Read masking key if present (server should not mask)
