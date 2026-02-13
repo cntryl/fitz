@@ -10,6 +10,7 @@ pub mod notice;
 pub mod queue;
 pub mod rpc;
 pub mod stream;
+pub mod transport;
 
 // Backwards compatibility alias
 pub use notice as notification;
