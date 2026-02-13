@@ -22,10 +22,10 @@ const MAX_NORMAL_PER_TICK: usize = 12;
 const MAX_TICK_DURATION_MS: u64 = 5;
 
 /// Minimum timeout for mailbox polling (adaptive based on load)
-const MIN_POLL_TIMEOUT_MS: u64 = 10;
+const MIN_POLL_TIMEOUT_MS: u64 = 1;
 
 /// Maximum timeout for mailbox polling (when mailbox is empty)
-const MAX_POLL_TIMEOUT_MS: u64 = 100;
+const MAX_POLL_TIMEOUT_MS: u64 = 1;
 
 /// Actor system scheduler that manages actor lifecycles and message processing
 pub struct Scheduler {

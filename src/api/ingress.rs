@@ -24,8 +24,8 @@ impl Default for IngressConfig {
         Self {
             max_frame_size: 1024 * 1024, // 1 MB
             max_connections: 10_000,
-            channel_capacity: 1000,
-            backpressure_timeout: Duration::from_millis(100),
+            channel_capacity: 10_000,
+            backpressure_timeout: Duration::from_millis(1),
         }
     }
 }
