@@ -770,20 +770,17 @@ impl QueueActor {
 impl Actor for QueueActor {
     type Message = QueueMessage;
 
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         // Process expired timers and delayed messages on every message
         self.process_expired_timers();
         self.process_delayed_messages();
 
-        match msg {
+        let response = match msg {
             QueueMessage::Enqueue {
                 body,
                 delay_seconds,
                 ..
-            } => {
-                let _response = self.handle_enqueue(body, delay_seconds);
-                // TODO: Send response back to caller via reply
-            }
+            } => self.handle_enqueue(body, delay_seconds),
 
             QueueMessage::Reserve {
                 lease_seconds,
@@ -791,7 +788,6 @@ impl Actor for QueueActor {
                 wait_seconds,
                 ..
             } => {
-                let _response = self.handle_reserve(lease_seconds, batch_size);
                 // NOTE: wait_seconds is handled at RPC layer, not in QueueActor
                 // QueueActor always returns immediately (never blocks)
                 // If empty and wait_seconds > 0, RPC layer will:
@@ -799,7 +795,7 @@ impl Actor for QueueActor {
                 //   2. Wait up to wait_seconds for notice or timeout
                 //   3. Retry reserve on notice or timeout
                 let _ = wait_seconds; // Unused by actor, used by RPC layer
-                                      // TODO: Send response back to caller via reply
+                self.handle_reserve(lease_seconds, batch_size)
             }
 
             QueueMessage::Extend {
@@ -807,20 +803,18 @@ impl Actor for QueueActor {
                 token,
                 lease_seconds,
                 ..
-            } => {
-                let _response = self.handle_extend(id, token, lease_seconds);
-                // TODO: Send response back to caller via reply
-            }
+            } => self.handle_extend(id, token, lease_seconds),
 
-            QueueMessage::Complete { id, token, .. } => {
-                let _response = self.handle_complete(id, token);
-                // TODO: Send response back to caller via reply
-            }
+            QueueMessage::Complete { id, token, .. } => self.handle_complete(id, token),
 
             QueueMessage::LeaseExpired { id } => {
                 self.handle_lease_expired(id);
+                return; // No response needed for internal timer message
             }
-        }
+        };
+
+        // Send response back to the client via reply
+        let _ = ctx.reply(response).ok();
     }
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
