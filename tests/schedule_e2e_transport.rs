@@ -198,11 +198,14 @@ fn parse_schedule_id(data: &[u8]) -> Option<String> {
     if data.is_empty() {
         return None;
     }
-    let has_id_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    if has_id_len == 0 {
+    // Read u8 flag: 0=None, 1=Some
+    let flag = data[0];
+    if flag == 0 {
         return None;
     }
-    let id_bytes = &data[4..4 + has_id_len];
+    // Read u32 length
+    let id_len = u32::from_be_bytes([data[1], data[2], data[3], data[4]]) as usize;
+    let id_bytes = &data[5..5 + id_len];
     Some(String::from_utf8_lossy(id_bytes).to_string())
 }
 

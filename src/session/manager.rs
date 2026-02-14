@@ -15,7 +15,7 @@
 //! - **Other session helpers** remain in their respective modules.
 
 use crate::protocol::frame::ChannelId;
-use crate::session::{CloseReason, SessionInfo};
+use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -161,12 +161,19 @@ impl Ingress for RuntimeIngress {
 
         self.sessions.insert(session_id, session.clone());
 
-        // Create a per-session SessionActor with the session's initial permissions
+        // Create a per-session SessionActor with permissions
+        // When auth is not required, grant all permissions to unauthenticated sessions
+        let permissions = if self.auth_required {
+            session.permissions_snapshot.clone()
+        } else {
+            SessionPermissions::all()
+        };
+
         self.session_actors.insert(
             session_id,
             crate::session::actor::SessionActor::new(
                 crate::session::session::SessionId(session_id),
-                session.permissions_snapshot.clone(),
+                permissions,
             ),
         );
 

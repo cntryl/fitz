@@ -62,6 +62,16 @@ impl SessionPermissions {
         }
     }
 
+    /// Create a permission set that allow all operations on all routes
+    ///
+    /// Used for unauthenticated sessions when auth_required=false
+    pub fn all() -> Self {
+        Self::from_permissions(vec![Permission {
+            raw: "**#all".to_string(),
+            access: Access::All,
+        }])
+    }
+
     pub fn get(&self, key: &str) -> Option<&str> {
         self.inner.get(key).map(|s| s.as_str())
     }
