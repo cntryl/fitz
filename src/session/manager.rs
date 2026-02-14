@@ -405,32 +405,68 @@ impl Ingress for RuntimeIngress {
                                     }
                                 }
                             } else {
-                                // No issuer present; use existing no-verify path
-                                match crate::auth::permissions_from_compact_jwt(compact) {
-                                    Ok((snapshot, claims)) => {
-                                        entry.permissions_snapshot = snapshot.clone();
-                                        entry.authenticated = true;
+                                // No issuer present; prefer HMAC verification when a shared secret is set.
+                                if let Ok(secret) = std::env::var("FITZ_JWT_HMAC_SECRET") {
+                                    match crate::auth::permissions_from_hmac_jwt(
+                                        compact,
+                                        secret.as_bytes(),
+                                    ) {
+                                        Ok((snapshot, claims)) => {
+                                            entry.permissions_snapshot = snapshot.clone();
+                                            entry.authenticated = true;
 
-                                        let mut actor = crate::session::actor::SessionActor::new(
-                                            crate::session::session::SessionId(session_id),
-                                            snapshot.clone(),
-                                        );
-                                        actor.authenticate(claims, snapshot);
+                                            let mut actor =
+                                                crate::session::actor::SessionActor::new(
+                                                    crate::session::session::SessionId(session_id),
+                                                    snapshot.clone(),
+                                                );
+                                            actor.authenticate(claims, snapshot);
 
-                                        self.session_actors.insert(session_id, actor);
+                                            self.session_actors.insert(session_id, actor);
 
-                                        notify_frame = Some(SessionFrame {
-                                            session_id,
-                                            channel_id,
-                                            payload: message_payload.clone(),
-                                        });
+                                            notify_frame = Some(SessionFrame {
+                                                session_id,
+                                                channel_id,
+                                                payload: message_payload.clone(),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (hmac verify)");
+                                            return IngressDecision::Close(format!(
+                                                "connect failed: {}",
+                                                e
+                                            ));
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify, no issuer)");
-                                        return IngressDecision::Close(format!(
-                                            "connect failed: {}",
-                                            e
-                                        ));
+                                } else {
+                                    // No issuer and no HMAC secret; fall back to no-verify path.
+                                    match crate::auth::permissions_from_compact_jwt(compact) {
+                                        Ok((snapshot, claims)) => {
+                                            entry.permissions_snapshot = snapshot.clone();
+                                            entry.authenticated = true;
+
+                                            let mut actor =
+                                                crate::session::actor::SessionActor::new(
+                                                    crate::session::session::SessionId(session_id),
+                                                    snapshot.clone(),
+                                                );
+                                            actor.authenticate(claims, snapshot);
+
+                                            self.session_actors.insert(session_id, actor);
+
+                                            notify_frame = Some(SessionFrame {
+                                                session_id,
+                                                channel_id,
+                                                payload: message_payload.clone(),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify, no issuer)");
+                                            return IngressDecision::Close(format!(
+                                                "connect failed: {}",
+                                                e
+                                            ));
+                                        }
                                     }
                                 }
                             }

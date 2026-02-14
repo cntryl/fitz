@@ -3,7 +3,9 @@
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
 use crate::session::manager::Ingress;
-use crate::session::{generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind};
+use crate::session::{
+    generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
+};
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};

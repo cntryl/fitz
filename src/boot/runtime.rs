@@ -217,11 +217,11 @@ type RuntimeComponents = (
 /// - IngressConfig for transport configuration
 /// - Scheduler for actor execution
 /// - Runtime stats tracker for observability
-pub fn init(_store: &Arc<cntryl_midge::Engine>) -> BootResult<RuntimeComponents> {
+pub fn init(
+    config: &BootConfig,
+    _store: &Arc<cntryl_midge::Engine>,
+) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
-
-    // Read auth configuration from BootConfig
-    let config = BootConfig::new();
 
     // Create runtime components
     let router = Arc::new(Router::new());
@@ -229,8 +229,8 @@ pub fn init(_store: &Arc<cntryl_midge::Engine>) -> BootResult<RuntimeComponents>
     let ingress = Arc::new(RuntimeIngress::new(config.auth_required).with_router(router.clone()));
 
     let ingress_config = IngressConfig::default()
-        .with_frame_size(1024 * 1024) // 1 MB
-        .with_channel_capacity(1000);
+        .with_frame_size(config.max_frame_size)
+        .with_channel_capacity(config.channel_capacity);
 
     // Create scheduler
     let num_workers = num_cpus::get();

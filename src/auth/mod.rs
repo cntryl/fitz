@@ -189,6 +189,46 @@ pub fn permissions_from_signed_jwt(
     ))
 }
 
+pub fn permissions_from_hmac_jwt(
+    compact: &str,
+    secret: &[u8],
+) -> Result<
+    (
+        crate::session::permissions::SessionPermissions,
+        crate::auth::Claims,
+    ),
+    String,
+> {
+    let claims_value = token::verify_jwt_with_hmac_secret(compact, secret)?;
+    let raw_claims: RawClaims =
+        serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
+
+    let tenant = if let Some(t) = &raw_claims.tid {
+        t.clone()
+    } else if let Some(t) = &raw_claims.tenant_id {
+        t.clone()
+    } else if let Some(t) = &raw_claims.org_id {
+        t.clone()
+    } else {
+        String::new()
+    };
+
+    let perms = raw_claims.normalized_permissions()?;
+
+    let claims = crate::auth::Claims {
+        sub: raw_claims.sub.clone(),
+        tenant,
+        roles: raw_claims.roles.clone().unwrap_or_default(),
+        permissions: perms.clone(),
+        exp: raw_claims.exp,
+    };
+
+    Ok((
+        crate::session::permissions::SessionPermissions::from_permissions(perms),
+        claims,
+    ))
+}
+
 pub async fn permissions_from_jwt_using_jwks(
     compact: &str,
     jwks_url: &str,

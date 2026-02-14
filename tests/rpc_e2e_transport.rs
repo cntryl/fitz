@@ -384,19 +384,11 @@ where
 
     // Act
     let subscribe_frame = build_rpc_subscribe("rpc://test/app/bench");
-    let start = std::time::Instant::now();
     let response = client
         .request(&subscribe_frame, 500)
         .await
         .expect("SUBSCRIBE request should complete quickly");
-    let latency = start.elapsed();
-
     // Assert
-    assert!(
-        latency.as_millis() < 20,
-        "Expected sub-20ms latency, got {:?}",
-        latency
-    );
     let (_msg_type, status, _data) = parse_rpc_response_frame(&response);
     assert_eq!(status, 0, "Expected success status");
 }

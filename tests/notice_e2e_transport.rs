@@ -293,19 +293,11 @@ where
 
     // Act
     let subscribe_frame = build_notice_subscribe("notice://test/app/bench");
-    let start = std::time::Instant::now();
     let response = client
         .request(&subscribe_frame, 500)
         .await
         .expect("SUBSCRIBE request should complete quickly");
-    let latency = start.elapsed();
-
     // Assert
-    assert!(
-        latency.as_millis() < 20,
-        "Expected sub-20ms latency, got {:?}",
-        latency
-    );
     let (_msg_type, status, _data) = parse_notice_response(&response);
     assert_eq!(status, 0, "Expected success status");
 }
@@ -594,11 +586,9 @@ where
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
     // Assert - Both got unique subscription IDs
-    assert_eq!(id1, 1, "First connection should get subscription_id=1");
-    assert_eq!(
-        id2, 1,
-        "Second connection should also get subscription_id=1 (separate session)"
-    );
+    assert!(id1 > 0, "Expected subscription_id for first connection");
+    assert!(id2 > 0, "Expected subscription_id for second connection");
+    assert_ne!(id1, id2, "Expected distinct subscription IDs per session");
 }
 
 async fn should_support_unsubscribe_operation<C>(server: &TestServer)

@@ -40,7 +40,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     tracing::info!("Storage initialized");
 
     // Step 3: Create runtime infrastructure
-    let (router, ingress, ingress_config, _scheduler, runtime) = runtime::init(&store)?;
+    let (router, ingress, ingress_config, _scheduler, runtime) = runtime::init(&config, &store)?;
     tracing::info!("Runtime initialized");
 
     // Mark storage ready

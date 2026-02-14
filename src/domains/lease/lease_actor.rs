@@ -193,24 +193,40 @@ impl LeaseActor {
         let now = self.clock.now();
         let ttl = Duration::from_secs(ttl_secs);
 
-        match self.leases.get_mut(&key) {
-            None => LeaseResponse::NotHeld,
+        enum RenewDecision {
+            NotHeld,
+            Expired,
+            Fenced(u64),
+            Renew,
+        }
+
+        let decision = match self.leases.get(&key) {
+            None => RenewDecision::NotHeld,
             Some(state) => {
                 if state.is_expired(now) {
-                    LeaseResponse::Expired
+                    RenewDecision::Expired
                 } else if !state.is_held_by(&owner_id) {
-                    LeaseResponse::NotHeld
+                    RenewDecision::NotHeld
                 } else if state.fencing_token != fencing_token {
-                    // Token mismatch - fencing
-                    LeaseResponse::Fenced {
-                        current_token: state.fencing_token,
-                    }
+                    RenewDecision::Fenced(state.fencing_token)
                 } else {
-                    // Valid renewal - extend expiry
+                    RenewDecision::Renew
+                }
+            }
+        };
+
+        match decision {
+            RenewDecision::NotHeld => LeaseResponse::NotHeld,
+            RenewDecision::Expired => LeaseResponse::Expired,
+            RenewDecision::Fenced(current_token) => LeaseResponse::Fenced { current_token },
+            RenewDecision::Renew => {
+                let new_token = self.next_fencing_token();
+                if let Some(state) = self.leases.get_mut(&key) {
                     state.expiry = now + ttl;
-                    LeaseResponse::Renewed {
-                        fencing_token: state.fencing_token,
-                    }
+                    state.fencing_token = new_token;
+                }
+                LeaseResponse::Renewed {
+                    fencing_token: new_token,
                 }
             }
         }
@@ -546,12 +562,12 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(
-            renew_response,
-            LeaseResponse::Renewed {
-                fencing_token: token
+        match renew_response {
+            LeaseResponse::Renewed { fencing_token } => {
+                assert!(fencing_token > token);
             }
-        );
+            _ => panic!("Expected Renewed"),
+        }
     }
 
     #[test]

@@ -5,6 +5,7 @@
 
 use bytes::{BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,15 +44,22 @@ impl TestServer {
             "FITZ_AUTH_REQUIRED",
             if auth_required { "true" } else { "false" },
         );
+        if auth_required {
+            std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
+        } else {
+            std::env::remove_var("FITZ_JWT_HMAC_SECRET");
+        }
 
-        // Find available ports
+        // Find available ports - DON'T drop listeners yet, keep them reserved
         let tcp_listener = TcpListener::bind("127.0.0.1:0").await?;
         let tcp_addr = tcp_listener.local_addr()?;
-        drop(tcp_listener); // Release so spawn_tcp_listener can bind
 
         let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
         let ws_addr = ws_listener.local_addr()?;
-        drop(ws_listener); // Release so spawn_http_listener can bind
+
+        // Release the temporary listeners
+        drop(tcp_listener);
+        drop(ws_listener);
 
         // Boot runtime with test configuration
         let boot_config = crate::boot::BootConfig {
@@ -70,7 +78,7 @@ impl TestServer {
 
         // Step 2: Initialize runtime
         let (router, ingress, ingress_config, _scheduler, runtime) =
-            crate::boot::runtime::init(&store)?;
+            crate::boot::runtime::init(&boot_config, &store)?;
 
         // Mark storage ready
         runtime.mark_storage_ready();
@@ -186,13 +194,17 @@ impl TestClient {
 /// Test client for WebSocket connections
 pub struct TestWebSocketClient {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    pending_frames: VecDeque<Message>,
 }
 
 impl TestWebSocketClient {
     /// Connect to a WebSocket server
     pub async fn connect(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let (ws_stream, _response) = connect_async(url).await?;
-        Ok(Self { ws: ws_stream })
+        Ok(Self {
+            ws: ws_stream,
+            pending_frames: VecDeque::new(),
+        })
     }
 
     /// Send a WebSocket binary frame (no length prefix - handled by WebSocket protocol)
@@ -207,30 +219,51 @@ impl TestWebSocketClient {
         timeout_ms: u64,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let recv_future = async {
-            while let Some(msg) = self.ws.next().await {
-                match msg {
-                    Ok(Message::Binary(data)) => return Ok(data),
-                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
-                        // Automatically handled by tokio-tungstenite
-                        continue;
+            loop {
+                // Check if we have pending frames from previous recv() calls
+                // This is a fast synchronous check that avoids async overhead
+                while let Some(msg) = self.pending_frames.pop_front() {
+                    match msg {
+                        Message::Binary(data) => return Ok(data),
+                        Message::Ping(_) | Message::Pong(_) => continue,
+                        Message::Close(_) => return Err("WebSocket closed".into()),
+                        Message::Text(_) => continue,
+                        Message::Frame(_) => continue,
                     }
-                    Ok(Message::Close(_)) => {
-                        return Err("WebSocket closed".into());
+                }
+
+                // Pending buffer empty, await next message from WebSocket stream
+                match self.ws.next().await {
+                    Some(Ok(msg)) => {
+                        match msg {
+                            Message::Binary(data) => return Ok(data),
+                            Message::Ping(_) | Message::Pong(_) => {
+                                // Filter out control frames, try next message
+                                continue;
+                            }
+                            Message::Close(_) => {
+                                return Err("WebSocket closed".into());
+                            }
+                            Message::Text(_) => {
+                                // Filter out text frames, try next message
+                                continue;
+                            }
+                            Message::Frame(_) => {
+                                // Filter out raw frames, try next message
+                                continue;
+                            }
+                        }
                     }
-                    Ok(Message::Text(_)) => {
-                        // Fitz uses binary frames only
-                        continue;
-                    }
-                    Err(e) => return Err(e.into()),
-                    _ => continue,
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Err("WebSocket stream ended".into()),
                 }
             }
-            Err("WebSocket stream ended".into())
         };
 
         timeout(Duration::from_millis(timeout_ms), recv_future)
             .await
             .map_err(|_| "timeout waiting for response".to_string())?
+            .map_err(|e: Box<dyn std::error::Error>| e)
     }
 
     /// Send a frame and wait for response
