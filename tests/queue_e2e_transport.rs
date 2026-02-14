@@ -13,10 +13,7 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait QueueTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
@@ -27,16 +24,11 @@ pub trait QueueTestClient {
 pub trait QueueConnector {
     type Client: QueueTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl QueueTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -50,10 +42,7 @@ impl QueueTestClient for TestClient {
 }
 
 impl QueueTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -71,9 +60,7 @@ struct TcpConnector;
 impl QueueConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -83,9 +70,7 @@ struct WsConnector;
 impl QueueConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -98,7 +83,7 @@ fn build_queue_enqueue(route: &str, body: &[u8], delay_seconds: Option<u64>) -> 
     payload.put_slice(route.as_bytes());
     payload.put_slice(&(body.len() as u32).to_be_bytes());
     payload.put_slice(body);
-    
+
     if let Some(delay) = delay_seconds {
         payload.put_u8(1);
         payload.put_slice(&delay.to_be_bytes());
@@ -113,19 +98,24 @@ fn build_queue_enqueue(route: &str, body: &[u8], delay_seconds: Option<u64>) -> 
 
 /// Build Queue RESERVE request frame
 /// Wire format: [u32 BE route_len][route][u64 BE lease_seconds][u8 has_batch_size][u32 batch?][u8 has_wait][u64 wait?]
-fn build_queue_reserve(route: &str, lease_seconds: u64, batch_size: Option<usize>, wait_seconds: Option<u64>) -> Vec<u8> {
+fn build_queue_reserve(
+    route: &str,
+    lease_seconds: u64,
+    batch_size: Option<usize>,
+    wait_seconds: Option<u64>,
+) -> Vec<u8> {
     let mut payload = BytesMut::new();
     payload.put_slice(&(route.len() as u32).to_be_bytes());
     payload.put_slice(route.as_bytes());
     payload.put_slice(&lease_seconds.to_be_bytes());
-    
+
     if let Some(batch) = batch_size {
         payload.put_u8(1);
         payload.put_slice(&(batch as u32).to_be_bytes());
     } else {
         payload.put_u8(0);
     }
-    
+
     if let Some(wait) = wait_seconds {
         payload.put_u8(1);
         payload.put_slice(&wait.to_be_bytes());
@@ -209,19 +199,34 @@ fn parse_reserve_response(data: &[u8]) -> Vec<(u64, u64, Vec<u8>)> {
     let mut messages = Vec::new();
     for _ in 0..count {
         let id = u64::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
         ]);
         offset += 8;
 
         let token = u64::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
         ]);
         offset += 8;
 
         let body_len = u32::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]) as usize;
         offset += 4;
 
@@ -295,7 +300,10 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let warmup_frame = build_queue_enqueue("queue://test/app/warmup", b"warmup", None);
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     // Act
     let enqueue_frame = build_queue_enqueue("queue://test/app/bench", b"benchmark", None);
@@ -325,7 +333,7 @@ where
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("queue://test/app/concurrent{}", idx);
         let body = format!("message-{}", idx);
-        
+
         let enqueue_frame = build_queue_enqueue(&route, body.as_bytes(), None);
         let response = client
             .request(&enqueue_frame, 4000)
@@ -337,14 +345,20 @@ where
         let message_id = parse_enqueue_response(&data);
 
         let reserve_frame = build_queue_reserve(&route, 30, Some(1), None);
-        let response = client.request(&reserve_frame, 4000).await.expect("RESERVE failed");
+        let response = client
+            .request(&reserve_frame, 4000)
+            .await
+            .expect("RESERVE failed");
         let (_msg_type, status, data) = parse_queue_response(&response);
         assert_eq!(status, 0);
         let messages = parse_reserve_response(&data);
         assert_eq!(messages.len(), 1);
 
         let complete_frame = build_queue_complete(&route, message_id, messages[0].1);
-        let response = client.request(&complete_frame, 4000).await.expect("COMPLETE failed");
+        let response = client
+            .request(&complete_frame, 4000)
+            .await
+            .expect("COMPLETE failed");
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 0);
 
@@ -354,7 +368,11 @@ where
     // Assert - All 3 concurrent operations complete
     let (id1, id2, id3) = tokio::join!(run_queue(0), run_queue(1), run_queue(2));
     let ids = [id1, id2, id3];
-    assert_eq!(ids.len(), 3, "All 3 concurrent queue operations should complete");
+    assert_eq!(
+        ids.len(),
+        3,
+        "All 3 concurrent queue operations should complete"
+    );
 }
 
 async fn should_assign_unique_message_ids_within_single_queue<C>(server: &TestServer)
@@ -383,7 +401,11 @@ where
 
     // Assert - All IDs are unique
     assert_eq!(message_ids.len(), 3);
-    assert_eq!(message_ids, vec![1, 2, 3], "Message IDs should be sequential");
+    assert_eq!(
+        message_ids,
+        vec![1, 2, 3],
+        "Message IDs should be sequential"
+    );
 }
 
 async fn should_reject_operations_with_invalid_token<C>(server: &TestServer)
@@ -393,7 +415,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "queue://test/app/invalid";
-    
+
     let enqueue_frame = build_queue_enqueue(route, b"test", None);
     let response = client.request(&enqueue_frame, 2000).await.expect("ENQUEUE");
     let message_id = parse_enqueue_response(&parse_queue_response(&response).2);
@@ -511,7 +533,10 @@ where
     let result = client.request(&enqueue_frame, 1000).await;
 
     // Assert
-    assert!(result.is_err(), "Expected rejection for invalid JWT signature");
+    assert!(
+        result.is_err(),
+        "Expected rejection for invalid JWT signature"
+    );
 }
 
 async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
@@ -550,7 +575,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client1.send_frame(&connect_frame1).await.expect("CONNECT 1");
+    client1
+        .send_frame(&connect_frame1)
+        .await
+        .expect("CONNECT 1");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Arrange - Second client
@@ -559,7 +587,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client2.send_frame(&connect_frame2).await.expect("CONNECT 2");
+    client2
+        .send_frame(&connect_frame2)
+        .await
+        .expect("CONNECT 2");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Act - Both clients enqueue to same queue
@@ -574,7 +605,10 @@ where
 
     // Assert - Both messages accepted, different IDs
     assert_eq!(id1, 1, "First connection should get message_id=1");
-    assert_eq!(id2, 2, "Second connection should get message_id=2 (same queue)");
+    assert_eq!(
+        id2, 2,
+        "Second connection should get message_id=2 (same queue)"
+    );
 }
 
 async fn should_reject_complete_without_reserve<C>(server: &TestServer)
@@ -584,7 +618,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "queue://test/app/noprep";
-    
+
     let enqueue_frame = build_queue_enqueue(route, b"test", None);
     let response = client.request(&enqueue_frame, 2000).await.expect("ENQUEUE");
     let message_id = parse_enqueue_response(&parse_queue_response(&response).2);
@@ -598,7 +632,10 @@ where
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 1, "Expected error for COMPLETE without RESERVE");
     } else {
-        assert!(result.is_err(), "Expected error/timeout for COMPLETE without RESERVE");
+        assert!(
+            result.is_err(),
+            "Expected error/timeout for COMPLETE without RESERVE"
+        );
     }
 }
 
@@ -620,7 +657,10 @@ where
     let token = messages[0].1;
 
     let complete_frame = build_queue_complete(route, message_id, token);
-    client.request(&complete_frame, 2000).await.expect("COMPLETE");
+    client
+        .request(&complete_frame, 2000)
+        .await
+        .expect("COMPLETE");
 
     // Act - Try to extend after complete
     let extend_frame = build_queue_extend(route, message_id, token, 60);
@@ -788,7 +828,10 @@ where
     let result = client.request(&garbage, 100).await;
 
     // Assert
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_lease<C>(server: &TestServer)
@@ -822,38 +865,51 @@ where
 
     // Assert
     let (_msg_type, status, _data) = parse_queue_response(&response);
-    assert_eq!(status, 1, "Expected error for token from disconnected session");
+    assert_eq!(
+        status, 1,
+        "Expected error for token from disconnected session"
+    );
 }
 
 // ===== TCP tests =====
 
 #[tokio::test]
 async fn should_complete_enqueue_reserve_complete_cycle_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_enqueue_reserve_complete_cycle::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_queues_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_queues::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_assign_unique_message_ids_within_single_queue_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_assign_unique_message_ids_within_single_queue::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_operations_with_invalid_token_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_operations_with_invalid_token::<TcpConnector>(&server).await;
 }
 
@@ -902,67 +958,86 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_create_separate_sessions_for_each_connection_with_auth::<TcpConnector>(&server)
-        .await;
+    should_create_separate_sessions_for_each_connection_with_auth::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_complete_without_reserve_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_complete_without_reserve::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_extend_after_complete_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_extend_after_complete::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_body_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_body::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_body_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_body::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_delayed_messages_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_delayed_messages::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_batch_reserve_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_batch_reserve::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_extend_lease_successfully_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_extend_lease_successfully::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_queues_across_resources_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_queues_across_resources::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_lease_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_lease::<TcpConnector>(&server).await;
 }
 
@@ -970,31 +1045,41 @@ async fn should_handle_connection_drop_during_lease_tcp() {
 
 #[tokio::test]
 async fn should_complete_enqueue_reserve_complete_cycle_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_enqueue_reserve_complete_cycle::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_queues_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_queues::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_assign_unique_message_ids_within_single_queue_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_assign_unique_message_ids_within_single_queue::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_operations_with_invalid_token_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_operations_with_invalid_token::<WsConnector>(&server).await;
 }
 
@@ -1043,66 +1128,85 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_create_separate_sessions_for_each_connection_with_auth::<WsConnector>(&server)
-        .await;
+    should_create_separate_sessions_for_each_connection_with_auth::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_complete_without_reserve_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_complete_without_reserve::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_extend_after_complete_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_extend_after_complete::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_body_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_body::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_body_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_body::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_delayed_messages_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_delayed_messages::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_batch_reserve_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_batch_reserve::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_extend_lease_successfully_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_extend_lease_successfully::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_queues_across_resources_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_queues_across_resources::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_lease_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_lease::<WsConnector>(&server).await;
 }

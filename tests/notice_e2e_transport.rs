@@ -13,34 +13,23 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait NoticeTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
         timeout_ms: u64,
     ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
 }
 
 pub trait NoticeConnector {
     type Client: NoticeTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl NoticeTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -52,19 +41,13 @@ impl NoticeTestClient for TestClient {
         Box::pin(async move { TestClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestClient::recv_frame(self, timeout_ms).await })
     }
 }
 
 impl NoticeTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -76,10 +59,7 @@ impl NoticeTestClient for TestWebSocketClient {
         Box::pin(async move { TestWebSocketClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestWebSocketClient::recv_frame(self, timeout_ms).await })
     }
 }
@@ -89,9 +69,7 @@ struct TcpConnector;
 impl NoticeConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -101,9 +79,7 @@ struct WsConnector;
 impl NoticeConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -292,9 +268,15 @@ where
 
     // Assert - NOTIFY received with correct data
     let (received_sub_id, received_route, received_payload) = parse_notify_message(&notify_frame);
-    assert_eq!(received_sub_id, subscription_id, "Expected matching subscription ID");
+    assert_eq!(
+        received_sub_id, subscription_id,
+        "Expected matching subscription ID"
+    );
     assert_eq!(received_route, pattern, "Expected matching route");
-    assert_eq!(received_payload, publish_payload, "Expected matching payload");
+    assert_eq!(
+        received_payload, publish_payload,
+        "Expected matching payload"
+    );
 }
 
 async fn should_receive_responses_within_reasonable_time<C>(server: &TestServer)
@@ -304,7 +286,10 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let warmup_frame = build_notice_subscribe("notice://test/app/warmup");
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     // Act
     let subscribe_frame = build_notice_subscribe("notice://test/app/bench");
@@ -356,9 +341,17 @@ where
     };
 
     // Assert - All 3 concurrent operations complete
-    let (id1, id2, id3) = tokio::join!(run_subscription(0), run_subscription(1), run_subscription(2));
+    let (id1, id2, id3) = tokio::join!(
+        run_subscription(0),
+        run_subscription(1),
+        run_subscription(2)
+    );
     let ids = [id1, id2, id3];
-    assert_eq!(ids.len(), 3, "All 3 concurrent subscriptions should complete");
+    assert_eq!(
+        ids.len(),
+        3,
+        "All 3 concurrent subscriptions should complete"
+    );
 }
 
 async fn should_assign_unique_subscription_ids<C>(server: &TestServer)
@@ -386,7 +379,11 @@ where
 
     // Assert - All IDs are unique
     assert_eq!(subscription_ids.len(), 3);
-    assert_eq!(subscription_ids, vec![1, 2, 3], "Subscription IDs should be sequential");
+    assert_eq!(
+        subscription_ids,
+        vec![1, 2, 3],
+        "Subscription IDs should be sequential"
+    );
 }
 
 async fn should_support_wildcard_patterns<C>(server: &TestServer)
@@ -399,7 +396,10 @@ where
 
     // Act - Subscribe to wildcard
     let subscribe_frame = build_notice_subscribe(pattern);
-    let response = client.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    let response = client
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
     let (_, status, data) = parse_notice_response(&response);
     assert_eq!(status, 0);
     let subscription_id = parse_subscription_id(&data).expect("Expected subscription ID");
@@ -413,7 +413,10 @@ where
 
     // Assert
     let (received_sub_id, _route, _payload) = parse_notify_message(&notify_frame);
-    assert_eq!(received_sub_id, subscription_id, "Expected notification for wildcard subscription");
+    assert_eq!(
+        received_sub_id, subscription_id,
+        "Expected notification for wildcard subscription"
+    );
 }
 
 async fn should_require_connect_message_when_auth_enabled<C>(server: &TestServer)
@@ -514,7 +517,10 @@ where
     let result = client.request(&subscribe_frame, 1000).await;
 
     // Assert
-    assert!(result.is_err(), "Expected rejection for invalid JWT signature");
+    assert!(
+        result.is_err(),
+        "Expected rejection for invalid JWT signature"
+    );
 }
 
 async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
@@ -553,7 +559,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client1.send_frame(&connect_frame1).await.expect("CONNECT 1");
+    client1
+        .send_frame(&connect_frame1)
+        .await
+        .expect("CONNECT 1");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Arrange - Second client
@@ -562,22 +571,34 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client2.send_frame(&connect_frame2).await.expect("CONNECT 2");
+    client2
+        .send_frame(&connect_frame2)
+        .await
+        .expect("CONNECT 2");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Act - Both clients subscribe
     let pattern = "notice://test-realm/app/shared";
     let subscribe1 = build_notice_subscribe(pattern);
-    let response1 = client1.request(&subscribe1, 2000).await.expect("SUBSCRIBE 1");
+    let response1 = client1
+        .request(&subscribe1, 2000)
+        .await
+        .expect("SUBSCRIBE 1");
     let id1 = parse_subscription_id(&parse_notice_response(&response1).2).expect("Expected ID");
 
     let subscribe2 = build_notice_subscribe(pattern);
-    let response2 = client2.request(&subscribe2, 2000).await.expect("SUBSCRIBE 2");
+    let response2 = client2
+        .request(&subscribe2, 2000)
+        .await
+        .expect("SUBSCRIBE 2");
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
     // Assert - Both got unique subscription IDs
     assert_eq!(id1, 1, "First connection should get subscription_id=1");
-    assert_eq!(id2, 1, "Second connection should also get subscription_id=1 (separate session)");
+    assert_eq!(
+        id2, 1,
+        "Second connection should also get subscription_id=1 (separate session)"
+    );
 }
 
 async fn should_support_unsubscribe_operation<C>(server: &TestServer)
@@ -590,13 +611,19 @@ where
 
     // ActAct - Subscribe
     let subscribe_frame = build_notice_subscribe(pattern);
-    let response = client.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    let response = client
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
     let (_, status, _) = parse_notice_response(&response);
     assert_eq!(status, 0);
 
     // Act - Unsubscribe
     let unsubscribe_frame = build_notice_unsubscribe(pattern);
-    let response = client.request(&unsubscribe_frame, 2000).await.expect("UNSUBSCRIBE");
+    let response = client
+        .request(&unsubscribe_frame, 2000)
+        .await
+        .expect("UNSUBSCRIBE");
 
     // Assert
     let (msg_type, status, _data) = parse_notice_response(&response);
@@ -615,7 +642,10 @@ where
     for i in 0..3 {
         let pattern = format!("notice://test/app/pattern{}", i);
         let subscribe_frame = build_notice_subscribe(&pattern);
-        client.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+        client
+            .request(&subscribe_frame, 2000)
+            .await
+            .expect("SUBSCRIBE");
     }
 
     // Act - Unsubscribe all
@@ -640,7 +670,10 @@ where
     let pattern = "notice://test/app/empty";
 
     let subscribe_frame = build_notice_subscribe(pattern);
-    client.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    client
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Act - Publish with empty payload
     let publish_frame = build_notice_publish(pattern, b"");
@@ -662,7 +695,10 @@ where
     let large_payload = vec![b'X'; 60_000];
 
     let subscribe_frame = build_notice_subscribe(pattern);
-    client.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    client
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Act - Publish with large payload
     let publish_frame = build_notice_publish(pattern, &large_payload);
@@ -685,11 +721,17 @@ where
 
     // Act - Both subscribe to same pattern
     let subscribe_frame1 = build_notice_subscribe(pattern);
-    let response1 = client1.request(&subscribe_frame1, 2000).await.expect("SUBSCRIBE 1");
+    let response1 = client1
+        .request(&subscribe_frame1, 2000)
+        .await
+        .expect("SUBSCRIBE 1");
     let id1 = parse_subscription_id(&parse_notice_response(&response1).2).expect("Expected ID");
 
     let subscribe_frame2 = build_notice_subscribe(pattern);
-    let response2 = client2.request(&subscribe_frame2, 2000).await.expect("SUBSCRIBE 2");
+    let response2 = client2
+        .request(&subscribe_frame2, 2000)
+        .await
+        .expect("SUBSCRIBE 2");
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
     // Act - Publish once
@@ -715,11 +757,17 @@ where
 
     // Act - Subscribe to two different patterns
     let subscribe1 = build_notice_subscribe("notice://test/app/pattern1");
-    let response1 = client.request(&subscribe1, 2000).await.expect("SUBSCRIBE 1");
+    let response1 = client
+        .request(&subscribe1, 2000)
+        .await
+        .expect("SUBSCRIBE 1");
     let id1 = parse_subscription_id(&parse_notice_response(&response1).2).expect("Expected ID");
 
     let subscribe2 = build_notice_subscribe("notice://test/app/pattern2");
-    let response2 = client.request(&subscribe2, 2000).await.expect("SUBSCRIBE 2");
+    let response2 = client
+        .request(&subscribe2, 2000)
+        .await
+        .expect("SUBSCRIBE 2");
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
     // Act - Publish to pattern1 only
@@ -748,7 +796,10 @@ where
     let result = client.request(&garbage, 100).await;
 
     // Assert
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_subscription<C>(server: &TestServer)
@@ -760,7 +811,10 @@ where
     let pattern = "notice://test/app/disconnect";
 
     let subscribe_frame = build_notice_subscribe(pattern);
-    client.request(&subscribe_frame, 1000).await.expect("SUBSCRIBE");
+    client
+        .request(&subscribe_frame, 1000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Act - Drop connection
     drop(client);
@@ -783,31 +837,41 @@ where
 
 #[tokio::test]
 async fn should_complete_subscribe_publish_notify_cycle_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_subscribe_publish_notify_cycle::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_subscriptions_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_subscriptions::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_assign_unique_subscription_ids_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_assign_unique_subscription_ids::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_wildcard_patterns_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_wildcard_patterns::<TcpConnector>(&server).await;
 }
 
@@ -861,49 +925,65 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
 
 #[tokio::test]
 async fn should_support_unsubscribe_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_unsubscribe_all_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_all_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_payload_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_payload::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_payload_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_payload::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_fanout_to_multiple_subscribers_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_fanout_to_multiple_subscribers::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_subscriptions_across_patterns_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_subscriptions_across_patterns::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_subscription_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_subscription::<TcpConnector>(&server).await;
 }
 
@@ -911,31 +991,41 @@ async fn should_handle_connection_drop_during_subscription_tcp() {
 
 #[tokio::test]
 async fn should_complete_subscribe_publish_notify_cycle_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_subscribe_publish_notify_cycle::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_subscriptions_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_subscriptions::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_assign_unique_subscription_ids_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_assign_unique_subscription_ids::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_wildcard_patterns_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_wildcard_patterns::<WsConnector>(&server).await;
 }
 
@@ -989,48 +1079,64 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
 
 #[tokio::test]
 async fn should_support_unsubscribe_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_unsubscribe_all_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_all_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_payload_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_payload::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_payload_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_payload::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_fanout_to_multiple_subscribers_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_fanout_to_multiple_subscribers::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_subscriptions_across_patterns_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_subscriptions_across_patterns::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_subscription_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_subscription::<WsConnector>(&server).await;
 }

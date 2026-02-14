@@ -11,7 +11,9 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
 
 /// Test server that starts Fitz on random available ports (TCP + WebSocket)
 pub struct TestServer {
@@ -37,7 +39,10 @@ impl TestServer {
             .try_init();
 
         // Set auth mode via environment variable
-        std::env::set_var("FITZ_AUTH_REQUIRED", if auth_required { "true" } else { "false" });
+        std::env::set_var(
+            "FITZ_AUTH_REQUIRED",
+            if auth_required { "true" } else { "false" },
+        );
 
         // Find available ports
         let tcp_listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -363,8 +368,8 @@ pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
 /// Token is valid for 1 hour from now
 /// Includes full permissions for the realm
 pub fn generate_test_jwt(realm: &str) -> String {
-    use jsonwebtoken::{encode, Header, EncodingKey, Algorithm};
-    use serde::{Serialize, Deserialize};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
@@ -382,8 +387,8 @@ pub fn generate_test_jwt(realm: &str) -> String {
         .as_secs() as i64;
 
     let claims = Claims {
-        iss: "".to_string(),       // Empty issuer = no signature verification
-        aud: "fitz".to_string(),   // Standard audience
+        iss: "".to_string(),     // Empty issuer = no signature verification
+        aud: "fitz".to_string(), // Standard audience
         sub: realm.to_string(),
         exp: now + 3600, // Valid for 1 hour
         iat: now,
@@ -410,8 +415,8 @@ pub fn generate_test_jwt(realm: &str) -> String {
 
 /// Generate expired JWT (for testing rejection)
 pub fn generate_expired_jwt(realm: &str) -> String {
-    use jsonwebtoken::{encode, Header, EncodingKey, Algorithm};
-    use serde::{Serialize, Deserialize};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
@@ -449,8 +454,8 @@ pub fn generate_expired_jwt(realm: &str) -> String {
 
 /// Generate JWT with invalid signature (for testing rejection)
 pub fn generate_invalid_signature_jwt(realm: &str) -> String {
-    use jsonwebtoken::{encode, Header, EncodingKey, Algorithm};
-    use serde::{Serialize, Deserialize};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
@@ -552,6 +557,10 @@ mod tests {
 
         // Assert
         let parts: Vec<&str> = jwt.split('.').collect();
-        assert_eq!(parts.len(), 3, "JWT should have header.payload.signature format");
+        assert_eq!(
+            parts.len(),
+            3,
+            "JWT should have header.payload.signature format"
+        );
     }
 }

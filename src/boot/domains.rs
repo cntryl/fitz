@@ -808,7 +808,8 @@ impl MailboxSink for RpcDomainSink {
 
                     // Encode REQUEST delivery for worker (similar to Notice NOTIFY encoding)
                     let work_item = crate::domains::rpc::protocol::RpcWorkItem::from_request(&req);
-                    let request_payload = crate::protocol::rpc_codec::encode_request_delivery(&work_item);
+                    let request_payload =
+                        crate::protocol::rpc_codec::encode_request_delivery(&work_item);
 
                     // Forward request to worker's session inbox (avoids RPC domain re-entry / stack overflow)
                     let forward_ctx = FrameContext::new(

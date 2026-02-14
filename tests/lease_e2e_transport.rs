@@ -13,10 +13,7 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait LeaseTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
@@ -27,16 +24,11 @@ pub trait LeaseTestClient {
 pub trait LeaseConnector {
     type Client: LeaseTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl LeaseTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -50,10 +42,7 @@ impl LeaseTestClient for TestClient {
 }
 
 impl LeaseTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -71,9 +60,7 @@ struct TcpConnector;
 impl LeaseConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -83,9 +70,7 @@ struct WsConnector;
 impl LeaseConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -226,7 +211,10 @@ where
     assert_eq!(msg_type, 401, "Expected RENEW response (401)");
     assert_eq!(status, 0, "Expected success status");
     let new_token = parse_lease_token_response(&data).expect("Expected new fencing token");
-    assert!(new_token > token, "Expected monotonically increasing fencing token");
+    assert!(
+        new_token > token,
+        "Expected monotonically increasing fencing token"
+    );
 
     // Act - RELEASE
     let release_frame = build_lease_release(route, owner_id, new_token);
@@ -248,7 +236,10 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let warmup_frame = build_lease_acquire("lease://test/app/warmup", "warmup", 30);
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     // Act
     let acquire_frame = build_lease_acquire("lease://test/app/bench", "bench", 30);
@@ -290,13 +281,19 @@ where
         let token = parse_lease_token_response(&data).expect("Expected token");
 
         let renew_frame = build_lease_renew(&route, &owner, token, 30);
-        let response = client.request(&renew_frame, 4000).await.expect("RENEW failed");
+        let response = client
+            .request(&renew_frame, 4000)
+            .await
+            .expect("RENEW failed");
         let (_msg_type, status, data) = parse_lease_response(&response);
         assert_eq!(status, 0);
         let new_token = parse_lease_token_response(&data).expect("Expected new token");
 
         let release_frame = build_lease_release(&route, &owner, new_token);
-        let response = client.request(&release_frame, 4000).await.expect("RELEASE failed");
+        let response = client
+            .request(&release_frame, 4000)
+            .await
+            .expect("RELEASE failed");
         let (_msg_type, status, _data) = parse_lease_response(&response);
         assert_eq!(status, 0);
 
@@ -306,7 +303,11 @@ where
     // Assert - All 3 concurrent operations complete
     let (t1, t2, t3) = tokio::join!(run_lease(0), run_lease(1), run_lease(2));
     let tokens = [t1, t2, t3];
-    assert_eq!(tokens.len(), 3, "All 3 concurrent lease operations should complete");
+    assert_eq!(
+        tokens.len(),
+        3,
+        "All 3 concurrent lease operations should complete"
+    );
 }
 
 async fn should_enforce_lease_contention<C>(server: &TestServer)
@@ -320,21 +321,29 @@ where
 
     // Act - Client 1 acquires lease
     let acquire1_frame = build_lease_acquire(route, "owner-1", 30);
-    let response1 = client1.request(&acquire1_frame, 2000).await.expect("ACQUIRE 1");
+    let response1 = client1
+        .request(&acquire1_frame, 2000)
+        .await
+        .expect("ACQUIRE 1");
     let (_msg_type, status1, data1) = parse_lease_response(&response1);
     assert_eq!(status1, 0);
     let token1 = parse_lease_token_response(&data1).expect("Expected token");
 
     // Act - Client 2 tries to acquire same lease
     let acquire2_frame = build_lease_acquire(route, "owner-2", 30);
-    let response2 = client2.request(&acquire2_frame, 2000).await.expect("ACQUIRE 2");
+    let response2 = client2
+        .request(&acquire2_frame, 2000)
+        .await
+        .expect("ACQUIRE 2");
 
     // Assert - Client 2 should be rejected or get error
     let (_msg_type, status2, _data2) = parse_lease_response(&response2);
     assert_eq!(status2, 1, "Expected error when lease already held");
 
     // Cleanup
-    let _ = client1.request(&build_lease_release(route, "owner-1", token1), 2000).await;
+    let _ = client1
+        .request(&build_lease_release(route, "owner-1", token1), 2000)
+        .await;
 }
 
 async fn should_reject_operations_with_invalid_token<C>(server: &TestServer)
@@ -461,7 +470,10 @@ where
     let result = client.request(&acquire_frame, 1000).await;
 
     // Assert
-    assert!(result.is_err(), "Expected rejection for invalid JWT signature");
+    assert!(
+        result.is_err(),
+        "Expected rejection for invalid JWT signature"
+    );
 }
 
 async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
@@ -500,7 +512,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client1.send_frame(&connect_frame1).await.expect("CONNECT 1");
+    client1
+        .send_frame(&connect_frame1)
+        .await
+        .expect("CONNECT 1");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Arrange - Second client
@@ -509,7 +524,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client2.send_frame(&connect_frame2).await.expect("CONNECT 2");
+    client2
+        .send_frame(&connect_frame2)
+        .await
+        .expect("CONNECT 2");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Act - Both clients acquire different leases
@@ -547,7 +565,10 @@ where
         let (_msg_type, status, _data) = parse_lease_response(&response);
         assert_eq!(status, 1, "Expected error for RENEW without ACQUIRE");
     } else {
-        assert!(result.is_err(), "Expected error/timeout for RENEW without ACQUIRE");
+        assert!(
+            result.is_err(),
+            "Expected error/timeout for RENEW without ACQUIRE"
+        );
     }
 }
 
@@ -562,7 +583,8 @@ where
 
     let acquire_frame = build_lease_acquire(route, owner_id, 30);
     let response = client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
-    let token = parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
+    let token =
+        parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
     let release_frame = build_lease_release(route, owner_id, token);
     client.request(&release_frame, 2000).await.expect("RELEASE");
@@ -612,15 +634,18 @@ where
     // Act - Acquire and renew multiple times
     let acquire_frame = build_lease_acquire(route, owner_id, 30);
     let response = client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
-    let token1 = parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
+    let token1 =
+        parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
     let renew_frame1 = build_lease_renew(route, owner_id, token1, 30);
     let response = client.request(&renew_frame1, 2000).await.expect("RENEW 1");
-    let token2 = parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
+    let token2 =
+        parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
     let renew_frame2 = build_lease_renew(route, owner_id, token2, 30);
     let response = client.request(&renew_frame2, 2000).await.expect("RENEW 2");
-    let token3 = parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
+    let token3 =
+        parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
     // Assert - Tokens are monotonically increasing
     assert!(token2 > token1, "Token 2 should be > Token 1");
@@ -637,11 +662,13 @@ where
     // Act - Acquire two different leases
     let acquire1 = build_lease_acquire("lease://test/app/lock1", "owner-1", 30);
     let response1 = client.request(&acquire1, 2000).await.expect("ACQUIRE 1");
-    let token1 = parse_lease_token_response(&parse_lease_response(&response1).2).expect("Expected token");
+    let token1 =
+        parse_lease_token_response(&parse_lease_response(&response1).2).expect("Expected token");
 
     let acquire2 = build_lease_acquire("lease://test/app/lock2", "owner-1", 30);
     let response2 = client.request(&acquire2, 2000).await.expect("ACQUIRE 2");
-    let token2 = parse_lease_token_response(&parse_lease_response(&response2).2).expect("Expected token");
+    let token2 =
+        parse_lease_token_response(&parse_lease_response(&response2).2).expect("Expected token");
 
     // Assert - Different leases, independent tokens
     assert!(token1 > 0, "Expected valid token for lease 1");
@@ -654,7 +681,11 @@ where
 
     let renew2 = build_lease_renew("lease://test/app/lock2", "owner-1", token2, 30);
     let response = client.request(&renew2, 2000).await.expect("RENEW 2");
-    assert_eq!(parse_lease_response(&response).1, 0, "Lease 2 should still be held");
+    assert_eq!(
+        parse_lease_response(&response).1,
+        0,
+        "Lease 2 should still be held"
+    );
 }
 
 async fn should_timeout_on_malformed_frame<C>(server: &TestServer)
@@ -669,7 +700,10 @@ where
     let result = client.request(&garbage, 100).await;
 
     // Assert
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_lease<C>(server: &TestServer)
@@ -683,7 +717,8 @@ where
 
     let acquire_frame = build_lease_acquire(route, owner_id, 30);
     let response = client.request(&acquire_frame, 1000).await.expect("ACQUIRE");
-    let token = parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
+    let token =
+        parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
     // Act - Drop connection
     drop(client);
@@ -700,38 +735,52 @@ where
     // Assert - Token validity depends on TTL, but connection drop shouldn't break the system
     let (_msg_type, status, _data) = parse_lease_response(&response);
     // Status could be 0 (if lease still valid) or 1 (if expired), but should not crash
-    assert!(status == 0 || status == 1, "Expected valid response, got status {}", status);
+    assert!(
+        status == 0 || status == 1,
+        "Expected valid response, got status {}",
+        status
+    );
 }
 
 // ===== TCP tests =====
 
 #[tokio::test]
 async fn should_complete_acquire_renew_release_cycle_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_acquire_renew_release_cycle::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_leases_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_leases::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_enforce_lease_contention_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_enforce_lease_contention::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_operations_with_invalid_token_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_operations_with_invalid_token::<TcpConnector>(&server).await;
 }
 
@@ -780,49 +829,62 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_create_separate_sessions_for_each_connection_with_auth::<TcpConnector>(&server)
-        .await;
+    should_create_separate_sessions_for_each_connection_with_auth::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_renew_without_acquire_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_renew_without_acquire::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_release_after_release_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_release_after_release::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_query_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_query_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_enforce_fencing_token_monotonicity_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_enforce_fencing_token_monotonicity::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_leases_across_resources_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_leases_across_resources::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_lease_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_lease::<TcpConnector>(&server).await;
 }
 
@@ -830,31 +892,41 @@ async fn should_handle_connection_drop_during_lease_tcp() {
 
 #[tokio::test]
 async fn should_complete_acquire_renew_release_cycle_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_acquire_renew_release_cycle::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_leases_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_leases::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_enforce_lease_contention_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_enforce_lease_contention::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_operations_with_invalid_token_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_operations_with_invalid_token::<WsConnector>(&server).await;
 }
 
@@ -903,48 +975,61 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_create_separate_sessions_for_each_connection_with_auth::<WsConnector>(&server)
-        .await;
+    should_create_separate_sessions_for_each_connection_with_auth::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_renew_without_acquire_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_renew_without_acquire::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_release_after_release_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_release_after_release::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_query_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_query_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_enforce_fencing_token_monotonicity_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_enforce_fencing_token_monotonicity::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_leases_across_resources_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_leases_across_resources::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_lease_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_lease::<WsConnector>(&server).await;
 }

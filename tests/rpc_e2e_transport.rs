@@ -14,34 +14,23 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait RpcTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
         timeout_ms: u64,
     ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
 }
 
 pub trait RpcConnector {
     type Client: RpcTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl RpcTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -53,19 +42,13 @@ impl RpcTestClient for TestClient {
         Box::pin(async move { TestClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestClient::recv_frame(self, timeout_ms).await })
     }
 }
 
 impl RpcTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -77,10 +60,7 @@ impl RpcTestClient for TestWebSocketClient {
         Box::pin(async move { TestWebSocketClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestWebSocketClient::recv_frame(self, timeout_ms).await })
     }
 }
@@ -90,9 +70,7 @@ struct TcpConnector;
 impl RpcConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -102,9 +80,7 @@ struct WsConnector;
 impl RpcConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -245,7 +221,8 @@ fn parse_rpc_request_delivery(frame: &[u8]) -> (Uuid, String, String, Vec<u8>) {
         payload[offset + 3],
     ]) as usize;
     offset += 4;
-    let reply_route = String::from_utf8_lossy(&payload[offset..offset + reply_route_len]).to_string();
+    let reply_route =
+        String::from_utf8_lossy(&payload[offset..offset + reply_route_len]).to_string();
     offset += reply_route_len;
 
     // Parse body
@@ -330,8 +307,8 @@ where
 {
     // Arrange - Worker subscribes to handle requests for compute route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
-    let route = "rpc://test/app/compute";  // Worker subscribes to the route that will receive requests
-    
+    let route = "rpc://test/app/compute"; // Worker subscribes to the route that will receive requests
+
     let subscribe_frame = build_rpc_subscribe(route);
     let response = worker
         .request(&subscribe_frame, 2000)
@@ -360,7 +337,7 @@ where
         .await
         .expect("Expected REQUEST delivery");
 
-    let (received_correlation_id, received_route, received_reply_route, received_body) = 
+    let (received_correlation_id, received_route, received_reply_route, received_body) =
         parse_rpc_request_delivery(&request_delivery);
 
     // Assert - Request delivered correctly
@@ -383,7 +360,7 @@ where
         .await
         .expect("Expected RESPONSE delivery");
 
-    let (resp_correlation_id, seq, resp_body, stream_end) = 
+    let (resp_correlation_id, seq, resp_body, stream_end) =
         parse_rpc_response_delivery(&response_delivery);
 
     // Assert - Response delivered correctly
@@ -400,7 +377,10 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let warmup_frame = build_rpc_subscribe("rpc://test/app/warmup");
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     // Act
     let subscribe_frame = build_rpc_subscribe("rpc://test/app/bench");
@@ -459,9 +439,12 @@ where
     // Arrange - Worker subscribes to stream route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/stream";
-    
+
     let subscribe_frame = build_rpc_subscribe(route);
-    worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Arrange - Client sends request
     let mut client = C::connect(server).await.expect("failed to connect client");
@@ -474,9 +457,18 @@ where
     // Act - Worker receives and sends 3 responses
     let _ = worker.recv_frame(2000).await.expect("REQUEST delivery");
 
-    worker.send_frame(&build_rpc_response(correlation_id, 0, b"chunk1", false)).await.expect("RESPONSE 1");
-    worker.send_frame(&build_rpc_response(correlation_id, 1, b"chunk2", false)).await.expect("RESPONSE 2");
-    worker.send_frame(&build_rpc_response(correlation_id, 2, b"chunk3", true)).await.expect("RESPONSE 3");
+    worker
+        .send_frame(&build_rpc_response(correlation_id, 0, b"chunk1", false))
+        .await
+        .expect("RESPONSE 1");
+    worker
+        .send_frame(&build_rpc_response(correlation_id, 1, b"chunk2", false))
+        .await
+        .expect("RESPONSE 2");
+    worker
+        .send_frame(&build_rpc_response(correlation_id, 2, b"chunk3", true))
+        .await
+        .expect("RESPONSE 3");
 
     // Assert - Client receives all 3 responses in order
     let resp1 = client.recv_frame(2000).await.expect("RESPONSE 1");
@@ -493,7 +485,7 @@ where
 
     let resp3 = client.recv_frame(2000).await.expect("RESPONSE 3");
     let (_, seq3, body3, end3) = parse_rpc_response_delivery(&resp3);
-    assert_eq!(seq3,2);
+    assert_eq!(seq3, 2);
     assert_eq!(body3, b"chunk3");
     assert!(end3);
 }
@@ -595,7 +587,10 @@ where
     let result = client.request(&subscribe_frame, 1000).await;
 
     // Assert
-    assert!(result.is_err(), "Expected rejection for invalid JWT signature");
+    assert!(
+        result.is_err(),
+        "Expected rejection for invalid JWT signature"
+    );
 }
 
 async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
@@ -634,7 +629,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    worker1.send_frame(&connect_frame1).await.expect("CONNECT 1");
+    worker1
+        .send_frame(&connect_frame1)
+        .await
+        .expect("CONNECT 1");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Arrange - Second worker
@@ -643,16 +641,25 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    worker2.send_frame(&connect_frame2).await.expect("CONNECT 2");
+    worker2
+        .send_frame(&connect_frame2)
+        .await
+        .expect("CONNECT 2");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Act - Both workers subscribe to different routes
     let subscribe1 = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
-    let response1 = worker1.request(&subscribe1, 2000).await.expect("SUBSCRIBE 1");
+    let response1 = worker1
+        .request(&subscribe1, 2000)
+        .await
+        .expect("SUBSCRIBE 1");
     assert_eq!(parse_rpc_response_frame(&response1).1, 0);
 
     let subscribe2 = build_rpc_subscribe("rpc://test-realm/app/workers/worker2");
-    let response2 = worker2.request(&subscribe2, 2000).await.expect("SUBSCRIBE 2");
+    let response2 = worker2
+        .request(&subscribe2, 2000)
+        .await
+        .expect("SUBSCRIBE 2");
     assert_eq!(parse_rpc_response_frame(&response2).1, 0);
 
     // Assert - Both workers subscribed successfully
@@ -668,11 +675,17 @@ where
     let worker_addr = "rpc://test/app/workers/unsub";
 
     let subscribe_frame = build_rpc_subscribe(worker_addr);
-    worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Act - Unsubscribe
     let unsubscribe_frame = build_rpc_unsubscribe(worker_addr);
-    let response = worker.request(&unsubscribe_frame, 2000).await.expect("UNSUBSCRIBE");
+    let response = worker
+        .request(&unsubscribe_frame, 2000)
+        .await
+        .expect("UNSUBSCRIBE");
 
     // Assert
     let (msg_type, status, _data) = parse_rpc_response_frame(&response);
@@ -687,9 +700,12 @@ where
     // Arrange - Worker subscribes to empty route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/empty";
-    
+
     let subscribe_frame = build_rpc_subscribe(route);
-    worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Arrange - Client sends request with empty body
     let mut client = C::connect(server).await.expect("failed to connect client");
@@ -714,9 +730,12 @@ where
     // Arrange - Worker subscribes to large route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/large";
-    
+
     let subscribe_frame = build_rpc_subscribe(route);
-    worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Arrange - Client sends large request
     let mut client = C::connect(server).await.expect("failed to connect client");
@@ -742,12 +761,18 @@ where
     // Arrange - Two workers on different routes
     let mut worker1 = C::connect(server).await.expect("failed to connect worker1");
     let mut worker2 = C::connect(server).await.expect("failed to connect worker2");
-    
+
     let subscribe1 = build_rpc_subscribe("rpc://test/app/route1");
-    worker1.request(&subscribe1, 2000).await.expect("SUBSCRIBE 1");
+    worker1
+        .request(&subscribe1, 2000)
+        .await
+        .expect("SUBSCRIBE 1");
 
     let subscribe2 = build_rpc_subscribe("rpc://test/app/route2");
-    worker2.request(&subscribe2, 2000).await.expect("SUBSCRIBE 2");
+    worker2
+        .request(&subscribe2, 2000)
+        .await
+        .expect("SUBSCRIBE 2");
 
     // Act - Send request to route1
     let mut client = C::connect(server).await.expect("failed to connect client");
@@ -778,7 +803,10 @@ where
     let result = client.request(&garbage, 100).await;
 
     // Assert
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_subscription<C>(server: &TestServer)
@@ -790,7 +818,10 @@ where
     let worker_addr = "rpc://test/app/workers/disconnect";
 
     let subscribe_frame = build_rpc_subscribe(worker_addr);
-    worker.request(&subscribe_frame, 1000).await.expect("SUBSCRIBE");
+    worker
+        .request(&subscribe_frame, 1000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Act - Drop connection
     drop(worker);
@@ -813,25 +844,33 @@ where
 
 #[tokio::test]
 async fn should_complete_subscribe_request_response_cycle_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_subscribe_request_response_cycle::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_workers_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_workers::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_streaming_responses_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_streaming_responses::<TcpConnector>(&server).await;
 }
 
@@ -885,37 +924,49 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
 
 #[tokio::test]
 async fn should_support_unsubscribe_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_request_body_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_request_body::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_request_body_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_request_body::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_workers_across_routes_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_workers_across_routes::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_subscription_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_subscription::<TcpConnector>(&server).await;
 }
 
@@ -923,25 +974,33 @@ async fn should_handle_connection_drop_during_subscription_tcp() {
 
 #[tokio::test]
 async fn should_complete_subscribe_request_response_cycle_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_subscribe_request_response_cycle::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_workers_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_connections_with_separate_workers::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_streaming_responses_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_streaming_responses::<WsConnector>(&server).await;
 }
 
@@ -995,36 +1054,48 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
 
 #[tokio::test]
 async fn should_support_unsubscribe_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_request_body_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_request_body::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_request_body_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_request_body::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_workers_across_routes_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_workers_across_routes::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_subscription_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_subscription::<WsConnector>(&server).await;
 }

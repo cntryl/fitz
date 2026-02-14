@@ -13,10 +13,7 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait KvTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
@@ -27,16 +24,11 @@ pub trait KvTestClient {
 pub trait KvConnector {
     type Client: KvTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl KvTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -50,10 +42,7 @@ impl KvTestClient for TestClient {
 }
 
 impl KvTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -71,9 +60,7 @@ struct TcpConnector;
 impl KvConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -83,9 +70,7 @@ struct WsConnector;
 impl KvConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -228,7 +213,10 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
 
     let warmup_frame = build_kv_begin("kv://test/app/warmup", 1, 0);
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     let begin_frame = build_kv_begin("kv://test/app/bench", 1, 0);
     let start = std::time::Instant::now();
@@ -252,7 +240,6 @@ async fn should_handle_concurrent_connections_with_separate_transactions<C>(serv
 where
     C: KvConnector,
 {
-
     let run_tx = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("kv://test/app/concurrent{}", idx);
@@ -287,7 +274,11 @@ where
     let (tx1, tx2, tx3) = tokio::join!(run_tx(0), run_tx(1), run_tx(2));
     let tx_ids = [tx1, tx2, tx3];
 
-    assert_eq!(tx_ids.len(), 3, "All 3 concurrent transactions should complete");
+    assert_eq!(
+        tx_ids.len(),
+        3,
+        "All 3 concurrent transactions should complete"
+    );
 }
 
 async fn should_assign_unique_tx_ids_within_single_session<C>(server: &TestServer)
@@ -327,7 +318,11 @@ where
     }
 
     assert_eq!(tx_ids.len(), 3);
-    assert_eq!(tx_ids, vec![1, 2, 3], "Transaction IDs should be sequential within a session");
+    assert_eq!(
+        tx_ids,
+        vec![1, 2, 3],
+        "Transaction IDs should be sequential within a session"
+    );
 }
 
 async fn should_reject_operations_on_invalid_transaction<C>(server: &TestServer)
@@ -476,10 +471,13 @@ where
     let (_msg_type1, status1, data1) = parse_kv_response(&response1);
     let (_msg_type2, status2, data2) = parse_kv_response(&response2);
 
-    assert_eq!(status1, 0, "First BEGIN should succeed, got status {}", status1);
     assert_eq!(
-        status2,
-        0,
+        status1, 0,
+        "First BEGIN should succeed, got status {}",
+        status1
+    );
+    assert_eq!(
+        status2, 0,
         "Second BEGIN should succeed, got status {}",
         status2
     );
@@ -502,7 +500,10 @@ where
     ]);
 
     assert_eq!(tx_id1, 1, "First connection should get tx_id=1");
-    assert_eq!(tx_id2, 1, "Second connection should also get tx_id=1 (separate session)");
+    assert_eq!(
+        tx_id2, 1,
+        "Second connection should also get tx_id=1 (separate session)"
+    );
 }
 
 async fn should_reject_commit_before_begin<C>(server: &TestServer)
@@ -518,7 +519,10 @@ where
         let (_msg_type, status, _data) = parse_kv_response(&response);
         assert_eq!(status, 1, "Expected error for COMMIT without BEGIN");
     } else {
-        assert!(result.is_err(), "Expected error/timeout for COMMIT without BEGIN");
+        assert!(
+            result.is_err(),
+            "Expected error/timeout for COMMIT without BEGIN"
+        );
     }
 }
 
@@ -674,7 +678,10 @@ where
         parse_kv_response(&response).2[7],
     ]);
 
-    assert_ne!(tx_id1, tx_id2, "Different resources should get different tx_ids");
+    assert_ne!(
+        tx_id1, tx_id2,
+        "Different resources should get different tx_ids"
+    );
 
     let put1 = build_kv_put(tx_id1, "kv://test/app/users", b"key", b"value");
     let response1 = client.request(&put1, 2000).await.expect("PUT 1");
@@ -688,7 +695,10 @@ where
     let response = client.request(&put_wrong, 2000).await.expect("PUT wrong");
 
     let (_msg_type, status, _data) = parse_kv_response(&response);
-    assert_eq!(status, 1, "Expected error for PUT to wrong resource with tx_id");
+    assert_eq!(
+        status, 1,
+        "Expected error for PUT to wrong resource with tx_id"
+    );
 }
 
 async fn should_timeout_on_malformed_frame<C>(server: &TestServer)
@@ -700,7 +710,10 @@ where
     let garbage = vec![0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00];
     let result = client.request(&garbage, 100).await;
 
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_transaction<C>(server: &TestServer)
@@ -734,39 +747,51 @@ where
         .expect("server should respond");
 
     let (_msg_type, status, _data) = parse_kv_response(&response);
-    assert_eq!(status, 1, "Expected error for tx_id from disconnected session");
+    assert_eq!(
+        status, 1,
+        "Expected error for tx_id from disconnected session"
+    );
 }
 
 // ===== TCP tests =====
 
 #[tokio::test]
 async fn should_complete_begin_put_commit_over_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_begin_put_commit_over_transport::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_transactions_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
-    should_handle_concurrent_connections_with_separate_transactions::<TcpConnector>(&server)
-        .await;
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+    should_handle_concurrent_connections_with_separate_transactions::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_assign_unique_tx_ids_within_single_session_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_assign_unique_tx_ids_within_single_session::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_operations_on_invalid_transaction_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_operations_on_invalid_transaction::<TcpConnector>(&server).await;
 }
 
@@ -815,55 +840,70 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_create_separate_sessions_for_each_connection_with_auth::<TcpConnector>(&server)
-        .await;
+    should_create_separate_sessions_for_each_connection_with_auth::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_commit_before_begin_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_commit_before_begin::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_put_after_commit_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_put_after_commit::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_rollback_transaction_successfully_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_rollback_transaction_successfully::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_key_and_value_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_key_and_value::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_values_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_values::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_transactions_across_resources_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_transactions_across_resources::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_transaction_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_transaction::<TcpConnector>(&server).await;
 }
 
@@ -871,32 +911,41 @@ async fn should_handle_connection_drop_during_transaction_tcp() {
 
 #[tokio::test]
 async fn should_complete_begin_put_commit_over_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_begin_put_commit_over_transport::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_connections_with_separate_transactions_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
-    should_handle_concurrent_connections_with_separate_transactions::<WsConnector>(&server)
-        .await;
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+    should_handle_concurrent_connections_with_separate_transactions::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_assign_unique_tx_ids_within_single_session_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_assign_unique_tx_ids_within_single_session::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_operations_on_invalid_transaction_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_operations_on_invalid_transaction::<WsConnector>(&server).await;
 }
 
@@ -945,54 +994,69 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_create_separate_sessions_for_each_connection_with_auth::<WsConnector>(&server)
-        .await;
+    should_create_separate_sessions_for_each_connection_with_auth::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_commit_before_begin_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_commit_before_begin::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_put_after_commit_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_reject_put_after_commit::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_rollback_transaction_successfully_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_rollback_transaction_successfully::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_key_and_value_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_key_and_value::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_large_values_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_large_values::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_transactions_across_resources_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_transactions_across_resources::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_transaction_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_transaction::<WsConnector>(&server).await;
 }

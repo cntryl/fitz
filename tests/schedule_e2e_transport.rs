@@ -13,34 +13,23 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait ScheduleTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
         timeout_ms: u64,
     ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
 }
 
 pub trait ScheduleConnector {
     type Client: ScheduleTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl ScheduleTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -52,19 +41,13 @@ impl ScheduleTestClient for TestClient {
         Box::pin(async move { TestClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestClient::recv_frame(self, timeout_ms).await })
     }
 }
 
 impl ScheduleTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -76,10 +59,7 @@ impl ScheduleTestClient for TestWebSocketClient {
         Box::pin(async move { TestWebSocketClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestWebSocketClient::recv_frame(self, timeout_ms).await })
     }
 }
@@ -89,9 +69,7 @@ struct TcpConnector;
 impl ScheduleConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -101,9 +79,7 @@ struct WsConnector;
 impl ScheduleConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -135,7 +111,7 @@ fn encode_schedule_payload(cron: &str, target_resource: &str, target_operation: 
 /// Wire format: [bytes payload] where payload is TLV-encoded SchedulePayload
 fn build_schedule_create(cron: &str, target_resource: &str, target_operation: &str) -> Vec<u8> {
     let payload = encode_schedule_payload(cron, target_resource, target_operation);
-    
+
     let mut buf = BytesMut::new();
     buf.put_slice(&(payload.len() as u32).to_be_bytes());
     buf.put_slice(&payload);
@@ -317,7 +293,10 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let warmup_frame = build_schedule_create("* * * * *", "warmup", "op");
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     // Act
     let create_frame = build_schedule_create("*/10 * * * *", "bench", "op");
@@ -477,7 +456,10 @@ where
     let result = client.request(&create_frame, 1000).await;
 
     // Assert
-    assert!(result.is_err(), "Expected rejection for invalid JWT signature");
+    assert!(
+        result.is_err(),
+        "Expected rejection for invalid JWT signature"
+    );
 }
 
 async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
@@ -516,7 +498,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client1.send_frame(&connect_frame1).await.expect("CONNECT 1");
+    client1
+        .send_frame(&connect_frame1)
+        .await
+        .expect("CONNECT 1");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Arrange - Second client
@@ -525,7 +510,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client2.send_frame(&connect_frame2).await.expect("CONNECT 2");
+    client2
+        .send_frame(&connect_frame2)
+        .await
+        .expect("CONNECT 2");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Act - Both clients create schedules
@@ -570,7 +558,10 @@ where
     let pattern = "schedule://test/app/*";
 
     let subscribe_frame = build_schedule_subscribe(pattern);
-    client.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
+    client
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("SUBSCRIBE");
 
     // Act - UNSUBSCRIBE
     let unsubscribe_frame = build_schedule_unsubscribe(pattern);
@@ -637,7 +628,10 @@ where
     let result = client.request(&garbage, 100).await;
 
     // Assert
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_schedule<C>(server: &TestServer)
@@ -671,25 +665,33 @@ where
 
 #[tokio::test]
 async fn should_complete_create_list_cancel_cycle_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_create_list_cancel_cycle::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_schedule_operations_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_schedule_operations::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_validate_cron_expressions_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_validate_cron_expressions::<TcpConnector>(&server).await;
 }
 
@@ -743,37 +745,49 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
 
 #[tokio::test]
 async fn should_support_subscribe_to_schedule_fires_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_subscribe_to_schedule_fires::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_unsubscribe_from_schedule_fires_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_from_schedule_fires::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_list_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_list::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_schedules_across_realms_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_schedules_across_realms::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_schedule_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_schedule::<TcpConnector>(&server).await;
 }
 
@@ -781,25 +795,33 @@ async fn should_handle_connection_drop_during_schedule_tcp() {
 
 #[tokio::test]
 async fn should_complete_create_list_cancel_cycle_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_create_list_cancel_cycle::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_schedule_operations_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_schedule_operations::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_validate_cron_expressions_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_validate_cron_expressions::<WsConnector>(&server).await;
 }
 
@@ -853,36 +875,48 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
 
 #[tokio::test]
 async fn should_support_subscribe_to_schedule_fires_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_subscribe_to_schedule_fires::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_unsubscribe_from_schedule_fires_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_unsubscribe_from_schedule_fires::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_empty_list_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_empty_list::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_schedules_across_realms_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_schedules_across_realms::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_schedule_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_schedule::<WsConnector>(&server).await;
 }

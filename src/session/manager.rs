@@ -262,10 +262,8 @@ impl Ingress for RuntimeIngress {
                                                         );
                                                         actor.authenticate(claims, snapshot);
 
-                                                        self.session_actors.insert(
-                                                        session_id,
-                                                        actor,
-                                                    );
+                                                        self.session_actors
+                                                            .insert(session_id, actor);
 
                                                         notify_frame = Some(SessionFrame {
                                                             session_id,
@@ -341,10 +339,8 @@ impl Ingress for RuntimeIngress {
                                                         );
                                                         actor.authenticate(claims, snapshot);
 
-                                                        self.session_actors.insert(
-                                                        session_id,
-                                                        actor,
-                                                    );
+                                                        self.session_actors
+                                                            .insert(session_id, actor);
 
                                                         notify_frame = Some(SessionFrame {
                                                             session_id,
@@ -374,18 +370,16 @@ impl Ingress for RuntimeIngress {
                                                 entry.permissions_snapshot = snapshot.clone();
                                                 entry.authenticated = true;
 
-                                                let mut actor = crate::session::actor::SessionActor::new(
-                                                    crate::session::session::SessionId(
-                                                        session_id,
-                                                    ),
-                                                    snapshot.clone(),
-                                                );
+                                                let mut actor =
+                                                    crate::session::actor::SessionActor::new(
+                                                        crate::session::session::SessionId(
+                                                            session_id,
+                                                        ),
+                                                        snapshot.clone(),
+                                                    );
                                                 actor.authenticate(claims, snapshot);
 
-                                                self.session_actors.insert(
-                                                    session_id,
-                                                    actor,
-                                                );
+                                                self.session_actors.insert(session_id, actor);
 
                                                 notify_frame = Some(SessionFrame {
                                                     session_id,
@@ -416,10 +410,7 @@ impl Ingress for RuntimeIngress {
                                         );
                                         actor.authenticate(claims, snapshot);
 
-                                        self.session_actors.insert(
-                                            session_id,
-                                            actor,
-                                        );
+                                        self.session_actors.insert(session_id, actor);
 
                                         notify_frame = Some(SessionFrame {
                                             session_id,

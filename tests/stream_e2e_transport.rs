@@ -13,34 +13,23 @@ type BoxError = Box<dyn Error>;
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub trait StreamTestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>>;
     fn request<'a>(
         &'a mut self,
         frame: &'a [u8],
         timeout_ms: u64,
     ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
 }
 
 pub trait StreamConnector {
     type Client: StreamTestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>>;
 }
 
 impl StreamTestClient for TestClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestClient::send_frame(self, frame).await })
     }
 
@@ -52,19 +41,13 @@ impl StreamTestClient for TestClient {
         Box::pin(async move { TestClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestClient::recv_frame(self, timeout_ms).await })
     }
 }
 
 impl StreamTestClient for TestWebSocketClient {
-    fn send_frame<'a>(
-        &'a mut self,
-        frame: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    fn send_frame<'a>(&'a mut self, frame: &'a [u8]) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { TestWebSocketClient::send_frame(self, frame).await })
     }
 
@@ -76,10 +59,7 @@ impl StreamTestClient for TestWebSocketClient {
         Box::pin(async move { TestWebSocketClient::request(self, frame, timeout_ms).await })
     }
 
-    fn recv_frame<'a>(
-        &'a mut self,
-        timeout_ms: u64,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    fn recv_frame<'a>(&'a mut self, timeout_ms: u64) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
         Box::pin(async move { TestWebSocketClient::recv_frame(self, timeout_ms).await })
     }
 }
@@ -89,9 +69,7 @@ struct TcpConnector;
 impl StreamConnector for TcpConnector {
     type Client = TestClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect().await })
     }
 }
@@ -101,9 +79,7 @@ struct WsConnector;
 impl StreamConnector for WsConnector {
     type Client = TestWebSocketClient;
 
-    fn connect<'a>(
-        server: &'a TestServer,
-    ) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
+    fn connect<'a>(server: &'a TestServer) -> BoxFuture<'a, Result<Self::Client, BoxError>> {
         Box::pin(async move { server.connect_ws().await })
     }
 }
@@ -115,7 +91,7 @@ fn build_stream_begin(route: &str, expected_offset: u64, metadata: Option<&[u8]>
     buf.put_slice(&(route.len() as u32).to_be_bytes());
     buf.put_slice(route.as_bytes());
     buf.put_slice(&expected_offset.to_be_bytes());
-    
+
     if let Some(meta) = metadata {
         buf.put_u8(1); // flag = Some
         buf.put_slice(&(meta.len() as u32).to_be_bytes());
@@ -136,7 +112,7 @@ fn build_stream_append(session_id: u64, body: &[u8], metadata: Option<&[u8]>) ->
     buf.put_slice(&session_id.to_be_bytes());
     buf.put_slice(&(body.len() as u32).to_be_bytes());
     buf.put_slice(body);
-    
+
     if let Some(meta) = metadata {
         buf.put_u8(1); // flag = Some
         buf.put_slice(&(meta.len() as u32).to_be_bytes());
@@ -181,7 +157,7 @@ fn build_stream_read(route: &str, from_offset: u64, limit: u64, max_bytes: Optio
     buf.put_slice(route.as_bytes());
     buf.put_slice(&from_offset.to_be_bytes());
     buf.put_slice(&limit.to_be_bytes());
-    
+
     if let Some(mb) = max_bytes {
         buf.put_u8(1); // flag = Some
         buf.put_slice(&mb.to_be_bytes());
@@ -339,7 +315,10 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let warmup_frame = build_stream_begin("stream://test/app/warmup", 0, None);
-    let _ = client.request(&warmup_frame, 1000).await.expect("warmup failed");
+    let _ = client
+        .request(&warmup_frame, 1000)
+        .await
+        .expect("warmup failed");
 
     // Act
     let begin_frame = build_stream_begin("stream://test/app/bench", 0, None);
@@ -516,7 +495,10 @@ where
     let result = client.request(&begin_frame, 1000).await;
 
     // Assert
-    assert!(result.is_err(), "Expected rejection for invalid JWT signature");
+    assert!(
+        result.is_err(),
+        "Expected rejection for invalid JWT signature"
+    );
 }
 
 async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
@@ -555,7 +537,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client1.send_frame(&connect_frame1).await.expect("CONNECT 1");
+    client1
+        .send_frame(&connect_frame1)
+        .await
+        .expect("CONNECT 1");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Arrange - Second client
@@ -564,7 +549,10 @@ where
         "test-realm",
         &fitz::testkit::transport::generate_test_jwt("test-realm"),
     );
-    client2.send_frame(&connect_frame2).await.expect("CONNECT 2");
+    client2
+        .send_frame(&connect_frame2)
+        .await
+        .expect("CONNECT 2");
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
     // Act - Both clients begin streams
@@ -716,7 +704,10 @@ where
     let result = client.request(&garbage, 100).await;
 
     // Assert
-    assert!(result.is_err(), "Expected error/timeout for malformed frame");
+    assert!(
+        result.is_err(),
+        "Expected error/timeout for malformed frame"
+    );
 }
 
 async fn should_handle_connection_drop_during_stream<C>(server: &TestServer)
@@ -751,25 +742,33 @@ where
 
 #[tokio::test]
 async fn should_complete_begin_append_commit_cycle_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_begin_append_commit_cycle::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_stream_operations_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_stream_operations::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_large_append_payloads_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_large_append_payloads::<TcpConnector>(&server).await;
 }
 
@@ -823,43 +822,57 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_tcp() {
 
 #[tokio::test]
 async fn should_support_rollback_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_rollback_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_read_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_read_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_last_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_last_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_get_metadata_operation_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_get_metadata_operation::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_sessions_across_streams_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_sessions_across_streams::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_stream_tcp() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_stream::<TcpConnector>(&server).await;
 }
 
@@ -867,25 +880,33 @@ async fn should_handle_connection_drop_during_stream_tcp() {
 
 #[tokio::test]
 async fn should_complete_begin_append_commit_cycle_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_complete_begin_append_commit_cycle::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_receive_responses_within_reasonable_time_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_receive_responses_within_reasonable_time::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_concurrent_stream_operations_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_concurrent_stream_operations::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_large_append_payloads_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_large_append_payloads::<WsConnector>(&server).await;
 }
 
@@ -939,42 +960,56 @@ async fn should_create_separate_sessions_for_each_connection_with_auth_ws() {
 
 #[tokio::test]
 async fn should_support_rollback_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_rollback_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_read_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_read_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_last_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_last_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_support_get_metadata_operation_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_support_get_metadata_operation::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_isolate_sessions_across_streams_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_isolate_sessions_across_streams::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_timeout_on_malformed_frame_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_timeout_on_malformed_frame::<WsConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_handle_connection_drop_during_stream_ws() {
-    let server = TestServer::start().await.expect("failed to start test server");
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
     should_handle_connection_drop_during_stream::<WsConnector>(&server).await;
 }
