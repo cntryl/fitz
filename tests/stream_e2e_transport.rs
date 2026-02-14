@@ -424,7 +424,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let begin_frame = build_stream_begin("stream://test-realm/app/logs", 0, None);
@@ -454,7 +454,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let begin_frame = build_stream_begin("stream://test-realm/app/logs", 0, None);
@@ -480,7 +480,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let begin_frame = build_stream_begin("stream://test-realm/app/logs", 0, None);
@@ -509,7 +509,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Try to begin stream in test-realm
     let begin_frame = build_stream_begin("stream://test-realm/app/logs", 0, None);
@@ -533,7 +533,7 @@ where
         .send_frame(&connect_frame1)
         .await
         .expect("CONNECT 1");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Arrange - Second client
     let mut client2 = C::connect(server).await.expect("failed to connect");
@@ -545,7 +545,7 @@ where
         .send_frame(&connect_frame2)
         .await
         .expect("CONNECT 2");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Both clients begin streams
     let begin1 = build_stream_begin("stream://test-realm/app/logs1", 0, None);
@@ -714,7 +714,7 @@ where
 
     // Act - Drop connection
     drop(client);
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
     // Act - Reconnect and begin again
     let mut client2 = C::connect(server).await.expect("failed to reconnect");

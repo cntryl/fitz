@@ -33,6 +33,8 @@ pub struct FrameContext {
     pub msg_type: MessageType,
     /// Raw TLV payload bytes
     pub payload: Bytes,
+    /// Realm (tenant) extracted from session JWT claims (if authenticated)
+    pub realm: String,
 }
 
 impl FrameContext {
@@ -48,6 +50,24 @@ impl FrameContext {
             channel_id,
             msg_type,
             payload,
+            realm: String::new(),
+        }
+    }
+
+    /// Create a new frame context with realm
+    pub fn new_with_realm(
+        session_id: u64,
+        channel_id: ChannelId,
+        msg_type: MessageType,
+        payload: Bytes,
+        realm: String,
+    ) -> Self {
+        Self {
+            session_id,
+            channel_id,
+            msg_type,
+            payload,
+            realm,
         }
     }
 }

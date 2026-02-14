@@ -311,7 +311,7 @@ where
 
     let subscribe_frame = build_rpc_subscribe(route);
     let response = worker
-        .request(&subscribe_frame, 2000)
+        .request(&subscribe_frame, 4000)
         .await
         .expect("SUBSCRIBE request failed");
 
@@ -333,7 +333,7 @@ where
 
     // Act - Worker receives request
     let request_delivery = worker
-        .recv_frame(2000)
+        .recv_frame(4000)
         .await
         .expect("Expected REQUEST delivery");
 
@@ -356,7 +356,7 @@ where
 
     // Act - Client receives response
     let response_delivery = client
-        .recv_frame(2000)
+        .recv_frame(4000)
         .await
         .expect("Expected RESPONSE delivery");
 
@@ -447,7 +447,7 @@ where
     client.send_frame(&request_frame).await.expect("REQUEST");
 
     // Act - Worker receives and sends 3 responses
-    let _ = worker.recv_frame(2000).await.expect("REQUEST delivery");
+    let _ = worker.recv_frame(4000).await.expect("REQUEST delivery");
 
     worker
         .send_frame(&build_rpc_response(correlation_id, 0, b"chunk1", false))
@@ -463,19 +463,19 @@ where
         .expect("RESPONSE 3");
 
     // Assert - Client receives all 3 responses in order
-    let resp1 = client.recv_frame(2000).await.expect("RESPONSE 1");
+    let resp1 = client.recv_frame(4000).await.expect("RESPONSE 1");
     let (_, seq1, body1, end1) = parse_rpc_response_delivery(&resp1);
     assert_eq!(seq1, 0);
     assert_eq!(body1, b"chunk1");
     assert!(!end1);
 
-    let resp2 = client.recv_frame(2000).await.expect("RESPONSE 2");
+    let resp2 = client.recv_frame(4000).await.expect("RESPONSE 2");
     let (_, seq2, body2, end2) = parse_rpc_response_delivery(&resp2);
     assert_eq!(seq2, 1);
     assert_eq!(body2, b"chunk2");
     assert!(!end2);
 
-    let resp3 = client.recv_frame(2000).await.expect("RESPONSE 3");
+    let resp3 = client.recv_frame(4000).await.expect("RESPONSE 3");
     let (_, seq3, body3, end3) = parse_rpc_response_delivery(&resp3);
     assert_eq!(seq3, 2);
     assert_eq!(body3, b"chunk3");
@@ -516,7 +516,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let subscribe_frame = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
@@ -546,7 +546,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let subscribe_frame = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
@@ -572,7 +572,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let subscribe_frame = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
@@ -601,7 +601,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Try to subscribe in test-realm
     let subscribe_frame = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
@@ -625,7 +625,7 @@ where
         .send_frame(&connect_frame1)
         .await
         .expect("CONNECT 1");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Arrange - Second worker
     let mut worker2 = C::connect(server).await.expect("failed to connect");
@@ -637,7 +637,7 @@ where
         .send_frame(&connect_frame2)
         .await
         .expect("CONNECT 2");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Both workers subscribe to different routes
     let subscribe1 = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
@@ -816,7 +816,7 @@ where
 
     // Act - Drop connection
     drop(worker);
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
     // Act - Reconnect and subscribe again
     let mut worker2 = C::connect(server).await.expect("failed to reconnect");

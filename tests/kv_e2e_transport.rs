@@ -366,7 +366,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     let begin_frame = build_kv_begin("kv://test-realm/app/users", 1, 0);
     let response = client
@@ -430,7 +430,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     let begin_frame = build_kv_begin("kv://corp/app/users", 1, 0);
     let result = client.request(&begin_frame, 1000).await;
@@ -457,7 +457,7 @@ where
     client1.send_frame(&connect_frame).await.expect("CONNECT 1");
     client2.send_frame(&connect_frame).await.expect("CONNECT 2");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     let begin_frame1 = build_kv_begin("kv://test-realm/app/users", 1, 0);
     let begin_frame2 = build_kv_begin("kv://test-realm/app/posts", 1, 0);
@@ -733,7 +733,7 @@ where
 
     drop(client);
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let put_frame = build_kv_put(tx_id, "kv://test/app/users", b"key", b"value");

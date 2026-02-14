@@ -54,20 +54,34 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_domains_ready();
 
     // Step 5: Start transport listeners
-    handlers::spawn_tcp_listener(
+    let tcp_ready = handlers::spawn_tcp_listener(
         &config,
         ingress.clone(),
         ingress_config.clone(),
         runtime.clone(),
     )
     .await?;
-    handlers::spawn_http_listener(
+    let ws_ready = handlers::spawn_http_listener(
         &config,
         ingress.clone(),
         ingress_config.clone(),
         runtime.clone(),
     )
     .await?;
+
+    // Wait for listeners to be ready before accepting traffic
+    tcp_ready.await.map_err(|e| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("TCP listener failed to start: {}", e),
+        )) as Box<dyn std::error::Error>
+    })?;
+    ws_ready.await.map_err(|e| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("WebSocket listener failed to start: {}", e),
+        )) as Box<dyn std::error::Error>
+    })?;
 
     // Mark startup complete
     runtime.mark_startup_complete();

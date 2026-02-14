@@ -7,7 +7,7 @@ use bytes::{BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Once, OnceLock};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -16,14 +16,37 @@ use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 
+static AUTH_ENV_INIT: Once = Once::new();
+static TEST_SERVER_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+fn init_auth_env() {
+    AUTH_ENV_INIT.call_once(|| {
+        std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
+    });
+}
+
+fn test_server_semaphore() -> &'static Arc<tokio::sync::Semaphore> {
+    TEST_SERVER_SEMAPHORE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+}
+
+/// Wait for auth processing to settle before sending authenticated requests.
+pub async fn wait_for_auth_ready() {
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+}
+
+/// Wait for session cleanup after a client disconnect.
+pub async fn wait_for_disconnect_cleanup() {
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+}
+
 /// Test server that starts Fitz on random available ports (TCP + WebSocket)
 pub struct TestServer {
     pub tcp_addr: SocketAddr,
     pub ws_addr: SocketAddr,
     pub runtime: Arc<crate::boot::Runtime>,
     _shutdown: tokio::sync::oneshot::Sender<()>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
-
 impl TestServer {
     /// Start a test server with auth disabled (backward compatible)
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
@@ -32,6 +55,12 @@ impl TestServer {
 
     /// Start a test server with configurable auth mode
     pub async fn start_with_auth(auth_required: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        let permit = test_server_semaphore()
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
         // Initialize tracing once for tests
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -39,27 +68,20 @@ impl TestServer {
             )
             .try_init();
 
-        // Set auth mode via environment variable
-        std::env::set_var(
-            "FITZ_AUTH_REQUIRED",
-            if auth_required { "true" } else { "false" },
-        );
         if auth_required {
-            std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
-        } else {
-            std::env::remove_var("FITZ_JWT_HMAC_SECRET");
+            init_auth_env();
         }
 
-        // Find available ports - DON'T drop listeners yet, keep them reserved
+        // Find available ports and keep listeners bound to prevent reallocation race
         let tcp_listener = TcpListener::bind("127.0.0.1:0").await?;
         let tcp_addr = tcp_listener.local_addr()?;
 
         let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
         let ws_addr = ws_listener.local_addr()?;
 
-        // Release the temporary listeners
-        drop(tcp_listener);
-        drop(ws_listener);
+        // Keep listeners alive - will be passed to spawn functions
+        // This prevents the port reallocation race condition where parallel tests
+        // could grab the same port between bind() and the spawn functions
 
         // Boot runtime with test configuration
         let boot_config = crate::boot::BootConfig {
@@ -89,23 +111,36 @@ impl TestServer {
         // Mark domains ready
         runtime.mark_domains_ready();
 
-        // Step 4: Start TCP listener
-        crate::boot::handlers::spawn_tcp_listener(
-            &boot_config,
+        // Step 4: Start TCP listener with pre-bound socket (eliminates port race)
+        let tcp_ready_rx = crate::boot::handlers::spawn_tcp_listener_with_bound_socket(
+            tcp_listener,
             ingress.clone(),
             ingress_config.clone(),
             runtime.clone(),
-        )
-        .await?;
+        )?;
 
-        // Step 5: Start HTTP/WebSocket listener
-        crate::boot::handlers::spawn_http_listener(
-            &boot_config,
+        // Step 5: Start HTTP/WebSocket listener with pre-bound socket
+        let ws_ready_rx = crate::boot::handlers::spawn_http_listener_with_bound_socket(
+            ws_listener,
             ingress.clone(),
             ingress_config.clone(),
             runtime.clone(),
-        )
-        .await?;
+        )?;
+
+        // Wait for both listeners to be ready before returning
+        // This ensures tests don't connect before accept loops are ready
+        tcp_ready_rx.await.map_err(|e| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("TCP readiness wait failed: {}", e),
+            )) as Box<dyn std::error::Error>
+        })?;
+        ws_ready_rx.await.map_err(|e| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("WebSocket readiness wait failed: {}", e),
+            )) as Box<dyn std::error::Error>
+        })?;
 
         // Mark startup complete
         runtime.mark_startup_complete();
@@ -119,6 +154,7 @@ impl TestServer {
             ws_addr,
             runtime: runtime_arc,
             _shutdown: _shutdown_tx,
+            _permit: permit,
         })
     }
 
@@ -408,6 +444,7 @@ pub fn generate_test_jwt(realm: &str) -> String {
     struct Claims {
         iss: String,        // Issuer (empty for test, triggers no-verify path)
         aud: String,        // Audience
+        tid: String,        // Realm identifier for auth routing
         sub: String,        // Subject: realm
         exp: i64,           // Expiration time
         iat: i64,           // Issued at
@@ -422,6 +459,7 @@ pub fn generate_test_jwt(realm: &str) -> String {
     let claims = Claims {
         iss: "".to_string(),     // Empty issuer = no signature verification
         aud: "fitz".to_string(), // Standard audience
+        tid: realm.to_string(),
         sub: realm.to_string(),
         exp: now + 3600, // Valid for 1 hour
         iat: now,
@@ -432,6 +470,7 @@ pub fn generate_test_jwt(realm: &str) -> String {
             format!("stream://{}/**#*", realm),
             format!("rpc://{}/**#*", realm),
             format!("lease://{}/**#*", realm),
+            format!("schedule://{}/**#*", realm),
         ],
     };
 
@@ -455,6 +494,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
     struct Claims {
         iss: String,
         aud: String,
+        tid: String,
         sub: String,
         exp: i64,
         iat: i64,
@@ -469,6 +509,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
     let claims = Claims {
         iss: "".to_string(),
         aud: "fitz".to_string(),
+        tid: realm.to_string(),
         sub: realm.to_string(),
         exp: now - 3600, // Expired 1 hour ago
         iat: now - 7200,
@@ -494,6 +535,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     struct Claims {
         iss: String,
         aud: String,
+        tid: String,
         sub: String,
         exp: i64,
         iat: i64,
@@ -508,6 +550,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     let claims = Claims {
         iss: "".to_string(),
         aud: "fitz".to_string(),
+        tid: realm.to_string(),
         sub: realm.to_string(),
         exp: now + 3600,
         iat: now,

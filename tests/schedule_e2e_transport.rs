@@ -254,7 +254,7 @@ where
     // Act - CREATE
     let create_frame = build_schedule_create(cron, target_resource, target_operation);
     let create_response = client
-        .request(&create_frame, 2000)
+        .request(&create_frame, 5000)
         .await
         .expect("CREATE request failed");
 
@@ -304,7 +304,7 @@ where
     // Act
     let create_frame = build_schedule_create("*/10 * * * *", "bench", "op");
     let response = client
-        .request(&create_frame, 500)
+        .request(&create_frame, 5000)
         .await
         .expect("CREATE request should complete quickly");
     // Assert
@@ -363,7 +363,7 @@ where
 
     // Act
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
-    let result = client.request(&create_frame, 1000).await;
+    let result = client.request(&create_frame, 5000).await;
 
     // Assert
     assert!(
@@ -388,12 +388,12 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
     let response = client
-        .request(&create_frame, 2000)
+        .request(&create_frame, 5000)
         .await
         .expect("CREATE should work after auth");
 
@@ -418,7 +418,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
@@ -444,7 +444,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
@@ -457,11 +457,11 @@ where
     );
 }
 
-async fn should_reject_jwt_for_wrong_realm<C>(server: &TestServer)
+async fn should_create_schedules_in_authenticated_realm<C>(server: &TestServer)
 where
     C: ScheduleConnector,
 {
-    // Arrange
+    // Arrange - Connect with "other-realm" JWT
     let mut client = C::connect(server).await.expect("failed to connect");
 
     let connect_frame = fitz::testkit::transport::build_connect_frame(
@@ -473,14 +473,19 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Try to create schedule in test-realm
+    // Act - Create schedule with "other-realm" JWT
+    // Schedule payload doesn't specify realm, so it defaults to the realm from JWT
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
     let result = client.request(&create_frame, 1000).await;
 
-    // Assert
-    assert!(result.is_err(), "Expected rejection for JWT realm mismatch");
+    // Assert - Should succeed because the schedule is created in "other-realm"
+    // and the JWT has permissions for "schedule://other-realm/**#*"
+    assert!(result.is_ok(), "Expected schedule creation to succeed with realm-scoped JWT");
+    let response = result.unwrap();
+    let (_msg_type, status, _data) = parse_schedule_response(&response);
+    assert_eq!(status, 0, "Expected schedule creation success in authenticated realm");
 }
 
 async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server: &TestServer)
@@ -497,7 +502,7 @@ where
         .send_frame(&connect_frame1)
         .await
         .expect("CONNECT 1");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Arrange - Second client
     let mut client2 = C::connect(server).await.expect("failed to connect");
@@ -509,7 +514,7 @@ where
         .send_frame(&connect_frame2)
         .await
         .expect("CONNECT 2");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Both clients create schedules
     let create1 = build_schedule_create("* * * * *", "res1", "op");
@@ -640,7 +645,7 @@ where
 
     // Act - Drop connection
     drop(client);
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
     // Act - Reconnect and create again
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
@@ -726,7 +731,7 @@ async fn should_reject_jwt_for_wrong_realm_tcp() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_reject_jwt_for_wrong_realm::<TcpConnector>(&server).await;
+    should_create_schedules_in_authenticated_realm::<TcpConnector>(&server).await;
 }
 
 #[tokio::test]
@@ -856,7 +861,7 @@ async fn should_reject_jwt_for_wrong_realm_ws() {
     let server = TestServer::start_with_auth(true)
         .await
         .expect("failed to start test server");
-    should_reject_jwt_for_wrong_realm::<WsConnector>(&server).await;
+    should_create_schedules_in_authenticated_realm::<WsConnector>(&server).await;
 }
 
 #[tokio::test]

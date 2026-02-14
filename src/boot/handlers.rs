@@ -11,20 +11,35 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
 
-/// Spawn TCP listener on configured port
+/// Spawn TCP listener on configured port (binds internally)
 pub async fn spawn_tcp_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
-) -> BootResult<()> {
+) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
     let tcp_addr = format!("{}:{}", config.bind_addr, config.tcp_port);
     let tcp_listener = TcpListener::bind(&tcp_addr).await?;
     info!("TCP endpoint listening on {}", tcp_addr);
 
+    spawn_tcp_listener_with_bound_socket(tcp_listener, ingress, ingress_config, runtime)
+}
+
+/// Spawn TCP listener with pre-bound socket (eliminates port reallocation race)
+pub fn spawn_tcp_listener_with_bound_socket(
+    tcp_listener: TcpListener,
+    ingress: Arc<dyn Ingress>,
+    ingress_config: IngressConfig,
+    runtime: crate::boot::Runtime,
+) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
     let tcp_config = ingress_config.clone();
     let runtime = Arc::new(runtime);
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
     tokio::spawn(async move {
+        // Signal readiness before accepting connections
+        let _ = ready_tx.send(());
+
         loop {
             match tcp_listener.accept().await {
                 Ok((stream, peer_addr)) => {
@@ -47,23 +62,38 @@ pub async fn spawn_tcp_listener(
         }
     });
 
-    Ok(())
+    Ok(ready_rx)
 }
 
-/// Spawn HTTP/WebSocket listener on configured port
+/// Spawn HTTP/WebSocket listener on configured port (binds internally)
 pub async fn spawn_http_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
-) -> BootResult<()> {
+) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
     let http_addr = format!("{}:{}", config.bind_addr, config.http_port);
     let http_listener = TcpListener::bind(&http_addr).await?;
     info!("HTTP/WebSocket endpoint listening on {}", http_addr);
 
+    spawn_http_listener_with_bound_socket(http_listener, ingress, ingress_config, runtime)
+}
+
+/// Spawn HTTP/WebSocket listener with pre-bound socket (eliminates port reallocation race)
+pub fn spawn_http_listener_with_bound_socket(
+    http_listener: TcpListener,
+    ingress: Arc<dyn Ingress>,
+    ingress_config: IngressConfig,
+    runtime: crate::boot::Runtime,
+) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
     let http_config = ingress_config.clone();
     let runtime = Arc::new(runtime);
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
     tokio::spawn(async move {
+        // Signal readiness before accepting connections
+        let _ = ready_tx.send(());
+
         loop {
             match http_listener.accept().await {
                 Ok((stream, peer_addr)) => {
@@ -85,7 +115,7 @@ pub async fn spawn_http_listener(
         }
     });
 
-    Ok(())
+    Ok(ready_rx)
 }
 
 /// Handle an incoming TCP connection with outbound response support
@@ -485,7 +515,3 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

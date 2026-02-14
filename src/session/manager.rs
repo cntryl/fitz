@@ -260,6 +260,7 @@ impl Ingress for RuntimeIngress {
                                                         entry.permissions_snapshot =
                                                             snapshot.clone();
                                                         entry.authenticated = true;
+                                                        entry.claims = Some(Arc::new(claims.clone()));
 
                                                         let mut actor = crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
@@ -287,6 +288,7 @@ impl Ingress for RuntimeIngress {
                                                             Ok((snapshot, claims)) => {
                                                                 entry.permissions_snapshot = snapshot.clone();
                                                                 entry.authenticated = true;
+                                                                entry.claims = Some(Arc::new(claims.clone()));
 
                                                                 let mut actor = crate::session::actor::SessionActor::new(
                                                                     crate::session::session::SessionId(session_id),
@@ -337,6 +339,7 @@ impl Ingress for RuntimeIngress {
                                                         entry.permissions_snapshot =
                                                             snapshot.clone();
                                                         entry.authenticated = true;
+                                                        entry.claims = Some(Arc::new(claims.clone()));
 
                                                         let mut actor = crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
@@ -414,6 +417,7 @@ impl Ingress for RuntimeIngress {
                                         Ok((snapshot, claims)) => {
                                             entry.permissions_snapshot = snapshot.clone();
                                             entry.authenticated = true;
+                                            entry.claims = Some(Arc::new(claims.clone()));
 
                                             let mut actor =
                                                 crate::session::actor::SessionActor::new(
@@ -444,6 +448,7 @@ impl Ingress for RuntimeIngress {
                                         Ok((snapshot, claims)) => {
                                             entry.permissions_snapshot = snapshot.clone();
                                             entry.authenticated = true;
+                                            entry.claims = Some(Arc::new(claims.clone()));
 
                                             let mut actor =
                                                 crate::session::actor::SessionActor::new(
@@ -623,11 +628,18 @@ impl Ingress for RuntimeIngress {
                         session_info.route_family,
                         route,
                     );
-                    let ctx = crate::protocol::frame_context::FrameContext::new(
+                    // Extract realm from session claims for FrameContext
+                    let realm = session_info
+                        .claims
+                        .as_ref()
+                        .map(|c| c.tenant.clone())
+                        .unwrap_or_default();
+                    let ctx = crate::protocol::frame_context::FrameContext::new_with_realm(
                         session_id,
-                        channel_id,
+                        crate::protocol::frame::ChannelId::Pub,
                         msg_type,
                         message_payload.clone(),
+                        realm,
                     );
                     // Set source to the session's inbox so domain sinks can route responses back
                     let source = crate::runtime::routing::RouteAddress::new(
@@ -740,20 +752,19 @@ impl RuntimeIngress {
         use crate::protocol::frame_context::FrameContext;
         use crate::runtime::routing::Route;
 
-        let ctx = FrameContext::new(
-            session_info.session_id,
-            crate::protocol::frame::ChannelId::Pub,
-            msg_type,
-            payload.clone(),
-        );
-
-        // Try to extract realm from authenticated claims for more precise routing.
-        // Anonymous sessions have no claims — use empty string, never wildcard.
         let realm = session_info
             .claims
             .as_ref()
             .map(|c| c.tenant.clone())
             .unwrap_or_default();
+
+        let ctx = FrameContext::new_with_realm(
+            session_info.session_id,
+            crate::protocol::frame::ChannelId::Pub,
+            msg_type,
+            payload.clone(),
+            realm.clone(),
+        );
 
         let mt = msg_type.as_u16();
         match mt {
@@ -853,7 +864,26 @@ impl RuntimeIngress {
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
-            200..=299 => Ok(None),
+            200..=299 => match crate::protocol::queue_codec::parse_request(
+                mt,
+                session_info.route_family,
+                payload.as_ref(),
+            ) {
+                Ok(crate::domains::queue::QueueMessage::Enqueue { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(crate::domains::queue::QueueMessage::Reserve { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(crate::domains::queue::QueueMessage::Complete { route, .. }) => {
+                    Ok(Some(route.clone()))
+                }
+                Ok(_) => Ok(None),
+                Err(e) => Err(e),
+            },
             400..=499 => {
                 match crate::protocol::lease_codec::parse_request(
                     &ctx,
@@ -922,8 +952,8 @@ impl RuntimeIngress {
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Create {
                         payload: pay,
                     }) => Ok(Some(Route::new(format!(
-                        "schedule://{}/{}",
-                        realm, pay.target_resource
+                        "schedule://{}/{}/{}",
+                        realm, pay.target_resource, pay.target_operation
                     )))),
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Subscribe {
                         pattern,

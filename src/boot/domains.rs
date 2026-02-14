@@ -2133,9 +2133,10 @@ impl MailboxSink for ScheduleDomainSink {
 
             match schedule_msg {
                 ScheduleMessage::Create { payload } => {
+                    // Build route matching authorization check pattern (realm/resource/operation)
                     let route_str = format!(
-                        "schedule://default/default/{}/{}",
-                        payload.target_resource, payload.target_operation
+                        "schedule://{}/{}/{}",
+                        frame_ctx.realm, payload.target_resource, payload.target_operation
                     );
                     let route = crate::runtime::routing::Route::new(route_str);
                     let payload_bytes = payload.encode();

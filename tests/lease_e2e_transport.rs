@@ -398,7 +398,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
@@ -429,7 +429,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
@@ -455,7 +455,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
     let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
@@ -484,7 +484,7 @@ where
         .await
         .expect("CONNECT send failed");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Try to access test-realm lease
     let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
@@ -508,7 +508,7 @@ where
         .send_frame(&connect_frame1)
         .await
         .expect("CONNECT 1");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Arrange - Second client
     let mut client2 = C::connect(server).await.expect("failed to connect");
@@ -520,7 +520,7 @@ where
         .send_frame(&connect_frame2)
         .await
         .expect("CONNECT 2");
-    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Both clients acquire different leases
     let acquire1 = build_lease_acquire("lease://test-realm/app/lock1", "owner-1", 30);
@@ -714,7 +714,7 @@ where
 
     // Act - Drop connection
     drop(client);
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
     // Act - Reconnect and try to renew with old token
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
