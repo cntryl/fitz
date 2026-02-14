@@ -4,23 +4,31 @@
 //! Client → TCP/WebSocket → Session → Routing → Domain → Response → Client
 
 use bytes::{BufMut, BytesMut};
+use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
 
-/// Test server that starts Fitz on a random available port
+/// Test server that starts Fitz on random available ports (TCP + WebSocket)
 pub struct TestServer {
-    pub addr: SocketAddr,
+    pub tcp_addr: SocketAddr,
+    pub ws_addr: SocketAddr,
     pub runtime: Arc<crate::boot::Runtime>,
     _shutdown: tokio::sync::oneshot::Sender<()>,
 }
 
 impl TestServer {
-    /// Start a test server on random available port with in-memory storage
+    /// Start a test server with auth disabled (backward compatible)
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_auth(false).await
+    }
+
+    /// Start a test server with configurable auth mode
+    pub async fn start_with_auth(auth_required: bool) -> Result<Self, Box<dyn std::error::Error>> {
         // Initialize tracing once for tests
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -28,21 +36,25 @@ impl TestServer {
             )
             .try_init();
 
-        // Disable auth for tests via environment variable
-        std::env::set_var("FITZ_AUTH_REQUIRED", "false");
+        // Set auth mode via environment variable
+        std::env::set_var("FITZ_AUTH_REQUIRED", if auth_required { "true" } else { "false" });
 
-        // Find an available port
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
-        drop(listener); // Release the port so spawn_tcp_listener can bind to it
+        // Find available ports
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let tcp_addr = tcp_listener.local_addr()?;
+        drop(tcp_listener); // Release so spawn_tcp_listener can bind
+
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let ws_addr = ws_listener.local_addr()?;
+        drop(ws_listener); // Release so spawn_http_listener can bind
 
         // Boot runtime with test configuration
         let boot_config = crate::boot::BootConfig {
             bind_addr: "127.0.0.1".to_string(),
-            tcp_port: addr.port(),
-            http_port: addr.port().saturating_sub(1000), // Offset to avoid conflicts
+            tcp_port: tcp_addr.port(),
+            http_port: ws_addr.port(), // Use discovered WS port
             storage_mode: crate::boot::runtime::StorageMode::Memory,
-            auth_required: false,            // Disable auth for tests
+            auth_required,
             max_connections: 1000,
             max_frame_size: 16_777_216, // 16 MB
             channel_capacity: 10_000,
@@ -64,8 +76,17 @@ impl TestServer {
         // Mark domains ready
         runtime.mark_domains_ready();
 
-        // Step 4: Start TCP listener (spawns its own listener task)
+        // Step 4: Start TCP listener
         crate::boot::handlers::spawn_tcp_listener(
+            &boot_config,
+            ingress.clone(),
+            ingress_config.clone(),
+            runtime.clone(),
+        )
+        .await?;
+
+        // Step 5: Start HTTP/WebSocket listener
+        crate::boot::handlers::spawn_http_listener(
             &boot_config,
             ingress.clone(),
             ingress_config.clone(),
@@ -81,16 +102,23 @@ impl TestServer {
         let (_shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel();
 
         Ok(TestServer {
-            addr,
+            tcp_addr,
+            ws_addr,
             runtime: runtime_arc,
             _shutdown: _shutdown_tx,
         })
     }
 
-    /// Connect to the test server
+    /// Connect to the test server via TCP
     pub async fn connect(&self) -> Result<TestClient, Box<dyn std::error::Error>> {
-        let stream = TcpStream::connect(self.addr).await?;
+        let stream = TcpStream::connect(self.tcp_addr).await?;
         Ok(TestClient { stream })
+    }
+
+    /// Connect to the test server via WebSocket
+    pub async fn connect_ws(&self) -> Result<TestWebSocketClient, Box<dyn std::error::Error>> {
+        let url = format!("ws://{}/", self.ws_addr);
+        TestWebSocketClient::connect(&url).await
     }
 }
 
@@ -137,6 +165,67 @@ impl TestClient {
             .await
             .map_err(|_| "timeout waiting for response".to_string())?
             .map_err(|e| e.into())
+    }
+
+    /// Send a frame and wait for response
+    pub async fn request(
+        &mut self,
+        frame: &[u8],
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        self.send_frame(frame).await?;
+        self.recv_frame(timeout_ms).await
+    }
+}
+
+/// Test client for WebSocket connections
+pub struct TestWebSocketClient {
+    ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
+}
+
+impl TestWebSocketClient {
+    /// Connect to a WebSocket server
+    pub async fn connect(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let (ws_stream, _response) = connect_async(url).await?;
+        Ok(Self { ws: ws_stream })
+    }
+
+    /// Send a WebSocket binary frame (no length prefix - handled by WebSocket protocol)
+    pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        self.ws.send(Message::Binary(frame.to_vec())).await?;
+        Ok(())
+    }
+
+    /// Receive a WebSocket binary frame with timeout
+    pub async fn recv_frame(
+        &mut self,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let recv_future = async {
+            while let Some(msg) = self.ws.next().await {
+                match msg {
+                    Ok(Message::Binary(data)) => return Ok(data),
+                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
+                        // Automatically handled by tokio-tungstenite
+                        continue;
+                    }
+                    Ok(Message::Close(_)) => {
+                        return Err("WebSocket closed".into());
+                    }
+                    Ok(Message::Text(_)) => {
+                        // Fitz uses binary frames only
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                    _ => continue,
+                }
+            }
+            Err("WebSocket stream ended".into())
+        };
+
+        timeout(Duration::from_millis(timeout_ms), recv_future)
+            .await
+            .map_err(|_| "timeout waiting for response".to_string())?
     }
 
     /// Send a frame and wait for response
@@ -206,25 +295,37 @@ impl TlvFrameParser {
 
     /// Parse next TLV field
     pub fn next_field(&mut self) -> Option<(u16, Vec<u8>)> {
-        if self.offset + 6 > self.buf.len() {
+        const ESCAPE_MARKER: u8 = 0xFF;
+
+        if self.offset >= self.buf.len() {
             return None;
         }
 
-        let msg_type = u16::from_be_bytes([self.buf[self.offset], self.buf[self.offset + 1]]);
-        let len =
-            u32::from_be_bytes([
-                self.buf[self.offset + 2],
-                self.buf[self.offset + 3],
-                self.buf[self.offset + 4],
-                self.buf[self.offset + 5],
-            ]) as usize;
+        // Parse msg_type
+        let msg_type = if self.buf[self.offset] == ESCAPE_MARKER {
+            if self.offset + 3 > self.buf.len() {
+                return None;
+            }
+            let mt = u16::from_be_bytes([self.buf[self.offset + 1], self.buf[self.offset + 2]]);
+            self.offset += 3;
+            mt
+        } else {
+            let mt = self.buf[self.offset] as u16;
+            self.offset += 1;
+            mt
+        };
 
-        self.offset += 6;
+        // Parse length (u16 BE)
+        if self.offset + 2 > self.buf.len() {
+            return None;
+        }
+        let len = u16::from_be_bytes([self.buf[self.offset], self.buf[self.offset + 1]]) as usize;
+        self.offset += 2;
 
+        // Parse value
         if self.offset + len > self.buf.len() {
             return None;
         }
-
         let value = self.buf[self.offset..self.offset + len].to_vec();
         self.offset += len;
 
@@ -247,19 +348,175 @@ impl Default for TlvFrameBuilder {
     }
 }
 
+/// Build CONNECT message (msg_type 1)
+/// Wire format: [u32 realm_len][realm][u32 token_len][jwt_token]
+pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
+    // CONNECT frame: [msg_type: 1][length: u16 BE][JWT string bytes]
+    // Server expects JWT as plain UTF-8 string, no additional structure
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(1, jwt_token.as_bytes()); // msg_type 1 = CONNECT
+    builder.build()
+}
+
+/// Generate test JWT token for given realm
+/// Uses HS256 with test secret "test-secret-key"
+/// Token is valid for 1 hour from now
+/// Includes full permissions for the realm
+pub fn generate_test_jwt(realm: &str) -> String {
+    use jsonwebtoken::{encode, Header, EncodingKey, Algorithm};
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        iss: String,        // Issuer (empty for test, triggers no-verify path)
+        aud: String,        // Audience
+        sub: String,        // Subject: realm
+        exp: i64,           // Expiration time
+        iat: i64,           // Issued at
+        roles: Vec<String>, // Permissions as role strings
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let claims = Claims {
+        iss: "".to_string(),       // Empty issuer = no signature verification
+        aud: "fitz".to_string(),   // Standard audience
+        sub: realm.to_string(),
+        exp: now + 3600, // Valid for 1 hour
+        iat: now,
+        roles: vec![
+            format!("kv://{}/**#*", realm), // Full KV access for this realm
+            format!("queue://{}/**#*", realm),
+            format!("notice://{}/**#*", realm),
+            format!("stream://{}/**#*", realm),
+            format!("rpc://{}/**#*", realm),
+            format!("lease://{}/**#*", realm),
+        ],
+    };
+
+    let mut header = Header::new(Algorithm::HS256);
+    header.typ = Some("JWT".to_string());
+
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret("test-secret-key".as_bytes()),
+    )
+    .unwrap()
+}
+
+/// Generate expired JWT (for testing rejection)
+pub fn generate_expired_jwt(realm: &str) -> String {
+    use jsonwebtoken::{encode, Header, EncodingKey, Algorithm};
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        iss: String,
+        aud: String,
+        sub: String,
+        exp: i64,
+        iat: i64,
+        roles: Vec<String>,
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let claims = Claims {
+        iss: "".to_string(),
+        aud: "fitz".to_string(),
+        sub: realm.to_string(),
+        exp: now - 3600, // Expired 1 hour ago
+        iat: now - 7200,
+        roles: vec![format!("kv://{}/**#*", realm)],
+    };
+
+    let header = Header::new(Algorithm::HS256);
+
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret("test-secret-key".as_bytes()),
+    )
+    .unwrap()
+}
+
+/// Generate JWT with invalid signature (for testing rejection)
+pub fn generate_invalid_signature_jwt(realm: &str) -> String {
+    use jsonwebtoken::{encode, Header, EncodingKey, Algorithm};
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        iss: String,
+        aud: String,
+        sub: String,
+        exp: i64,
+        iat: i64,
+        roles: Vec<String>,
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let claims = Claims {
+        iss: "".to_string(),
+        aud: "fitz".to_string(),
+        sub: realm.to_string(),
+        exp: now + 3600,
+        iat: now,
+        roles: vec![format!("kv://{}/**#*", realm)],
+    };
+
+    let header = Header::new(Algorithm::HS256);
+
+    // Use wrong secret to create invalid signature
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret("wrong-secret-key".as_bytes()),
+    )
+    .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn should_encode_and_decode_tlv_frame() {
+    fn should_encode_tlv_frame() {
+        // Arrange
+        let mut builder = TlvFrameBuilder::new();
+        builder.encode_field(100, b"test_value");
+
+        // Act
+        let frame = builder.build();
+
+        // Assert
+        assert!(frame.len() >= 3 + b"test_value".len());
+        assert_eq!(frame[0], 100); // msg_type
+        assert_eq!(frame[1], 0);
+        assert_eq!(frame[2], b"test_value".len() as u8);
+        assert_eq!(&frame[3..], b"test_value");
+    }
+
+    #[test]
+    fn should_decode_tlv_frame() {
         // Arrange
         let mut builder = TlvFrameBuilder::new();
         builder.encode_field(100, b"test_value");
         builder.encode_field(200, b"another_value");
+        let frame = builder.build();
 
         // Act
-        let frame = builder.build();
         let mut parser = TlvFrameParser::new(frame);
         let fields = parser.parse_all();
 
@@ -269,5 +526,32 @@ mod tests {
         assert_eq!(fields[0].1, b"test_value");
         assert_eq!(fields[1].0, 200);
         assert_eq!(fields[1].1, b"another_value");
+    }
+
+    #[test]
+    fn should_build_connect_frame() {
+        // Arrange
+        let realm = "test-realm";
+        let jwt = "fake-jwt-token";
+
+        // Act
+        let frame = build_connect_frame(realm, jwt);
+
+        // Assert
+        assert!(!frame.is_empty());
+        assert_eq!(frame[0], 1); // msg_type 1 (CONNECT)
+    }
+
+    #[test]
+    fn should_generate_valid_jwt() {
+        // Arrange
+        let realm = "test-realm";
+
+        // Act
+        let jwt = generate_test_jwt(realm);
+
+        // Assert
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3, "JWT should have header.payload.signature format");
     }
 }

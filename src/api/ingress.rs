@@ -104,7 +104,7 @@ mod tests {
         // Assert
         assert_eq!(config.max_frame_size, 1024 * 1024);
         assert_eq!(config.max_connections, 10_000);
-        assert_eq!(config.channel_capacity, 1000);
+        assert_eq!(config.channel_capacity, 10_000);
     }
 
     #[test]
