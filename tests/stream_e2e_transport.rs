@@ -117,10 +117,11 @@ fn build_stream_begin(route: &str, expected_offset: u64, metadata: Option<&[u8]>
     buf.put_slice(&expected_offset.to_be_bytes());
     
     if let Some(meta) = metadata {
+        buf.put_u8(1); // flag = Some
         buf.put_slice(&(meta.len() as u32).to_be_bytes());
         buf.put_slice(meta);
     } else {
-        buf.put_slice(&0u32.to_be_bytes()); // 0 length = None
+        buf.put_u8(0); // flag = None
     }
 
     let mut builder = TlvFrameBuilder::new();
@@ -137,10 +138,11 @@ fn build_stream_append(session_id: u64, body: &[u8], metadata: Option<&[u8]>) ->
     buf.put_slice(body);
     
     if let Some(meta) = metadata {
+        buf.put_u8(1); // flag = Some
         buf.put_slice(&(meta.len() as u32).to_be_bytes());
         buf.put_slice(meta);
     } else {
-        buf.put_slice(&0u32.to_be_bytes()); // 0 length = None
+        buf.put_u8(0); // flag = None
     }
 
     let mut builder = TlvFrameBuilder::new();
@@ -181,10 +183,10 @@ fn build_stream_read(route: &str, from_offset: u64, limit: u64, max_bytes: Optio
     buf.put_slice(&limit.to_be_bytes());
     
     if let Some(mb) = max_bytes {
-        buf.put_slice(&8u32.to_be_bytes()); // u64 length
+        buf.put_u8(1); // flag = Some
         buf.put_slice(&mb.to_be_bytes());
     } else {
-        buf.put_slice(&0u32.to_be_bytes()); // 0 length = None
+        buf.put_u8(0); // flag = None
     }
 
     let mut builder = TlvFrameBuilder::new();
@@ -270,15 +272,15 @@ fn parse_stream_response(frame: &[u8]) -> (u16, u8, Vec<u8>) {
 
 /// Parse session_id from BEGIN response
 fn parse_session_id_from_begin(data: &[u8]) -> Option<u64> {
-    if data.len() < 8 {
+    if data.is_empty() {
         return None;
     }
-    // Response format: [optional u64 session_id][bytes data]
-    // Check if optional is present (first byte != 0 for length prefix)
-    let has_session_id = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) == 8;
-    if has_session_id {
+    // Response format: [u8 flag][optional u64 session_id][bytes data]
+    // flag: 0=None, 1=Some
+    let flag = data[0];
+    if flag == 1 && data.len() >= 9 {
         Some(u64::from_be_bytes([
-            data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
+            data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
         ]))
     } else {
         None

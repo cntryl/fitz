@@ -215,10 +215,7 @@ fn parse_notify_message(frame: &[u8]) -> (u64, String, Vec<u8>) {
     let payload = &frame[offset..];
     offset = 0;
 
-    // Skip status byte
-    offset += 1;
-
-    // Parse subscription_id
+    // Parse subscription_id (no status byte in NOTIFY - it's a notification, not a response)
     let subscription_id = u64::from_be_bytes([
         payload[offset],
         payload[offset + 1],
