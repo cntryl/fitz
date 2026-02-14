@@ -18,7 +18,7 @@ fn should_reject_unauthorized_realm_for_schedule() {
     let session_perms = SessionPermissions::from_permissions(permissions);
 
     // Act - Try to schedule in staging realm (unauthorized)
-    let route = Route::new("schedule://staging/jobs/cleanup".to_string());
+    let route = Route::new("schedule://staging/jobs/cleanup/create".to_string());
 
     // Assert - Session should not have write permission for staging realm
     assert!(
@@ -34,7 +34,7 @@ fn should_allow_authorized_realm_for_schedule() {
     let session_perms = SessionPermissions::from_permissions(permissions);
 
     // Act - Check permission for prod realm
-    let route = Route::new("schedule://prod/jobs/cleanup".to_string());
+    let route = Route::new("schedule://prod/jobs/cleanup/create".to_string());
 
     // Assert
     assert!(
@@ -58,7 +58,7 @@ fn should_enforce_realm_equality_strictly_for_schedule() {
     ];
 
     for invalid_realm in invalid_realms {
-        let route = Route::new(format!("schedule://{}/jobs/test", invalid_realm));
+        let route = Route::new(format!("schedule://{}/jobs/test/create", invalid_realm));
 
         // Assert - Should not match
         assert!(
@@ -76,7 +76,7 @@ fn should_allow_read_permission_for_status_check() {
     let session_perms = SessionPermissions::from_permissions(permissions);
 
     // Act - Check read permission
-    let route = Route::new("schedule://analytics/jobs/report".to_string());
+    let route = Route::new("schedule://analytics/jobs/report/list".to_string());
 
     // Assert
     assert!(
@@ -95,8 +95,8 @@ fn should_enforce_realm_isolation_across_different_realms() {
     let session_evil = SessionPermissions::from_permissions(perms_evil);
 
     // Act - Check that each session can only access its realm
-    let acme_route = Route::new("schedule://acme/jobs/backup".to_string());
-    let evil_route = Route::new("schedule://evil/jobs/cleanup".to_string());
+    let acme_route = Route::new("schedule://acme/jobs/backup/create".to_string());
+    let evil_route = Route::new("schedule://evil/jobs/cleanup/create".to_string());
 
     // Assert
     assert!(
@@ -125,8 +125,8 @@ fn should_support_wildcard_patterns_for_schedule_realms() {
     let session_perms = SessionPermissions::from_permissions(permissions);
 
     // Act - Check that matching works for that realm
-    let prod_route = Route::new("schedule://prod/jobs/test".to_string());
-    let staging_route = Route::new("schedule://staging/jobs/test".to_string());
+    let prod_route = Route::new("schedule://prod/jobs/test/create".to_string());
+    let staging_route = Route::new("schedule://staging/jobs/test/create".to_string());
 
     // Assert
     assert!(
@@ -145,7 +145,7 @@ fn should_distinguish_between_read_write_permissions() {
     let read_perms = vec![Permission::parse("schedule://monitoring/**#read").unwrap()];
     let session_read = SessionPermissions::from_permissions(read_perms);
 
-    let route = Route::new("schedule://monitoring/jobs/alert".to_string());
+    let route = Route::new("schedule://monitoring/jobs/alert/list".to_string());
 
     // Act
     let can_read = session_read.allows(&route, fitz::auth::Access::Read);
@@ -165,7 +165,7 @@ fn should_support_write_permission_level() {
     let write_perms = vec![Permission::parse("schedule://admin/**#write").unwrap()];
     let session_write = SessionPermissions::from_permissions(write_perms);
 
-    let route = Route::new("schedule://admin/jobs/critical".to_string());
+    let route = Route::new("schedule://admin/jobs/critical/create".to_string());
 
     // Act
     let can_write = session_write.allows(&route, fitz::auth::Access::Write);

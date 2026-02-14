@@ -90,6 +90,59 @@ impl QueueKey {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::routing::Route;
+
+    #[test]
+    fn should_parse_queue_route_with_scheme() {
+        // Arrange
+        let route = Route::new("queue://acme/tasks/work");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = QueueKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert_eq!(key.realm, "acme");
+        assert_eq!(key.area, "tasks");
+        assert_eq!(key.resource, "work");
+    }
+
+    #[test]
+    fn should_parse_queue_route_without_scheme() {
+        // Arrange
+        let route = Route::new("acme/tasks/work");
+        let family = RouteFamily::new(2);
+
+        // Act
+        let key = QueueKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert_eq!(key.realm, "acme");
+        assert_eq!(key.area, "tasks");
+        assert_eq!(key.resource, "work");
+    }
+
+    #[test]
+    fn should_reject_queue_route_with_too_few_segments() {
+        // Arrange
+        let route = Route::new("queue://acme/tasks");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = QueueKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_none());
+    }
+}
+
 /// Message identifier
 ///
 /// Opaque u64 identifier for messages in the queue.

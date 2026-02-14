@@ -960,4 +960,21 @@ mod tests {
             _ => panic!("Expected KvMessage::Begin with buffered write options"),
         }
     }
+
+    #[test]
+    fn should_reject_begin_with_too_few_route_segments() {
+        // Arrange
+        let route = "kv://acme/kv";
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u8(1); // ReadWrite
+        payload.put_u8(0); // buffered
+
+        // Act
+        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+
+        // Assert
+        assert!(result.is_err());
+    }
 }

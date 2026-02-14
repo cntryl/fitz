@@ -482,10 +482,16 @@ where
 
     // Assert - Should succeed because the schedule is created in "other-realm"
     // and the JWT has permissions for "schedule://other-realm/**#*"
-    assert!(result.is_ok(), "Expected schedule creation to succeed with realm-scoped JWT");
+    assert!(
+        result.is_ok(),
+        "Expected schedule creation to succeed with realm-scoped JWT"
+    );
     let response = result.unwrap();
     let (_msg_type, status, _data) = parse_schedule_response(&response);
-    assert_eq!(status, 0, "Expected schedule creation success in authenticated realm");
+    assert_eq!(
+        status, 0,
+        "Expected schedule creation success in authenticated realm"
+    );
 }
 
 async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server: &TestServer)
@@ -534,7 +540,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
-    let pattern = "schedule://test/app/*";
+    let pattern = "schedule://test/app/*/fired";
 
     // Act - SUBSCRIBE
     let subscribe_frame = build_schedule_subscribe(pattern);
@@ -554,7 +560,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
-    let pattern = "schedule://test/app/*";
+    let pattern = "schedule://test/app/*/fired";
 
     let subscribe_frame = build_schedule_subscribe(pattern);
     client

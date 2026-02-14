@@ -514,4 +514,3 @@ where
     info!("WebSocket connection closed, session {}", session_id);
     Ok(())
 }
-

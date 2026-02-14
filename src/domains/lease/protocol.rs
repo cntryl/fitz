@@ -57,6 +57,59 @@ impl LeaseKey {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::routing::Route;
+
+    #[test]
+    fn should_parse_lease_route_with_scheme() {
+        // Arrange
+        let route = Route::new("lease://acme/locks/db-migration");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = LeaseKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert_eq!(key.realm, "acme");
+        assert_eq!(key.area, "locks");
+        assert_eq!(key.resource, "db-migration");
+    }
+
+    #[test]
+    fn should_parse_lease_route_without_scheme() {
+        // Arrange
+        let route = Route::new("acme/locks/db-migration");
+        let family = RouteFamily::new(2);
+
+        // Act
+        let key = LeaseKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert_eq!(key.realm, "acme");
+        assert_eq!(key.area, "locks");
+        assert_eq!(key.resource, "db-migration");
+    }
+
+    #[test]
+    fn should_reject_lease_route_with_too_few_segments() {
+        // Arrange
+        let route = Route::new("lease://acme/locks");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = LeaseKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_none());
+    }
+}
+
 /// Lease errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeaseError {

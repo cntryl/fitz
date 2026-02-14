@@ -1,4 +1,5 @@
 use crate::protocol::tlv::TlvDecoder;
+use crate::runtime::routing::Route;
 use bytes::Bytes;
 
 /// TLV payload for schedules. MUST be TLV encoded.
@@ -67,6 +68,36 @@ impl SchedulePayload {
         enc.encode(MessageType(3), self.target_operation.as_bytes());
         enc.finish()
     }
+}
+
+/// Parse a schedule route into (realm, area, resource, operation).
+///
+/// Expected format: `{scheme}://{realm}/{area}/{resource}/{operation}`
+/// or `/{realm}/{area}/{resource}/{operation}`
+pub fn parse_schedule_route(route: &Route) -> Result<(String, String, String, String), String> {
+    let path = route.as_str();
+
+    let path_without_scheme = if let Some(pos) = path.find("://") {
+        &path[pos + 3..]
+    } else {
+        path
+    };
+
+    let parts: Vec<&str> = path_without_scheme
+        .trim_start_matches('/')
+        .split('/')
+        .collect();
+
+    if parts.len() != 4 {
+        return Err("Schedule routes require exactly 4 segments".to_string());
+    }
+
+    Ok((
+        parts[0].to_string(),
+        parts[1].to_string(),
+        parts[2].to_string(),
+        parts[3].to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -139,6 +170,33 @@ mod tests {
 
         // Assert
         assert_eq!(dec.cron, "0 12 * * 1-5");
+    }
+
+    #[test]
+    fn should_parse_schedule_route_with_operation() {
+        // Arrange
+        let route = Route::new("schedule://acme/jobs/backup/create");
+
+        // Act
+        let result = parse_schedule_route(&route).unwrap();
+
+        // Assert
+        assert_eq!(result.0, "acme");
+        assert_eq!(result.1, "jobs");
+        assert_eq!(result.2, "backup");
+        assert_eq!(result.3, "create");
+    }
+
+    #[test]
+    fn should_reject_schedule_route_missing_operation() {
+        // Arrange
+        let route = Route::new("schedule://acme/jobs/backup");
+
+        // Act
+        let result = parse_schedule_route(&route);
+
+        // Assert
+        assert!(result.is_err());
     }
 }
 

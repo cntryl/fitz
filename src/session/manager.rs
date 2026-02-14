@@ -260,7 +260,8 @@ impl Ingress for RuntimeIngress {
                                                         entry.permissions_snapshot =
                                                             snapshot.clone();
                                                         entry.authenticated = true;
-                                                        entry.claims = Some(Arc::new(claims.clone()));
+                                                        entry.claims =
+                                                            Some(Arc::new(claims.clone()));
 
                                                         let mut actor = crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
@@ -339,7 +340,8 @@ impl Ingress for RuntimeIngress {
                                                         entry.permissions_snapshot =
                                                             snapshot.clone();
                                                         entry.authenticated = true;
-                                                        entry.claims = Some(Arc::new(claims.clone()));
+                                                        entry.claims =
+                                                            Some(Arc::new(claims.clone()));
 
                                                         let mut actor = crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
