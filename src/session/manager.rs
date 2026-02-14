@@ -795,6 +795,12 @@ impl RuntimeIngress {
                 Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => {
                     Ok(Some(r.route.clone()))
                 }
+                Ok(crate::domains::rpc::protocol::RpcMessage::Subscribe { worker_addr }) => {
+                    Ok(Some(worker_addr.route().clone()))
+                }
+                Ok(crate::domains::rpc::protocol::RpcMessage::Unsubscribe { worker_addr }) => {
+                    Ok(Some(worker_addr.route().clone()))
+                }
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },

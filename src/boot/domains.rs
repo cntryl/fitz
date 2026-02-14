@@ -879,6 +879,11 @@ impl MailboxSink for RpcDomainSink {
                 );
                 RpcResponseMsg::Ok { data: vec![] }
             }
+            RpcMessage::RequestDelivery(_) => {
+                // RequestDelivery should only be sent TO workers by route actors,
+                // not received from clients. Ignore or error.
+                RpcResponseMsg::Error("RequestDelivery not valid client message".to_string())
+            }
         };
 
         // Encode and route response back

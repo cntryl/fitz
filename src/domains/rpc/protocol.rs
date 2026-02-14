@@ -150,6 +150,12 @@ pub enum RpcMessage {
         /// Correlation ID of completed request
         correlation_id: Uuid,
     },
+
+    /// Request delivery to worker (internal routing message)
+    ///
+    /// Sent from RpcRouteActor to worker session actor to deliver a request.
+    /// The session actor encodes this as message type 302 (REQUEST) on the wire.
+    RequestDelivery(RpcWorkItem),
 }
 
 impl RpcMessage {
@@ -177,6 +183,11 @@ impl RpcMessage {
     pub fn ack(correlation_id: Uuid) -> Self {
         Self::Ack { correlation_id }
     }
+
+    /// Create RequestDelivery message
+    pub fn request_delivery(work_item: RpcWorkItem) -> Self {
+        Self::RequestDelivery(work_item)
+    }
 }
 
 /// Work item dispatched to a worker
@@ -188,6 +199,9 @@ impl RpcMessage {
 pub struct RpcWorkItem {
     /// Correlation ID for tracking
     pub correlation_id: Uuid,
+
+    /// Target route (for worker context/logging)
+    pub route: Route,
 
     /// Reply route for sending responses
     pub reply_route: Route,
@@ -201,15 +215,17 @@ impl RpcWorkItem {
     pub fn from_request(req: &RpcRequest) -> Self {
         Self {
             correlation_id: req.correlation_id,
+            route: req.route.clone(),
             reply_route: req.reply_route.clone(),
             body: req.body.clone(),
         }
     }
 
     /// Create work item directly
-    pub fn new(correlation_id: Uuid, reply_route: Route, body: Bytes) -> Self {
+    pub fn new(correlation_id: Uuid, route: Route, reply_route: Route, body: Bytes) -> Self {
         Self {
             correlation_id,
+            route,
             reply_route,
             body,
         }

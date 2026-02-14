@@ -163,3 +163,19 @@ fn parse_ack(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
 
     Ok(RpcMessage::Ack { correlation_id })
 }
+
+// ===== Encoders for Outbound Messages =====
+
+/// Encode RPC REQUEST delivery to worker (message type 302)
+///
+/// Wire format: `[bytes correlation_id][string route][string reply_route][bytes body]`
+///
+/// This encodes the RpcWorkItem to be sent from route actor to worker session actor.
+pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWorkItem) -> Vec<u8> {
+    let mut enc = TlvEncoder::new();
+    enc.put_bytes(work_item.correlation_id.as_bytes());
+    enc.put_string(work_item.route.as_str());
+    enc.put_string(work_item.reply_route.as_str());
+    enc.put_bytes(&work_item.body);
+    enc.finish()
+}

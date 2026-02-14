@@ -282,7 +282,7 @@ impl RpcRouteActor {
     /// - No request clone (already has ownership)
     /// - No worker_addr clone (use index)
     /// - Arc for reply_route (shared ownership)
-    fn dispatch_to_worker(&mut self, request: RpcRequest, _ctx: &mut Context<Self>) {
+    fn dispatch_to_worker(&mut self, request: RpcRequest, ctx: &mut Context<Self>) {
         // Pop next ready worker from queue
         if let Some(idx) = self.ready_queue.pop_front() {
             // Track in-flight request
@@ -313,8 +313,11 @@ impl RpcRouteActor {
             // Create work item
             let work_item = RpcWorkItem::from_request(&request);
 
-            // Send to worker (TODO: integrate with actor messaging)
-            let _ = (work_item, worker_addr); // Silence unused warnings
+            // Send REQUEST to worker actor (encoded as message type 302 on wire)
+            let _ = ctx.send(
+                worker_addr,
+                crate::domains::rpc::protocol::RpcMessage::RequestDelivery(work_item),
+            );
         } else {
             // No available workers, re-queue
             self.pending.push_back(request);
@@ -437,6 +440,10 @@ impl Actor for RpcRouteActor {
             }
             RpcMessage::Ack { correlation_id } => {
                 self.handle_ack(correlation_id, ctx);
+            }
+            RpcMessage::RequestDelivery(_) => {
+                // RequestDelivery is sent TO workers, not received by route actor
+                // Ignore if misrouted
             }
         }
     }
