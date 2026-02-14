@@ -334,11 +334,11 @@ async fn should_complete_subscribe_request_response_cycle<C>(server: &TestServer
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes
+    // Arrange - Worker subscribes to handle requests for compute route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
-    let worker_addr = "rpc://test/app/workers/worker1";
+    let route = "rpc://test/app/compute";  // Worker subscribes to the route that will receive requests
     
-    let subscribe_frame = build_rpc_subscribe(worker_addr);
+    let subscribe_frame = build_rpc_subscribe(route);
     let response = worker
         .request(&subscribe_frame, 2000)
         .await
@@ -351,7 +351,6 @@ where
     // Arrange - Client sends request
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
-    let route = "rpc://test/app/compute";
     let reply_route = "rpc://test/app/replies/client1";
     let request_body = b"compute-request";
 
@@ -463,17 +462,16 @@ async fn should_support_streaming_responses<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes
+    // Arrange - Worker subscribes to stream route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
-    let worker_addr = "rpc://test/app/workers/streamer";
+    let route = "rpc://test/app/stream";
     
-    let subscribe_frame = build_rpc_subscribe(worker_addr);
+    let subscribe_frame = build_rpc_subscribe(route);
     worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
 
     // Arrange - Client sends request
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
-    let route = "rpc://test/app/stream";
     let reply_route = "rpc://test/app/replies/client1";
 
     let request_frame = build_rpc_request(correlation_id, route, reply_route, b"stream-request");
@@ -692,17 +690,16 @@ async fn should_handle_empty_request_body<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes
+    // Arrange - Worker subscribes to empty route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
-    let worker_addr = "rpc://test/app/workers/empty";
+    let route = "rpc://test/app/empty";
     
-    let subscribe_frame = build_rpc_subscribe(worker_addr);
+    let subscribe_frame = build_rpc_subscribe(route);
     worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
 
     // Arrange - Client sends request with empty body
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
-    let route = "rpc://test/app/empty";
     let reply_route = "rpc://test/app/replies/client1";
 
     let request_frame = build_rpc_request(correlation_id, route, reply_route, b"");
@@ -720,17 +717,16 @@ async fn should_handle_large_request_body<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes
+    // Arrange - Worker subscribes to large route
     let mut worker = C::connect(server).await.expect("failed to connect worker");
-    let worker_addr = "rpc://test/app/workers/large";
+    let route = "rpc://test/app/large";
     
-    let subscribe_frame = build_rpc_subscribe(worker_addr);
+    let subscribe_frame = build_rpc_subscribe(route);
     worker.request(&subscribe_frame, 2000).await.expect("SUBSCRIBE");
 
     // Arrange - Client sends large request
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
-    let route = "rpc://test/app/large";
     let reply_route = "rpc://test/app/replies/client1";
     let large_body = vec![b'X'; 60_000];
 
@@ -753,10 +749,10 @@ where
     let mut worker1 = C::connect(server).await.expect("failed to connect worker1");
     let mut worker2 = C::connect(server).await.expect("failed to connect worker2");
     
-    let subscribe1 = build_rpc_subscribe("rpc://test/app/workers/route1");
+    let subscribe1 = build_rpc_subscribe("rpc://test/app/route1");
     worker1.request(&subscribe1, 2000).await.expect("SUBSCRIBE 1");
 
-    let subscribe2 = build_rpc_subscribe("rpc://test/app/workers/route2");
+    let subscribe2 = build_rpc_subscribe("rpc://test/app/route2");
     worker2.request(&subscribe2, 2000).await.expect("SUBSCRIBE 2");
 
     // Act - Send request to route1
