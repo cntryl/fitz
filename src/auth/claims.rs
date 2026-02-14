@@ -280,6 +280,7 @@ impl RawClaims {
 /// Extract permissions from a `serde_json::Value` representing JWT claims.
 /// This is a permissive extractor that returns an empty Vec if no permissions
 /// sources are present instead of failing validation.
+#[allow(dead_code)]
 pub fn normalized_permissions_from_value(
     value: &serde_json::Value,
 ) -> Result<Vec<Permission>, String> {

@@ -249,19 +249,22 @@ impl Ingress for RuntimeIngress {
                                                 )
                                                 .await
                                                 {
-                                                    Ok(snapshot) => {
+                                                    Ok((snapshot, claims)) => {
                                                         entry.permissions_snapshot =
                                                             snapshot.clone();
                                                         entry.authenticated = true;
 
-                                                        self.session_actors.insert(
-                                                        session_id,
-                                                        crate::session::actor::SessionActor::new(
+                                                        let mut actor = crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
                                                                 session_id,
                                                             ),
-                                                            snapshot,
-                                                        ),
+                                                            snapshot.clone(),
+                                                        );
+                                                        actor.authenticate(claims, snapshot);
+
+                                                        self.session_actors.insert(
+                                                        session_id,
+                                                        actor,
                                                     );
 
                                                         notify_frame = Some(SessionFrame {
@@ -276,16 +279,19 @@ impl Ingress for RuntimeIngress {
                                                         if e.starts_with("invalid jwt header:") {
                                                             debug!(session_id = session_id, error = %e, "Ingress: invalid JWT header, falling back to no-verify");
                                                             match crate::auth::permissions_from_compact_jwt(compact) {
-                                                            Ok(snapshot) => {
+                                                            Ok((snapshot, claims)) => {
                                                                 entry.permissions_snapshot = snapshot.clone();
                                                                 entry.authenticated = true;
 
+                                                                let mut actor = crate::session::actor::SessionActor::new(
+                                                                    crate::session::session::SessionId(session_id),
+                                                                    snapshot.clone(),
+                                                                );
+                                                                actor.authenticate(claims, snapshot);
+
                                                                 self.session_actors.insert(
                                                                     session_id,
-                                                                    crate::session::actor::SessionActor::new(
-                                                                        crate::session::session::SessionId(session_id),
-                                                                        snapshot,
-                                                                    ),
+                                                                    actor,
                                                                 );
 
                                                                 notify_frame = Some(SessionFrame {
@@ -322,19 +328,22 @@ impl Ingress for RuntimeIngress {
                                                 match crate::auth::permissions_from_compact_jwt(
                                                     compact,
                                                 ) {
-                                                    Ok(snapshot) => {
+                                                    Ok((snapshot, claims)) => {
                                                         entry.permissions_snapshot =
                                                             snapshot.clone();
                                                         entry.authenticated = true;
 
-                                                        self.session_actors.insert(
-                                                        session_id,
-                                                        crate::session::actor::SessionActor::new(
+                                                        let mut actor = crate::session::actor::SessionActor::new(
                                                             crate::session::session::SessionId(
                                                                 session_id,
                                                             ),
-                                                            snapshot,
-                                                        ),
+                                                            snapshot.clone(),
+                                                        );
+                                                        actor.authenticate(claims, snapshot);
+
+                                                        self.session_actors.insert(
+                                                        session_id,
+                                                        actor,
                                                     );
 
                                                         notify_frame = Some(SessionFrame {
@@ -361,18 +370,21 @@ impl Ingress for RuntimeIngress {
                                             "Ingress: JWKS derivation failed, falling back to no-verify"
                                         );
                                         match crate::auth::permissions_from_compact_jwt(compact) {
-                                            Ok(snapshot) => {
+                                            Ok((snapshot, claims)) => {
                                                 entry.permissions_snapshot = snapshot.clone();
                                                 entry.authenticated = true;
 
+                                                let mut actor = crate::session::actor::SessionActor::new(
+                                                    crate::session::session::SessionId(
+                                                        session_id,
+                                                    ),
+                                                    snapshot.clone(),
+                                                );
+                                                actor.authenticate(claims, snapshot);
+
                                                 self.session_actors.insert(
                                                     session_id,
-                                                    crate::session::actor::SessionActor::new(
-                                                        crate::session::session::SessionId(
-                                                            session_id,
-                                                        ),
-                                                        snapshot,
-                                                    ),
+                                                    actor,
                                                 );
 
                                                 notify_frame = Some(SessionFrame {
@@ -394,16 +406,19 @@ impl Ingress for RuntimeIngress {
                             } else {
                                 // No issuer present; use existing no-verify path
                                 match crate::auth::permissions_from_compact_jwt(compact) {
-                                    Ok(snapshot) => {
+                                    Ok((snapshot, claims)) => {
                                         entry.permissions_snapshot = snapshot.clone();
                                         entry.authenticated = true;
 
+                                        let mut actor = crate::session::actor::SessionActor::new(
+                                            crate::session::session::SessionId(session_id),
+                                            snapshot.clone(),
+                                        );
+                                        actor.authenticate(claims, snapshot);
+
                                         self.session_actors.insert(
                                             session_id,
-                                            crate::session::actor::SessionActor::new(
-                                                crate::session::session::SessionId(session_id),
-                                                snapshot,
-                                            ),
+                                            actor,
                                         );
 
                                         notify_frame = Some(SessionFrame {

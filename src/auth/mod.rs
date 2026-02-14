@@ -104,31 +104,80 @@ pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
     }
 }
 
-/// Backwards-compatible helper that returns a `SessionPermissions` snapshot.
-/// These remain convenience wrappers for the transport/session-layer integration.
+/// Backwards-compatible helper that returns a `SessionPermissions` snapshot and Claims.
+/// Returns a tuple (SessionPermissions, Claims) for use by the session manager.
+/// The Claims object includes expiration time for security checks.
 pub fn permissions_from_compact_jwt(
     compact: &str,
-) -> Result<crate::session::permissions::SessionPermissions, String> {
-    let claims = claims::parse_jwt_noverify(compact)?;
-    let perms = claims.normalized_permissions()?;
-    Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
+) -> Result<(crate::session::permissions::SessionPermissions, crate::auth::Claims), String> {
+    let raw_claims = claims::parse_jwt_noverify(compact)?;
+    
+    // Resolve tenant (prefer tid > tenant_id > org_id, fallback to empty for no-verify path)
+    let tenant = if let Some(t) = &raw_claims.tid {
+        t.clone()
+    } else if let Some(t) = &raw_claims.tenant_id {
+        t.clone()
+    } else if let Some(t) = &raw_claims.org_id {
+        t.clone()
+    } else {
+        // For no-verify path without tenant field, use empty string
+        String::new()
+    };
+    
+    // Get normalized permissions
+    let perms = raw_claims.normalized_permissions()?;
+    
+    // Build Claims object with expiration time
+    let claims = crate::auth::Claims {
+        sub: raw_claims.sub.clone(),
+        tenant,
+        roles: raw_claims.roles.clone().unwrap_or_default(),
+        permissions: perms.clone(),
+        exp: raw_claims.exp,
+    };
+    
+    let session_perms = crate::session::permissions::SessionPermissions::from_permissions(perms);
+    
+    Ok((session_perms, claims))
 }
 
 pub fn permissions_from_signed_jwt(
     compact: &str,
     public_pem: &[u8],
-) -> Result<crate::session::permissions::SessionPermissions, String> {
+) -> Result<(crate::session::permissions::SessionPermissions, crate::auth::Claims), String> {
     let claims_value = token::verify_jwt_with_rsa_pem(compact, public_pem)?;
-    let claims: RawClaims =
+    let raw_claims: RawClaims =
         serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
-    let perms = claims.normalized_permissions()?;
-    Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
+    
+    // Resolve tenant (prefer tid > tenant_id > org_id, fallback to empty)
+    let tenant = if let Some(t) = &raw_claims.tid {
+        t.clone()
+    } else if let Some(t) = &raw_claims.tenant_id {
+        t.clone()
+    } else if let Some(t) = &raw_claims.org_id {
+        t.clone()
+    } else {
+        String::new()
+    };
+    
+    let perms = raw_claims.normalized_permissions()?;
+    
+    // Build Claims object with expiration time
+    let claims = crate::auth::Claims {
+        sub: raw_claims.sub.clone(),
+        tenant,
+        roles: raw_claims.roles.clone().unwrap_or_default(),
+        permissions: perms.clone(),
+        exp: raw_claims.exp,
+    };
+    
+    Ok((crate::session::permissions::SessionPermissions::from_permissions(perms), claims))
 }
 
 pub async fn permissions_from_jwt_using_jwks(
     compact: &str,
     jwks_url: &str,
-) -> Result<crate::session::permissions::SessionPermissions, String> {
+) -> Result<(crate::session::permissions::SessionPermissions, crate::auth::Claims), String> {
     // Ensure jwks present or fetched
     crate::auth::jwks::ensure_jwks_cached(jwks_url)
         .await
@@ -157,11 +206,34 @@ pub async fn permissions_from_jwt_using_jwks(
     let token_data = jsonwebtoken::decode::<serde_json::Value>(compact, &dk, &validation)
         .map_err(|e| format!("signature verification failed: {}", e))?;
 
-    // Extract permissions directly from the claim value. Signed tokens may omit other
-    // standard claims when used only for service permissions; return an empty
-    // snapshot if no permission source is present.
-    let perms = claims::normalized_permissions_from_value(&token_data.claims)?;
-    Ok(crate::session::permissions::SessionPermissions::from_permissions(perms))
+    // Deserialize into RawClaims to extract all needed fields
+    let raw_claims: RawClaims = serde_json::from_value(token_data.claims)
+        .map_err(|e| format!("json parse error: {}", e))?;
+    
+    // Resolve tenant (prefer tid > tenant_id > org_id, fallback to empty)
+    let tenant = if let Some(t) = &raw_claims.tid {
+        t.clone()
+    } else if let Some(t) = &raw_claims.tenant_id {
+        t.clone()
+    } else if let Some(t) = &raw_claims.org_id {
+        t.clone()
+    } else {
+        String::new()
+    };
+    
+    // Extract permissions directly from the claim value
+    let perms = raw_claims.normalized_permissions()?;
+    
+    // Build Claims object with expiration time
+    let claims = crate::auth::Claims {
+        sub: raw_claims.sub.clone(),
+        tenant,
+        roles: raw_claims.roles.clone().unwrap_or_default(),
+        permissions: perms.clone(),
+        exp: raw_claims.exp,
+    };
+    
+    Ok((crate::session::permissions::SessionPermissions::from_permissions(perms), claims))
 }
 
 /// Create default anonymous permissions with full access across all domains.
@@ -233,7 +305,7 @@ mod auth_tests {
             jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
 
         // Act
-        let perms = permissions_from_jwt_using_jwks(&token, "inline://local")
+        let (perms, _claims) = permissions_from_jwt_using_jwks(&token, "inline://local")
             .await
             .unwrap();
 
