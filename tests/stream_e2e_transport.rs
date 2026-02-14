@@ -218,6 +218,7 @@ fn build_stream_get_metadata(route: &str) -> Vec<u8> {
 
 /// Build Stream SUBSCRIBE request frame
 /// Wire format: [string pattern]
+#[allow(dead_code)]
 fn build_stream_subscribe(pattern: &str) -> Vec<u8> {
     let mut buf = BytesMut::new();
     buf.put_slice(&(pattern.len() as u32).to_be_bytes());
@@ -230,6 +231,7 @@ fn build_stream_subscribe(pattern: &str) -> Vec<u8> {
 
 /// Build Stream UNSUBSCRIBE request frame
 /// Wire format: [string pattern]
+#[allow(dead_code)]
 fn build_stream_unsubscribe(pattern: &str) -> Vec<u8> {
     let mut buf = BytesMut::new();
     buf.put_slice(&(pattern.len() as u32).to_be_bytes());

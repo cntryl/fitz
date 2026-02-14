@@ -601,7 +601,7 @@ where
 
     let ids = parse_schedule_list(&data);
     // May or may not be empty depending on prior tests, just verify parsing works
-    assert!(ids.len() >= 0);
+    let _ = ids; // Verify parsing works
 }
 
 async fn should_isolate_schedules_across_realms<C>(server: &TestServer)
