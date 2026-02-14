@@ -1551,6 +1551,7 @@ pub mod tests {
             store.clone(),
             Box::new(clock.clone()),
             Some(3), // max_attempts = 3
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         // Act - Enqueue message
@@ -1614,6 +1615,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None, // No max_attempts limit
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         // Act - Enqueue message

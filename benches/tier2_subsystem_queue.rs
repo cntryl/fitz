@@ -243,6 +243,7 @@ fn bench_churn_dlq_threshold(c: &mut Criterion) {
         store,
         Box::new(clock.clone()),
         Some(1),
+        fitz::utils::idempotency::global_dedup_store(),
     );
 
     let payload = Bytes::from_static(b"test message");
