@@ -14,6 +14,7 @@
 //! use fitz::testkit::create_test_engine_with_cfs;
 //! use fitz::runtime::routing::RouteFamily;
 //! use fitz::domains::queue::{QueueActor, QueueKey};
+//! use fitz::utils::idempotency::global_dedup_store;
 //!
 //! // ✅ CORRECT - Explicit CF configuration
 //! let engine = create_test_engine_with_cfs(vec![1, 2, 3]);
@@ -23,7 +24,7 @@
 //!     area: "area".to_string(),
 //!     resource: "resource".to_string(),
 //! };
-//! let actor = QueueActor::new(RouteFamily::new(1), key, engine, None);
+//! let actor = QueueActor::new(RouteFamily::new(1), key, engine, None, global_dedup_store());
 //!
 //! // ❌ FORBIDDEN - Will panic
 //! // let actor = QueueActor::new(RouteFamily::new(0), ...);

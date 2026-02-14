@@ -809,6 +809,7 @@ impl MailboxSink for RpcDomainSink {
         use crate::domains::rpc::protocol::RpcMessage;
         use crate::protocol::rpc_codec::RpcResponseMsg;
 
+        // Only emit operation responses for subscribe/unsubscribe or explicit errors.
         let response = match rpc_msg {
             RpcMessage::Subscribe { worker_addr } => {
                 let route_key = worker_addr.route().as_str().to_string();
@@ -825,7 +826,7 @@ impl MailboxSink for RpcDomainSink {
                     session = frame_ctx.session_id,
                     "Worker registered"
                 );
-                RpcResponseMsg::Ok { data: vec![] }
+                Some(RpcResponseMsg::Ok { data: vec![] })
             }
             RpcMessage::Unsubscribe { worker_addr } => {
                 let route_key = worker_addr.route().as_str().to_string();
@@ -839,7 +840,7 @@ impl MailboxSink for RpcDomainSink {
                     worker = worker_addr.route().as_str(),
                     "Worker unregistered"
                 );
-                RpcResponseMsg::Ok { data: vec![] }
+                Some(RpcResponseMsg::Ok { data: vec![] })
             }
             RpcMessage::Request(req) => {
                 let route_key = req.route.as_str().to_string();
@@ -899,9 +900,11 @@ impl MailboxSink for RpcDomainSink {
                         route = route_key,
                         "Request forwarded to worker"
                     );
-                    RpcResponseMsg::Ok { data: vec![] }
+                    None
                 } else {
-                    RpcResponseMsg::Error("No workers registered for route".to_string())
+                    Some(RpcResponseMsg::Error(
+                        "No workers registered for route".to_string(),
+                    ))
                 }
             }
             RpcMessage::Response(resp) => {
@@ -944,7 +947,7 @@ impl MailboxSink for RpcDomainSink {
                         "No pending request for response"
                     );
                 }
-                RpcResponseMsg::Ok { data: vec![] }
+                None
             }
             RpcMessage::Ack { correlation_id } => {
                 let mut state = self.state.lock();
@@ -954,25 +957,29 @@ impl MailboxSink for RpcDomainSink {
                     correlation_id = %correlation_id,
                     "Request acknowledged and cleaned up"
                 );
-                RpcResponseMsg::Ok { data: vec![] }
+                None
             }
             RpcMessage::RequestDelivery(_) => {
                 // RequestDelivery should only be sent TO workers by route actors,
                 // not received from clients. Ignore or error.
-                RpcResponseMsg::Error("RequestDelivery not valid client message".to_string())
+                Some(RpcResponseMsg::Error(
+                    "RequestDelivery not valid client message".to_string(),
+                ))
             }
         };
 
-        // Encode and route response back
-        let response_bytes = crate::protocol::rpc_codec::encode_response(&response);
-        let response_ctx = FrameContext::new(
-            frame_ctx.session_id,
-            frame_ctx.channel_id,
-            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-            bytes::Bytes::from(response_bytes),
-        );
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+        if let Some(response) = response {
+            // Encode and route response back
+            let response_bytes = crate::protocol::rpc_codec::encode_response(&response);
+            let response_ctx = FrameContext::new(
+                frame_ctx.session_id,
+                frame_ctx.channel_id,
+                crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                bytes::Bytes::from(response_bytes),
+            );
+            if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                let _ = self.router.route(response_envelope);
+            }
         }
 
         Ok(())
