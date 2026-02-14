@@ -17,7 +17,7 @@ pub fn create_test_queue_actor(
     max_attempts: Option<u32>,
 ) -> QueueActor {
     let queue_key = QueueKey {
-        family: RouteFamily::new(1),
+        family: RouteFamily::new(0), // CF=0 for Midge test limitation
         realm: realm.to_string(),
         area: area.to_string(),
         resource: resource.to_string(),
@@ -25,7 +25,7 @@ pub fn create_test_queue_actor(
 
     let store = super::stream::create_test_db();
     QueueActor::new(
-        RouteFamily::new(1),
+        RouteFamily::new(0), // CF=0 for Midge test limitation
         queue_key,
         store,
         max_attempts,

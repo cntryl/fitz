@@ -281,7 +281,7 @@ fn should_implement_queue_complete_deduplication_by_message_id() {
     let enqueue_response = actor.handle_enqueue(body, None);
     let msg_id = match enqueue_response {
         QueueResponse::Enqueued { id } => id,
-        _ => panic!("Expected Enqueued response"),
+        _ => panic!("Expected Enqueued response, got: {:?}", enqueue_response),
     };
 
     // Reserve the message (lease_seconds: u64, batch_size: Option<usize>)

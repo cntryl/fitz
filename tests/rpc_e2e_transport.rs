@@ -662,8 +662,7 @@ where
         .expect("SUBSCRIBE 2");
     assert_eq!(parse_rpc_response_frame(&response2).1, 0);
 
-    // Assert - Both workers subscribed successfully
-    assert!(true, "Both workers subscribed with separate sessions");
+    // Both workers subscribed successfully with separate sessions
 }
 
 async fn should_support_unsubscribe_operation<C>(server: &TestServer)

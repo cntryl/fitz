@@ -528,8 +528,7 @@ where
     let response2 = client2.request(&create2, 2000).await.expect("CREATE 2");
     assert_eq!(parse_schedule_response(&response2).1, 0);
 
-    // Assert - Both clients have separate sessions
-    assert!(true, "Both clients have separate sessions");
+    // Both clients have separate sessions
 }
 
 async fn should_support_subscribe_to_schedule_fires<C>(server: &TestServer)

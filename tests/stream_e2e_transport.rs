@@ -564,8 +564,7 @@ where
     let response2 = client2.request(&begin2, 2000).await.expect("BEGIN 2");
     assert_eq!(parse_stream_response(&response2).1, 0);
 
-    // Assert - Both clients have separate sessions
-    assert!(true, "Both clients have separate sessions");
+    // Both clients have separate sessions
 }
 
 async fn should_support_rollback_operation<C>(server: &TestServer)
