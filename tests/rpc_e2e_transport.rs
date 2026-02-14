@@ -213,10 +213,7 @@ fn parse_rpc_request_delivery(frame: &[u8]) -> (Uuid, String, String, Vec<u8>) {
     let payload = &frame[offset..];
     offset = 0;
 
-    // Skip status byte
-    offset += 1;
-
-    // Parse correlation_id
+    // Parse correlation_id (no status byte in REQUEST deliveries - only in responses)
     let correlation_id_len = u32::from_be_bytes([
         payload[offset],
         payload[offset + 1],
@@ -282,10 +279,7 @@ fn parse_rpc_response_delivery(frame: &[u8]) -> (Uuid, u64, Vec<u8>, bool) {
     let payload = &frame[offset..];
     offset = 0;
 
-    // Skip status byte
-    offset += 1;
-
-    // Parse correlation_id
+    // Parse correlation_id (no status byte in responses either - status is in TLV frame context)
     let correlation_id_len = u32::from_be_bytes([
         payload[offset],
         payload[offset + 1],

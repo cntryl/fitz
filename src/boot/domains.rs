@@ -806,12 +806,16 @@ impl MailboxSink for RpcDomainSink {
                     // Drop state lock before routing
                     drop(state);
 
+                    // Encode REQUEST delivery for worker (similar to Notice NOTIFY encoding)
+                    let work_item = crate::domains::rpc::protocol::RpcWorkItem::from_request(&req);
+                    let request_payload = crate::protocol::rpc_codec::encode_request_delivery(&work_item);
+
                     // Forward request to worker's session inbox (avoids RPC domain re-entry / stack overflow)
                     let forward_ctx = FrameContext::new(
                         frame_ctx.session_id,
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(302), // Request msg_type
-                        frame_ctx.payload.clone(),
+                        bytes::Bytes::from(request_payload),
                     );
                     let forward_envelope = Envelope::new(worker_inbox_addr, forward_ctx);
                     let _ = self.router.route(forward_envelope);
