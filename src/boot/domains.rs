@@ -185,6 +185,13 @@ impl MailboxSink for KvDomainSink {
         use crate::domains::kv::{KvError, KvMessage, KvResponse, TxMode};
         let session_id = frame_ctx.session_id;
 
+        tracing::trace!(
+            domain = "kv",
+            session_id = session_id,
+            msg_type = frame_ctx.msg_type.as_u16(),
+            "KV deliver: getting or creating actor for session"
+        );
+
         let response = match &kv_message {
             KvMessage::Begin {
                 route_family,
@@ -210,10 +217,26 @@ impl MailboxSink for KvDomainSink {
                             drop(locks);
                             let mut actors = self.actors.lock();
                             let actor = actors.entry(session_id).or_insert_with(|| {
+                                tracing::trace!(
+                                    domain = "kv",
+                                    session_id = session_id,
+                                    "Creating new KvActor instance"
+                                );
                                 crate::domains::kv::KvActor::new(self.store.clone())
                             });
+                            tracing::trace!(
+                                domain = "kv",
+                                session_id = session_id,
+                                "Calling actor.handle() for BEGIN (ReadWrite)"
+                            );
                             let resp = actor.handle(kv_message.clone());
                             if let KvResponse::BeginOk { tx_id } = resp {
+                                tracing::trace!(
+                                    domain = "kv",
+                                    session_id = session_id,
+                                    tx_id = tx_id,
+                                    "BEGIN succeeded, storing resource lock"
+                                );
                                 self.resource_locks
                                     .lock()
                                     .insert(lock_key.clone(), session_id);
@@ -227,10 +250,26 @@ impl MailboxSink for KvDomainSink {
                         drop(locks);
                         let mut actors = self.actors.lock();
                         let actor = actors.entry(session_id).or_insert_with(|| {
+                            tracing::trace!(
+                                domain = "kv",
+                                session_id = session_id,
+                                "Creating new KvActor instance"
+                            );
                             crate::domains::kv::KvActor::new(self.store.clone())
                         });
+                        tracing::trace!(
+                            domain = "kv",
+                            session_id = session_id,
+                            "Calling actor.handle() for BEGIN (ReadWrite, acquiring lock)"
+                        );
                         let resp = actor.handle(kv_message.clone());
                         if let KvResponse::BeginOk { tx_id } = resp {
+                            tracing::trace!(
+                                domain = "kv",
+                                session_id = session_id,
+                                tx_id = tx_id,
+                                "BEGIN succeeded, acquiring resource lock"
+                            );
                             self.resource_locks
                                 .lock()
                                 .insert(lock_key.clone(), session_id);
@@ -246,7 +285,20 @@ impl MailboxSink for KvDomainSink {
                 let mut actors = self.actors.lock();
                 let actor = actors
                     .entry(session_id)
-                    .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                    .or_insert_with(|| {
+                        tracing::trace!(
+                            domain = "kv",
+                            session_id = session_id,
+                            "Creating new KvActor instance (COMMIT)"
+                        );
+                        crate::domains::kv::KvActor::new(self.store.clone())
+                    });
+                tracing::trace!(
+                    domain = "kv",
+                    session_id = session_id,
+                    tx_id = tx_id,
+                    "Calling actor.handle() for COMMIT"
+                );
                 let resp = actor.handle(kv_message.clone());
                 if let KvResponse::CommitOk = resp {
                     let lock_key = self.tx_to_resource.lock().remove(&(session_id, *tx_id));
@@ -260,7 +312,20 @@ impl MailboxSink for KvDomainSink {
                 let mut actors = self.actors.lock();
                 let actor = actors
                     .entry(session_id)
-                    .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                    .or_insert_with(|| {
+                        tracing::trace!(
+                            domain = "kv",
+                            session_id = session_id,
+                            "Creating new KvActor instance (ROLLBACK)"
+                        );
+                        crate::domains::kv::KvActor::new(self.store.clone())
+                    });
+                tracing::trace!(
+                    domain = "kv",
+                    session_id = session_id,
+                    tx_id = tx_id,
+                    "Calling actor.handle() for ROLLBACK"
+                );
                 let resp = actor.handle(kv_message.clone());
                 if let KvResponse::RollbackOk = resp {
                     let lock_key = self.tx_to_resource.lock().remove(&(session_id, *tx_id));
@@ -274,7 +339,20 @@ impl MailboxSink for KvDomainSink {
                 let mut actors = self.actors.lock();
                 let actor = actors
                     .entry(session_id)
-                    .or_insert_with(|| crate::domains::kv::KvActor::new(self.store.clone()));
+                    .or_insert_with(|| {
+                        tracing::trace!(
+                            domain = "kv",
+                            session_id = session_id,
+                            "Creating new KvActor instance (other operation)"
+                        );
+                        crate::domains::kv::KvActor::new(self.store.clone())
+                    });
+                tracing::trace!(
+                    domain = "kv",
+                    session_id = session_id,
+                    msg_type = frame_ctx.msg_type.as_u16(),
+                    "Calling actor.handle() for operation"
+                );
                 actor.handle(kv_message)
             }
         };

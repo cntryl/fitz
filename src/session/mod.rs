@@ -14,6 +14,7 @@
 #![allow(clippy::module_inception)]
 
 pub mod actor;
+pub mod id_generator;
 pub mod manager;
 pub mod outbound;
 pub mod permissions;
@@ -22,6 +23,7 @@ pub mod tenant;
 
 pub use actor::SessionActor;
 
+pub use id_generator::generate as generate_session_id;
 pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};
 pub use outbound::SessionOutboundSink;
 pub use permissions::SessionPermissions;

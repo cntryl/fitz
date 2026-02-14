@@ -160,6 +160,12 @@ impl KvActor {
                 let tx_id = self.next_tx_id;
                 self.next_tx_id += 1;
 
+                tracing::trace!(
+                    "KvActor assigning transaction ID: {}, next_tx_id is now: {}",
+                    tx_id,
+                    self.next_tx_id
+                );
+
                 self.transactions.insert(
                     tx_id,
                     ActiveKvTx {

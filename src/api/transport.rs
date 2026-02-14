@@ -50,7 +50,10 @@
 
 use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
-use crate::session::{CloseReason, Session, SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
+use crate::session::{
+    generate_session_id, CloseReason, Session, SessionInfo, SessionMetadata, SessionPermissions,
+    TransportKind,
+};
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -211,15 +214,6 @@ impl TransportDriver {
     pub fn session_id(&self) -> u64 {
         self.session_id
     }
-}
-
-/// Generate a unique session ID
-///
-/// Uses Relaxed ordering as session IDs are used for indexing, not synchronization.
-fn generate_session_id() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-    SESSION_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Drop for TransportDriver {

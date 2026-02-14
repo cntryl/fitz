@@ -3,9 +3,8 @@
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
 use crate::session::manager::Ingress;
-use crate::session::{CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind};
+use crate::session::{generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind};
 use bytes::Bytes;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
@@ -484,27 +483,7 @@ where
     Ok(())
 }
 
-/// Generate a unique session ID
-fn generate_session_id() -> u64 {
-    static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-    SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn should_generate_unique_session_ids() {
-        // Arrange
-
-        // Act
-        let id1 = generate_session_id();
-        let id2 = generate_session_id();
-        let id3 = generate_session_id();
-
-        // Assert
-        assert!(id1 < id2);
-        assert!(id2 < id3);
-    }
 }

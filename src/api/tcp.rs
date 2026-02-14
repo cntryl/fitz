@@ -9,7 +9,9 @@
 
 use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
-use crate::session::{CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind};
+use crate::session::{
+    generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
+};
 use bytes::{Buf, Bytes, BytesMut};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -240,13 +242,6 @@ pub async fn create_session(
         TcpHandler::new(ingress, config, session_id, tx, read_half),
         write_half,
     ))
-}
-
-/// Generate a unique session ID
-fn generate_session_id() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-    SESSION_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Helper: preview first N bytes as hex string for trace logging
