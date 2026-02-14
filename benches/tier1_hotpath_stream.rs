@@ -1,4 +1,4 @@
-﻿/// Tier 1: Stream Domain Hot-Path Microbenchmarks
+/// Tier 1: Stream Domain Hot-Path Microbenchmarks
 ///
 /// Tests isolated, single-actor hot paths with minimal coordination.
 /// CRITICAL: All write benches MUST use the full session flow:

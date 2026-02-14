@@ -38,6 +38,7 @@ fn should_persist_messages_to_storage() {
         queue_key.clone(),
         store.clone(),
         None,
+        fitz::utils::idempotency::global_dedup_store(),
     );
     let body = Bytes::from("durable message");
 
@@ -80,6 +81,7 @@ fn should_recover_messages_after_restart() {
             queue_key.clone(),
             store.clone(),
             None,
+            fitz::utils::idempotency::global_dedup_store(),
         );
         let body = Bytes::from("durable message");
         match actor.handle_enqueue(body, None) {
@@ -94,6 +96,7 @@ fn should_recover_messages_after_restart() {
         queue_key,
         store,
         None,
+        fitz::utils::idempotency::global_dedup_store(),
     );
     let reserve_response = actor.handle_reserve(30, Some(1));
 
@@ -119,7 +122,13 @@ fn should_increment_attempts_on_redelivery() {
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("redelivery");
-    let mut actor = QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key.clone(),
+        store.clone(),
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
 
     // Act
     let body = Bytes::from("test message");

@@ -24,5 +24,11 @@ pub fn create_test_queue_actor(
     };
 
     let store = super::stream::create_test_db();
-    QueueActor::new(RouteFamily::new(1), queue_key, store, max_attempts)
+    QueueActor::new(
+        RouteFamily::new(1),
+        queue_key,
+        store,
+        max_attempts,
+        crate::utils::idempotency::global_dedup_store(),
+    )
 }

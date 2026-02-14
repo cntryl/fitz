@@ -33,7 +33,13 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     );
 
     let queue_key = unique_queue_key("competing");
-    let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
 
     // Enqueue 30 messages (10 per consumer)
     let mut message_ids = Vec::new();
@@ -107,8 +113,13 @@ fn should_redelivery_messages_after_crash() {
     // Pre-populate with messages
     let mut original_ids = Vec::new();
     {
-        let mut actor =
-            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            fitz::utils::idempotency::global_dedup_store(),
+        );
 
         for i in 0..10 {
             let body = Bytes::from(format!("task {}", i));
@@ -134,7 +145,13 @@ fn should_redelivery_messages_after_crash() {
     }
 
     // Act - Actor crashes and restarts (create new actor, recovery runs automatically)
-    let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
 
     // Assert - All 10 messages recovered (inflight automatically redelivered)
     assert_eq!(
@@ -177,8 +194,13 @@ fn should_preserve_delayed_visibility_across_restart() {
 
     // Enqueue messages with delay
     {
-        let mut actor =
-            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            fitz::utils::idempotency::global_dedup_store(),
+        );
 
         // Message 1: immediately visible
         actor.handle_enqueue(Bytes::from("immediate"), None);
@@ -192,7 +214,13 @@ fn should_preserve_delayed_visibility_across_restart() {
     }
 
     // Act - Restart actor
-    let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
 
     // Assert - Recovery should restore delayed queue
     assert_eq!(actor.ready.len(), 1, "Ready message should be recovered");
@@ -222,8 +250,13 @@ fn should_prevent_id_collisions_across_crash() {
 
     // Enqueue first batch
     {
-        let mut actor =
-            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            fitz::utils::idempotency::global_dedup_store(),
+        );
 
         for i in 0..10 {
             let body = Bytes::from(format!("batch1-{}", i));
@@ -241,8 +274,13 @@ fn should_prevent_id_collisions_across_crash() {
     // Act - Restart and enqueue second batch
     let mut second_batch_ids = Vec::new();
     {
-        let mut actor =
-            QueueActor::new(RouteFamily::new(0), queue_key.clone(), store.clone(), None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            fitz::utils::idempotency::global_dedup_store(),
+        );
 
         for i in 0..10 {
             let body = Bytes::from(format!("batch2-{}", i));
@@ -279,7 +317,13 @@ fn should_redelivery_message_on_lease_expiration() {
     );
 
     let queue_key = unique_queue_key("lease-expire");
-    let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
 
     // Act
     // Enqueue and reserve message

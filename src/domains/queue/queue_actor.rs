@@ -199,6 +199,9 @@ pub struct QueueActor {
 
     /// Maximum delivery attempts before DLQ (None = unlimited retries)
     max_attempts: Option<u32>,
+
+    /// Deduplication store for context-dependent operations (e.g., COMPLETE)
+    dedup_store: Arc<crate::utils::idempotency::DedupStore>,
 }
 
 impl QueueActor {
@@ -208,6 +211,7 @@ impl QueueActor {
         queue_key: QueueKey,
         store: Arc<cntryl_midge::MidgeEngine>,
         max_attempts: Option<u32>,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         Self::with_clock(
             family,
@@ -215,6 +219,7 @@ impl QueueActor {
             store,
             Box::new(SystemClock),
             max_attempts,
+            dedup_store,
         )
     }
 
@@ -225,6 +230,7 @@ impl QueueActor {
         store: Arc<cntryl_midge::MidgeEngine>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         // Recover next_id from Midge on startup
         let next_id = Self::recover_next_id(&store, &queue_key);
@@ -240,6 +246,7 @@ impl QueueActor {
             delayed: BinaryHeap::new(),
             clock,
             max_attempts,
+            dedup_store,
         };
 
         actor.recover_ready_and_delayed_from_store();
@@ -553,24 +560,72 @@ impl QueueActor {
 
     /// Handle complete operation
     pub fn handle_complete(&mut self, id: MessageId, token: u64) -> QueueResponse {
+        use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
+
         let now = self.clock.now_instant();
+
+        // Check deduplication store first (prevents re-processing completed operations)
+        let dedup_key = DedupKey {
+            realm: self.queue_key.realm.clone(),
+            domain: Domain::Queue,
+            identifier: DedupIdentifier::QueueComplete(id.as_u64(), token),
+        };
+
+        if let Some(cached_response) = self.dedup_store.get(&dedup_key) {
+            tracing::debug!(
+                realm = %self.queue_key.realm,
+                area = %self.queue_key.area,
+                resource = %self.queue_key.resource,
+                message_id = id.as_u64(),
+                token = token,
+                "Queue COMPLETE deduplicated (returning cached response)"
+            );
+            // Deserialize cached response
+            return match bincode::deserialize(&cached_response) {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::warn!(
+                        message_id = id.as_u64(),
+                        token = token,
+                        error = ?e,
+                        "Failed to deserialize cached COMPLETE response, processing normally"
+                    );
+                    // Fall through to normal processing if deserialization fails
+                    QueueResponse::NotFound
+                }
+            };
+        }
 
         // Check if message is inflight
         let inflight = match self.inflight.get(&id) {
             Some(inflight) => inflight.clone(),
-            None => return QueueResponse::NotFound,
+            None => {
+                let response = QueueResponse::NotFound;
+                // Cache negative response (prevents retries from hitting storage)
+                if let Ok(bytes) = bincode::serialize(&response) {
+                    self.dedup_store.record(dedup_key, bytes);
+                }
+                return response;
+            }
         };
 
         // Validate token
         if inflight.token != token {
-            return QueueResponse::InvalidToken;
+            let response = QueueResponse::InvalidToken;
+            // Don't cache invalid token - security: wrong token should fail every time
+            return response;
         }
 
         // Check if already expired
         if inflight.expires_at <= now {
             // Remove stale inflight entry
             self.inflight.remove(&id);
-            return QueueResponse::LeaseExpired;
+            let response = QueueResponse::LeaseExpired;
+            // Cache expired response
+            if let Ok(bytes) = bincode::serialize(&response) {
+                self.dedup_store.record(dedup_key, bytes);
+            }
+            return response;
         }
 
         // Remove inflight entry
@@ -613,7 +668,22 @@ impl QueueActor {
             Err(e) => eprintln!("WARN: Failed to begin tx to delete message {}: {:?}", id, e),
         }
 
-        QueueResponse::Completed
+        let response = QueueResponse::Completed;
+
+        // Cache successful completion response
+        if let Ok(bytes) = bincode::serialize(&response) {
+            self.dedup_store.record(dedup_key, bytes);
+        }
+
+        tracing::info!(
+            realm = %self.queue_key.realm,
+            area = %self.queue_key.area,
+            resource = %self.queue_key.resource,
+            message_id = id.as_u64(),
+            "Queue COMPLETE processed successfully"
+        );
+
+        response
     }
 
     /// Handle lease expiration (internal timer event)
@@ -1002,7 +1072,13 @@ pub mod tests {
         let queue_key = unique_queue_key("jobs");
         // TODO: Use CF=0 due to Midge test limitation (only default CF exists in in-memory engine)
         // Production uses proper RouteFamily â†’ CF mapping once Midge supports multi-CF registration
-        let mut actor = QueueActor::new(RouteFamily::new(0), queue_key, store, None);
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
 
         // Act - Enqueue
         let body = Bytes::from("test message");
@@ -1046,6 +1122,7 @@ pub mod tests {
             queue_key,
             store,
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         // Act
@@ -1073,6 +1150,7 @@ pub mod tests {
             queue_key,
             store,
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1105,6 +1183,7 @@ pub mod tests {
             queue_key,
             store,
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1139,6 +1218,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1175,6 +1255,7 @@ pub mod tests {
             queue_key,
             store,
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1208,6 +1289,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1258,6 +1340,7 @@ pub mod tests {
             queue_key,
             store,
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         // Enqueue 5 messages
@@ -1295,6 +1378,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1334,6 +1418,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -1378,6 +1463,7 @@ pub mod tests {
             queue_key,
             store,
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
         let fake_id = MessageId::new(99999);
 
@@ -1405,6 +1491,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
+            crate::utils::idempotency::global_dedup_store(),
         );
 
         // Act - Enqueue with 30 second delay

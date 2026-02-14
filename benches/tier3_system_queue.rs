@@ -106,8 +106,13 @@ fn bench_capacity_cold_start_recovery(c: &mut Criterion) {
                     cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                         .expect("Failed to open in-memory store"),
                 );
-                let mut actor =
-                    QueueActor::new(RouteFamily::new(1), queue_key.clone(), store.clone(), None);
+                let mut actor = QueueActor::new(
+                    RouteFamily::new(1),
+                    queue_key.clone(),
+                    store.clone(),
+                    None,
+                    fitz::utils::idempotency::global_dedup_store(),
+                );
 
                 let payload = Bytes::from_static(b"recovery message");
                 for _ in 0..100 {
@@ -118,7 +123,13 @@ fn bench_capacity_cold_start_recovery(c: &mut Criterion) {
                 (store, queue_key)
             },
             |(store, queue_key)| {
-                let actor = QueueActor::new(RouteFamily::new(1), queue_key, store, None);
+                let actor = QueueActor::new(
+                    RouteFamily::new(1),
+                    queue_key,
+                    store,
+                    None,
+                    fitz::utils::idempotency::global_dedup_store(),
+                );
                 black_box(actor);
             },
             criterion::BatchSize::SmallInput,

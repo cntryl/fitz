@@ -125,6 +125,7 @@ fn bench_churn_reserve_expire_fixed(c: &mut Criterion) {
         store,
         Box::new(clock.clone()),
         None,
+        fitz::utils::idempotency::global_dedup_store(),
     );
 
     let payload = Bytes::from_static(b"test message");
@@ -339,6 +340,7 @@ fn bench_churn_abuse_reserve_without_complete(c: &mut Criterion) {
         store,
         Box::new(clock.clone()),
         None,
+        fitz::utils::idempotency::global_dedup_store(),
     );
 
     let payload = Bytes::from_static(b"abandoned message");

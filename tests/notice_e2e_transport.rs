@@ -778,6 +778,7 @@ where
     let notify = client.recv_frame(2000).await.expect("Expected NOTIFY");
     let (received_id, _, _) = parse_notify_message(&notify);
     assert_eq!(received_id, id1, "Expected notification for pattern1 only");
+    assert_ne!(received_id, id2, "pattern2 should not receive notification");
 
     // Assert - No additional notifications
     let result = client.recv_frame(500).await;

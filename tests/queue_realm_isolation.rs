@@ -31,7 +31,13 @@ fn make_queue_actor(realm: &str, area: &str, resource: &str) -> (QueueActor, Con
         area: area.to_string(),
         resource: resource.to_string(),
     };
-    let actor = QueueActor::new(family, queue_key, db, None); // max_attempts = None = unlimited retries
+    let actor = QueueActor::new(
+        family,
+        queue_key,
+        db,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    ); // max_attempts = None = unlimited retries
     let ctx = Context::new(addr, router);
 
     (actor, ctx)

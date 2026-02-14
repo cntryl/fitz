@@ -1019,7 +1019,13 @@ impl MailboxSink for QueueDomainSink {
                     });
                     let store = self.store.clone();
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                        crate::domains::queue::QueueActor::new(
+                            family_id,
+                            key.clone(),
+                            store,
+                            None,
+                            crate::utils::idempotency::global_dedup_store(),
+                        )
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
@@ -1040,7 +1046,13 @@ impl MailboxSink for QueueDomainSink {
                     });
                     let store = self.store.clone();
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                        crate::domains::queue::QueueActor::new(
+                            family_id,
+                            key.clone(),
+                            store,
+                            None,
+                            crate::utils::idempotency::global_dedup_store(),
+                        )
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
@@ -1061,7 +1073,13 @@ impl MailboxSink for QueueDomainSink {
                     });
                     let store = self.store.clone();
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                        crate::domains::queue::QueueActor::new(
+                            family_id,
+                            key.clone(),
+                            store,
+                            None,
+                            crate::utils::idempotency::global_dedup_store(),
+                        )
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
@@ -1081,7 +1099,13 @@ impl MailboxSink for QueueDomainSink {
                     });
                     let store = self.store.clone();
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(family_id, key.clone(), store, None)
+                        crate::domains::queue::QueueActor::new(
+                            family_id,
+                            key.clone(),
+                            store,
+                            None,
+                            crate::utils::idempotency::global_dedup_store(),
+                        )
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();

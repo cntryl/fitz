@@ -31,7 +31,13 @@ pub fn create_bench_queue_actor(
 
     let store = create_bench_store();
     // TODO: Use CF=1 once Midge supports explicit CF creation in in-memory mode
-    QueueActor::new(RouteFamily::new(0), queue_key, store, max_attempts)
+    QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        max_attempts,
+        crate::utils::idempotency::global_dedup_store(),
+    )
 }
 
 /// Create a QueueActor for integration benchmarking with local disk storage
@@ -63,6 +69,12 @@ pub fn create_local_bench_queue_actor(
     };
 
     let (store, temp_dir) = create_local_bench_store();
-    let actor = QueueActor::new(RouteFamily::new(0), queue_key, store, max_attempts);
+    let actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        max_attempts,
+        crate::utils::idempotency::global_dedup_store(),
+    );
     (actor, temp_dir)
 }

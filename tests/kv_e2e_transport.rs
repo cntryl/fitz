@@ -240,6 +240,10 @@ async fn should_handle_concurrent_connections_with_separate_transactions<C>(serv
 where
     C: KvConnector,
 {
+    // Note: TX IDs are session-scoped, not global. Each connection creates a new session
+    // with its own KvActor instance. Each actor starts with next_tx_id = 1.
+    // This is correct behavior: all three transactions may get tx_id=1 within their
+    // respective sessions. TX IDs are unique within a session, not across sessions.
     let run_tx = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("kv://test/app/concurrent{}", idx);

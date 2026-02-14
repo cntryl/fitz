@@ -190,7 +190,13 @@ mod tests {
             area: "area".to_string(),
             resource: "jobs".to_string(),
         };
-        QueueActor::new(RouteFamily::new(1), queue_key, store, None)
+        QueueActor::new(
+            RouteFamily::new(1),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        )
     }
 
     #[test]
