@@ -8,13 +8,10 @@
 //! Target: <10 seconds total
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::domains::lease::lease_actor::LeaseActor;
-use fitz::domains::lease::protocol::LeaseMessage;
-use fitz::runtime::actor::{Actor, Context};
-use fitz::runtime::router::Router;
-use fitz::runtime::routing::RouteAddress;
+use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::runtime::actor::Actor;
 use fitz::runtime::routing::{Route, RouteFamily};
-use std::sync::Arc;
+use fitz::testkit::lease::create_test_lease_context;
 
 #[path = "config.rs"]
 mod config;
@@ -31,10 +28,7 @@ fn bench_queue_depth_throughput_10_waiters(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut actor = LeaseActor::new(family);
-                let router = Arc::new(Router::new());
-                let addr =
-                    RouteAddress::new(family, Route::new("lease://bench/app/queue-scale-10"));
-                let mut ctx = Context::new(addr, router);
+                let mut ctx = create_test_lease_context(Some("lease://bench/app/queue-scale-10"));
 
                 // Setup: Holder + 10 waiters already queued
                 let holder_msg = LeaseMessage::Acquire {
@@ -86,10 +80,7 @@ fn bench_queue_depth_throughput_50_waiters(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut actor = LeaseActor::new(family);
-                let router = Arc::new(Router::new());
-                let addr =
-                    RouteAddress::new(family, Route::new("lease://bench/app/queue-scale-50"));
-                let mut ctx = Context::new(addr, router);
+                let mut ctx = create_test_lease_context(Some("lease://bench/app/queue-scale-50"));
 
                 // Setup: Holder + 50 waiters
                 let holder_msg = LeaseMessage::Acquire {
@@ -141,10 +132,8 @@ fn bench_queue_depth_throughput_100_waiters(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut actor = LeaseActor::new(family);
-                let router = Arc::new(Router::new());
-                let addr =
-                    RouteAddress::new(family, Route::new("lease://bench/app/queue-scale-100-max"));
-                let mut ctx = Context::new(addr, router);
+                let mut ctx =
+                    create_test_lease_context(Some("lease://bench/app/queue-scale-100-max"));
 
                 // Setup: Holder + 100 waiters (at max queue depth)
                 let holder_msg = LeaseMessage::Acquire {
@@ -194,9 +183,7 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
 
     group.bench_function("lease_turnover_with_50_waiter_backlog", |b| {
         let mut actor = LeaseActor::new(family);
-        let router = Arc::new(Router::new());
-        let addr = RouteAddress::new(family, Route::new("lease://bench/app/turnover-backlog"));
-        let mut ctx = Context::new(addr, router);
+        let mut ctx = create_test_lease_context(Some("lease://bench/app/turnover-backlog"));
 
         // Setup: 50 clients already waiting
         let holder_msg = LeaseMessage::Acquire {
