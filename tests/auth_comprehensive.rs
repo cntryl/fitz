@@ -1,4 +1,4 @@
-﻿//! Comprehensive auth tests for token expiration, reauth flow, and edge cases
+//! Comprehensive auth tests for token expiration, reauth flow, and edge cases
 //!
 //! Tests the complete auth â†’ session â†’ authorization pipeline with focus on:
 //! - Token expiration enforcement in authorize()
@@ -151,7 +151,7 @@ fn should_reauth_update_expiration_time() {
 
     assert_eq!(actor.token_expiration(), Some(1000));
 
-    // Act: Reauth with new expiration
+    // Act
     let claims_new = Claims {
         sub: "user:42".to_string(),
         tenant: "prod".to_string(),

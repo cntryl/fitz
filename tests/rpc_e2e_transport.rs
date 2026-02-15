@@ -305,7 +305,7 @@ async fn should_complete_subscribe_request_response_cycle<C>(server: &TestServer
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes to handle requests for compute route
+    // Arrange
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/compute"; // Worker subscribes to the route that will receive requests
 
@@ -319,7 +319,7 @@ where
     assert_eq!(msg_type, 300, "Expected SUBSCRIBE response (300)");
     assert_eq!(status, 0, "Expected success status");
 
-    // Arrange - Client sends request
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
     let reply_route = "rpc://test/app/replies/client1";
@@ -331,7 +331,7 @@ where
         .await
         .expect("REQUEST send failed");
 
-    // Act - Worker receives request
+    // Act
     let request_delivery = worker
         .recv_frame(4000)
         .await
@@ -340,13 +340,13 @@ where
     let (received_correlation_id, received_route, received_reply_route, received_body) =
         parse_rpc_request_delivery(&request_delivery);
 
-    // Assert - Request delivered correctly
+    // Assert
     assert_eq!(received_correlation_id, correlation_id);
     assert_eq!(received_route, route);
     assert_eq!(received_reply_route, reply_route);
     assert_eq!(received_body, request_body);
 
-    // Act - Worker sends response
+    // Act
     let response_body = b"compute-result";
     let response_frame = build_rpc_response(correlation_id, 0, response_body, true);
     worker
@@ -354,7 +354,7 @@ where
         .await
         .expect("RESPONSE send failed");
 
-    // Act - Client receives response
+    // Act
     let response_delivery = client
         .recv_frame(4000)
         .await
@@ -363,7 +363,7 @@ where
     let (resp_correlation_id, seq, resp_body, stream_end) =
         parse_rpc_response_delivery(&response_delivery);
 
-    // Assert - Response delivered correctly
+    // Assert
     assert_eq!(resp_correlation_id, correlation_id);
     assert_eq!(seq, 0);
     assert_eq!(resp_body, response_body);
@@ -397,12 +397,14 @@ async fn should_handle_concurrent_connections_with_separate_workers<C>(server: &
 where
     C: RpcConnector,
 {
-    // Arrange & Act
+    // Arrange
     let run_worker = |idx: usize| async move {
         let mut worker = C::connect(server).await.expect("connect failed");
         let worker_addr = format!("rpc://test/app/workers/worker{}", idx);
 
         let subscribe_frame = build_rpc_subscribe(&worker_addr);
+
+        // Act
         let response = worker
             .request(&subscribe_frame, 4000)
             .await
@@ -420,7 +422,7 @@ where
         assert_eq!(status, 0);
     };
 
-    // Assert - All 3 concurrent operations complete
+    // Assert
     tokio::join!(run_worker(0), run_worker(1), run_worker(2));
 }
 
@@ -428,7 +430,7 @@ async fn should_support_streaming_responses<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes to stream route
+    // Arrange
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/stream";
 
@@ -438,7 +440,7 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Arrange - Client sends request
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
     let reply_route = "rpc://test/app/replies/client1";
@@ -446,7 +448,7 @@ where
     let request_frame = build_rpc_request(correlation_id, route, reply_route, b"stream-request");
     client.send_frame(&request_frame).await.expect("REQUEST");
 
-    // Act - Worker receives and sends 3 responses
+    // Act
     let _ = worker.recv_frame(4000).await.expect("REQUEST delivery");
 
     worker
@@ -462,7 +464,7 @@ where
         .await
         .expect("RESPONSE 3");
 
-    // Assert - Client receives all 3 responses in order
+    // Assert
     let resp1 = client.recv_frame(4000).await.expect("RESPONSE 1");
     let (_, seq1, body1, end1) = parse_rpc_response_delivery(&resp1);
     assert_eq!(seq1, 0);
@@ -603,7 +605,7 @@ where
 
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Try to subscribe in test-realm
+    // Act
     let subscribe_frame = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
     let result = client.request(&subscribe_frame, 1000).await;
 
@@ -615,7 +617,7 @@ async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server
 where
     C: RpcConnector,
 {
-    // Arrange - First worker
+    // Arrange
     let mut worker1 = C::connect(server).await.expect("failed to connect");
     let connect_frame1 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -627,7 +629,7 @@ where
         .expect("CONNECT 1");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Arrange - Second worker
+    // Arrange
     let mut worker2 = C::connect(server).await.expect("failed to connect");
     let connect_frame2 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -639,7 +641,7 @@ where
         .expect("CONNECT 2");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Both workers subscribe to different routes
+    // Act
     let subscribe1 = build_rpc_subscribe("rpc://test-realm/app/workers/worker1");
     let response1 = worker1
         .request(&subscribe1, 2000)
@@ -671,7 +673,7 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Act - Unsubscribe
+    // Act
     let unsubscribe_frame = build_rpc_unsubscribe(worker_addr);
     let response = worker
         .request(&unsubscribe_frame, 2000)
@@ -688,7 +690,7 @@ async fn should_handle_empty_request_body<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes to empty route
+    // Arrange
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/empty";
 
@@ -698,7 +700,7 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Arrange - Client sends request with empty body
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
     let reply_route = "rpc://test/app/replies/client1";
@@ -706,7 +708,7 @@ where
     let request_frame = build_rpc_request(correlation_id, route, reply_route, b"");
     client.send_frame(&request_frame).await.expect("REQUEST");
 
-    // Act - Worker receives request
+    // Act
     let request_delivery = worker.recv_frame(2000).await.expect("REQUEST");
     let (_, _, _, body) = parse_rpc_request_delivery(&request_delivery);
 
@@ -718,7 +720,7 @@ async fn should_handle_large_request_body<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Worker subscribes to large route
+    // Arrange
     let mut worker = C::connect(server).await.expect("failed to connect worker");
     let route = "rpc://test/app/large";
 
@@ -728,7 +730,7 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Arrange - Client sends large request
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
     let reply_route = "rpc://test/app/replies/client1";
@@ -737,7 +739,7 @@ where
     let request_frame = build_rpc_request(correlation_id, route, reply_route, &large_body);
     client.send_frame(&request_frame).await.expect("REQUEST");
 
-    // Act - Worker receives request
+    // Act
     let request_delivery = worker.recv_frame(3000).await.expect("REQUEST");
     let (_, _, _, body) = parse_rpc_request_delivery(&request_delivery);
 
@@ -749,7 +751,7 @@ async fn should_isolate_workers_across_routes<C>(server: &TestServer)
 where
     C: RpcConnector,
 {
-    // Arrange - Two workers on different routes
+    // Arrange
     let mut worker1 = C::connect(server).await.expect("failed to connect worker1");
     let mut worker2 = C::connect(server).await.expect("failed to connect worker2");
 
@@ -765,7 +767,7 @@ where
         .await
         .expect("SUBSCRIBE 2");
 
-    // Act - Send request to route1
+    // Act
     let mut client = C::connect(server).await.expect("failed to connect client");
     let correlation_id = Uuid::new_v4();
     let route = "rpc://test/app/route1";
@@ -774,7 +776,7 @@ where
     let request_frame = build_rpc_request(correlation_id, route, reply_route, b"route1-request");
     client.send_frame(&request_frame).await.expect("REQUEST");
 
-    // Assert - Only worker1 receives request
+    // Assert
     let result1 = worker1.recv_frame(2000).await;
     assert!(result1.is_ok(), "Worker 1 should receive request");
 
@@ -814,11 +816,11 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Act - Drop connection
+    // Act
     drop(worker);
     fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
-    // Act - Reconnect and subscribe again
+    // Act
     let mut worker2 = C::connect(server).await.expect("failed to reconnect");
     let subscribe_frame2 = build_rpc_subscribe(worker_addr);
     let response = worker2

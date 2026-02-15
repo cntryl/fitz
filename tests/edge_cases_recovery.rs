@@ -47,7 +47,7 @@ fn should_handle_empty_key() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT with empty key
+    // Act
     let response = actor.handle(KvMessage::Put {
         tx_id,
         route_family,
@@ -56,7 +56,7 @@ fn should_handle_empty_key() {
         value: Bytes::from_static(b"value"),
     });
 
-    // Assert - Should either succeed or return specific error
+    // Assert
     // (Behavior depends on Midge's handling of empty keys)
     match response {
         KvResponse::PutOk => {
@@ -90,7 +90,7 @@ fn should_handle_empty_value() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT with empty value
+    // Act
     let response = actor.handle(KvMessage::Put {
         tx_id,
         route_family,
@@ -99,7 +99,7 @@ fn should_handle_empty_value() {
         value: Bytes::new(), // Empty value
     });
 
-    // Assert - Empty values should be allowed
+    // Assert
     assert!(matches!(response, KvResponse::PutOk));
 }
 
@@ -124,7 +124,7 @@ fn should_handle_large_key() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT with large key (1KB)
+    // Act
     let large_key = vec![b'x'; 1024];
     let response = actor.handle(KvMessage::Put {
         tx_id,
@@ -134,7 +134,7 @@ fn should_handle_large_key() {
         value: Bytes::from_static(b"value"),
     });
 
-    // Assert - Large keys should be handled (allowed or rejected with proper error)
+    // Assert
     match response {
         KvResponse::PutOk => {
             // Midge allows large keys
@@ -167,7 +167,7 @@ fn should_handle_large_value() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT with large value (1MB)
+    // Act
     let large_value = vec![b'y'; 1024 * 1024];
     let response = actor.handle(KvMessage::Put {
         tx_id,
@@ -177,7 +177,7 @@ fn should_handle_large_value() {
         value: Bytes::from(large_value),
     });
 
-    // Assert - Large values should be handled
+    // Assert
     assert!(matches!(
         response,
         KvResponse::PutOk | KvResponse::Error { .. }
@@ -205,7 +205,7 @@ fn should_handle_many_keys_in_single_transaction() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - PUT many keys (reduced to 10 for test speed)
+    // Act
     for i in 0..10 {
         let key = format!("key{}", i);
         let value = format!("value{}", i);
@@ -221,7 +221,7 @@ fn should_handle_many_keys_in_single_transaction() {
         assert!(matches!(response, KvResponse::PutOk));
     }
 
-    // Assert - COMMIT should succeed
+    // Assert
     let commit_response = actor.handle(KvMessage::Commit { tx_id });
     // Just verify it's some response (could be CommitOk or Error depending on Midge behavior)
     match commit_response {
@@ -242,7 +242,7 @@ fn should_handle_transaction_id_wraparound() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - Create many transactions to test ID wraparound
+    // Act
     // (In practice, u64 IDs are so large this is not a real concern)
     for _ in 0..10 {
         let begin_response = actor.handle(KvMessage::Begin {
@@ -257,6 +257,6 @@ fn should_handle_transaction_id_wraparound() {
         assert!(matches!(begin_response, KvResponse::BeginOk { .. }));
     }
 
-    // Assert - Transaction IDs should be unique
+    // Assert
     // (Implicitly tested by successful BEGIN operations)
 }

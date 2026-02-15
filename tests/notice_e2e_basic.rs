@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};

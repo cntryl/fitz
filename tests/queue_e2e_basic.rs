@@ -90,7 +90,7 @@ fn should_recover_messages_after_restart() {
         }
     };
 
-    // Act - Restart actor and recover from storage
+    // Act
     let mut actor = QueueActor::new(
         RouteFamily::new(0), /* CF=0 for Midge test limitation */
         queue_key,
@@ -100,7 +100,7 @@ fn should_recover_messages_after_restart() {
     );
     let reserve_response = actor.handle_reserve(30, Some(1));
 
-    // Assert - Message recovered and redeliverable
+    // Assert
     match reserve_response {
         QueueResponse::Reserved { messages } => {
             assert_eq!(messages.len(), 1);

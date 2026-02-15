@@ -1,4 +1,4 @@
-﻿use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::domains::lease::{LeaseActor, LeaseMessage};
 use fitz::runtime::actor::{Actor, Context};
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -56,7 +56,7 @@ fn should_reject_second_requester_when_lease_is_held() {
     };
     actor.receive(msg1, &mut ctx);
 
-    // Act - Client 2 tries to acquire
+    // Act
     let msg2 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -66,7 +66,7 @@ fn should_reject_second_requester_when_lease_is_held() {
     };
     actor.receive(msg2, &mut ctx);
 
-    // Assert - Should still have only one lease holder
+    // Assert
     assert_eq!(actor.lease_count(), 1);
 }
 
@@ -78,7 +78,7 @@ fn should_return_same_token_for_idempotent_acquire() {
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
 
-    // Act - Same client acquires twice
+    // Act
     let msg1 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -97,7 +97,7 @@ fn should_return_same_token_for_idempotent_acquire() {
     };
     actor.receive(msg2, &mut ctx);
 
-    // Assert - Still only one lease
+    // Assert
     assert_eq!(actor.lease_count(), 1);
 }
 
@@ -119,7 +119,7 @@ fn should_renew_lease_with_valid_token() {
     };
     actor.receive(acquire_msg, &mut ctx);
 
-    // Act - Renew with token 1 (first token issued)
+    // Act
     let renew_msg = LeaseMessage::Renew {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -129,7 +129,7 @@ fn should_renew_lease_with_valid_token() {
     };
     actor.receive(renew_msg, &mut ctx);
 
-    // Assert - Lease still held
+    // Assert
     assert_eq!(actor.lease_count(), 1);
 }
 
@@ -151,7 +151,7 @@ fn should_release_lease_with_valid_token() {
     };
     actor.receive(acquire_msg, &mut ctx);
 
-    // Act - Release with token 1
+    // Act
     let release_msg = LeaseMessage::Release {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -160,7 +160,7 @@ fn should_release_lease_with_valid_token() {
     };
     actor.receive(release_msg, &mut ctx);
 
-    // Assert - Lease released
+    // Assert
     assert_eq!(actor.lease_count(), 0);
 }
 
@@ -190,7 +190,7 @@ fn should_allow_new_owner_after_release() {
     };
     actor.receive(release, &mut ctx);
 
-    // Act - Client 2 acquires
+    // Act
     let acquire2 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -200,7 +200,7 @@ fn should_allow_new_owner_after_release() {
     };
     actor.receive(acquire2, &mut ctx);
 
-    // Assert - New owner has the lease
+    // Assert
     assert_eq!(actor.lease_count(), 1);
 }
 
@@ -214,7 +214,7 @@ fn should_issue_monotonically_increasing_tokens() {
     let route2 = Route::new("lease://realm/locks/lock2/acquire");
     let route3 = Route::new("lease://realm/locks/lock3/acquire");
 
-    // Act - Acquire three different leases
+    // Act
     let msg1 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: route1,
@@ -242,7 +242,7 @@ fn should_issue_monotonically_increasing_tokens() {
     };
     actor.receive(msg3, &mut ctx);
 
-    // Assert - Three leases acquired
+    // Assert
     assert_eq!(actor.lease_count(), 3);
 }
 
@@ -254,7 +254,7 @@ fn should_isolate_leases_across_route_families() {
 
     let route = Route::new("lease://realm/locks/db-migration/acquire");
 
-    // Act - Acquire same route in different families
+    // Act
     let msg1 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -273,7 +273,7 @@ fn should_isolate_leases_across_route_families() {
     };
     actor.receive(msg2, &mut ctx);
 
-    // Assert - Only one lease (family=1) because family=2 message is rejected
+    // Assert
     assert_eq!(actor.lease_count(), 1);
 }
 
@@ -295,13 +295,13 @@ fn should_query_lease_status() {
     };
     actor.receive(acquire_msg, &mut ctx);
 
-    // Act - Query the lease
+    // Act
     let query_msg = LeaseMessage::Query {
         family_id: RouteFamily::new(1),
         route: route.clone(),
     };
     actor.receive(query_msg, &mut ctx);
 
-    // Assert - Lease exists
+    // Assert
     assert_eq!(actor.lease_count(), 1);
 }

@@ -1,4 +1,4 @@
-﻿//! Stream Authorization Tests
+//! Stream Authorization Tests
 //!
 //! Tests that stream operations enforce session-level permissions:
 //! - Write operations require Write access
@@ -184,7 +184,7 @@ fn should_reject_commit_without_write_permission() {
     // Act
     let result = session_read.commit_session(commit_msg, &mut actor, &mut ctx);
 
-    // Assert - Commit checks were done at BeginSession, so this just forwards
+    // Assert
     // The actual protection is that read-only session cannot BEGIN a session
     assert!(result.is_ok()); // This forwards to actor (session check was at begin)
 }
@@ -213,7 +213,7 @@ fn should_enforce_realm_boundary_in_permissions() {
     // Act
     let result = session.begin_session(msg, &mut actor, &mut ctx);
 
-    // Assert - Should fail due to realm mismatch
+    // Assert
     assert!(result.is_err());
 }
 
@@ -241,7 +241,7 @@ fn should_enforce_area_boundary_in_permissions() {
     // Act
     let result = session.begin_session(msg, &mut actor, &mut ctx);
 
-    // Assert - Should fail due to area mismatch
+    // Assert
     assert!(result.is_err());
 }
 
@@ -328,7 +328,7 @@ fn should_check_permissions_on_peek_operation() {
     // Act
     let result = session_no_access.read_stream(msg, &mut actor, &mut ctx);
 
-    // Assert - Should fail with no read permission
+    // Assert
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("unauthorized"));
 }
@@ -348,7 +348,7 @@ fn should_check_permissions_on_get_metadata() {
     // Act
     let result = session_no_access.read_stream(msg, &mut actor, &mut ctx);
 
-    // Assert - Should fail with no read permission
+    // Assert
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("unauthorized"));
 }

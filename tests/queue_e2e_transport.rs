@@ -249,28 +249,28 @@ where
     let route = "queue://test/app/jobs";
     let body = b"task-payload";
 
-    // Act - ENQUEUE
+    // Act
     let enqueue_frame = build_queue_enqueue(route, body, None);
     let response = client
         .request(&enqueue_frame, 2000)
         .await
         .expect("ENQUEUE request failed");
 
-    // Assert - ENQUEUE success
+    // Assert
     let (msg_type, status, data) = parse_queue_response(&response);
     assert_eq!(msg_type, 200, "Expected ENQUEUE response (200)");
     assert_eq!(status, 0, "Expected success status");
     let message_id = parse_enqueue_response(&data);
     assert!(message_id > 0, "Expected valid message ID");
 
-    // Act - RESERVE
+    // Act
     let reserve_frame = build_queue_reserve(route, 30, Some(1), None);
     let response = client
         .request(&reserve_frame, 2000)
         .await
         .expect("RESERVE request failed");
 
-    // Assert - RESERVE success
+    // Assert
     let (msg_type, status, data) = parse_queue_response(&response);
     assert_eq!(msg_type, 202, "Expected RESERVE response (202)");
     assert_eq!(status, 0, "Expected success status");
@@ -280,14 +280,14 @@ where
     assert_eq!(messages[0].2, body, "Expected same body");
     let token = messages[0].1;
 
-    // Act - COMPLETE
+    // Act
     let complete_frame = build_queue_complete(route, message_id, token);
     let response = client
         .request(&complete_frame, 2000)
         .await
         .expect("COMPLETE request failed");
 
-    // Assert - COMPLETE success
+    // Assert
     let (msg_type, status, _data) = parse_queue_response(&response);
     assert_eq!(msg_type, 204, "Expected COMPLETE response (204)");
     assert_eq!(status, 0, "Expected success status");
@@ -320,13 +320,15 @@ async fn should_handle_concurrent_connections_with_separate_queues<C>(server: &T
 where
     C: QueueConnector,
 {
-    // Arrange & Act
+    // Arrange
     let run_queue = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("queue://test/app/concurrent{}", idx);
         let body = format!("message-{}", idx);
 
         let enqueue_frame = build_queue_enqueue(&route, body.as_bytes(), None);
+
+        // Act
         let response = client
             .request(&enqueue_frame, 4000)
             .await
@@ -357,7 +359,7 @@ where
         message_id
     };
 
-    // Assert - All 3 concurrent operations complete
+    // Assert
     let (id1, id2, id3) = tokio::join!(run_queue(0), run_queue(1), run_queue(2));
     let ids = [id1, id2, id3];
     assert_eq!(
@@ -376,7 +378,7 @@ where
     let route = "queue://test/app/sequential";
     let mut message_ids = vec![];
 
-    // Act - Enqueue 3 messages
+    // Act
     for i in 0..3 {
         let body = format!("message-{}", i);
         let enqueue_frame = build_queue_enqueue(route, body.as_bytes(), None);
@@ -391,7 +393,7 @@ where
         message_ids.push(message_id);
     }
 
-    // Assert - All IDs are unique
+    // Assert
     assert_eq!(message_ids.len(), 3);
     assert_eq!(
         message_ids,
@@ -415,7 +417,7 @@ where
     let reserve_frame = build_queue_reserve(route, 30, Some(1), None);
     let _ = client.request(&reserve_frame, 2000).await.expect("RESERVE");
 
-    // Act - Try to complete with wrong token
+    // Act
     let complete_frame = build_queue_complete(route, message_id, 99999);
     let response = client
         .request(&complete_frame, 2000)
@@ -549,7 +551,7 @@ where
 
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Try to access test-realm queue
+    // Act
     let enqueue_frame = build_queue_enqueue("queue://test-realm/app/auth", b"test", None);
     let result = client.request(&enqueue_frame, 1000).await;
 
@@ -561,7 +563,7 @@ async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server
 where
     C: QueueConnector,
 {
-    // Arrange - First client
+    // Arrange
     let mut client1 = C::connect(server).await.expect("failed to connect");
     let connect_frame1 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -573,7 +575,7 @@ where
         .expect("CONNECT 1");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Arrange - Second client
+    // Arrange
     let mut client2 = C::connect(server).await.expect("failed to connect");
     let connect_frame2 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -585,7 +587,7 @@ where
         .expect("CONNECT 2");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Both clients enqueue to same queue
+    // Act
     let route = "queue://test-realm/app/shared";
     let enqueue1 = build_queue_enqueue(route, b"message1", None);
     let response1 = client1.request(&enqueue1, 5000).await.expect("ENQUEUE 1");
@@ -595,7 +597,7 @@ where
     let response2 = client2.request(&enqueue2, 5000).await.expect("ENQUEUE 2");
     let id2 = parse_enqueue_response(&parse_queue_response(&response2).2);
 
-    // Assert - Both messages accepted, different IDs
+    // Assert
     assert_eq!(id1, 1, "First connection should get message_id=1");
     assert_eq!(
         id2, 2,
@@ -615,7 +617,7 @@ where
     let response = client.request(&enqueue_frame, 2000).await.expect("ENQUEUE");
     let message_id = parse_enqueue_response(&parse_queue_response(&response).2);
 
-    // Act - Try to complete without reserving
+    // Act
     let complete_frame = build_queue_complete(route, message_id, 12345);
     let result = client.request(&complete_frame, 2000).await;
 
@@ -654,7 +656,7 @@ where
         .await
         .expect("COMPLETE");
 
-    // Act - Try to extend after complete
+    // Act
     let extend_frame = build_queue_extend(route, message_id, token, 60);
     let response = client
         .request(&extend_frame, 2000)
@@ -709,17 +711,17 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "queue://test/app/delayed";
 
-    // Act - Enqueue with 10 second delay
+    // Act
     let enqueue_frame = build_queue_enqueue(route, b"delayed", Some(10));
     let response = client.request(&enqueue_frame, 2000).await.expect("ENQUEUE");
     let (_msg_type, status, _data) = parse_queue_response(&response);
     assert_eq!(status, 0);
 
-    // Act - Try to reserve immediately (should be empty)
+    // Act
     let reserve_frame = build_queue_reserve(route, 30, Some(1), None);
     let response = client.request(&reserve_frame, 2000).await.expect("RESERVE");
 
-    // Assert - No messages available yet
+    // Assert
     let (_msg_type, status, data) = parse_queue_response(&response);
     assert_eq!(status, 0, "Expected success status");
     let messages = parse_reserve_response(&data);
@@ -734,14 +736,14 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "queue://test/app/batch";
 
-    // Act - Enqueue 3 messages
+    // Act
     for i in 0..3 {
         let body = format!("message-{}", i);
         let enqueue_frame = build_queue_enqueue(route, body.as_bytes(), None);
         client.request(&enqueue_frame, 2000).await.expect("ENQUEUE");
     }
 
-    // Act - Reserve batch of 3
+    // Act
     let reserve_frame = build_queue_reserve(route, 30, Some(3), None);
     let response = client.request(&reserve_frame, 2000).await.expect("RESERVE");
 
@@ -769,7 +771,7 @@ where
     let messages = parse_reserve_response(&parse_queue_response(&response).2);
     let token = messages[0].1;
 
-    // Act - Extend lease
+    // Act
     let extend_frame = build_queue_extend(route, message_id, token, 60);
     let response = client.request(&extend_frame, 2000).await.expect("EXTEND");
 
@@ -785,7 +787,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    // Act - Enqueue to two different queues
+    // Act
     let enqueue1 = build_queue_enqueue("queue://test/app/jobs", b"job1", None);
     let response1 = client.request(&enqueue1, 2000).await.expect("ENQUEUE 1");
     let id1 = parse_enqueue_response(&parse_queue_response(&response1).2);
@@ -794,16 +796,16 @@ where
     let response2 = client.request(&enqueue2, 2000).await.expect("ENQUEUE 2");
     let id2 = parse_enqueue_response(&parse_queue_response(&response2).2);
 
-    // Assert - Different queues have independent IDs
+    // Assert
     assert_eq!(id1, 1, "First queue should start at ID 1");
     assert_eq!(id2, 1, "Second queue should also start at ID 1 (isolated)");
 
-    // Act - Reserve from first queue only
+    // Act
     let reserve1 = build_queue_reserve("queue://test/app/jobs", 30, Some(1), None);
     let response = client.request(&reserve1, 2000).await.expect("RESERVE 1");
     let messages = parse_reserve_response(&parse_queue_response(&response).2);
 
-    // Assert - Only message from first queue
+    // Assert
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].2, b"job1");
 }
@@ -843,11 +845,11 @@ where
     let messages = parse_reserve_response(&parse_queue_response(&response).2);
     let token = messages[0].1;
 
-    // Act - Drop connection
+    // Act
     drop(client);
     fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
-    // Act - Reconnect and try to complete with old token
+    // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let complete_frame = build_queue_complete(route, message_id, token);
     let response = client2

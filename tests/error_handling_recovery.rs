@@ -34,7 +34,7 @@ fn should_return_error_for_invalid_transaction_id() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - Use invalid transaction ID
+    // Act
     let response = actor.handle(KvMessage::Get {
         tx_id: 999,
         route_family,
@@ -58,7 +58,7 @@ fn should_return_error_for_invalid_realm_format() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - Use invalid realm (contains invalid characters)
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family,
         realm: "invalid realm!".to_string(), // Spaces and special chars not allowed
@@ -99,7 +99,7 @@ fn should_handle_get_on_nonexistent_key_gracefully() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - GET on nonexistent key
+    // Act
     let response = actor.handle(KvMessage::Get {
         tx_id,
         route_family,
@@ -107,7 +107,7 @@ fn should_handle_get_on_nonexistent_key_gracefully() {
         key: Bytes::from_static(b"nonexistent"),
     });
 
-    // Assert - Should return found=false
+    // Assert
     match response {
         KvResponse::GetResult { found, .. } => {
             assert!(!found, "Should not find nonexistent key");
@@ -122,7 +122,7 @@ fn should_handle_commit_on_invalid_transaction() {
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
 
-    // Act - Try to commit non-existent transaction
+    // Act
     let response = actor.handle(KvMessage::Commit { tx_id: 999 });
 
     // Assert
@@ -140,7 +140,7 @@ fn should_handle_rollback_on_invalid_transaction() {
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
 
-    // Act - Try to rollback non-existent transaction
+    // Act
     let response = actor.handle(KvMessage::Rollback { tx_id: 999 });
 
     // Assert
@@ -176,7 +176,7 @@ fn should_handle_operations_after_transaction_closed() {
 
     actor.handle(KvMessage::Commit { tx_id });
 
-    // Act - Try to use transaction after commit
+    // Act
     let response = actor.handle(KvMessage::Get {
         tx_id,
         route_family,
@@ -184,7 +184,7 @@ fn should_handle_operations_after_transaction_closed() {
         key: Bytes::from_static(b"key1"),
     });
 
-    // Assert - Should return error (transaction no longer valid)
+    // Assert
     match response {
         KvResponse::Error { error } => {
             assert_eq!(error, KvError::InvalidTxId);

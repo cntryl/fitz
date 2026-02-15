@@ -1,4 +1,4 @@
-﻿//! RPC domain lease and fault tolerance tests
+//! RPC domain lease and fault tolerance tests
 //!
 //! Tests the lease mechanism, timeout handling, re-enqueue logic, and error responses.
 
@@ -131,7 +131,7 @@ fn should_allow_worker_to_take_next_request_after_lease_released() {
     let req1 = create_request(correlation_id_1);
     let req2 = create_request(correlation_id_2);
 
-    // Act - dispatch first request
+    // Act
     actor.receive(fitz::domains::rpc::RpcMessage::Request(req1), &mut ctx);
     assert_eq!(actor.pending_count(), 0);
 
@@ -143,17 +143,17 @@ fn should_allow_worker_to_take_next_request_after_lease_released() {
     let response = RpcResponse::single(correlation_id_1, Bytes::from(vec![]));
     actor.receive(fitz::domains::rpc::RpcMessage::Response(response), &mut ctx);
 
-    // Assert - second request should now be dispatched
+    // Assert
     assert_eq!(actor.pending_count(), 0);
 }
 
 #[test]
 fn should_handle_backpressure_when_queue_full() {
-    // Arrange - actor with tiny capacity
+    // Arrange
     let mut actor = RpcRouteActor::with_capacity(RouteFamily::new(1), 2);
     let mut ctx = create_context();
 
-    // Act - fill queue past capacity
+    // Act
     actor.receive(
         fitz::domains::rpc::RpcMessage::Request(create_request(Uuid::new_v4())),
         &mut ctx,
@@ -167,7 +167,7 @@ fn should_handle_backpressure_when_queue_full() {
         &mut ctx,
     );
 
-    // Assert - only 2 requests queued (third rejected with backpressure)
+    // Assert
     assert_eq!(actor.pending_count(), 2);
 }
 
@@ -194,11 +194,11 @@ fn should_drop_late_response_after_lease_expired() {
         &mut ctx,
     );
 
-    // Act - send response after lease released
+    // Act
     let response = RpcResponse::single(correlation_id, Bytes::from(vec![]));
     actor.receive(fitz::domains::rpc::RpcMessage::Response(response), &mut ctx);
 
-    // Assert - should not panic, just drop the late response
+    // Assert
     assert_eq!(actor.active_leases(), 0);
 }
 
@@ -218,7 +218,7 @@ fn should_track_multiple_concurrent_leases() {
         );
     }
 
-    // Act - dispatch 3 requests to 3 workers
+    // Act
     for _i in 1..=3 {
         actor.receive(
             fitz::domains::rpc::RpcMessage::Request(create_request(Uuid::new_v4())),

@@ -47,11 +47,11 @@ fn bench_complete_workflow_enqueue_reserve_complete(c: &mut Criterion) {
         b.iter_batched(
             || create_local_bench_queue_actor("bench", "integration", "queue", None),
             |(mut actor, _temp_dir)| {
-                // Arrange: Enqueue a message
+                // Arrange
                 let enqueue_response =
                     actor.handle_enqueue(black_box(payload.clone()), black_box(None));
 
-                // Act: Reserve the message
+                // Act
                 let _message_id = match enqueue_response {
                     QueueResponse::Enqueued { id } => id,
                     _ => return, // Skip if enqueue failed
@@ -59,7 +59,7 @@ fn bench_complete_workflow_enqueue_reserve_complete(c: &mut Criterion) {
 
                 let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
 
-                // Assert & cleanup: Complete the message
+                // Assert
                 if let QueueResponse::Reserved { messages } = reserve_response {
                     if !messages.is_empty() {
                         let _ = actor.handle_complete(
@@ -146,7 +146,7 @@ fn bench_failure_recovery_deadletter_workflow(c: &mut Criterion) {
         b.iter_batched(
             || create_local_bench_queue_actor("bench", "integration", "queue", Some(3)),
             |(mut actor, _temp_dir)| {
-                // Arrange: Enqueue a message with retry limit
+                // Arrange
                 let enqueue_response =
                     actor.handle_enqueue(black_box(payload.clone()), black_box(Some(5)));
 
@@ -155,7 +155,7 @@ fn bench_failure_recovery_deadletter_workflow(c: &mut Criterion) {
                     _ => return,
                 };
 
-                // Act: Reserve → Nack (simulate failure) → Retry
+                // Act
                 for _attempt in 0..3 {
                     let reserve_response = actor.handle_reserve(black_box(30), black_box(Some(1)));
 

@@ -40,7 +40,7 @@ fn should_reject_token_with_invalid_signature() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Verify signature validation happens in token.rs via jsonwebtoken crate
+    // Act
     // This is implicit; the actual signature check is in src/auth/token.rs
     // which uses jsonwebtoken::decode() with DecodingKey and Validation.
 
@@ -55,7 +55,7 @@ fn should_reject_token_with_invalid_signature() {
 
 #[test]
 fn should_reject_expired_token_in_authorize() {
-    // Arrange - Token expired at timestamp 1 (1970-01-01)
+    // Arrange
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
 
@@ -79,7 +79,7 @@ fn should_reject_expired_token_in_authorize() {
 
 #[test]
 fn should_allow_valid_future_token() {
-    // Arrange - Token expires far in future
+    // Arrange
     let p = Permission::parse("notice://prod/orders/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![p.clone()]);
 
@@ -168,7 +168,7 @@ fn should_extract_realm_claim_correctly() {
 
 #[test]
 fn should_extract_areas_array_from_permissions() {
-    // Arrange - Create multiple area permissions
+    // Arrange
     let perms_vec = vec![
         Permission::parse("kv://myapp/app/**#write").unwrap(),
         Permission::parse("kv://myapp/system/**#read").unwrap(),
@@ -186,7 +186,7 @@ fn should_extract_areas_array_from_permissions() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Verify access to both areas
+    // Act
     let app_authorized = actor.authorize(&Route::new("kv://myapp/app/users/get"), Access::Write);
     let system_authorized =
         actor.authorize(&Route::new("kv://myapp/system/config/get"), Access::Read);
@@ -198,7 +198,7 @@ fn should_extract_areas_array_from_permissions() {
 
 #[test]
 fn should_extract_scopes_from_permissions() {
-    // Arrange - Permissions act as scopes in Fitz
+    // Arrange
     let read_perm = Permission::parse("notice://prod/alerts/**#read").unwrap();
     let write_perm = Permission::parse("notice://prod/alerts/**#write").unwrap();
     let perms_vec = vec![read_perm, write_perm];
@@ -230,7 +230,7 @@ fn should_extract_scopes_from_permissions() {
 
 #[test]
 fn should_enforce_realm_match_per_request() {
-    // Arrange - Session authorized for realm "prod"
+    // Arrange
     let perm = Permission::parse("kv://prod/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -245,7 +245,7 @@ fn should_enforce_realm_match_per_request() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Request for different realm
+    // Act
     let authorized = actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
 
     // Assert
@@ -254,7 +254,7 @@ fn should_enforce_realm_match_per_request() {
 
 #[test]
 fn should_enforce_area_match_per_request() {
-    // Arrange - Session authorized for area "app" only
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -269,7 +269,7 @@ fn should_enforce_area_match_per_request() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Request for different area
+    // Act
     let authorized = actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
 
     // Assert
@@ -278,7 +278,7 @@ fn should_enforce_area_match_per_request() {
 
 #[test]
 fn should_enforce_scope_match_per_request() {
-    // Arrange - Session has read scope only
+    // Arrange
     let perm = Permission::parse("notice://prod/**#read").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -293,7 +293,7 @@ fn should_enforce_scope_match_per_request() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Try write operation (not in scope)
+    // Act
     let authorized = actor.authorize(&Route::new("notice://prod/events/create"), Access::Write);
 
     // Assert
@@ -385,7 +385,7 @@ fn should_return_unauthorized_on_scope_not_in_jwt() {
 
 #[test]
 fn should_allow_valid_jwt_through_complete_pipeline() {
-    // Arrange - Valid token with all claims
+    // Arrange
     let perms_vec = vec![
         Permission::parse("kv://acme/app/users/**#read").unwrap(),
         Permission::parse("kv://acme/app/users/**#write").unwrap(),
@@ -403,7 +403,7 @@ fn should_allow_valid_jwt_through_complete_pipeline() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Full authorization check
+    // Act
     let read_ok = actor.authorize(&Route::new("kv://acme/app/users/get"), Access::Read);
     let write_ok = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
 

@@ -1,4 +1,4 @@
-﻿use fitz::testkit::notice::*;
+use fitz::testkit::notice::*;
 
 // This file asserts end-to-end scale: does not fall over and delivers correct counts under load.
 // These tests must be robust and non-flaky; avoid timing assertions.
@@ -35,7 +35,7 @@ fn should_handle_1k_subscriptions_end_to_end() {
         sinks.push(sink);
     }
 
-    // Act - publish once
+    // Act
     let mut pubctx = Context::new(
         addr("notify://realm/area/scale_e2e/p"),
         Arc::new(router.clone()),
@@ -77,7 +77,7 @@ fn should_handle_5k_subscriptions_without_failure_end_to_end() {
         sinks.push(sink);
     }
 
-    // Act - publish once
+    // Act
     let mut pubctx = Context::new(
         addr("notify://realm/area/scale_e2e_big/p"),
         Arc::new(router.clone()),

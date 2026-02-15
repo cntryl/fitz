@@ -117,7 +117,7 @@ fn should_parse_valid_cron_with_range_syntax() {
 
 #[test]
 fn should_parse_valid_cron_max_values() {
-    // Arrange - Minute max 59, Hour max 23, Day max 31, Month max 12, Weekday max 6
+    // Arrange
     let payload = SchedulePayload {
         cron: "59 23 31 12 6".to_string(),
         target_resource: "last".to_string(),
@@ -135,7 +135,7 @@ fn should_parse_valid_cron_max_values() {
 
 #[test]
 fn should_parse_valid_cron_min_values() {
-    // Arrange - Minute min 0, Hour min 0, Day min 1, Month min 1, Weekday min 0
+    // Arrange
     let payload = SchedulePayload {
         cron: "0 0 1 1 0".to_string(),
         target_resource: "first".to_string(),
@@ -153,7 +153,7 @@ fn should_parse_valid_cron_min_values() {
 
 #[test]
 fn should_decode_with_empty_operation_field() {
-    // Arrange - Operation can be empty string (semantic meaning: fire without routing)
+    // Arrange
     let payload = SchedulePayload {
         cron: "0 12 * * *".to_string(),
         target_resource: "task".to_string(),
@@ -277,7 +277,7 @@ fn should_reject_malformed_tlv_payload() {
 
 #[test]
 fn should_decode_payload_with_missing_cron_field() {
-    // Arrange - TLV with only resource and operation, missing cron (type 1)
+    // Arrange
     use fitz::protocol::tlv::{MessageType, TlvEncoder};
     let mut enc = TlvEncoder::new();
     enc.encode(MessageType(2), b"resource_only");
@@ -313,7 +313,7 @@ fn should_encode_multiple_payloads_independently() {
     let decoded1 = SchedulePayload::decode(&encoded1).unwrap();
     let decoded2 = SchedulePayload::decode(&encoded2).unwrap();
 
-    // Assert - Verify no cross-contamination
+    // Assert
     assert_eq!(decoded1.target_resource, "morning");
     assert_eq!(decoded2.target_resource, "evening");
     assert_ne!(decoded1, decoded2);

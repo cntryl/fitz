@@ -52,7 +52,7 @@ fn should_send_subscribe_ok_response_immediately() {
 
 #[test]
 fn should_match_notify_frames_to_subscription_id() {
-    // Arrangement test: NOTIFYs for different subscriptions not mixed
+    // Arrange
     //
     // Setup:
     // - Client subscribes to route A (subscription_id=42)
@@ -71,7 +71,7 @@ fn should_match_notify_frames_to_subscription_id() {
 
 #[test]
 fn should_continue_sending_notifies_until_unsubscribe() {
-    // Arrangement test: Notifications continue indefinitely
+    // Arrange
     //
     // Behavior:
     // 1. Client sends SUBSCRIBE
@@ -86,7 +86,7 @@ fn should_continue_sending_notifies_until_unsubscribe() {
 
 #[test]
 fn should_handle_multiple_subscriptions_concurrently() {
-    // Arrangement test: Multiple concurrent subscriptions
+    // Arrange
     //
     // Setup:
     // - Client subscribes to notice://acme/app/events (id=42)
@@ -106,7 +106,7 @@ fn should_handle_multiple_subscriptions_concurrently() {
 
 #[test]
 fn should_allow_client_requests_between_notifies() {
-    // Arrangement test: Normal requests while receiving NOTIFYs
+    // Arrange
     //
     // Sequence:
     // 1. Client sends SUBSCRIBE → SUBSCRIBE_OK(id=42)
@@ -177,7 +177,7 @@ fn should_send_rpc_accepted_response_immediately() {
 
 #[test]
 fn should_match_rpc_responses_to_correlation_id() {
-    // Arrangement test: RPC_RESPONSEs for different requests not mixed
+    // Arrange
     //
     // Setup:
     // - Client sends REQUEST with correlation_id=UUID-1
@@ -197,7 +197,7 @@ fn should_match_rpc_responses_to_correlation_id() {
 
 #[test]
 fn should_maintain_seq_order_in_streaming_responses() {
-    // Arrangement test: Streaming chunks in correct order
+    // Arrange
     //
     // Setup:
     // - Worker sends 5 chunks for same request
@@ -218,7 +218,7 @@ fn should_maintain_seq_order_in_streaming_responses() {
 
 #[test]
 fn should_detect_out_of_order_rpc_chunks() {
-    // Arrangement test: Out-of-order detection
+    // Arrange
     //
     // Scenario:
     // - Receives: seq=0, seq=2, seq=1, seq=3
@@ -240,7 +240,7 @@ fn should_complete_response_only_on_stream_end() {
 
 #[test]
 fn should_handle_multiple_rpc_requests_concurrently() {
-    // Arrangement test: Multiple concurrent RPC requests
+    // Arrange
     //
     // Setup:
     // - Client sends REQUEST(uuid=UUID-1) → ACCEPTED(UUID-1)
@@ -261,7 +261,7 @@ fn should_handle_multiple_rpc_requests_concurrently() {
 
 #[test]
 fn should_allow_client_requests_between_streaming_chunks() {
-    // Arrangement test: Normal requests while receiving streaming RPC responses
+    // Arrange
     //
     // Sequence:
     // 1. Client sends RPC REQUEST(uuid=UUID-1) → ACCEPTED(UUID-1)
@@ -328,7 +328,7 @@ fn should_return_complete_response_after_all_frames() {
 
 #[test]
 fn should_reassemble_large_stream_reads_correctly() {
-    // Arrangement test: Large result set handling
+    // Arrange
     //
     // Setup:
     // - READ request returns 1000 events
@@ -361,7 +361,7 @@ fn should_handle_small_reads_in_single_frame() {
 
 #[test]
 fn should_not_lose_async_frames_on_connection_close() {
-    // Arrangement test: Buffering continues even if connection closes
+    // Arrange
     // - Client subscribed to notice route
     // - NOTIFY frames buffered in client
     // - Client sends request (synchronous)
@@ -419,7 +419,7 @@ fn should_not_duplicate_streaming_frames() {
 
 #[test]
 fn should_handle_interleaved_streaming_and_sync_requests() {
-    // Arrangement test: Complex interleaving
+    // Arrange
     //
     // Sequence:
     // 1. SUBSCRIBE → SUBSCRIBE_OK(id=1)

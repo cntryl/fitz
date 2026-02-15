@@ -43,7 +43,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
         },
         &mut ctx,
     );
-    // Act - Try to begin session with wrong expected_offset
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -53,7 +53,7 @@ fn should_reject_commit_with_wrong_expected_offset() {
         },
         &mut ctx,
     );
-    // Assert - Should fail with ConcurrencyConflict error
+    // Assert
     // (In real impl, would check response for StreamError::ConcurrencyConflict)
 }
 #[test]
@@ -62,7 +62,7 @@ fn should_reject_second_session_when_one_active() {
     let (mut actor, mut ctx) = create_test_stream_actor("realm1", "area1", "orders");
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
-    // Act - Begin first session
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -82,7 +82,7 @@ fn should_reject_second_session_when_one_active() {
         },
         &mut ctx,
     );
-    // Assert - Second begin should fail with SessionAlreadyActive error
+    // Assert
 }
 #[test]
 fn should_allow_new_session_after_commit() {
@@ -90,7 +90,7 @@ fn should_allow_new_session_after_commit() {
     let (mut actor, mut ctx) = create_test_stream_actor("realm1", "area1", "orders");
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
-    // Act - First session
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -125,7 +125,7 @@ fn should_allow_new_session_after_commit() {
         },
         &mut ctx,
     );
-    // Assert - Second session should succeed
+    // Assert
 }
 #[test]
 fn should_allow_new_session_after_abort() {
@@ -133,7 +133,7 @@ fn should_allow_new_session_after_abort() {
     let (mut actor, mut ctx) = create_test_stream_actor("realm1", "area1", "orders");
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
-    // Act - Begin and abort
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -154,13 +154,13 @@ fn should_allow_new_session_after_abort() {
         },
         &mut ctx,
     );
-    // Assert - Should succeed
+    // Assert
 }
 #[test]
 fn should_advance_watermark_only_on_contiguous_commits() {
     // Arrange
     let (mut area_actor, mut area_ctx) = create_test_area_actor("realm1", "area1");
-    // Act - Commit batch at offsets 1-3 (area offsets, watermark starts at 0)
+    // Act
     area_actor.receive(
         StreamMessage::BatchCommitted {
             first_area_offset: 1,
@@ -170,7 +170,7 @@ fn should_advance_watermark_only_on_contiguous_commits() {
         },
         &mut area_ctx,
     );
-    // Assert - Watermark should be at 3
+    // Assert
     assert_eq!(area_actor.watermark(), 3);
     // Commit batch at offsets 6-8 (gap at 4-5)
     area_actor.receive(
@@ -182,7 +182,7 @@ fn should_advance_watermark_only_on_contiguous_commits() {
         },
         &mut area_ctx,
     );
-    // Assert - Watermark should still be 3 (gap prevents advancement)
+    // Assert
     assert_eq!(area_actor.watermark(), 3);
     // Commit batch at offsets 4-5 (fills gap)
     area_actor.receive(
@@ -194,14 +194,14 @@ fn should_advance_watermark_only_on_contiguous_commits() {
         },
         &mut area_ctx,
     );
-    // Assert - Watermark should now be 8 (gap filled)
+    // Assert
     assert_eq!(area_actor.watermark(), 8);
 }
 #[test]
 fn should_track_committed_ranges_for_gap_detection() {
     // Arrange
     let (mut area_actor, mut area_ctx) = create_test_area_actor("realm1", "area1");
-    // Act - Commit non-contiguous batches
+    // Act
     area_actor.receive(
         StreamMessage::BatchCommitted {
             first_area_offset: 1,
@@ -229,7 +229,7 @@ fn should_track_committed_ranges_for_gap_detection() {
         },
         &mut area_ctx,
     );
-    // Assert - Watermark at 3, with ranges buffered
+    // Assert
     assert_eq!(area_actor.watermark(), 3);
     // Fill first gap
     area_actor.receive(
@@ -301,7 +301,7 @@ fn should_debounce_area_watermark_notifications() {
     let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
     let _ = scheduler.spawn(actor, area_addr.clone(), 16);
 
-    // Act - send batch committed to advance watermark
+    // Act
     let area_ref = fitz::runtime::actor::ActorRef::new(area_addr, scheduler.router());
     let _ = area_ref.send(
         fitz::domains::stream::protocol::StreamMessage::BatchCommitted {
@@ -312,7 +312,7 @@ fn should_debounce_area_watermark_notifications() {
         },
     );
 
-    // Assert - no immediate notification (debounced)
+    // Assert
     assert!(rx
         .recv_timeout(std::time::Duration::from_millis(10))
         .is_err());
@@ -343,7 +343,7 @@ fn should_request_lease_when_insufficient_capacity() {
     let (mut actor, mut ctx) = create_test_stream_actor("realm1", "area1", "orders");
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
-    // Act - Begin session (will have empty leases initially)
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -372,7 +372,7 @@ fn should_request_lease_when_insufficient_capacity() {
         },
         &mut ctx,
     );
-    // Assert - LeaseRequested error or successful commit after lease grant
+    // Assert
     // (Would check router for RequestLease message sent to AreaActor)
 }
 #[test]
@@ -407,7 +407,7 @@ fn should_process_pending_commits_after_lease_grant() {
         },
         &mut ctx,
     );
-    // Act - Grant lease
+    // Act
     actor.receive(
         StreamMessage::LeaseGranted {
             grant: fitz::domains::stream::protocol::LeaseGrant {
@@ -419,7 +419,7 @@ fn should_process_pending_commits_after_lease_grant() {
         },
         &mut ctx,
     );
-    // Assert - Pending commit should now complete
+    // Assert
     // (Would verify BatchCommitted notification was sent to AreaActor)
 }
 #[test]
@@ -437,7 +437,7 @@ fn should_reject_event_exceeding_max_size() {
         },
         &mut ctx,
     );
-    // Act - Try to append oversized event (>1MB)
+    // Act
     let huge_payload = vec![0u8; 2 * 1024 * 1024]; // 2 MB
     actor.receive(
         StreamMessage::Append {
@@ -447,7 +447,7 @@ fn should_reject_event_exceeding_max_size() {
         },
         &mut ctx,
     );
-    // Assert - Should fail with EventTooLarge error
+    // Assert
 }
 #[test]
 fn should_enforce_realm_isolation() {
@@ -455,7 +455,7 @@ fn should_enforce_realm_isolation() {
     let (mut actor1, mut ctx1) = create_test_stream_actor("realm1", "area1", "orders");
     let (mut actor2, mut ctx2) = create_test_stream_actor("realm2", "area1", "orders");
     // Both use same area/resource name but different realms
-    // Act - Append to both
+    // Act
     actor1.receive(
         StreamMessage::Begin {
             family_id: *ctx1.address().family(),
@@ -474,7 +474,7 @@ fn should_enforce_realm_isolation() {
         },
         &mut ctx2,
     );
-    // Assert - Both start at offset 0 independently (realm isolation)
+    // Assert
 }
 #[test]
 fn should_enforce_area_isolation_within_realm() {
@@ -482,7 +482,7 @@ fn should_enforce_area_isolation_within_realm() {
     let (mut actor1, mut ctx1) = create_test_stream_actor("realm1", "area1", "orders");
     let (mut actor2, mut ctx2) = create_test_stream_actor("realm1", "area2", "orders");
     // Same realm, different areas
-    // Act - Both should have independent offsets
+    // Act
     actor1.receive(
         StreamMessage::Begin {
             family_id: *ctx1.address().family(),
@@ -501,5 +501,5 @@ fn should_enforce_area_isolation_within_realm() {
         },
         &mut ctx2,
     );
-    // Assert - Independent area offsets
+    // Assert
 }

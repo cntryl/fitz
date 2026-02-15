@@ -203,7 +203,7 @@ fn should_enforce_realm_boundary_for_lease_operations() {
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(SessionId(1), session_perms);
 
-    // Act - try to acquire in different realm
+    // Act
     let res = session.acquire(
         AcquireRequest {
             family: RouteFamily::new(1),

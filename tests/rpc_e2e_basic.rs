@@ -1,4 +1,4 @@
-﻿use bytes::Bytes;
+use bytes::Bytes;
 use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcResponse, RpcRouteActor};
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
@@ -90,7 +90,7 @@ fn should_handle_streaming_report_generation() {
 
     actor.receive(RpcMessage::Request(request), &mut ctx);
 
-    // Act - Stream multiple chunks
+    // Act
     let chunks = [
         b"Page 1 data...".to_vec(),
         b"Page 2 data...".to_vec(),
@@ -160,7 +160,7 @@ fn should_maintain_isolation_across_realms() {
     actor_acme.receive(RpcMessage::Request(request_acme), &mut ctx);
     actor_corp.receive(RpcMessage::Request(request_corp), &mut ctx);
 
-    // Assert - Each realm has processed independently
+    // Assert
     assert_eq!(actor_acme.pending_count(), 0);
     assert_eq!(actor_corp.pending_count(), 0);
     assert_eq!(actor_acme.worker_count(), 1);
@@ -187,7 +187,7 @@ fn should_handle_multiple_workers_for_same_route() {
         );
     }
 
-    // Act - Send 10 requests (more than workers)
+    // Act
     for _i in 0..10 {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
@@ -199,7 +199,7 @@ fn should_handle_multiple_workers_for_same_route() {
         actor.receive(RpcMessage::Request(request), &mut ctx);
     }
 
-    // Assert - Some requests dispatched, rest queued (5 workers, 10 requests)
+    // Assert
     assert!(actor.pending_count() <= 10);
     assert_eq!(actor.worker_count(), 5);
 }
@@ -215,7 +215,7 @@ fn should_queue_requests_when_worker_unregisters() {
         Route::new("worker://acme/analytics/query/worker1"),
     );
 
-    // Act - Subscribe
+    // Act
     actor.receive(
         RpcMessage::Subscribe {
             worker_addr: worker_addr.clone(),
@@ -249,7 +249,7 @@ fn should_queue_requests_when_worker_unregisters() {
     };
     actor.receive(RpcMessage::Request(request2), &mut ctx);
 
-    // Assert - Worker gone, second request queued
+    // Assert
     assert_eq!(actor.worker_count(), 0);
     assert_eq!(actor.pending_count(), 1);
 }

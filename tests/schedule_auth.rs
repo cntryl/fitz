@@ -13,14 +13,14 @@ use fitz::session::permissions::SessionPermissions;
 
 #[test]
 fn should_reject_unauthorized_realm_for_schedule() {
-    // Arrange - Session authorized for prod realm only
+    // Arrange
     let permissions = vec![Permission::parse("schedule://prod/**#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
 
-    // Act - Try to schedule in staging realm (unauthorized)
+    // Act
     let route = Route::new("schedule://staging/jobs/cleanup/create".to_string());
 
-    // Assert - Session should not have write permission for staging realm
+    // Assert
     assert!(
         !session_perms.allows(&route, fitz::auth::Access::Write),
         "Session should not have write permission for staging realm"
@@ -29,11 +29,11 @@ fn should_reject_unauthorized_realm_for_schedule() {
 
 #[test]
 fn should_allow_authorized_realm_for_schedule() {
-    // Arrange - Session authorized for prod realm
+    // Arrange
     let permissions = vec![Permission::parse("schedule://prod/**#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
 
-    // Act - Check permission for prod realm
+    // Act
     let route = Route::new("schedule://prod/jobs/cleanup/create".to_string());
 
     // Assert
@@ -45,11 +45,11 @@ fn should_allow_authorized_realm_for_schedule() {
 
 #[test]
 fn should_enforce_realm_equality_strictly_for_schedule() {
-    // Arrange - Session authorized for "prod" realm only
+    // Arrange
     let permissions = vec![Permission::parse("schedule://prod/**#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
 
-    // Act - Check realm variations that should NOT match
+    // Act
     let invalid_realms = vec![
         "PROD",    // Case-sensitive: different case
         "prod-2",  // Different realm (similar name)
@@ -60,7 +60,7 @@ fn should_enforce_realm_equality_strictly_for_schedule() {
     for invalid_realm in invalid_realms {
         let route = Route::new(format!("schedule://{}/jobs/test/create", invalid_realm));
 
-        // Assert - Should not match
+        // Assert
         assert!(
             !session_perms.allows(&route, fitz::auth::Access::Write),
             "Realm '{}' should not match 'prod'",
@@ -71,11 +71,11 @@ fn should_enforce_realm_equality_strictly_for_schedule() {
 
 #[test]
 fn should_allow_read_permission_for_status_check() {
-    // Arrange - Session has read-only permission
+    // Arrange
     let permissions = vec![Permission::parse("schedule://analytics/**#read").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
 
-    // Act - Check read permission
+    // Act
     let route = Route::new("schedule://analytics/jobs/report/list".to_string());
 
     // Assert
@@ -94,7 +94,7 @@ fn should_enforce_realm_isolation_across_different_realms() {
     let session_acme = SessionPermissions::from_permissions(perms_acme);
     let session_evil = SessionPermissions::from_permissions(perms_evil);
 
-    // Act - Check that each session can only access its realm
+    // Act
     let acme_route = Route::new("schedule://acme/jobs/backup/create".to_string());
     let evil_route = Route::new("schedule://evil/jobs/cleanup/create".to_string());
 
@@ -120,11 +120,11 @@ fn should_enforce_realm_isolation_across_different_realms() {
 
 #[test]
 fn should_support_wildcard_patterns_for_schedule_realms() {
-    // Arrange - Session with specific realm permission
+    // Arrange
     let permissions = vec![Permission::parse("schedule://prod/**#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
 
-    // Act - Check that matching works for that realm
+    // Act
     let prod_route = Route::new("schedule://prod/jobs/test/create".to_string());
     let staging_route = Route::new("schedule://staging/jobs/test/create".to_string());
 

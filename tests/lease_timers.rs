@@ -53,7 +53,7 @@ mod timeout_behavior_basic {
         };
         let _ = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
-        // Act - Try to acquire with wait_seconds exceeding server max (30s)
+        // Act
         let acquire_too_long = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -63,7 +63,7 @@ mod timeout_behavior_basic {
         };
         let response = actor.handle_message(acquire_too_long, &mut ctx).unwrap();
 
-        // Assert - Should be rejected with error
+        // Assert
         assert_eq!(response, LeaseResponse::Timeout);
     }
 
@@ -84,7 +84,7 @@ mod timeout_behavior_basic {
         };
         let _ = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
-        // Act - Acquire with wait_seconds at max (30s)
+        // Act
         let acquire_at_max = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -94,7 +94,7 @@ mod timeout_behavior_basic {
         };
         let response = actor.handle_message(acquire_at_max, &mut ctx).unwrap();
 
-        // Assert - Should be Queued (accepted wait)
+        // Assert
         match response {
             LeaseResponse::Queued { fencing_token } => {
                 assert!(fencing_token > 0, "Expected valid token for queued waiter");
@@ -135,7 +135,7 @@ mod timeout_and_expiry_coordination {
         };
         let response_queued = actor.handle_message(acquire_waiter, &mut ctx).unwrap();
 
-        // Assert - Waiter is queued
+        // Assert
         match response_queued {
             LeaseResponse::Queued { fencing_token } => {
                 assert!(fencing_token > 0, "Expected valid token");
@@ -143,12 +143,14 @@ mod timeout_and_expiry_coordination {
             _ => panic!("Expected Queued response, got {:?}", response_queued),
         }
 
-        // Act & Assert - Querying should still show waiter
+        // Act
         let query = LeaseMessage::Query {
             family_id: fam,
             route: test_route.clone(),
         };
         let status = actor.handle_message(query, &mut ctx).unwrap();
+
+        // Assert
 
         match status {
             LeaseResponse::Status {
@@ -199,12 +201,14 @@ mod timeout_and_expiry_coordination {
             }
         }
 
-        // Act & Assert - Query shows all 5 waiters
+        // Act
         let query = LeaseMessage::Query {
             family_id: fam,
             route: test_route.clone(),
         };
         let status = actor.handle_message(query, &mut ctx).unwrap();
+
+        // Assert
 
         match status {
             LeaseResponse::Status {
@@ -256,7 +260,7 @@ mod timer_interaction_with_release {
         };
         let _waiter_resp = actor.handle_message(acquire_waiter, &mut ctx).unwrap();
 
-        // Act - Holder releases immediately (before timeout)
+        // Act
         let release = LeaseMessage::Release {
             family_id: fam,
             route: test_route.clone(),
@@ -265,7 +269,7 @@ mod timer_interaction_with_release {
         };
         let release_resp = actor.handle_message(release, &mut ctx).unwrap();
 
-        // Assert - Release succeeds
+        // Assert
         match release_resp {
             LeaseResponse::Released => {}
             _ => panic!("Expected Released, got {:?}", release_resp),
@@ -339,7 +343,7 @@ mod timer_interaction_with_release {
         };
         let _ = actor.handle_message(release, &mut ctx).unwrap();
 
-        // Act - Try to acquire immediately after release
+        // Act
         // Depending on impl, waiter-1 may not yet be "open" for new ops
         let acquire_new = LeaseMessage::Acquire {
             family_id: fam,
@@ -350,7 +354,7 @@ mod timer_interaction_with_release {
         };
         let response = actor.handle_message(acquire_new, &mut ctx).unwrap();
 
-        // Assert - Should either:
+        // Assert
         // 1. HeldByOther (waiter-1 is now holder), or
         // 2. Queued (if waiter-1 hasn't been granted yet and is still in queue)
         match response {
@@ -416,12 +420,14 @@ mod concurrent_lease_independence {
         };
         let _ = actor.handle_message(acquire_b_waiter, &mut ctx).unwrap();
 
-        // Act & Assert - Query both; should both show 1 waiter each
+        // Act
         let query_a = LeaseMessage::Query {
             family_id: fam,
             route: route_a.clone(),
         };
         let status_a = actor.handle_message(query_a, &mut ctx).unwrap();
+
+        // Assert
 
         match status_a {
             LeaseResponse::Status {
@@ -466,7 +472,7 @@ mod error_state_handling {
         let test_route = route("lease://test/app/never-created");
         let fam = family();
 
-        // Act - Release on lease that was never acquired
+        // Act
         let release = LeaseMessage::Release {
             family_id: fam,
             route: test_route.clone(),
@@ -475,7 +481,7 @@ mod error_state_handling {
         };
         let response = actor.handle_message(release, &mut ctx).unwrap();
 
-        // Assert - Should return error (NotHeld or similar)
+        // Assert
         match response {
             LeaseResponse::NotHeld => {}
             LeaseResponse::NotFound => {}
@@ -500,7 +506,7 @@ mod error_state_handling {
         };
         let _ = actor.handle_message(acquire, &mut ctx).unwrap();
 
-        // Act - Renew with invalid token (simulating stale/expired holder)
+        // Act
         let renew = LeaseMessage::Renew {
             family_id: fam,
             route: test_route.clone(),

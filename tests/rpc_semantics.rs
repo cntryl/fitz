@@ -1,4 +1,4 @@
-﻿use bytes::Bytes;
+use bytes::Bytes;
 use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcResponse, RpcRouteActor};
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
@@ -164,7 +164,7 @@ fn should_distribute_requests_across_multiple_workers() {
         actor.receive(subscribe_msg, &mut ctx);
     }
 
-    // Act - Send three requests
+    // Act
     for _i in 0..3 {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
@@ -225,7 +225,7 @@ fn should_maintain_request_order_in_queue() {
         actor.receive(RpcMessage::Request(request), &mut ctx);
     }
 
-    // Act - Register worker to trigger processing
+    // Act
     let worker_addr = RouteAddress::new(
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
@@ -235,7 +235,7 @@ fn should_maintain_request_order_in_queue() {
     };
     actor.receive(subscribe_msg, &mut ctx);
 
-    // Assert - First request should be dispatched
+    // Assert
     assert_eq!(actor.pending_count(), 2);
 }
 
@@ -265,7 +265,7 @@ fn should_handle_streaming_response_with_multiple_chunks() {
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
 
-    // Act - Send three response chunks
+    // Act
     for seq in 0..3 {
         let response = RpcResponse {
             correlation_id: Uuid::new_v4(),
@@ -339,7 +339,7 @@ fn should_cleanup_state_after_request_completion() {
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
 
-    // Act - Complete the request
+    // Act
     let response = RpcResponse {
         correlation_id,
         seq: 0,

@@ -55,7 +55,7 @@ fn should_create_distinct_queue_actors_per_realm() {
     // Act
     let (actor_evil, _) = make_queue_actor("evil", "tasks", "inbox");
 
-    // Assert: Actors are completely separate instances
+    // Assert
     let addr_acme = &actor_acme as *const _;
     let addr_evil = &actor_evil as *const _;
     assert_ne!(addr_acme, addr_evil);
@@ -67,12 +67,12 @@ fn should_create_distinct_queue_actors_per_realm() {
 
 #[test]
 fn should_bind_queue_realm_immutably_at_construction() {
-    // Arrange: Create a queue actor for specific realm
+    // Arrange
     let (_actor, _) = make_queue_actor("production-realm", "jobs", "pending");
 
     // Act
 
-    // Assert: Realm is bound in the constructor and cannot be changed
+    // Assert
     // The actor's message handling uses the bound realm for storage keys
 }
 
@@ -82,11 +82,11 @@ fn should_bind_queue_realm_immutably_at_construction() {
 
 #[test]
 fn should_isolate_queue_messages_by_realm() {
-    // Arrange: Create two separate queue actors
+    // Arrange
     let (mut queue_realm1, mut ctx1) = make_queue_actor("realm1", "tasks", "work");
     let (mut queue_realm2, mut ctx2) = make_queue_actor("realm2", "tasks", "work");
 
-    // Act: Enqueue messages in realm1
+    // Act
     let msg1 = QueueMessage::Enqueue {
         family_id: RouteFamily::new(1),
         route: Route::new("queue://realm1/tasks/work"),
@@ -95,7 +95,6 @@ fn should_isolate_queue_messages_by_realm() {
     };
     queue_realm1.receive(msg1, &mut ctx1);
 
-    // Act: Enqueue messages in realm2
     let msg2 = QueueMessage::Enqueue {
         family_id: RouteFamily::new(1),
         route: Route::new("queue://realm2/tasks/work"),
@@ -104,7 +103,7 @@ fn should_isolate_queue_messages_by_realm() {
     };
     queue_realm2.receive(msg2, &mut ctx2);
 
-    // Assert: Both enqueued independently
+    // Assert
     // realm1 queue has message [1,2,3]
     // realm2 queue has message [4,5,6]
     // They never mix because they're separate actors with separate storage
@@ -120,12 +119,12 @@ fn should_isolate_queue_messages_by_realm() {
 
 #[test]
 fn should_prevent_runtime_queue_realm_changes() {
-    // Arrange: Create queue with specific realm
+    // Arrange
     let (_actor, _) = make_queue_actor("locked-realm", "area", "resource");
 
     // Act
 
-    // Assert: QueueActor takes realm as part of QueueKey constructor parameter
+    // Assert
     // There is no method to change realm after creation
 }
 
@@ -135,14 +134,14 @@ fn should_prevent_runtime_queue_realm_changes() {
 
 #[test]
 fn should_achieve_queue_isolation_through_actor_design() {
-    // Arrange: Create multiple queues with same logical paths
+    // Arrange
     let (actor_red, _) = make_queue_actor("red", "events", "processing");
     let (actor_blue, _) = make_queue_actor("blue", "events", "processing");
     let (actor_green, _) = make_queue_actor("green", "events", "processing");
 
     // Act
 
-    // Assert: Three completely separate actors, no shared state
+    // Assert
     let addr_red = &actor_red as *const _;
     let addr_blue = &actor_blue as *const _;
     let addr_green = &actor_green as *const _;
@@ -158,10 +157,10 @@ fn should_achieve_queue_isolation_through_actor_design() {
 
 #[test]
 fn should_accept_queue_operations_only_in_bound_realm() {
-    // Arrange: Create queue for specific realm
+    // Arrange
     let (mut actor, mut ctx) = make_queue_actor("production", "tasks", "work");
 
-    // Act: Enqueue message with matching realm
+    // Act
     let msg = QueueMessage::Enqueue {
         family_id: RouteFamily::new(1),
         route: Route::new("queue://production/tasks/work"),
@@ -170,7 +169,7 @@ fn should_accept_queue_operations_only_in_bound_realm() {
     };
     actor.receive(msg, &mut ctx);
 
-    // Assert: Queue actor accepted message (no panic)
+    // Assert
     // The actor only exists in one realm, so only that realm's messages are stored
     // This validates realm-scoped storage behavior
 }
@@ -181,13 +180,13 @@ fn should_accept_queue_operations_only_in_bound_realm() {
 
 #[test]
 fn should_use_independent_queue_storage_per_realm() {
-    // Arrange: Create two actors
+    // Arrange
     let (queue_sandbox, _) = make_queue_actor("sandbox", "test", "ephemeral");
     let (queue_prod, _) = make_queue_actor("production", "test", "persistent");
 
     // Act
 
-    // Assert: Each actor has its own Midge storage handle
+    // Assert
     // (Store is passed per actor instance with realm-scoped keys)
     // This prevents any cross-realm message leakage
     assert_eq!(queue_sandbox.ready.len(), 0);
@@ -200,13 +199,13 @@ fn should_use_independent_queue_storage_per_realm() {
 
 #[test]
 fn should_route_to_correct_realm_queue() {
-    // Arrange: Create separate realm queues
+    // Arrange
     let (queue_us, _) = make_queue_actor("us-east-1", "data", "stream");
     let (queue_eu, _) = make_queue_actor("eu-west-1", "data", "stream");
 
     // Act
 
-    // Assert: Each actor exists independently
+    // Assert
     // Router layer ensures route "queue://us-east-1/..." goes to us queue
     // Router layer ensures route "queue://eu-west-1/..." goes to eu queue
     // They never mix because they're separate actor instances
@@ -221,12 +220,12 @@ fn should_route_to_correct_realm_queue() {
 
 #[test]
 fn should_rely_on_auth_layer_for_queue_realm_validation() {
-    // Arrange: Create queue actor
+    // Arrange
     let (_actor, _) = make_queue_actor("authenticated-realm", "secure", "work");
 
     // Act
 
-    // Assert: Queue actor exists for a single realm
+    // Assert
     // The SessionActor layer (in session.rs) performs authorization checks
     // based on token grants and route patterns before dispatching to QueueActor
     //

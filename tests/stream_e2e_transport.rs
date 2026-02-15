@@ -273,7 +273,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "stream://test/app/logs";
 
-    // Act - BEGIN
+    // Act
     let begin_frame = build_stream_begin(route, 0, None);
     let begin_response = client
         .request(&begin_frame, 2000)
@@ -286,7 +286,7 @@ where
 
     let session_id = parse_session_id_from_begin(&data).expect("Expected session_id");
 
-    // Act - APPEND
+    // Act
     let append_frame = build_stream_append(session_id, b"log entry 1", None);
     let append_response = client
         .request(&append_frame, 2000)
@@ -296,7 +296,7 @@ where
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
     assert_eq!(status, 0, "Expected APPEND success");
 
-    // Act - COMMIT
+    // Act
     let commit_frame = build_stream_commit(session_id, false);
     let commit_response = client
         .request(&commit_frame, 2000)
@@ -335,12 +335,14 @@ async fn should_handle_concurrent_stream_operations<C>(server: &TestServer)
 where
     C: StreamConnector,
 {
-    // Arrange & Act
+    // Arrange
     let run_stream = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("stream://test/app/concurrent{}", idx);
 
         let begin_frame = build_stream_begin(&route, 0, None);
+
+        // Act
         let begin_response = client
             .request(&begin_frame, 4000)
             .await
@@ -360,7 +362,7 @@ where
         assert_eq!(status, 0);
     };
 
-    // Assert - All 3 concurrent operations complete
+    // Assert
     tokio::join!(run_stream(0), run_stream(1), run_stream(2));
 }
 
@@ -377,7 +379,7 @@ where
     let (_msg_type, _status, data) = parse_stream_response(&begin_response);
     let session_id = parse_session_id_from_begin(&data).expect("session_id");
 
-    // Act - APPEND with 60KB body
+    // Act
     let large_body = vec![b'X'; 60_000];
     let append_frame = build_stream_append(session_id, &large_body, None);
     let append_response = client
@@ -511,7 +513,7 @@ where
 
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Try to begin stream in test-realm
+    // Act
     let begin_frame = build_stream_begin("stream://test-realm/app/logs", 0, None);
     let result = client.request(&begin_frame, 1000).await;
 
@@ -523,7 +525,7 @@ async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server
 where
     C: StreamConnector,
 {
-    // Arrange - First client
+    // Arrange
     let mut client1 = C::connect(server).await.expect("failed to connect");
     let connect_frame1 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -535,7 +537,7 @@ where
         .expect("CONNECT 1");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Arrange - Second client
+    // Arrange
     let mut client2 = C::connect(server).await.expect("failed to connect");
     let connect_frame2 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -547,7 +549,7 @@ where
         .expect("CONNECT 2");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Both clients begin streams
+    // Act
     let begin1 = build_stream_begin("stream://test-realm/app/logs1", 0, None);
     let response1 = client1.request(&begin1, 2000).await.expect("BEGIN 1");
     assert_eq!(parse_stream_response(&response1).1, 0);
@@ -575,7 +577,7 @@ where
     let append_frame = build_stream_append(session_id, b"entry", None);
     client.request(&append_frame, 2000).await.expect("APPEND");
 
-    // Act - ROLLBACK
+    // Act
     let rollback_frame = build_stream_rollback(session_id);
     let rollback_response = client
         .request(&rollback_frame, 2000)
@@ -606,7 +608,7 @@ where
     let commit_frame = build_stream_commit(session_id, false);
     client.request(&commit_frame, 2000).await.expect("COMMIT");
 
-    // Act - READ
+    // Act
     let read_frame = build_stream_read(route, 0, 10, None);
     let read_response = client.request(&read_frame, 2000).await.expect("READ");
 
@@ -623,7 +625,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "stream://test/app/last";
 
-    // Act - LAST (even on empty stream)
+    // Act
     let last_frame = build_stream_last(route);
     let last_response = client.request(&last_frame, 2000).await.expect("LAST");
 
@@ -640,7 +642,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "stream://test/app/metadata";
 
-    // Act - GET_METADATA
+    // Act
     let metadata_frame = build_stream_get_metadata(route);
     let metadata_response = client
         .request(&metadata_frame, 2000)
@@ -656,7 +658,7 @@ async fn should_isolate_sessions_across_streams<C>(server: &TestServer)
 where
     C: StreamConnector,
 {
-    // Arrange - Begin two separate streams
+    // Arrange
     let mut client1 = C::connect(server).await.expect("connect 1");
     let mut client2 = C::connect(server).await.expect("connect 2");
 
@@ -670,10 +672,10 @@ where
     let (_msg_type, _status, data2) = parse_stream_response(&response2);
     let session2 = parse_session_id_from_begin(&data2).expect("session_id 2");
 
-    // Assert - Different session IDs
+    // Assert
     assert_ne!(session1, session2, "Expected different session IDs");
 
-    // Act - Append to both
+    // Act
     let append1 = build_stream_append(session1, b"entry1", None);
     let result1 = client1.request(&append1, 2000).await;
     assert!(result1.is_ok(), "Session 1 append should work");
@@ -712,11 +714,11 @@ where
     let begin_frame = build_stream_begin(route, 0, None);
     client.request(&begin_frame, 1000).await.expect("BEGIN");
 
-    // Act - Drop connection
+    // Act
     drop(client);
     fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
-    // Act - Reconnect and begin again
+    // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let begin_frame2 = build_stream_begin(route, 0, None);
     let response = client2

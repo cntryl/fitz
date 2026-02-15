@@ -100,7 +100,7 @@ fn should_reject_implicit_realm_without_default_realm() {
     // This test verifies the KV domain rejects empty realm strings
     let mut actor = create_kv_actor();
 
-    // Act - Try to begin transaction with empty realm
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "".to_string(), // Empty realm
@@ -110,7 +110,7 @@ fn should_reject_implicit_realm_without_default_realm() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    // Assert - Should fail due to empty realm
+    // Assert
     assert!(
         matches!(
             response,
@@ -128,7 +128,7 @@ fn should_reject_malformed_realm_before_domain_execution() {
     // Arrange
     let mut actor = create_kv_actor();
 
-    // Act - Client sends malformed realm (spaces)
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "invalid realm with spaces".to_string(),
@@ -138,7 +138,7 @@ fn should_reject_malformed_realm_before_domain_execution() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    // Assert - Should be rejected before touching storage
+    // Assert
     assert!(
         matches!(
             response,
@@ -184,7 +184,7 @@ fn should_isolate_kv_data_across_realms() {
 
     actor.handle(KvMessage::Commit { tx_id });
 
-    // Act - Try to read the same key from a different realm
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "evil".to_string(), // Different realm, same RouteFamily
@@ -206,7 +206,7 @@ fn should_isolate_kv_data_across_realms() {
         key: Bytes::from_static(b"user:secret"),
     });
 
-    // Assert - Should NOT find data from another realm
+    // Assert
     match response {
         KvResponse::GetResult {
             found: true,
@@ -234,7 +234,7 @@ fn should_enforce_realm_equality_strictly() {
     // Arrange
     let mut actor = create_kv_actor();
 
-    // Act - Write to "acme"
+    // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "acme".to_string(),

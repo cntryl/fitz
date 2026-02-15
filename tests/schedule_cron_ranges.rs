@@ -191,7 +191,7 @@ fn should_maintain_sorted_output() {
 
 #[test]
 fn should_work_with_step_syntax() {
-    // Arrange - Step syntax should still work
+    // Arrange
     let expr = "*/15 */4 * * *";
 
     // Act
@@ -206,7 +206,7 @@ fn should_work_with_step_syntax() {
 
 #[test]
 fn should_not_support_range_with_step() {
-    // Arrange - Range with step (e.g., 9-17/2) not supported
+    // Arrange
     let expr = "0 9-17/2 * * *";
 
     // Act
@@ -263,7 +263,7 @@ fn should_reject_malformed_range_without_dash() {
     // Act
     let cron = CronSchedule::parse(expr);
 
-    // Assert - This should fail because expression has 6 fields instead of 5
+    // Assert
     assert!(cron.is_err());
 }
 

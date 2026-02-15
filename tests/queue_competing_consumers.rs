@@ -51,7 +51,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
         }
     }
 
-    // Act - Three competing consumers reserve messages
+    // Act
     let mut _consumer_a_msgs = Vec::new();
     let mut _consumer_b_msgs = Vec::new();
     let mut _consumer_c_msgs = Vec::new();
@@ -144,7 +144,7 @@ fn should_redelivery_messages_after_crash() {
         assert_eq!(actor.inflight.len(), 5);
     }
 
-    // Act - Actor crashes and restarts (create new actor, recovery runs automatically)
+    // Act
     let mut actor = QueueActor::new(
         RouteFamily::new(0),
         queue_key,
@@ -153,7 +153,7 @@ fn should_redelivery_messages_after_crash() {
         fitz::utils::idempotency::global_dedup_store(),
     );
 
-    // Assert - All 10 messages recovered (inflight automatically redelivered)
+    // Assert
     assert_eq!(
         actor.ready.len(),
         10,
@@ -213,7 +213,7 @@ fn should_preserve_delayed_visibility_across_restart() {
         // delayed field is private, verify through reserve behavior
     }
 
-    // Act - Restart actor
+    // Act
     let mut actor = QueueActor::new(
         RouteFamily::new(0),
         queue_key,
@@ -222,7 +222,7 @@ fn should_preserve_delayed_visibility_across_restart() {
         fitz::utils::idempotency::global_dedup_store(),
     );
 
-    // Assert - Recovery should restore delayed queue
+    // Assert
     assert_eq!(actor.ready.len(), 1, "Ready message should be recovered");
     // Note: delayed is private field, so verify behavior through reserve instead
 
@@ -271,7 +271,7 @@ fn should_prevent_id_collisions_across_crash() {
         assert_eq!(first_batch_ids[9], 10);
     }
 
-    // Act - Restart and enqueue second batch
+    // Act
     let mut second_batch_ids = Vec::new();
     {
         let mut actor = QueueActor::new(
@@ -295,7 +295,7 @@ fn should_prevent_id_collisions_across_crash() {
         assert_eq!(second_batch_ids[9], 20);
     }
 
-    // Assert - No collisions between batches
+    // Assert
     let mut all_ids = first_batch_ids.clone();
     all_ids.extend(&second_batch_ids);
     all_ids.sort();

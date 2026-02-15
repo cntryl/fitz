@@ -92,7 +92,7 @@ fn should_isolate_transactions_across_resources() {
         value: Bytes::from_static(b"Alice"),
     });
 
-    // Act - Try to operate on different resource
+    // Act
     let response = actor.handle(KvMessage::Put {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -101,7 +101,7 @@ fn should_isolate_transactions_across_resources() {
         value: Bytes::from_static(b"Hello World"),
     });
 
-    // Assert - Should fail with TxScopeViolation
+    // Assert
     assert!(matches!(
         response,
         KvResponse::Error {
@@ -173,7 +173,7 @@ fn should_isolate_transactions_across_column_families() {
         key: Bytes::from_static(b"key1"),
     });
 
-    // Assert - Should get Family 2's value
+    // Assert
     match response {
         KvResponse::GetResult {
             found: true,
@@ -215,11 +215,11 @@ fn should_rollback_changes_on_explicit_rollback() {
         value: Bytes::from_static(b"Temporary User"),
     });
 
-    // Act - Rollback
+    // Act
     let response = actor.handle(KvMessage::Rollback { tx_id });
     assert!(matches!(response, KvResponse::RollbackOk));
 
-    // Assert - Transaction ended
+    // Assert
     let response = actor.handle(KvMessage::Get {
         tx_id: 9999,
         route_family: RouteFamily::new(1),
@@ -256,7 +256,7 @@ fn should_handle_delete_operations() {
         value: Bytes::from_static(b"temp_value"),
     });
 
-    // Act - Delete the key
+    // Act
     let response = actor.handle(KvMessage::Delete {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -264,10 +264,10 @@ fn should_handle_delete_operations() {
         key: Bytes::from_static(b"temp_key"),
     });
 
-    // Assert - Delete succeeded
+    // Assert
     assert!(matches!(response, KvResponse::DeleteOk));
 
-    // Assert - Key is gone
+    // Assert
     let response = actor.handle(KvMessage::Get {
         tx_id,
         route_family: RouteFamily::new(1),
@@ -290,7 +290,7 @@ fn should_reject_operations_without_begin() {
     // Arrange
     let mut actor = create_kv_actor();
 
-    // Act - Try Get without Begin
+    // Act
     let response = actor.handle(KvMessage::Get {
         tx_id: 9999,
         route_family: RouteFamily::new(1),
@@ -358,7 +358,7 @@ fn should_allow_multiple_sequential_transactions() {
         value: Bytes::from_static(b"tx2_value"),
     });
 
-    // Assert - Can rollback second transaction
+    // Assert
     let response = actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
     assert!(matches!(response, KvResponse::RollbackOk));
 }

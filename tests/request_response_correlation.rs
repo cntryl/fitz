@@ -34,7 +34,7 @@ fn should_implement_synchronous_request_response_model() {
 
 #[test]
 fn should_send_exactly_one_response_per_request() {
-    // Arrangement test: One request → exactly one response
+    // Arrange
     //
     // Sequence:
     // 1. Client sends KV BEGIN request
@@ -50,7 +50,7 @@ fn should_send_exactly_one_response_per_request() {
 
 #[test]
 fn should_block_client_until_response_arrives() {
-    // Arrangement test: Client blocks on request, unblocks on response
+    // Arrange
     //
     // Behavior:
     // - Client.send_request(msg) → blocks
@@ -66,7 +66,7 @@ fn should_block_client_until_response_arrives() {
 
 #[test]
 fn should_prevent_pipelining_multiple_requests() {
-    // Arrangement test: No multiple in-flight requests
+    // Arrange
     //
     // Setup:
     // - Client connected and authenticated
@@ -225,7 +225,7 @@ fn should_buffer_async_frames_while_waiting_for_response() {
 
 #[test]
 fn should_dispatch_async_frames_to_correct_handlers() {
-    // Arrangement test: Async frames routed to proper handlers
+    // Arrange
     //
     // Setup:
     // - Multiple subscriptions active (e.g., #42 and #43)
@@ -245,7 +245,7 @@ fn should_dispatch_async_frames_to_correct_handlers() {
 
 #[test]
 fn should_prevent_frame_loss_during_async_buffering() {
-    // Arrangement test: Async queue doesn't drop frames
+    // Arrange
     //
     // Scenario:
     // - Client sends request
@@ -261,7 +261,7 @@ fn should_prevent_frame_loss_during_async_buffering() {
 
 #[test]
 fn should_maintain_frame_order_in_async_queue() {
-    // Arrangement test: Async frames received in order
+    // Arrange
     //
     // Setup:
     // - Client requests subscription to notice://acme/app/events
@@ -281,7 +281,7 @@ fn should_maintain_frame_order_in_async_queue() {
 
 #[test]
 fn should_handle_mixed_sync_and_async_frames() {
-    // Arrangement test: Interleaving sync and async operations
+    // Arrange
     //
     // Sequence:
     // 1. Client sends KV BEGIN request
@@ -322,7 +322,7 @@ fn should_guarantee_fifo_response_order() {
 
 #[test]
 fn should_prevent_request_response_mismatch() {
-    // Arrangement test: Response correctly matched to request
+    // Arrange
     //
     // Scenario:
     // - Client sends BEGIN request expecting transaction ID
@@ -337,7 +337,7 @@ fn should_prevent_request_response_mismatch() {
 
 #[test]
 fn should_handle_timeout_on_no_response() {
-    // Arrangement test: Client timeout behavior
+    // Arrange
     //
     // Behavior when response doesn't arrive:
     // - Client blocks with timeout (e.g., 30 seconds)
@@ -351,7 +351,7 @@ fn should_handle_timeout_on_no_response() {
 
 #[test]
 fn should_allow_client_retry_on_timeout() {
-    // Arrangement test: Retry after timeout
+    // Arrange
     //
     // Behavior:
     // 1. Client sends request
@@ -466,7 +466,7 @@ fn should_not_lose_async_frames_on_error_response() {
 
 #[test]
 fn should_handle_connection_close_while_waiting_for_response() {
-    // Arrangement test: Connection loss behavior
+    // Arrange
     // - Client sends request
     // - Client blocks waiting for response
     // - Connection closes (TCP/WS broken)

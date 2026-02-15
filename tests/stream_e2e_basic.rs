@@ -52,7 +52,7 @@ fn should_append_single_event_to_stream() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
 
-    // Act - Begin session
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -82,7 +82,7 @@ fn should_append_single_event_to_stream() {
         &mut ctx,
     );
 
-    // Assert - Read back the event
+    // Assert
     actor.receive(
         StreamMessage::Read {
             family_id: family,
@@ -102,7 +102,7 @@ fn should_append_batch_of_events() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/logs/append");
 
-    // Act - Begin session
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -134,7 +134,7 @@ fn should_append_batch_of_events() {
         &mut ctx,
     );
 
-    // Assert - All events committed atomically
+    // Assert
     actor.receive(
         StreamMessage::Read {
             family_id: family,
@@ -154,7 +154,7 @@ fn should_assign_sequential_resource_offsets() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/events/append");
 
-    // Act - First session
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -210,7 +210,7 @@ fn should_assign_sequential_resource_offsets() {
         &mut ctx,
     );
 
-    // Assert - Offsets are sequential
+    // Assert
     actor.receive(
         StreamMessage::Read {
             family_id: family,
@@ -234,7 +234,7 @@ fn should_handle_session_with_ingest_metadata() {
         opaque: Bytes::from(r#"{"source": "csv", "batch_id": "123"}"#),
     };
 
-    // Act - Begin session with metadata
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -262,7 +262,7 @@ fn should_handle_session_with_ingest_metadata() {
         &mut ctx,
     );
 
-    // Assert - Metadata preserved
+    // Assert
     actor.receive(
         StreamMessage::GetMetadata {
             family_id: family,
@@ -279,7 +279,7 @@ fn should_abort_session_without_committing() {
     let family = *ctx.address().family();
     let route = Route::new("stream://realm1/area1/orders/append");
 
-    // Act - Begin session and append
+    // Act
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -302,7 +302,7 @@ fn should_abort_session_without_committing() {
     // Abort instead of commit
     actor.receive(StreamMessage::Rollback { session_id: 6 }, &mut ctx);
 
-    // Assert - Stream still at offset 0
+    // Assert
     actor.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -351,7 +351,7 @@ fn should_peek_at_last_committed_event() {
         );
     }
 
-    // Act - Peek should return last event
+    // Act
     actor.receive(
         StreamMessage::Last {
             family_id: family,
@@ -360,7 +360,7 @@ fn should_peek_at_last_committed_event() {
         &mut ctx,
     );
 
-    // Assert - Should see event_2
+    // Assert
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn should_isolate_streams_across_resources() {
     let (mut actor2, mut ctx2) = make_stream_actor("realm1", "area1", "invoices");
     let family = *ctx1.address().family();
 
-    // Act - Append to both streams
+    // Act
     actor1.receive(
         StreamMessage::Begin {
             family_id: family,
@@ -392,5 +392,5 @@ fn should_isolate_streams_across_resources() {
     );
 
     // Both should start at offset 0 independently
-    // Assert - Streams are isolated
+    // Assert
 }

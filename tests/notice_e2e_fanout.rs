@@ -1,4 +1,4 @@
-﻿use fitz::testkit::notice::*;
+use fitz::testkit::notice::*;
 
 // This file asserts E2E fanout correctness: realistic overlapping subscriptions and no duplicate deliveries.
 // Keep subscriber counts modest (Ã¢â€°Â¤64) Ã¢â‚¬â€ large-scale tests belong in `notification_e2e_scale.rs`.
@@ -89,6 +89,6 @@ fn should_not_duplicate_deliveries_for_duplicate_subscriptions() {
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
 
-    // Assert - deduplication means single delivery
+    // Assert
     assert_eq!(sink.count(), 1);
 }

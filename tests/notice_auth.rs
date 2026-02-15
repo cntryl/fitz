@@ -1,4 +1,4 @@
-﻿use bytes::Bytes;
+use bytes::Bytes;
 use fitz::domains::notice::route_actor::NoticeRouteActor;
 use fitz::domains::notice::session::SessionActor;
 use fitz::runtime::actor::Context;
@@ -57,7 +57,7 @@ fn should_reject_unauthorized_publish() {
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(fitz::session::session::SessionId(43), session_perms);
 
-    // Act: Publish requires write access; expect Err and no delivery
+    // Act
     let res = session.publish(
         RouteFamily::new(1),
         Route::new("notify://prod/orders/create"),

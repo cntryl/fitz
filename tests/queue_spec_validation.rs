@@ -89,14 +89,14 @@ fn should_support_complete_operation_with_lease_token() {
 
 #[test]
 fn should_have_message_id_for_deduplication() {
-    // Arrangement test: message_id enables idempotent enqueue
+    // Arrange
     // - If same message_id sent again during retry, only stored once
     // - Return same message_id in response
 }
 
 #[test]
 fn should_have_lease_token_for_exclusive_access() {
-    // Arrangement test: lease_token prevents concurrent processing
+    // Arrange
     // - Only holder of lease_token can complete or extend
     // - Other clients receive error if trying to complete with wrong token
 }
@@ -181,118 +181,118 @@ fn should_use_4014_for_batch_size_out_of_range() {
 
 #[test]
 fn should_complete_enqueue_reserve_complete_cycle() {
-    // Arrange - Setup queue
+    // Arrange
     // let queue = create_test_queue("acme/messages");
 
     // Act
     // let enqueue_resp = queue.enqueue(message_id, payload);
-    // assert_eq!(enqueue_resp.status, "ok");
-    // assert_eq!(enqueue_resp.message_id, message_id);
+    // assert
+    // assert
 
     // Step 2: Reserve message
     // let reserve_resp = queue.reserve(batch_size=10, timeout=30);
-    // assert_eq!(reserve_resp.messages.len(), 1);
+    // assert
     // let reserved_msg = &reserve_resp.messages[0];
-    // assert_eq!(reserved_msg.message_id, message_id);
+    // assert
     // let lease_token = reserved_msg.lease_token;
 
     // Step 3: Complete message
     // let complete_resp = queue.complete(message_id, lease_token);
-    // assert_eq!(complete_resp.status, "ok");
+    // assert
 
-    // Assert - Message no longer available
+    // Assert
     // let reserve_resp2 = queue.reserve(batch_size=10, timeout=30);
-    // assert_eq!(reserve_resp2.messages.len(), 0);
+    // assert
 }
 
 #[test]
 fn should_persist_message_until_completed() {
-    // Arrange - Enqueue message
+    // Arrange
     // let message_id = "msg-123";
     // queue.enqueue(message_id, "test data");
 
-    // Act - Reserve in one session
+    // Act
     // let session1_resp = session1.reserve(batch_size=10, timeout=30);
-    // assert_eq!(session1_resp.messages.len(), 1);
+    // assert
 
-    // Assert - Not available in other sessions during lease
+    // Assert
     // let session2_resp = session2.reserve(batch_size=10, timeout=30);
-    // assert_eq!(session2_resp.messages.len(), 0);
+    // assert
 }
 
 #[test]
 fn should_return_message_to_queue_on_lease_expiry() {
-    // Arrange - Enqueue message, reserve with short timeout
+    // Arrange
     // queue.enqueue("msg-1", "data");
     // let reserve_resp = queue.reserve(batch_size=10, timeout=1); // 1 second
 
-    // Act - Wait for lease to expire
+    // Act
     // std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Assert - Message available again in queue
+    // Assert
     // let reserve_resp2 = queue.reserve(batch_size=10, timeout=30);
-    // assert_eq!(reserve_resp2.messages.len(), 1);
+    // assert
 }
 
 #[test]
 fn should_allow_lease_extension_before_expiry() {
-    // Arrange - Enqueue, reserve
+    // Arrange
     // queue.enqueue("msg-1", "data");
     // let reserve_resp = queue.reserve(batch_size=10, timeout=1);
     // let lease_token = reserve_resp.messages[0].lease_token;
 
-    // Act - Extend lease before expiry
+    // Act
     // let extend_resp = queue.extend("msg-1", lease_token, timeout=60);
-    // assert_eq!(extend_resp.status, "ok");
+    // assert
 
-    // Assert - Processing continues
+    // Assert
     // std::thread::sleep(std::time::Duration::from_secs(2));
     // let reserve_resp2 = queue.reserve(batch_size=10, timeout=30);
-    // assert_eq!(reserve_resp2.messages.len(), 0); // Still leased
+    // assert
 }
 
 #[test]
 fn should_batch_multiple_messages_in_reserve() {
-    // Arrange - Enqueue 5 messages
+    // Arrange
     // for i in 0..5 {
     //     queue.enqueue(format!("msg-{}", i), format!("data-{}", i));
     // }
 
-    // Act - Reserve with batch_size=10
+    // Act
     // let reserve_resp = queue.reserve(batch_size=10, timeout=30);
 
-    // Assert - All messages returned
-    // assert_eq!(reserve_resp.messages.len(), 5);
-    // assert_eq!(reserve_resp.count, 5);
+    // Assert
+    // assert
+    // assert
 }
 
 #[test]
 fn should_respect_batch_size_upper_limit() {
-    // Arrange - Enqueue 20 messages
+    // Arrange
     // for i in 0..20 {
     //     queue.enqueue(format!("msg-{}", i), "data");
     // }
 
-    // Act - Reserve with batch_size=10
+    // Act
     // let reserve_resp = queue.reserve(batch_size=10, timeout=30);
 
-    // Assert - Only 10 returned (respecting batch_size limit)
-    // assert_eq!(reserve_resp.messages.len(), 10);
+    // Assert
+    // assert
 }
 
 #[test]
 fn should_reject_complete_with_wrong_lease_token() {
-    // Arrange - Enqueue, reserve twice from different clients
+    // Arrange
     // queue.enqueue("msg-1", "data");
     // let client1_resp = client1.reserve(batch_size=10, timeout=30);
     // let client2_resp = client2.reserve(batch_size=10, timeout=30);
     // (client2 should get nothing because client1 has the lease)
 
-    // Act - Try to complete with wrong token
+    // Act
     // let complete_resp = queue.complete("msg-1", wrong_token);
 
-    // Assert - Error 4013 (invalid lease token)
-    // assert_eq!(complete_resp.status_code, 4013);
+    // Assert
+    // assert
 }
 
 // ============================================================================

@@ -22,7 +22,7 @@ fn create_kv_actor() -> KvActor {
 
 #[test]
 fn should_reject_unauthorized_realm_access() {
-    // Arrange - Session authorized for realm1 only
+    // Arrange
     let permissions = vec![
         Permission::parse("kv://realm1/**#read").unwrap(),
         Permission::parse("kv://realm1/**#write").unwrap(),
@@ -32,7 +32,7 @@ fn should_reject_unauthorized_realm_access() {
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Try to access realm2 (unauthorized)
+    // Act
     let msg = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "realm2".to_string(),
@@ -54,7 +54,7 @@ fn should_reject_unauthorized_realm_access() {
 
 #[test]
 fn should_allow_authorized_realm_access() {
-    // Arrange - Session authorized for mycompany realm
+    // Arrange
     let permissions = vec![
         Permission::parse("kv://mycompany/**#read").unwrap(),
         Permission::parse("kv://mycompany/**#write").unwrap(),
@@ -64,7 +64,7 @@ fn should_allow_authorized_realm_access() {
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Access authorized realm
+    // Act
     let msg = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "mycompany".to_string(),
@@ -82,14 +82,14 @@ fn should_allow_authorized_realm_access() {
 
 #[test]
 fn should_enforce_realm_equality_strictly() {
-    // Arrange - Session authorized for "acme" realm only
+    // Arrange
     let permissions = vec![Permission::parse("kv://acme/**#write").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
     let session_actor = SessionActor::new(SessionId(1), session_perms);
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Try realm variations that should NOT match
+    // Act
     let invalid_realms = vec![
         "ACME",   // Case-sensitive: different case
         "acme-2", // Different realm (similar name)
@@ -108,7 +108,7 @@ fn should_enforce_realm_equality_strictly() {
 
         let result = session_actor.begin(msg, &mut kv_actor);
 
-        // Assert - Should be rejected
+        // Assert
         assert!(
             result.is_err(),
             "Realm '{}' should not match 'acme'",
@@ -126,7 +126,7 @@ fn should_accept_valid_message_type() {
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Valid Begin message
+    // Act
     let msg = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "tenant".to_string(),
@@ -151,7 +151,7 @@ fn should_reject_invalid_message_type() {
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Try to begin with non-Begin message
+    // Act
     // Get a tx_id first (we need one to create a Commit message)
     let begin_msg = KvMessage::Begin {
         route_family: RouteFamily::new(1),
@@ -228,14 +228,14 @@ fn should_allow_subsequent_operations_after_begin() {
 
 #[test]
 fn should_allow_read_permission_for_transactions() {
-    // Arrange - Session has read-only permission
+    // Arrange
     let permissions = vec![Permission::parse("kv://analytics/**#read").unwrap()];
     let session_perms = SessionPermissions::from_permissions(permissions);
     let session_actor = SessionActor::new(SessionId(1), session_perms);
 
     let mut kv_actor = create_kv_actor();
 
-    // Act - Begin read-only transaction with read permission
+    // Act
     let msg = KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "analytics".to_string(),
@@ -247,7 +247,7 @@ fn should_allow_read_permission_for_transactions() {
 
     let result = session_actor.begin(msg, &mut kv_actor);
 
-    // Assert - Should succeed (read permission grants access)
+    // Assert
     assert!(result.is_ok());
 }
 
@@ -288,7 +288,7 @@ fn should_enforce_realm_isolation_across_sessions() {
 
     let result2 = session2.begin(msg2, &mut actor2);
 
-    // Assert - Session2 should be rejected
+    // Assert
     assert!(
         result2.is_err(),
         "Session2 should not access realm outside its permissions"

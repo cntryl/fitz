@@ -57,7 +57,7 @@ fn should_create_distinct_actors_per_realm() {
     // Act
     let (actor_evil, _) = make_stream_actor("evil", "events", "data");
 
-    // Assert: Actors are completely separate instances
+    // Assert
     // Even though they have identical area/resource, they are different objects
     let addr_acme = &actor_acme as *const _;
     let addr_evil = &actor_evil as *const _;
@@ -70,12 +70,12 @@ fn should_create_distinct_actors_per_realm() {
 
 #[test]
 fn should_bind_realm_immutably_at_construction() {
-    // Arrange: Create a stream actor for specific realm
+    // Arrange
     let (_actor, _) = make_stream_actor("production-realm", "logs", "errors");
 
     // Act
 
-    // Assert: Realm is bound in the constructor and cannot be changed
+    // Assert
     // (We verify this by successful construction with specific realm)
     // The actor's methods all use the bound realm internally
 }
@@ -86,13 +86,13 @@ fn should_bind_realm_immutably_at_construction() {
 
 #[test]
 fn should_isolate_realm_sessions() {
-    // Arrange: Create two separate stream actors
+    // Arrange
     let (mut actor_realm1, mut ctx1) =
         make_stream_actor("realm1", "shared-area", "shared-resource");
     let (mut actor_realm2, mut ctx2) =
         make_stream_actor("realm2", "shared-area", "shared-resource");
 
-    // Act: Begin session in realm1
+    // Act
     let msg1 = StreamMessage::Begin {
         family_id: RouteFamily::new(1),
         route: Route::new("stream://realm1/shared-area/shared-resource"),
@@ -101,7 +101,6 @@ fn should_isolate_realm_sessions() {
     };
     actor_realm1.receive(msg1, &mut ctx1);
 
-    // Act: Begin session in realm2
     let msg2 = StreamMessage::Begin {
         family_id: RouteFamily::new(1),
         route: Route::new("stream://realm2/shared-area/shared-resource"),
@@ -110,7 +109,7 @@ fn should_isolate_realm_sessions() {
     };
     actor_realm2.receive(msg2, &mut ctx2);
 
-    // Assert: Both sessions created independently
+    // Assert
     // (No panic means both succeeded in their respective actors)
 }
 
@@ -120,12 +119,12 @@ fn should_isolate_realm_sessions() {
 
 #[test]
 fn should_prevent_runtime_realm_changes() {
-    // Arrange: Create stream with specific realm
+    // Arrange
     let (_actor, _) = make_stream_actor("locked-realm", "area", "resource");
 
     // Act
 
-    // Assert: StreamActor takes realm as constructor parameter
+    // Assert
     // There is no method to change realm after creation
     // This is verified by the constructor signature and API
 }
@@ -136,14 +135,14 @@ fn should_prevent_runtime_realm_changes() {
 
 #[test]
 fn should_achieve_isolation_through_actor_design() {
-    // Arrange: Create multiple streams with same logical paths
+    // Arrange
     let (actor_red, _) = make_stream_actor("red", "events", "updates");
     let (actor_blue, _) = make_stream_actor("blue", "events", "updates");
     let (actor_green, _) = make_stream_actor("green", "events", "updates");
 
     // Act
 
-    // Assert: Three completely separate actors, no shared state
+    // Assert
     let addr_red = &actor_red as *const _;
     let addr_blue = &actor_blue as *const _;
     let addr_green = &actor_green as *const _;
@@ -159,10 +158,10 @@ fn should_achieve_isolation_through_actor_design() {
 
 #[test]
 fn should_accept_sessions_only_in_bound_realm() {
-    // Arrange: Create actor for specific realm
+    // Arrange
     let (mut actor, mut ctx) = make_stream_actor("production", "logs", "app");
 
-    // Act: Send session message with matching realm
+    // Act
     let msg = StreamMessage::Begin {
         family_id: RouteFamily::new(1),
         route: Route::new("stream://production/logs/app"),
@@ -171,7 +170,7 @@ fn should_accept_sessions_only_in_bound_realm() {
     };
     actor.receive(msg, &mut ctx);
 
-    // Assert: Session created (no panic)
+    // Assert
     // The actor only exists in one realm, so only that realm's sessions are possible
 }
 
@@ -181,13 +180,13 @@ fn should_accept_sessions_only_in_bound_realm() {
 
 #[test]
 fn should_use_independent_storage_per_realm() {
-    // Arrange: Create two actors
+    // Arrange
     let (_actor_sandbox, _) = make_stream_actor("sandbox", "test", "ephemeral");
     let (_actor_prod, _) = make_stream_actor("production", "test", "persistent");
 
     // Act
 
-    // Assert: Each actor has its own StreamStore instance
+    // Assert
     // (Store is created per actor instance)
     // This prevents any cross-realm data leakage
 }
@@ -198,13 +197,13 @@ fn should_use_independent_storage_per_realm() {
 
 #[test]
 fn should_route_to_correct_realm_actor() {
-    // Arrange: Create separate realm actors
+    // Arrange
     let (actor_us, _) = make_stream_actor("us-east-1", "data", "stream");
     let (actor_eu, _) = make_stream_actor("eu-west-1", "data", "stream");
 
     // Act
 
-    // Assert: Each actor exists independently
+    // Assert
     // Router layer ensures route "stream://us-east-1/..." goes to us actor
     // Router layer ensures route "stream://eu-west-1/..." goes to eu actor
     // They never mix because they're separate actor instances
@@ -219,12 +218,12 @@ fn should_route_to_correct_realm_actor() {
 
 #[test]
 fn should_rely_on_auth_layer_for_realm_validation() {
-    // Arrange: Create stream actor
+    // Arrange
     let (_actor, _) = make_stream_actor("authenticated-realm", "secure", "data");
 
     // Act
 
-    // Assert: Stream actor exists for a single realm
+    // Assert
     // The SessionActor layer (in session.rs) performs authorization checks
     // based on token grants and route patterns before dispatching to StreamActor
     //

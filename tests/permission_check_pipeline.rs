@@ -24,7 +24,7 @@ use fitz::session::session::SessionId;
 
 #[test]
 fn should_check_realm_match_first_in_pipeline() {
-    // Arrange - Session authorized for realm "prod" only
+    // Arrange
     let perm = Permission::parse("kv://prod/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -39,7 +39,7 @@ fn should_check_realm_match_first_in_pipeline() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Request for different realm (should fail immediately)
+    // Act
     let authorized = actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
 
     // Assert
@@ -51,7 +51,7 @@ fn should_check_realm_match_first_in_pipeline() {
 
 #[test]
 fn should_check_area_match_after_realm_in_pipeline() {
-    // Arrange - Session authorized for specific area only
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -66,7 +66,7 @@ fn should_check_area_match_after_realm_in_pipeline() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Realm matches, but area doesn't
+    // Act
     let authorized = actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
 
     // Assert
@@ -78,7 +78,7 @@ fn should_check_area_match_after_realm_in_pipeline() {
 
 #[test]
 fn should_check_scope_match_after_area_in_pipeline() {
-    // Arrange - Session authorized for read scope only
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#read").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -93,7 +93,7 @@ fn should_check_scope_match_after_area_in_pipeline() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Realm and area match, but scope doesn't (write not permitted)
+    // Act
     let authorized = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
 
     // Assert
@@ -105,7 +105,7 @@ fn should_check_scope_match_after_area_in_pipeline() {
 
 #[test]
 fn should_allow_when_all_permission_checks_pass() {
-    // Arrange - Session with all matching permissions
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -120,7 +120,7 @@ fn should_allow_when_all_permission_checks_pass() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - All checks pass: realm, area, scope
+    // Act
     let authorized = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
 
     // Assert
@@ -148,7 +148,7 @@ fn should_check_realm_per_request_not_cached() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - First request to correct realm, then to wrong realm
+    // Act
     let first_ok = actor.authorize(&Route::new("kv://prod/users/put"), Access::Write);
     let second_unauthorized = actor.authorize(&Route::new("kv://staging/users/put"), Access::Write);
 
@@ -177,7 +177,7 @@ fn should_check_area_per_request_not_cached() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - First request to correct area, then to wrong area
+    // Act
     let first_ok = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
     let second_unauthorized =
         actor.authorize(&Route::new("kv://acme/system/config/put"), Access::Write);
@@ -209,7 +209,7 @@ fn should_check_scope_per_request_not_cached() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - First read, then write, then read again (scope checks per request)
+    // Act
     let first_read_ok = actor.authorize(&Route::new("kv://acme/app/users/get"), Access::Read);
     let write_ok = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
     let second_read_ok = actor.authorize(&Route::new("kv://acme/app/users/get"), Access::Read);
@@ -315,7 +315,7 @@ fn should_use_consistent_error_for_scope_mismatch() {
 
 #[test]
 fn should_allow_when_any_permission_matches() {
-    // Arrange - Session with multiple permission rules
+    // Arrange
     let perm1 = Permission::parse("kv://acme/app/**#read").unwrap();
     let perm2 = Permission::parse("kv://acme/app/**#write").unwrap();
     let perms_vec = vec![perm1, perm2];
@@ -332,7 +332,7 @@ fn should_allow_when_any_permission_matches() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Request should succeed if ANY permission matches
+    // Act
     let read_ok = actor.authorize(&Route::new("kv://acme/app/users/get"), Access::Read);
     let write_ok = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
 
@@ -343,7 +343,7 @@ fn should_allow_when_any_permission_matches() {
 
 #[test]
 fn should_reject_when_no_permission_matches() {
-    // Arrange - Session with limited permissions
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#read").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -358,7 +358,7 @@ fn should_reject_when_no_permission_matches() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Request should fail when NO permission matches
+    // Act
     let write_denied = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
     let system_denied = actor.authorize(&Route::new("kv://acme/system/config/get"), Access::Read);
     let staging_denied = actor.authorize(&Route::new("kv://staging/app/users/get"), Access::Read);
@@ -378,7 +378,7 @@ fn should_reject_when_no_permission_matches() {
 
 #[test]
 fn should_apply_permission_checks_to_wildcard_patterns() {
-    // Arrange - Permission with double-star wildcard
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -393,7 +393,7 @@ fn should_apply_permission_checks_to_wildcard_patterns() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Wildcard should match various nested paths
+    // Act
     let shallow = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
     let nested = actor.authorize(
         &Route::new("kv://acme/app/users/profile/put"),
@@ -409,7 +409,7 @@ fn should_apply_permission_checks_to_wildcard_patterns() {
 
 #[test]
 fn should_apply_permission_checks_to_single_star_patterns() {
-    // Arrange - Permission with single-star wildcard (matches one segment)
+    // Arrange
     let perm = Permission::parse("notice://acme/orders/*#read").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -424,7 +424,7 @@ fn should_apply_permission_checks_to_single_star_patterns() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Single star should match one level only
+    // Act
     let one_level = actor.authorize(&Route::new("notice://acme/orders/created"), Access::Read);
     let two_levels = actor.authorize(
         &Route::new("notice://acme/orders/created/update"),
@@ -445,7 +445,7 @@ fn should_apply_permission_checks_to_single_star_patterns() {
 
 #[test]
 fn should_apply_full_permission_pipeline_to_complex_scenario() {
-    // Arrange - Realistic multi-area multi-scope setup
+    // Arrange
     let perms_vec = vec![
         Permission::parse("kv://acme/app/users/**#read").unwrap(),
         Permission::parse("kv://acme/app/users/**#write").unwrap(),
@@ -464,7 +464,7 @@ fn should_apply_full_permission_pipeline_to_complex_scenario() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Various requests to verify pipeline
+    // Act
     let user_read = actor.authorize(&Route::new("kv://acme/app/users/get"), Access::Read);
     let user_write = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
     let settings_read = actor.authorize(&Route::new("kv://acme/app/settings/get"), Access::Read);
@@ -501,14 +501,14 @@ fn should_maintain_permission_checks_across_multiple_sequential_requests() {
     let mut actor = SessionActor::new(SessionId(1), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Sequential requests should each be checked independently
+    // Act
     let mut results = Vec::new();
     for _i in 0..5 {
         let ok = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
         results.push(ok);
     }
 
-    // Assert - All should succeed consistently
+    // Assert
     for (i, result) in results.iter().enumerate() {
         assert!(*result, "request {} should succeed consistently", i);
     }

@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
@@ -109,7 +109,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
         sinks.push(sink);
     }
 
-    // Act - publish multiple messages
+    // Act
     let mut pubctx = Context::new(
         addr("notify://realm/area/many/pub"),
         Arc::new(router.clone()),
@@ -123,7 +123,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
         actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
     }
 
-    // Assert - each sink should have received 4 deliveries
+    // Assert
     for s in sinks.iter() {
         assert_eq!(s.count(), 4);
     }

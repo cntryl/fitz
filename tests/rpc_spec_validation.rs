@@ -313,7 +313,7 @@ fn should_reassemble_multi_chunk_streaming_response() {
     // Arrange
     let correlation_id = Uuid::new_v4();
 
-    // Act - Simulate streaming response
+    // Act
     let chunk1 = RpcResponse::chunk(correlation_id, 0, Bytes::from("chunk1"), false);
     let chunk2 = RpcResponse::chunk(correlation_id, 1, Bytes::from("chunk2"), false);
     let chunk3 = RpcResponse::chunk(correlation_id, 2, Bytes::from("chunk3"), true);
@@ -338,11 +338,11 @@ fn should_detect_out_of_order_streaming_chunks() {
     // Arrange
     let correlation_id = Uuid::new_v4();
 
-    // Act - Out of order: chunk 0, then chunk 2 (missing chunk 1)
+    // Act
     let chunk0 = RpcResponse::chunk(correlation_id, 0, Bytes::from("chunk0"), false);
     let chunk2 = RpcResponse::chunk(correlation_id, 2, Bytes::from("chunk2"), false);
 
-    // Assert - Client should detect gap
+    // Assert
     assert_eq!(chunk0.seq, 0);
     assert_eq!(chunk2.seq, 2);
     assert!(

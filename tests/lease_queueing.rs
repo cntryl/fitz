@@ -58,7 +58,7 @@ mod basic_queueing {
             _ => panic!("Expected Acquired for first client"),
         };
 
-        // Act - Client-B tries to acquire with wait
+        // Act
         let acquire_b = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -97,7 +97,7 @@ mod basic_queueing {
         };
         let _ = actor.handle_message(acquire_a, &mut ctx).unwrap();
 
-        // Act - Client-B tries immediate acquire (no wait)
+        // Act
         let acquire_b = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -143,7 +143,7 @@ mod basic_queueing {
         };
         let _ = actor.handle_message(acquire_b, &mut ctx).unwrap();
 
-        // Act - Client-B tries to acquire same route again
+        // Act
         let acquire_b_again = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -187,7 +187,7 @@ mod basic_queueing {
             _ => panic!("Expected Acquired"),
         };
 
-        // Act - Client-A tries to acquire same lease again
+        // Act
         let acquire_a_again = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -236,7 +236,7 @@ mod idempotent_acquire {
             _ => panic!("Expected Acquired"),
         };
 
-        // Act - Client-A tries again with wait_seconds > 0
+        // Act
         let acquire_a_with_wait = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -246,7 +246,7 @@ mod idempotent_acquire {
         };
         let response = actor.handle_message(acquire_a_with_wait, &mut ctx).unwrap();
 
-        // Assert - Should return AlreadyHeld, not Queued, even though wait_seconds>0
+        // Assert
         match response {
             LeaseResponse::AlreadyHeld { fencing_token } => {
                 assert_eq!(fencing_token, token_a, "Expected same token");
@@ -297,7 +297,7 @@ mod queue_overflow {
             );
         }
 
-        // Act - Try to add one more (exceeding limit)
+        // Act
         let acquire_overflow = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
@@ -360,14 +360,14 @@ mod fifo_ordering {
         };
         let _ = actor.handle_message(acquire_c, &mut ctx).unwrap();
 
-        // Act - Query to verify B and C are queued
+        // Act
         let query = LeaseMessage::Query {
             family_id: fam,
             route: test_route.clone(),
         };
         let response = actor.handle_message(query, &mut ctx).unwrap();
 
-        // Assert - Should show holder and 2 pending waiters
+        // Assert
         match response {
             LeaseResponse::Status {
                 owner_id,
@@ -408,7 +408,7 @@ mod renew_and_release {
             _ => panic!("Expected Acquired"),
         };
 
-        // Act - Renew with valid token
+        // Act
         let renew = LeaseMessage::Renew {
             family_id: fam,
             route: test_route.clone(),
@@ -418,7 +418,7 @@ mod renew_and_release {
         };
         let response = actor.handle_message(renew, &mut ctx).unwrap();
 
-        // Assert - Should get new token
+        // Assert
         match response {
             LeaseResponse::Renewed {
                 fencing_token: new_token,
@@ -446,7 +446,7 @@ mod renew_and_release {
         };
         let _ = actor.handle_message(acquire, &mut ctx).unwrap();
 
-        // Act - Renew with wrong token
+        // Act
         let renew_bad_token = LeaseMessage::Renew {
             family_id: fam,
             route: test_route.clone(),
@@ -487,7 +487,7 @@ mod renew_and_release {
             _ => panic!("Expected Acquired"),
         };
 
-        // Act - Release with valid token
+        // Act
         let release = LeaseMessage::Release {
             family_id: fam,
             route: test_route.clone(),
@@ -515,7 +515,7 @@ mod query_operations {
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
-        // Act - Query on free lease
+        // Act
         let query = LeaseMessage::Query {
             family_id: fam,
             route: test_route.clone(),
@@ -569,7 +569,7 @@ mod query_operations {
             let _ = actor.handle_message(acquire, &mut ctx).unwrap();
         }
 
-        // Act - Query
+        // Act
         let query = LeaseMessage::Query {
             family_id: fam,
             route: test_route.clone(),

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
-    // Arrange: create store & router & domains
+    // Arrange
     let store = create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     domains::setup(&router, &store).unwrap();
@@ -60,11 +60,11 @@ async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
     enc.encode(fitz::protocol::tlv::MessageType::new(103), &payload);
     let frame = enc.finish();
 
-    // Act - send frame through session (this should route to KV domain & produce a response)
+    // Act
     let ingress_ref: &dyn fitz::session::manager::Ingress = ingress.as_ref();
     session.on_frame(frame, ingress_ref).await.unwrap();
 
-    // Assert - we should receive a TLV response on the inbox channel
+    // Assert
     let resp = rx.recv().await.expect("expected response");
     // Decode TLV header to check msg_type and that the payload is a GET result
     let dec = fitz::protocol::tlv::TlvDecoder::new();

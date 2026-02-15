@@ -273,7 +273,7 @@ fn should_implement_queue_complete_deduplication_by_message_id() {
     use fitz::domains::queue::QueueResponse;
     use fitz::testkit::queue::create_test_queue_actor;
 
-    // Arrange - Create queue actor with deduplication (using testkit helper)
+    // Arrange
     let mut actor = create_test_queue_actor("test", "app", "jobs", None);
 
     // Enqueue a message
@@ -294,11 +294,11 @@ fn should_implement_queue_complete_deduplication_by_message_id() {
         _ => panic!("Expected Reserved response"),
     };
 
-    // Act - Complete twice with same (id, token)
+    // Act
     let response1 = actor.handle_complete(msg_id, token);
     let response2 = actor.handle_complete(msg_id, token); // Retry
 
-    // Assert - Both succeed (second is deduplicated)
+    // Assert
     assert_eq!(response1, QueueResponse::Completed);
     assert_eq!(response2, QueueResponse::Completed); // Should return cached response
 }
@@ -432,7 +432,7 @@ fn should_expire_deduplication_state_after_ttl() {
     // Act
     store.record(key.clone(), b"ok".to_vec());
 
-    // Assert - should exist immediately
+    // Assert
     assert!(store.get(&key).is_some());
 
     // We don't have a manual 'expire' trigger in the public API yet,
@@ -443,22 +443,15 @@ fn should_expire_deduplication_state_after_ttl() {
 
 #[test]
 fn should_log_deduplicated_requests_for_debugging() {
-    // Test: Server logs when deduplication is hit
-    //
-    // Deduplication logging is now implemented in QueueActor::handle_complete()
+    // Arrange
+    // Deduplication logging is implemented in QueueActor::handle_complete()
     // with tracing::debug! for cache hits and tracing::info! for first-time completions.
-    //
-    // Expected logs:
-    // - First REQUEST: "Queue COMPLETE processed successfully" (info level)
-    // - Retry REQUEST: "Queue COMPLETE deduplicated (returning cached response)" (debug level)
-    //
-    // Verification:
-    // - Logging is implemented via tracing macros
-    // - Operators can enable debug logging to see deduplication hits
-    // - Production logs show completion success at info level
-    //
-    // This test passes to acknowledge that logging infrastructure is in place.
+
+    // Act
     // Manual verification: Set RUST_LOG=debug and observe logs during duplicate COMPLETE operations.
+
+    // Assert
+    // This test passes to acknowledge that logging infrastructure is in place.
 }
 
 // ============================================================================

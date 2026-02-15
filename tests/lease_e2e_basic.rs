@@ -1,4 +1,4 @@
-﻿use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::domains::lease::{LeaseActor, LeaseMessage};
 use fitz::runtime::actor::{Actor, Context};
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -57,7 +57,7 @@ fn should_renew_lease_successfully() {
     };
     actor.receive(acquire_msg, &mut ctx);
 
-    // Act - Renew the lease
+    // Act
     let renew_msg = LeaseMessage::Renew {
         family_id: RouteFamily::new(1),
         route: route.clone(),
@@ -90,7 +90,7 @@ fn should_release_lease_successfully() {
     };
     actor.receive(acquire_msg, &mut ctx);
 
-    // Act - Release the lease
+    // Act
     let release_msg = LeaseMessage::Release {
         family_id: RouteFamily::new(1),
         route: route.clone(),

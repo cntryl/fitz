@@ -1,4 +1,4 @@
-﻿use bytes::Bytes;
+use bytes::Bytes;
 use fitz::auth::Permission;
 use fitz::domains::rpc::session::SessionActor;
 use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcRouteActor};
@@ -54,7 +54,7 @@ fn should_reject_rpc_request_without_call_permission() {
     // Act
     let result = session.call_rpc(request, &mut actor, &mut ctx);
 
-    // Assert - Request should be rejected
+    // Assert
     assert!(result.is_err());
     assert_eq!(actor.pending_count(), 0);
 }
@@ -93,7 +93,7 @@ fn should_allow_rpc_request_with_valid_call_permission() {
     // Act
     let result = session.call_rpc(request, &mut actor, &mut ctx);
 
-    // Assert - Request should be processed
+    // Assert
     assert!(result.is_ok());
     assert_eq!(actor.pending_count(), 0); // Dispatched to worker
     assert_eq!(actor.worker_count(), 1);
@@ -134,7 +134,7 @@ fn should_enforce_realm_isolation_in_authorization() {
     // Act
     let result = session.call_rpc(request_cross_realm, &mut actor_acme, &mut ctx);
 
-    // Assert - Cross-realm access denied
+    // Assert
     assert!(result.is_err());
     assert_eq!(actor_acme.pending_count(), 0);
 }
@@ -156,7 +156,7 @@ fn should_allow_worker_subscription_with_valid_permissions() {
     );
     let route = Route::new("rpc://acme/inventory/item/query");
 
-    // Act - Worker with proper subscribe permission
+    // Act
     let result = session.subscribe_worker(worker_addr, &route, &mut actor, &mut ctx);
 
     // Assert
@@ -181,10 +181,10 @@ fn should_reject_worker_subscription_without_permissions() {
     );
     let route = Route::new("rpc://acme/admin/user/delete");
 
-    // Act - Worker without subscribe permission
+    // Act
     let result = session.subscribe_worker(unauthorized_worker, &route, &mut actor, &mut ctx);
 
-    // Assert - Worker registration rejected
+    // Assert
     assert!(result.is_err());
     assert_eq!(actor.worker_count(), 0);
 }
@@ -223,7 +223,7 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
     // Act
     let result = session.call_rpc(request, &mut actor, &mut ctx);
 
-    // Assert - Scope violation prevents processing
+    // Assert
     assert!(result.is_err());
     assert_eq!(actor.pending_count(), 0);
 }
@@ -262,7 +262,7 @@ fn should_allow_requests_within_granted_scope() {
     // Act
     let result = session.call_rpc(request, &mut actor, &mut ctx);
 
-    // Assert - Request processed within valid scope
+    // Assert
     assert!(result.is_ok());
     assert_eq!(actor.pending_count(), 0);
     assert_eq!(actor.worker_count(), 1);
@@ -290,7 +290,7 @@ fn should_validate_permissions_per_request() {
     let session_perms = SessionPermissions::from_permissions(perms);
     let session = SessionActor::new(SessionId(1), session_perms);
 
-    // Act - Send authorized and unauthorized requests
+    // Act
     // First request - authorized
     let request1 = RpcRequest {
         family_id: RouteFamily::new(1),
@@ -311,7 +311,7 @@ fn should_validate_permissions_per_request() {
     };
     let result2 = session.call_rpc(request2, &mut actor, &mut ctx);
 
-    // Assert - First processed, second rejected
+    // Assert
     assert!(result1.is_ok());
     assert!(result2.is_err());
     assert_eq!(actor.worker_count(), 1);

@@ -68,7 +68,7 @@ fn should_store_jwt_claims_in_session() {
     let mut actor = SessionActor::new(SessionId(100), perms.clone());
     actor.authenticate(claims.clone(), perms);
 
-    // Assert - Claims should be stored and retrievable
+    // Assert
     // Note: SessionActor stores claims internally for authorization checks
     let authorized = actor.authorize(&Route::new("kv://myapp/users/put"), Access::Write);
     assert!(authorized, "stored claims should enable authorization");
@@ -103,7 +103,7 @@ fn should_set_session_as_authenticated_on_successful_connect() {
 
 #[test]
 fn should_immediately_accept_requests_after_session_creation() {
-    // Arrange - Create session with permissions
+    // Arrange
     let perm = Permission::parse("kv://acme/app/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -118,7 +118,7 @@ fn should_immediately_accept_requests_after_session_creation() {
     let mut actor = SessionActor::new(SessionId(102), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Send request immediately after session creation
+    // Act
     let authorized = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
 
     // Assert
@@ -145,7 +145,7 @@ fn should_reject_unauthorized_requests_on_new_session() {
     let mut actor = SessionActor::new(SessionId(103), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Try write operation on read-only session
+    // Act
     let authorized = actor.authorize(&Route::new("kv://acme/app/users/put"), Access::Write);
 
     // Assert
@@ -213,7 +213,7 @@ fn should_cleanup_permissions_on_disconnect() {
     let mut actor = SessionActor::new(SessionId(104), perms.clone());
     actor.authenticate(claims, perms);
 
-    // Act - Verify session is active
+    // Act
     let before_disconnect = actor.authorize(&Route::new("kv://acme/users/put"), Access::Write);
     assert!(
         before_disconnect,
@@ -256,7 +256,7 @@ fn should_expire_session_token_on_disconnect() {
 
 #[test]
 fn should_create_new_session_on_reconnect() {
-    // Arrange - First connection
+    // Arrange
     let perm = Permission::parse("kv://acme/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -272,7 +272,7 @@ fn should_create_new_session_on_reconnect() {
     let mut actor1 = SessionActor::new(SessionId(200), perms.clone());
     actor1.authenticate(claims.clone(), perms.clone());
 
-    // Act - Reconnect with new session ID 201
+    // Act
     let mut actor2 = SessionActor::new(SessionId(201), perms.clone());
     actor2.authenticate(claims, perms);
 
@@ -302,11 +302,11 @@ fn should_invalidate_old_session_after_reconnect() {
     let mut actor1 = SessionActor::new(SessionId(300), perms.clone());
     actor1.authenticate(claims.clone(), perms.clone());
 
-    // Act - Reconnect creates new session
+    // Act
     let mut actor2 = SessionActor::new(SessionId(301), perms.clone());
     actor2.authenticate(claims, perms);
 
-    // Assert - Old session ID should not be usable
+    // Assert
     // (In real system, session 300 would be dropped and cleaned up)
     // This is verified by the fact that new session has different ID
     assert_ne!(SessionId(300), SessionId(301));
@@ -314,7 +314,7 @@ fn should_invalidate_old_session_after_reconnect() {
 
 #[test]
 fn should_not_recover_subscriptions_on_reconnect() {
-    // Arrange - Initial session with subscriptions
+    // Arrange
     let perm = Permission::parse("notice://acme/**#read").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -329,7 +329,7 @@ fn should_not_recover_subscriptions_on_reconnect() {
     let mut initial_session = SessionActor::new(SessionId(400), perms.clone());
     initial_session.authenticate(claims.clone(), perms.clone());
 
-    // Act - Client disconnects and reconnects with new session
+    // Act
     let mut new_session = SessionActor::new(SessionId(401), perms.clone());
     new_session.authenticate(claims, perms);
 
@@ -382,7 +382,7 @@ fn should_require_fresh_auth_on_reconnect() {
 
 #[test]
 fn should_isolate_permissions_across_multiple_sessions() {
-    // Arrange - Two sessions with different permissions
+    // Arrange
     let read_perm = Permission::parse("kv://acme/**#read").unwrap();
     let write_perm = Permission::parse("kv://acme/**#write").unwrap();
 
@@ -405,14 +405,14 @@ fn should_isolate_permissions_across_multiple_sessions() {
         exp: 9999999999,
     };
 
-    // Act - Create two sessions with different permissions
+    // Act
     let mut read_session = SessionActor::new(SessionId(600), read_perms.clone());
     read_session.authenticate(read_claims, read_perms);
 
     let mut write_session = SessionActor::new(SessionId(601), write_perms.clone());
     write_session.authenticate(write_claims, write_perms);
 
-    // Assert - Each session enforces its own permissions
+    // Assert
     let read_ok = read_session.authorize(&Route::new("kv://acme/users/get"), Access::Read);
     let read_write_denied =
         read_session.authorize(&Route::new("kv://acme/users/put"), Access::Write);
@@ -429,7 +429,7 @@ fn should_isolate_permissions_across_multiple_sessions() {
 
 #[test]
 fn should_expire_sessions_independently() {
-    // Arrange - Two sessions with different expiration times
+    // Arrange
     let perm = Permission::parse("kv://acme/**#write").unwrap();
     let perms = SessionPermissions::from_permissions(vec![perm.clone()]);
 
@@ -449,14 +449,14 @@ fn should_expire_sessions_independently() {
         exp: 1,
     };
 
-    // Act - Create two sessions
+    // Act
     let mut valid_session = SessionActor::new(SessionId(700), perms.clone());
     valid_session.authenticate(claims_valid, perms.clone());
 
     let mut expired_session = SessionActor::new(SessionId(701), perms.clone());
     expired_session.authenticate(claims_expired, perms);
 
-    // Assert - Sessions expire independently
+    // Assert
     let valid_not_expired = !valid_session.is_token_expired();
     let expired_is_expired = expired_session.is_token_expired();
 

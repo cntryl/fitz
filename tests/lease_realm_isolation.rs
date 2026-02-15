@@ -29,7 +29,7 @@ fn make_lease_actor() -> (LeaseActor, Context<LeaseActor>) {
 
 #[test]
 fn should_include_realm_in_lease_key_identity() {
-    // Arrange: Create two lease keys with same area/resource but different realms
+    // Arrange
     let family = RouteFamily::new(1);
     let key_acme = LeaseKey {
         family,
@@ -46,7 +46,7 @@ fn should_include_realm_in_lease_key_identity() {
         resource: "database".to_string(),
     };
 
-    // Assert: Keys are different because realm differs
+    // Assert
     assert_ne!(key_acme, key_evil);
 }
 
@@ -56,10 +56,10 @@ fn should_include_realm_in_lease_key_identity() {
 
 #[test]
 fn should_isolate_leases_by_realm() {
-    // Arrange: Create a single shared lease actor
+    // Arrange
     let (mut actor, mut ctx) = make_lease_actor();
 
-    // Act: Acquire lease in realm1
+    // Act
     let _lease_acme = LeaseKey {
         family: RouteFamily::new(1),
         realm: "acme".to_string(),
@@ -76,7 +76,6 @@ fn should_isolate_leases_by_realm() {
     };
     actor.receive(msg_acme, &mut ctx);
 
-    // Act: Acquire lease in realm2 with same logical path
     let msg_evil = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://evil/locks/config"),
@@ -86,7 +85,7 @@ fn should_isolate_leases_by_realm() {
     };
     actor.receive(msg_evil, &mut ctx);
 
-    // Assert: Both leases coexist in the actor
+    // Assert
     // They don't interfere because they have different LeaseKeys
     // (different realm values)
 }
@@ -97,7 +96,7 @@ fn should_isolate_leases_by_realm() {
 
 #[test]
 fn should_treat_realm_as_opaque_in_lease_keys() {
-    // Arrange: Create lease keys with different realm formats
+    // Arrange
     let family = RouteFamily::new(1);
 
     let key_lowercase = LeaseKey {
@@ -115,7 +114,7 @@ fn should_treat_realm_as_opaque_in_lease_keys() {
         resource: "task".to_string(),
     };
 
-    // Assert: Keys are different (no normalization)
+    // Assert
     assert_ne!(key_lowercase, key_uppercase);
 }
 
@@ -125,7 +124,7 @@ fn should_treat_realm_as_opaque_in_lease_keys() {
 
 #[test]
 fn should_enforce_realm_in_lease_operations() {
-    // Arrange: Create lease actor and acquire lease for realm1
+    // Arrange
     let (mut actor, mut ctx) = make_lease_actor();
 
     let msg_acquire = LeaseMessage::Acquire {
@@ -137,7 +136,7 @@ fn should_enforce_realm_in_lease_operations() {
     };
     actor.receive(msg_acquire, &mut ctx);
 
-    // Act: Try to release lease from different realm (won't find it)
+    // Act
     let msg_release_different = LeaseMessage::Release {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://realm2/locks/resource"), // Different realm
@@ -146,7 +145,7 @@ fn should_enforce_realm_in_lease_operations() {
     };
     actor.receive(msg_release_different, &mut ctx);
 
-    // Assert: Release on different realm won't find the lease
+    // Assert
     // because realm1 and realm2 are different LeaseKeys
 }
 
@@ -156,10 +155,10 @@ fn should_enforce_realm_in_lease_operations() {
 
 #[test]
 fn should_prevent_cross_realm_lease_confusion() {
-    // Arrange: Create lease actor
+    // Arrange
     let (mut actor, mut ctx) = make_lease_actor();
 
-    // Act: Acquire lease in realm A
+    // Act
     let msg1 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://realm-a/locks/resource"),
@@ -169,14 +168,13 @@ fn should_prevent_cross_realm_lease_confusion() {
     };
     actor.receive(msg1, &mut ctx);
 
-    // Act: Query lease from realm B (different realm, same logical path)
     let msg2 = LeaseMessage::Query {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://realm-b/locks/resource"),
     };
     actor.receive(msg2, &mut ctx);
 
-    // Assert: Query returns nothing (or error) because realm-b/locks/resource â‰  realm-a/locks/resource
+    // Assert
     // Realm is part of the key, so different realms cannot see each other's leases
 }
 
@@ -186,10 +184,10 @@ fn should_prevent_cross_realm_lease_confusion() {
 
 #[test]
 fn should_maintain_global_monotonic_tokens() {
-    // Arrange: Create lease actor
+    // Arrange
     let (mut actor, mut ctx) = make_lease_actor();
 
-    // Act: Acquire lease in realm1
+    // Act
     let msg1 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://realm1/locks/resource"),
@@ -199,7 +197,6 @@ fn should_maintain_global_monotonic_tokens() {
     };
     actor.receive(msg1, &mut ctx);
 
-    // Act: Acquire lease in realm2
     let msg2 = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://realm2/locks/resource"),
@@ -209,7 +206,7 @@ fn should_maintain_global_monotonic_tokens() {
     };
     actor.receive(msg2, &mut ctx);
 
-    // Assert: Both operations succeed
+    // Assert
     // Fencing tokens are allocated globally (next_token increments in both cases)
     // But leases remain isolated because they're stored under different LeaseKeys
 }
@@ -220,7 +217,7 @@ fn should_maintain_global_monotonic_tokens() {
 
 #[test]
 fn should_rely_on_auth_layer_for_lease_realm_validation() {
-    // Arrange: Create lease actor
+    // Arrange
     let (_actor, _) = make_lease_actor();
 
     // Act
@@ -248,10 +245,10 @@ fn should_rely_on_auth_layer_for_lease_realm_validation() {
 
 #[test]
 fn should_support_lease_operations_within_realm() {
-    // Arrange: Create lease actor
+    // Arrange
     let (mut actor, mut ctx) = make_lease_actor();
 
-    // Act: Acquire lease in specific realm
+    // Act
     let msg_acquire = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://production/critical/database"),
@@ -261,7 +258,6 @@ fn should_support_lease_operations_within_realm() {
     };
     actor.receive(msg_acquire, &mut ctx);
 
-    // Act: Release same lease (within same realm)
     let msg_release = LeaseMessage::Release {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://production/critical/database"),
@@ -270,7 +266,6 @@ fn should_support_lease_operations_within_realm() {
     };
     actor.receive(msg_release, &mut ctx);
 
-    // Act: Query lease
     let msg_query = LeaseMessage::Query {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://production/critical/database"),
@@ -287,10 +282,10 @@ fn should_support_lease_operations_within_realm() {
 
 #[test]
 fn should_require_explicit_realm_in_lease_routes() {
-    // Arrange: Create lease actor
+    // Arrange
     let (mut actor, mut ctx) = make_lease_actor();
 
-    // Act: Acquire lease with explicit realm in route
+    // Act
     let msg = LeaseMessage::Acquire {
         family_id: RouteFamily::new(1),
         route: Route::new("lease://explicit-realm/locks/resource"),

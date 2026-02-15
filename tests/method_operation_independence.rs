@@ -209,9 +209,8 @@ fn should_reject_missing_method_at_protocol_level() {
     // The only way to send to the actor is via KvMessage enum,
     // which enforces that every request has an explicit method.
     // In real code, this would be enforced by the Mux layer.
+    // Every request is required to have a msg_type field.
 
     // Assert
-    // This test documents the invariant.
-    // Actual enforcement happens at Session/Mux layer where TlvRecord
-    // is required to have a msg_type field.
+    // This test documents the invariant that the type system enforces.
 }

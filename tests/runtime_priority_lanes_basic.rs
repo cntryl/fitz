@@ -1,4 +1,4 @@
-﻿// Priority Lanes Basic Functionality Tests
+// Priority Lanes Basic Functionality Tests
 //
 // Tests demonstrating that the dual-lane priority system works correctly:
 // 1. High-priority messages process first
@@ -59,10 +59,10 @@ fn should_verify_dual_channel_architecture() {
     // Arrange
     let mailbox = Mailbox::new(100);
 
-    // Act - Get normal sender (public API)
+    // Act
     let normal_sender = mailbox.sender();
 
-    // Assert - Mailbox tracks both lanes
+    // Assert
     assert_eq!(mailbox.capacity(), 100);
     assert_eq!(mailbox.len(), 0);
     assert_eq!(mailbox.high_priority_len(), 0);
@@ -80,7 +80,7 @@ fn should_report_occupancy_for_both_lanes() {
     let mailbox = Mailbox::new(10);
     let addr = test_address(1, "/test/actor");
 
-    // Act - Fill normal lane via MailboxSink trait (internal API)
+    // Act
     let sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
 
     for i in 0..5 {
@@ -108,14 +108,14 @@ fn should_process_actor_messages_with_dual_lanes() {
     let addr = test_address(1, "/test/priority");
     let actor_ref = scheduler.spawn(actor, addr.clone(), 100);
 
-    // Act - Send 2 normal messages
+    // Act
     actor_ref.send(TestMessage::Normal("N1".to_string())).ok();
     actor_ref.send(TestMessage::Normal("N2".to_string())).ok();
 
     // Wait for processing
     thread::sleep(Duration::from_millis(100));
 
-    // Assert - Normal messages processed
+    // Assert
     let processed = order.lock().unwrap();
     assert_eq!(processed.len(), 2);
     assert_eq!(processed[0], "NORMAL:N1");
@@ -131,7 +131,7 @@ fn should_enforce_capacity_limits_on_normal_lane() {
     let addr = test_address(1, "/test/overflow");
     let sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
 
-    // Act - Fill normal lane to capacity
+    // Act
     for i in 0..5 {
         let env = Envelope::new(addr.clone(), i);
         assert!(sink.deliver(env).is_ok());
@@ -164,7 +164,7 @@ fn should_enforce_capacity_limits_on_high_lane() {
     let addr = test_address(1, "/test/high_overflow");
     let sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
 
-    // Act - Fill high-priority lane to capacity
+    // Act
     for i in 0..5 {
         let env = Envelope::new(addr.clone(), i);
         assert!(sink.deliver_high_priority(env).is_ok());
@@ -215,7 +215,7 @@ fn should_process_messages_from_both_lanes() {
     let addr = test_address(1, "/test/counter");
     let actor_ref = scheduler.spawn(actor, addr.clone(), 100);
 
-    // Act - Send messages (they all go to normal lane for now)
+    // Act
     for i in 0..10 {
         actor_ref.send(i).ok();
     }
@@ -237,7 +237,7 @@ fn should_verify_independent_lane_capacities() {
     let addr = test_address(1, "/test/independent");
     let sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
 
-    // Act - Fill both lanes to capacity via MailboxSink
+    // Act
     for i in 0..10 {
         sink.deliver(Envelope::new(addr.clone(), i)).ok();
     }
@@ -247,7 +247,7 @@ fn should_verify_independent_lane_capacities() {
             .ok();
     }
 
-    // Assert - Both lanes are full independently
+    // Assert
     assert_eq!(mailbox.len(), 10);
     assert_eq!(mailbox.high_priority_len(), 10);
 

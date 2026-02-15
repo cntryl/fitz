@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
@@ -13,7 +13,7 @@ use fitz::testkit::notice::{addr, make_router, route, session_id, TestSink};
 
 #[test]
 fn should_scale_linearly_with_subscription_count() {
-    // Arrange: create two sizes and register subscriptions
+    // Arrange
     let router = make_router();
     let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
 
@@ -54,7 +54,7 @@ fn should_scale_linearly_with_subscription_count() {
         large_sinks.push(sink);
     }
 
-    // Act: publish once and count deliveries
+    // Act
     let mut pubctx = Context::new(
         addr("notify://realm/area/scale/p"),
         Arc::new(router.clone()),
@@ -69,7 +69,7 @@ fn should_scale_linearly_with_subscription_count() {
     let small_total: usize = small_sinks.iter().map(|s| s.count()).sum();
     let large_total: usize = large_sinks.iter().map(|s| s.count()).sum();
 
-    // Assert: deliveries scale linearly (large Ã¢â€°Ë† 4 * small)
+    // Assert
     assert_eq!(small_total, small_n);
     assert_eq!(large_total, large_n);
     assert!(large_total >= small_total * 4, "expected large >= 4*small");
@@ -77,7 +77,7 @@ fn should_scale_linearly_with_subscription_count() {
 
 #[test]
 fn should_not_exhibit_quadratic_fanout_growth() {
-    // Arrange: create increasing subscription sizes and assert deliveries match subscribers (no explosion)
+    // Arrange
     let router = make_router();
     let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
 
@@ -108,7 +108,7 @@ fn should_not_exhibit_quadratic_fanout_growth() {
         actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
         let total: usize = sinks.iter().map(|s| s.count()).sum();
-        // Assert: exactly N deliveries, no quadratic growth
+        // Assert
         assert_eq!(
             total, n,
             "expected exactly {} deliveries for {} subscriptions",
@@ -119,7 +119,7 @@ fn should_not_exhibit_quadratic_fanout_growth() {
 
 #[test]
 fn should_handle_large_subscription_sets_without_failure() {
-    // Arrange: create a large set of subscriptions to ensure system doesn't panic
+    // Arrange
     let router = make_router();
     let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
 
@@ -142,7 +142,7 @@ fn should_handle_large_subscription_sets_without_failure() {
         sinks.push(sink);
     }
 
-    // Act - publish once
+    // Act
     let mut pubctx = Context::new(
         addr("notify://realm/area/scale_big/p"),
         Arc::new(router.clone()),

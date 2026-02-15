@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
@@ -65,7 +65,7 @@ fn should_not_deliver_notification_when_no_subscription_matches() {
     let mut ctx = ctx;
     actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
 
-    // Act - publish to a different route
+    // Act
     let pubmsg = PublishMessage::new(
         family,
         fitz::testkit::notice::route("notify://realm/area/other/recv"),
@@ -171,7 +171,7 @@ fn should_not_duplicate_delivery_for_same_subscription() {
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
 
-    // Assert - since duplicate subscribes are idempotent, we expect a single delivery
+    // Assert
     assert_eq!(sink.count(), 1);
 }
 
@@ -208,7 +208,7 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     );
     actor.receive(NotificationMessage::Subscribe(subscribe2), &mut ctx2);
 
-    // Act - publish to a route that matches both patterns
+    // Act
     let mut pubctx = Context::new(sub1.clone(), Arc::new(router.clone()));
     let pubmsg = PublishMessage::new(
         family,
@@ -217,7 +217,7 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
-    // Assert - both sinks receive a delivery
+    // Assert
     assert_eq!(sink1.count(), 1);
     assert_eq!(sink2.count(), 1);
 }
@@ -257,7 +257,7 @@ fn should_deliver_multiple_notifications_independently() {
     );
     actor.receive(NotificationMessage::Subscribe(sub_b), &mut ctx_b);
 
-    // Act - publish two different notifications
+    // Act
     let mut pubctx = Context::new(a.clone(), Arc::new(router.clone()));
     let pub1 = PublishMessage::new(
         family,
@@ -272,7 +272,7 @@ fn should_deliver_multiple_notifications_independently() {
     actor.receive(NotificationMessage::Publish(pub1), &mut pubctx);
     actor.receive(NotificationMessage::Publish(pub2), &mut pubctx);
 
-    // Assert - each sink should receive its matching message
+    // Assert
     assert_eq!(sink_a.count(), 1);
     assert_eq!(sink_b.count(), 1);
 }

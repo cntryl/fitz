@@ -1,4 +1,4 @@
-﻿//! RPC ReplyInboxActor streaming and ordering tests
+//! RPC ReplyInboxActor streaming and ordering tests
 //!
 //! Tests streaming chunk ordering, buffering, gap detection, and duplicate handling.
 
@@ -40,7 +40,7 @@ fn should_accept_single_chunk_response() {
     // Act
     inbox.receive(InboxMessage::Response(response), &mut ctx);
 
-    // Assert - stream should be cleaned up after stream_end
+    // Assert
     assert_eq!(inbox.active_streams(), 0);
 }
 
@@ -51,7 +51,7 @@ fn should_handle_in_order_streaming_chunks() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - send chunks in order
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 0, false)),
         &mut ctx,
@@ -65,7 +65,7 @@ fn should_handle_in_order_streaming_chunks() {
         &mut ctx,
     );
 
-    // Assert - stream should be cleaned up
+    // Assert
     assert_eq!(inbox.active_streams(), 0);
 }
 
@@ -76,7 +76,7 @@ fn should_buffer_out_of_order_chunks() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - receive seq 2 before seq 0 and 1
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 2, false)),
         &mut ctx,
@@ -86,7 +86,7 @@ fn should_buffer_out_of_order_chunks() {
         &mut ctx,
     );
 
-    // Assert - chunks buffered, stream still active
+    // Assert
     assert_eq!(inbox.active_streams(), 1);
     assert_eq!(inbox.buffered_count(&correlation_id), 2);
 }
@@ -98,7 +98,7 @@ fn should_flush_buffer_when_gap_filled() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - receive out of order, then fill gaps
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 3, false)),
         &mut ctx,
@@ -120,7 +120,7 @@ fn should_flush_buffer_when_gap_filled() {
         &mut ctx,
     );
 
-    // Assert - all buffered chunks should be flushed
+    // Assert
     assert_eq!(inbox.buffered_count(&correlation_id), 0);
 }
 
@@ -131,7 +131,7 @@ fn should_cleanup_stream_when_final_chunk_received() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - send chunks with stream_end on last
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 0, false)),
         &mut ctx,
@@ -154,7 +154,7 @@ fn should_cleanup_when_buffered_final_chunk_flushed() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - receive final chunk before earlier chunks
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 2, true)),
         &mut ctx,
@@ -170,7 +170,7 @@ fn should_cleanup_when_buffered_final_chunk_flushed() {
         &mut ctx,
     );
 
-    // Assert - stream cleaned up when buffered final chunk flushed
+    // Assert
     assert_eq!(inbox.active_streams(), 0);
 }
 
@@ -181,7 +181,7 @@ fn should_drop_duplicate_chunks() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - send seq 0 twice
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 0, false)),
         &mut ctx,
@@ -195,7 +195,7 @@ fn should_drop_duplicate_chunks() {
         &mut ctx,
     );
 
-    // Assert - should complete successfully (duplicate dropped)
+    // Assert
     assert_eq!(inbox.active_streams(), 0);
 }
 
@@ -208,7 +208,7 @@ fn should_handle_multiple_concurrent_streams() {
     let correlation_id_2 = Uuid::new_v4();
     let correlation_id_3 = Uuid::new_v4();
 
-    // Act - start 3 different streams
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id_1, 0, false)),
         &mut ctx,
@@ -234,7 +234,7 @@ fn should_isolate_streams_by_correlation_id() {
     let correlation_id_1 = Uuid::new_v4();
     let correlation_id_2 = Uuid::new_v4();
 
-    // Act - complete one stream, leave another active
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id_1, 0, true)),
         &mut ctx,
@@ -257,7 +257,7 @@ fn should_handle_buffer_overflow_by_disconnecting() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - send 6 out-of-order chunks (buffer limit is 5)
+    // Act
     for seq in 1..=6 {
         inbox.receive(
             InboxMessage::Response(create_response(correlation_id, seq, false)),
@@ -265,7 +265,7 @@ fn should_handle_buffer_overflow_by_disconnecting() {
         );
     }
 
-    // Assert - stream should be disconnected (cleaned up)
+    // Assert
     assert_eq!(inbox.active_streams(), 0);
 }
 
@@ -296,7 +296,7 @@ fn should_handle_large_sequence_gaps() {
     let mut ctx = create_context();
     let correlation_id = Uuid::new_v4();
 
-    // Act - receive seq 100 before seq 0
+    // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 100, false)),
         &mut ctx,
@@ -306,7 +306,7 @@ fn should_handle_large_sequence_gaps() {
         &mut ctx,
     );
 
-    // Assert - seq 100 should still be buffered
+    // Assert
     assert_eq!(inbox.active_streams(), 1);
     assert_eq!(inbox.buffered_count(&correlation_id), 1);
 }

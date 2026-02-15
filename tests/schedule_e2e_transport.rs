@@ -251,7 +251,7 @@ where
     let target_resource = "notifications";
     let target_operation = "send";
 
-    // Act - CREATE
+    // Act
     let create_frame = build_schedule_create(cron, target_resource, target_operation);
     let create_response = client
         .request(&create_frame, 5000)
@@ -264,7 +264,7 @@ where
 
     let schedule_id = parse_schedule_id(&data).expect("Expected schedule_id");
 
-    // Act - LIST
+    // Act
     let list_frame = build_schedule_list();
     let list_response = client
         .request(&list_frame, 2000)
@@ -277,7 +277,7 @@ where
     let ids = parse_schedule_list(&data);
     assert!(ids.contains(&schedule_id), "Expected schedule_id in list");
 
-    // Act - CANCEL
+    // Act
     let cancel_frame = build_schedule_cancel(&schedule_id);
     let cancel_response = client
         .request(&cancel_frame, 2000)
@@ -316,13 +316,15 @@ async fn should_handle_concurrent_schedule_operations<C>(server: &TestServer)
 where
     C: ScheduleConnector,
 {
-    // Arrange & Act
+    // Arrange
     let run_schedule = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let cron = "* * * * *";
         let target = format!("resource{}", idx);
 
         let create_frame = build_schedule_create(cron, &target, "op");
+
+        // Act
         let create_response = client
             .request(&create_frame, 4000)
             .await
@@ -332,7 +334,7 @@ where
         assert_eq!(status, 0);
     };
 
-    // Assert - All 3 concurrent operations complete
+    // Assert
     tokio::join!(run_schedule(0), run_schedule(1), run_schedule(2));
 }
 
@@ -343,7 +345,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    // Act - Valid cron
+    // Act
     let valid_frame = build_schedule_create("0 */6 * * *", "valid", "op");
     let valid_response = client
         .request(&valid_frame, 2000)
@@ -461,7 +463,7 @@ async fn should_create_schedules_in_authenticated_realm<C>(server: &TestServer)
 where
     C: ScheduleConnector,
 {
-    // Arrange - Connect with "other-realm" JWT
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
     let connect_frame = fitz::testkit::transport::build_connect_frame(
@@ -475,12 +477,12 @@ where
 
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Create schedule with "other-realm" JWT
+    // Act
     // Schedule payload doesn't specify realm, so it defaults to the realm from JWT
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
     let result = client.request(&create_frame, 1000).await;
 
-    // Assert - Should succeed because the schedule is created in "other-realm"
+    // Assert
     // and the JWT has permissions for "schedule://other-realm/**#*"
     assert!(
         result.is_ok(),
@@ -498,7 +500,7 @@ async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server
 where
     C: ScheduleConnector,
 {
-    // Arrange - First client
+    // Arrange
     let mut client1 = C::connect(server).await.expect("failed to connect");
     let connect_frame1 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -510,7 +512,7 @@ where
         .expect("CONNECT 1");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Arrange - Second client
+    // Arrange
     let mut client2 = C::connect(server).await.expect("failed to connect");
     let connect_frame2 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -522,7 +524,7 @@ where
         .expect("CONNECT 2");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Both clients create schedules
+    // Act
     let create1 = build_schedule_create("* * * * *", "res1", "op");
     let response1 = client1.request(&create1, 2000).await.expect("CREATE 1");
     assert_eq!(parse_schedule_response(&response1).1, 0);
@@ -542,7 +544,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let pattern = "schedule://test/app/*/fired";
 
-    // Act - SUBSCRIBE
+    // Act
     let subscribe_frame = build_schedule_subscribe(pattern);
     let subscribe_response = client
         .request(&subscribe_frame, 2000)
@@ -568,7 +570,7 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Act - UNSUBSCRIBE
+    // Act
     let unsubscribe_frame = build_schedule_unsubscribe(pattern);
     let unsubscribe_response = client
         .request(&unsubscribe_frame, 2000)
@@ -587,7 +589,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    // Act - LIST (empty)
+    // Act
     let list_frame = build_schedule_list();
     let list_response = client.request(&list_frame, 2000).await.expect("LIST");
 
@@ -604,7 +606,7 @@ async fn should_isolate_schedules_across_realms<C>(server: &TestServer)
 where
     C: ScheduleConnector,
 {
-    // Arrange - Create schedule in test realm
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
@@ -617,7 +619,7 @@ where
     assert_eq!(status, 0);
     let schedule_id = parse_schedule_id(&data).expect("schedule_id");
 
-    // Assert - Schedule exists
+    // Assert
     assert!(!schedule_id.is_empty());
 }
 
@@ -649,11 +651,11 @@ where
     let create_frame = build_schedule_create("* * * * *", "resource", "op");
     client.request(&create_frame, 1000).await.expect("CREATE");
 
-    // Act - Drop connection
+    // Act
     drop(client);
     fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
-    // Act - Reconnect and create again
+    // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let create_frame2 = build_schedule_create("* * * * *", "resource2", "op");
     let response = client2

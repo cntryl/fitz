@@ -168,7 +168,7 @@ async fn should_serve_spa_for_unknown_paths() {
         .await
         .unwrap();
 
-    // Assert - Unknown paths serve SPA (for client-side routing)
+    // Assert
     // 404 is OK if public/index.html doesn't exist in test environment
     assert!(response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND);
 }
@@ -191,6 +191,6 @@ async fn should_serve_spa_at_root() {
         .await
         .unwrap();
 
-    // Assert - Should try to serve SPA (404 if file doesn't exist is OK for test)
+    // Assert
     assert!(response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND);
 }

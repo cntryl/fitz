@@ -200,28 +200,28 @@ where
     let route = "lease://test/app/lock1";
     let owner_id = "owner-1";
 
-    // Act - ACQUIRE
+    // Act
     let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client
         .request(&acquire_frame, 2000)
         .await
         .expect("ACQUIRE request failed");
 
-    // Assert - ACQUIRE success
+    // Assert
     let (msg_type, status, data) = parse_lease_response(&response);
     assert_eq!(msg_type, 400, "Expected ACQUIRE response (400)");
     assert_eq!(status, 0, "Expected success status");
     let token = parse_lease_token_response(&data).expect("Expected fencing token");
     assert!(token > 0, "Expected valid fencing token");
 
-    // Act - RENEW
+    // Act
     let renew_frame = build_lease_renew(route, owner_id, token, 30);
     let response = client
         .request(&renew_frame, 2000)
         .await
         .expect("RENEW request failed");
 
-    // Assert - RENEW success
+    // Assert
     let (msg_type, status, data) = parse_lease_response(&response);
     assert_eq!(msg_type, 401, "Expected RENEW response (401)");
     assert_eq!(status, 0, "Expected success status");
@@ -231,14 +231,14 @@ where
         "Expected monotonically increasing fencing token"
     );
 
-    // Act - RELEASE
+    // Act
     let release_frame = build_lease_release(route, owner_id, new_token);
     let response = client
         .request(&release_frame, 2000)
         .await
         .expect("RELEASE request failed");
 
-    // Assert - RELEASE success
+    // Assert
     let (msg_type, status, _data) = parse_lease_response(&response);
     assert_eq!(msg_type, 402, "Expected RELEASE response (402)");
     assert_eq!(status, 0, "Expected success status");
@@ -271,13 +271,15 @@ async fn should_handle_concurrent_connections_with_separate_leases<C>(server: &T
 where
     C: LeaseConnector,
 {
-    // Arrange & Act
+    // Arrange
     let run_lease = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let route = format!("lease://test/app/concurrent{}", idx);
         let owner = format!("owner-{}", idx);
 
         let acquire_frame = build_lease_acquire_immediate(&route, &owner, 30);
+
+        // Act
         let response = client
             .request(&acquire_frame, 4000)
             .await
@@ -307,7 +309,7 @@ where
         token
     };
 
-    // Assert - All 3 concurrent operations complete
+    // Assert
     let (t1, t2, t3) = tokio::join!(run_lease(0), run_lease(1), run_lease(2));
     let tokens = [t1, t2, t3];
     assert_eq!(
@@ -326,7 +328,7 @@ where
     let mut client2 = C::connect(server).await.expect("failed to connect");
     let route = "lease://test/app/contended";
 
-    // Act - Client 1 acquires lease
+    // Act
     let acquire1_frame = build_lease_acquire_immediate(route, "owner-1", 30);
     let response1 = client1
         .request(&acquire1_frame, 2000)
@@ -336,14 +338,14 @@ where
     assert_eq!(status1, 0);
     let token1 = parse_lease_token_response(&data1).expect("Expected token");
 
-    // Act - Client 2 tries to acquire same lease
+    // Act
     let acquire2_frame = build_lease_acquire_immediate(route, "owner-2", 30);
     let response2 = client2
         .request(&acquire2_frame, 2000)
         .await
         .expect("ACQUIRE 2");
 
-    // Assert - Client 2 should be rejected or get error
+    // Assert
     let (_msg_type, status2, _data2) = parse_lease_response(&response2);
     assert_eq!(status2, 1, "Expected error when lease already held");
 
@@ -367,7 +369,7 @@ where
     let (_msg_type, _status, data) = parse_lease_response(&response);
     let _token = parse_lease_token_response(&data).expect("Expected token");
 
-    // Act - Try to renew with wrong token
+    // Act
     let renew_frame = build_lease_renew(route, owner_id, 99999, 30);
     let response = client
         .request(&renew_frame, 2000)
@@ -501,7 +503,7 @@ where
 
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Try to access test-realm lease
+    // Act
     let acquire_frame = build_lease_acquire_immediate("lease://test-realm/app/lock", "owner-1", 30);
     let result = client.request(&acquire_frame, 1000).await;
 
@@ -513,7 +515,7 @@ async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server
 where
     C: LeaseConnector,
 {
-    // Arrange - First client
+    // Arrange
     let mut client1 = C::connect(server).await.expect("failed to connect");
     let connect_frame1 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -525,7 +527,7 @@ where
         .expect("CONNECT 1");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Arrange - Second client
+    // Arrange
     let mut client2 = C::connect(server).await.expect("failed to connect");
     let connect_frame2 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -537,7 +539,7 @@ where
         .expect("CONNECT 2");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Both clients acquire different leases
+    // Act
     let acquire1 = build_lease_acquire_immediate("lease://test-realm/app/lock1", "owner-1", 30);
     let response1 = client1.request(&acquire1, 2000).await.expect("ACQUIRE 1");
     let (_msg_type, status1, data1) = parse_lease_response(&response1);
@@ -550,7 +552,7 @@ where
     assert_eq!(status2, 0);
     let token2 = parse_lease_token_response(&data2).expect("Expected token");
 
-    // Assert - Both got unique tokens
+    // Assert
     assert!(token1 > 0, "Expected valid token for client 1");
     assert!(token2 > 0, "Expected valid token for client 2");
 }
@@ -563,7 +565,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "lease://test/app/noprep";
 
-    // Act - Try to renew without acquiring
+    // Act
     let renew_frame = build_lease_renew(route, "owner-1", 12345, 30);
     let result = client.request(&renew_frame, 2000).await;
 
@@ -596,7 +598,7 @@ where
     let release_frame = build_lease_release(route, owner_id, token);
     client.request(&release_frame, 2000).await.expect("RELEASE");
 
-    // Act - Try to release again
+    // Act
     let release_frame2 = build_lease_release(route, owner_id, token);
     let response = client
         .request(&release_frame2, 2000)
@@ -620,7 +622,7 @@ where
     let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
 
-    // Act - Query lease status
+    // Act
     let query_frame = build_lease_query(route);
     let response = client.request(&query_frame, 2000).await.expect("QUERY");
 
@@ -638,7 +640,7 @@ where
     let route = "lease://test/app/monotonic";
     let owner_id = "owner-1";
 
-    // Act - Acquire and renew multiple times
+    // Act
     let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
     let token1 =
@@ -654,7 +656,7 @@ where
     let token3 =
         parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
-    // Assert - Tokens are monotonically increasing
+    // Assert
     assert!(token2 > token1, "Token 2 should be > Token 1");
     assert!(token3 > token2, "Token 3 should be > Token 2");
 }
@@ -666,7 +668,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    // Act - Acquire two different leases
+    // Act
     let acquire1 = build_lease_acquire_immediate("lease://test/app/lock1", "owner-1", 30);
     let response1 = client.request(&acquire1, 2000).await.expect("ACQUIRE 1");
     let token1 =
@@ -677,11 +679,11 @@ where
     let token2 =
         parse_lease_token_response(&parse_lease_response(&response2).2).expect("Expected token");
 
-    // Assert - Different leases, independent tokens
+    // Assert
     assert!(token1 > 0, "Expected valid token for lease 1");
     assert!(token2 > 0, "Expected valid token for lease 2");
 
-    // Act - Release one should not affect the other
+    // Act
     let release1 = build_lease_release("lease://test/app/lock1", "owner-1", token1);
     let response = client.request(&release1, 2000).await.expect("RELEASE 1");
     assert_eq!(parse_lease_response(&response).1, 0);
@@ -727,11 +729,11 @@ where
     let token =
         parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
 
-    // Act - Drop connection
+    // Act
     drop(client);
     fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
-    // Act - Reconnect and try to renew with old token
+    // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let renew_frame = build_lease_renew(route, owner_id, token, 30);
     let response = client2
@@ -739,7 +741,7 @@ where
         .await
         .expect("server should respond");
 
-    // Assert - Token validity depends on TTL, but connection drop shouldn't break the system
+    // Assert
     let (_msg_type, status, _data) = parse_lease_response(&response);
     // Status could be 0 (if lease still valid) or 1 (if expired), but should not crash
     assert!(

@@ -239,34 +239,34 @@ where
     let pattern = "notice://test/app/events";
     let publish_payload = b"test-event";
 
-    // Act - SUBSCRIBE
+    // Act
     let subscribe_frame = build_notice_subscribe(pattern);
     let response = client
         .request(&subscribe_frame, 2000)
         .await
         .expect("SUBSCRIBE request failed");
 
-    // Assert - SUBSCRIBE success
+    // Assert
     let (msg_type, status, data) = parse_notice_response(&response);
     assert_eq!(msg_type, 501, "Expected SUBSCRIBE response (501)");
     assert_eq!(status, 0, "Expected success status");
     let subscription_id = parse_subscription_id(&data).expect("Expected subscription ID");
     assert!(subscription_id > 0, "Expected valid subscription ID");
 
-    // Act - PUBLISH to subscribed pattern
+    // Act
     let publish_frame = build_notice_publish(pattern, publish_payload);
     client
         .send_frame(&publish_frame)
         .await
         .expect("PUBLISH send failed");
 
-    // Act - Wait for NOTIFY message
+    // Act
     let notify_frame = client
         .recv_frame(2000)
         .await
         .expect("Expected NOTIFY message");
 
-    // Assert - NOTIFY received with correct data
+    // Assert
     let (received_sub_id, received_route, received_payload) = parse_notify_message(&notify_frame);
     assert_eq!(
         received_sub_id, subscription_id,
@@ -306,12 +306,14 @@ async fn should_handle_concurrent_connections_with_separate_subscriptions<C>(ser
 where
     C: NoticeConnector,
 {
-    // Arrange & Act
+    // Arrange
     let run_subscription = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
         let pattern = format!("notice://test/app/concurrent{}", idx);
 
         let subscribe_frame = build_notice_subscribe(&pattern);
+
+        // Act
         let response = client
             .request(&subscribe_frame, 4000)
             .await
@@ -332,7 +334,7 @@ where
         subscription_id
     };
 
-    // Assert - All 3 concurrent operations complete
+    // Assert
     let (id1, id2, id3) = tokio::join!(
         run_subscription(0),
         run_subscription(1),
@@ -354,7 +356,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let mut subscription_ids = vec![];
 
-    // Act - Subscribe to 3 different patterns
+    // Act
     for i in 0..3 {
         let pattern = format!("notice://test/app/pattern{}", i);
         let subscribe_frame = build_notice_subscribe(&pattern);
@@ -369,7 +371,7 @@ where
         subscription_ids.push(subscription_id);
     }
 
-    // Assert - All IDs are unique
+    // Assert
     assert_eq!(subscription_ids.len(), 3);
     assert_eq!(
         subscription_ids,
@@ -386,7 +388,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let pattern = "notice://test/app/*";
 
-    // Act - Subscribe to wildcard
+    // Act
     let subscribe_frame = build_notice_subscribe(pattern);
     let response = client
         .request(&subscribe_frame, 2000)
@@ -396,11 +398,11 @@ where
     assert_eq!(status, 0);
     let subscription_id = parse_subscription_id(&data).expect("Expected subscription ID");
 
-    // Act - Publish to matching route
+    // Act
     let publish_frame = build_notice_publish("notice://test/app/events", b"wildcard-match");
     client.send_frame(&publish_frame).await.expect("PUBLISH");
 
-    // Act - Receive notification
+    // Act
     let notify_frame = client.recv_frame(2000).await.expect("Expected NOTIFY");
 
     // Assert
@@ -533,7 +535,7 @@ where
 
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Try to subscribe to test-realm pattern
+    // Act
     let subscribe_frame = build_notice_subscribe("notice://test-realm/app/events");
     let result = client.request(&subscribe_frame, 1000).await;
 
@@ -545,7 +547,7 @@ async fn should_create_separate_sessions_for_each_connection_with_auth<C>(server
 where
     C: NoticeConnector,
 {
-    // Arrange - First client
+    // Arrange
     let mut client1 = C::connect(server).await.expect("failed to connect");
     let connect_frame1 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -557,7 +559,7 @@ where
         .expect("CONNECT 1");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Arrange - Second client
+    // Arrange
     let mut client2 = C::connect(server).await.expect("failed to connect");
     let connect_frame2 = fitz::testkit::transport::build_connect_frame(
         "test-realm",
@@ -569,7 +571,7 @@ where
         .expect("CONNECT 2");
     fitz::testkit::transport::wait_for_auth_ready().await;
 
-    // Act - Both clients subscribe
+    // Act
     let pattern = "notice://test-realm/app/shared";
     let subscribe1 = build_notice_subscribe(pattern);
     let response1 = client1
@@ -585,7 +587,7 @@ where
         .expect("SUBSCRIBE 2");
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
-    // Assert - Both got unique subscription IDs
+    // Assert
     assert!(id1 > 0, "Expected subscription_id for first connection");
     assert!(id2 > 0, "Expected subscription_id for second connection");
     assert_ne!(id1, id2, "Expected distinct subscription IDs per session");
@@ -599,7 +601,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
     let pattern = "notice://test/app/unsub";
 
-    // ActAct - Subscribe
+    // Act
     let subscribe_frame = build_notice_subscribe(pattern);
     let response = client
         .request(&subscribe_frame, 2000)
@@ -608,7 +610,7 @@ where
     let (_, status, _) = parse_notice_response(&response);
     assert_eq!(status, 0);
 
-    // Act - Unsubscribe
+    // Act
     let unsubscribe_frame = build_notice_unsubscribe(pattern);
     let response = client
         .request(&unsubscribe_frame, 2000)
@@ -628,7 +630,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    // Act - Subscribe to multiple patterns
+    // Act
     for i in 0..3 {
         let pattern = format!("notice://test/app/pattern{}", i);
         let subscribe_frame = build_notice_subscribe(&pattern);
@@ -638,7 +640,7 @@ where
             .expect("SUBSCRIBE");
     }
 
-    // Act - Unsubscribe all
+    // Act
     let unsubscribe_all_frame = build_notice_unsubscribe_all();
     let response = client
         .request(&unsubscribe_all_frame, 2000)
@@ -665,11 +667,11 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Act - Publish with empty payload
+    // Act
     let publish_frame = build_notice_publish(pattern, b"");
     client.send_frame(&publish_frame).await.expect("PUBLISH");
 
-    // Assert - Should receive notification
+    // Assert
     let notify_frame = client.recv_frame(2000).await.expect("Expected NOTIFY");
     let (_, _, payload) = parse_notify_message(&notify_frame);
     assert_eq!(payload.len(), 0, "Expected empty payload");
@@ -690,11 +692,11 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Act - Publish with large payload
+    // Act
     let publish_frame = build_notice_publish(pattern, &large_payload);
     client.send_frame(&publish_frame).await.expect("PUBLISH");
 
-    // Assert - Should receive notification
+    // Assert
     let notify_frame = client.recv_frame(3000).await.expect("Expected NOTIFY");
     let (_, _, payload) = parse_notify_message(&notify_frame);
     assert_eq!(payload.len(), 60_000, "Expected 60KB payload");
@@ -709,7 +711,7 @@ where
     let mut client2 = C::connect(server).await.expect("failed to connect 2");
     let pattern = "notice://test/app/fanout";
 
-    // Act - Both subscribe to same pattern
+    // Act
     let subscribe_frame1 = build_notice_subscribe(pattern);
     let response1 = client1
         .request(&subscribe_frame1, 2000)
@@ -724,11 +726,11 @@ where
         .expect("SUBSCRIBE 2");
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
-    // Act - Publish once
+    // Act
     let publish_frame = build_notice_publish(pattern, b"fanout-test");
     client1.send_frame(&publish_frame).await.expect("PUBLISH");
 
-    // Assert - Both subscribers receive notification
+    // Assert
     let notify1 = client1.recv_frame(2000).await.expect("Expected NOTIFY 1");
     let (received_id1, _, _) = parse_notify_message(&notify1);
     assert_eq!(received_id1, id1);
@@ -745,7 +747,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
 
-    // Act - Subscribe to two different patterns
+    // Act
     let subscribe1 = build_notice_subscribe("notice://test/app/pattern1");
     let response1 = client
         .request(&subscribe1, 2000)
@@ -760,17 +762,17 @@ where
         .expect("SUBSCRIBE 2");
     let id2 = parse_subscription_id(&parse_notice_response(&response2).2).expect("Expected ID");
 
-    // Act - Publish to pattern1 only
+    // Act
     let publish_frame = build_notice_publish("notice://test/app/pattern1", b"isolated");
     client.send_frame(&publish_frame).await.expect("PUBLISH");
 
-    // Assert - Only pattern1 subscriber receives notification
+    // Assert
     let notify = client.recv_frame(2000).await.expect("Expected NOTIFY");
     let (received_id, _, _) = parse_notify_message(&notify);
     assert_eq!(received_id, id1, "Expected notification for pattern1 only");
     assert_ne!(received_id, id2, "pattern2 should not receive notification");
 
-    // Assert - No additional notifications
+    // Assert
     let result = client.recv_frame(500).await;
     assert!(result.is_err(), "Expected no notification for pattern2");
 }
@@ -807,11 +809,11 @@ where
         .await
         .expect("SUBSCRIBE");
 
-    // Act - Drop connection
+    // Act
     drop(client);
     fitz::testkit::transport::wait_for_disconnect_cleanup().await;
 
-    // Act - Reconnect and subscribe again (should succeed)
+    // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let subscribe_frame2 = build_notice_subscribe(pattern);
     let response = client2

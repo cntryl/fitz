@@ -74,7 +74,7 @@ fn should_complete_full_kv_transaction_cycle() {
     // Execute: COMMIT operation
     let commit_response = actor.handle(KvMessage::Commit { tx_id });
 
-    // Assert - Should succeed (Midge behavior dependent)
+    // Assert
     match commit_response {
         KvResponse::CommitOk => { /* Success */ }
         KvResponse::Error { .. } => { /* Also acceptable depending on Midge state */ }
@@ -176,7 +176,7 @@ fn should_support_kv_scan() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act - SCAN
+    // Act
     let scan_response = actor.handle(KvMessage::Scan {
         tx_id,
         route_family,
@@ -189,7 +189,7 @@ fn should_support_kv_scan() {
         },
     });
 
-    // Assert - should get results
+    // Assert
     assert!(matches!(scan_response, KvResponse::ScanResult { .. }));
 }
 
@@ -200,7 +200,7 @@ fn should_reject_operations_without_transaction() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - Try to PUT without BEGIN
+    // Act
     let put_response = actor.handle(KvMessage::Put {
         tx_id: 999, // Invalid tx_id
         route_family,
@@ -270,7 +270,7 @@ fn should_maintain_realm_isolation_across_transactions() {
 
     actor.handle(KvMessage::Commit { tx_id: tx_b });
 
-    // Assert - Both realms maintain separate data
+    // Assert
     // Note: In actual implementation, realm isolation is enforced by CF mapping
     // This test verifies the actor accepts different realms
 }
@@ -282,7 +282,7 @@ fn should_handle_multiple_concurrent_transactions() {
     let mut actor = KvActor::new(store);
     let route_family = RouteFamily::new(1);
 
-    // Act - Create multiple transactions
+    // Act
     let tx1 = actor.handle(KvMessage::Begin {
         route_family,
         realm: "realm".to_string(),
@@ -301,7 +301,7 @@ fn should_handle_multiple_concurrent_transactions() {
         write_options: WriteOptions::buffered(),
     });
 
-    // Assert - Both transactions should succeed (different resources)
+    // Assert
     assert!(matches!(tx1, KvResponse::BeginOk { .. }));
     assert!(matches!(tx2, KvResponse::BeginOk { .. }));
 }
