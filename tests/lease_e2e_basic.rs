@@ -28,6 +28,7 @@ fn should_acquire_lease_successfully() {
         route: Route::new("lease://realm/locks/db-migration/acquire"),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
 
     // Act
@@ -52,6 +53,7 @@ fn should_renew_lease_successfully() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -84,6 +86,7 @@ fn should_release_lease_successfully() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 

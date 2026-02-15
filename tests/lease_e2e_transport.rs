@@ -76,18 +76,33 @@ impl LeaseConnector for WsConnector {
 }
 
 /// Build Lease ACQUIRE request frame
-/// Wire format: [u32 BE route_len][route][u32 BE owner_len][owner_id][u64 BE ttl_secs]
-fn build_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -> Vec<u8> {
+/// Wire format: [u32 BE route_len][route][u32 BE owner_len][owner_id][u64 BE ttl_secs][u32 BE wait_seconds (optional)]
+fn build_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64, wait_seconds: Option<u32>) -> Vec<u8> {
     let mut payload = BytesMut::new();
     payload.put_slice(&(route.len() as u32).to_be_bytes());
     payload.put_slice(route.as_bytes());
     payload.put_slice(&(owner_id.len() as u32).to_be_bytes());
     payload.put_slice(owner_id.as_bytes());
     payload.put_slice(&ttl_secs.to_be_bytes());
+    
+    // Include wait_seconds if provided
+    if let Some(ws) = wait_seconds {
+        payload.put_slice(&ws.to_be_bytes());
+    }
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(400, &payload);
     builder.build()
+}
+
+/// Helper: Build Lease ACQUIRE with immediate fail (wait_seconds=0)
+fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: u64) -> Vec<u8> {
+    build_lease_acquire(route, owner_id, ttl_secs, None)
+}
+
+/// Helper: Build Lease ACQUIRE with wait
+fn build_lease_acquire_with_wait(route: &str, owner_id: &str, ttl_secs: u64, wait_seconds: u32) -> Vec<u8> {
+    build_lease_acquire(route, owner_id, ttl_secs, Some(wait_seconds))
 }
 
 /// Build Lease RENEW request frame
@@ -186,7 +201,7 @@ where
     let owner_id = "owner-1";
 
     // Act - ACQUIRE
-    let acquire_frame = build_lease_acquire(route, owner_id, 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client
         .request(&acquire_frame, 2000)
         .await
@@ -235,14 +250,14 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
-    let warmup_frame = build_lease_acquire("lease://test/app/warmup", "warmup", 30);
+    let warmup_frame = build_lease_acquire_immediate("lease://test/app/warmup", "warmup", 30);
     let _ = client
         .request(&warmup_frame, 1000)
         .await
         .expect("warmup failed");
 
     // Act
-    let acquire_frame = build_lease_acquire("lease://test/app/bench", "bench", 30);
+    let acquire_frame = build_lease_acquire_immediate("lease://test/app/bench", "bench", 30);
     let response = client
         .request(&acquire_frame, 500)
         .await
@@ -262,7 +277,7 @@ where
         let route = format!("lease://test/app/concurrent{}", idx);
         let owner = format!("owner-{}", idx);
 
-        let acquire_frame = build_lease_acquire(&route, &owner, 30);
+        let acquire_frame = build_lease_acquire_immediate(&route, &owner, 30);
         let response = client
             .request(&acquire_frame, 4000)
             .await
@@ -312,7 +327,7 @@ where
     let route = "lease://test/app/contended";
 
     // Act - Client 1 acquires lease
-    let acquire1_frame = build_lease_acquire(route, "owner-1", 30);
+    let acquire1_frame = build_lease_acquire_immediate(route, "owner-1", 30);
     let response1 = client1
         .request(&acquire1_frame, 2000)
         .await
@@ -322,7 +337,7 @@ where
     let token1 = parse_lease_token_response(&data1).expect("Expected token");
 
     // Act - Client 2 tries to acquire same lease
-    let acquire2_frame = build_lease_acquire(route, "owner-2", 30);
+    let acquire2_frame = build_lease_acquire_immediate(route, "owner-2", 30);
     let response2 = client2
         .request(&acquire2_frame, 2000)
         .await
@@ -347,7 +362,7 @@ where
     let route = "lease://test/app/invalid";
     let owner_id = "owner-1";
 
-    let acquire_frame = build_lease_acquire(route, owner_id, 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
     let (_msg_type, _status, data) = parse_lease_response(&response);
     let _token = parse_lease_token_response(&data).expect("Expected token");
@@ -372,7 +387,7 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
 
     // Act
-    let acquire_frame = build_lease_acquire("lease://test/app/lock", "owner-1", 30);
+    let acquire_frame = build_lease_acquire_immediate("lease://test/app/lock", "owner-1", 30);
     let result = client.request(&acquire_frame, 1000).await;
 
     // Assert
@@ -401,7 +416,7 @@ where
     fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
-    let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
+    let acquire_frame = build_lease_acquire_immediate("lease://test-realm/app/lock", "owner-1", 30);
     let response = client
         .request(&acquire_frame, 2000)
         .await
@@ -432,7 +447,7 @@ where
     fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
-    let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
+    let acquire_frame = build_lease_acquire_immediate("lease://test-realm/app/lock", "owner-1", 30);
     let result = client.request(&acquire_frame, 1000).await;
 
     // Assert
@@ -458,7 +473,7 @@ where
     fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act
-    let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
+    let acquire_frame = build_lease_acquire_immediate("lease://test-realm/app/lock", "owner-1", 30);
     let result = client.request(&acquire_frame, 1000).await;
 
     // Assert
@@ -487,7 +502,7 @@ where
     fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Try to access test-realm lease
-    let acquire_frame = build_lease_acquire("lease://test-realm/app/lock", "owner-1", 30);
+    let acquire_frame = build_lease_acquire_immediate("lease://test-realm/app/lock", "owner-1", 30);
     let result = client.request(&acquire_frame, 1000).await;
 
     // Assert
@@ -523,13 +538,13 @@ where
     fitz::testkit::transport::wait_for_auth_ready().await;
 
     // Act - Both clients acquire different leases
-    let acquire1 = build_lease_acquire("lease://test-realm/app/lock1", "owner-1", 30);
+    let acquire1 = build_lease_acquire_immediate("lease://test-realm/app/lock1", "owner-1", 30);
     let response1 = client1.request(&acquire1, 2000).await.expect("ACQUIRE 1");
     let (_msg_type, status1, data1) = parse_lease_response(&response1);
     assert_eq!(status1, 0);
     let token1 = parse_lease_token_response(&data1).expect("Expected token");
 
-    let acquire2 = build_lease_acquire("lease://test-realm/app/lock2", "owner-2", 30);
+    let acquire2 = build_lease_acquire_immediate("lease://test-realm/app/lock2", "owner-2", 30);
     let response2 = client2.request(&acquire2, 2000).await.expect("ACQUIRE 2");
     let (_msg_type, status2, data2) = parse_lease_response(&response2);
     assert_eq!(status2, 0);
@@ -573,7 +588,7 @@ where
     let route = "lease://test/app/lifecycle";
     let owner_id = "owner-1";
 
-    let acquire_frame = build_lease_acquire(route, owner_id, 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
     let token =
         parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
@@ -602,7 +617,7 @@ where
     let route = "lease://test/app/queryable";
     let owner_id = "owner-1";
 
-    let acquire_frame = build_lease_acquire(route, owner_id, 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
 
     // Act - Query lease status
@@ -624,7 +639,7 @@ where
     let owner_id = "owner-1";
 
     // Act - Acquire and renew multiple times
-    let acquire_frame = build_lease_acquire(route, owner_id, 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client.request(&acquire_frame, 2000).await.expect("ACQUIRE");
     let token1 =
         parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
@@ -652,12 +667,12 @@ where
     let mut client = C::connect(server).await.expect("failed to connect");
 
     // Act - Acquire two different leases
-    let acquire1 = build_lease_acquire("lease://test/app/lock1", "owner-1", 30);
+    let acquire1 = build_lease_acquire_immediate("lease://test/app/lock1", "owner-1", 30);
     let response1 = client.request(&acquire1, 2000).await.expect("ACQUIRE 1");
     let token1 =
         parse_lease_token_response(&parse_lease_response(&response1).2).expect("Expected token");
 
-    let acquire2 = build_lease_acquire("lease://test/app/lock2", "owner-1", 30);
+    let acquire2 = build_lease_acquire_immediate("lease://test/app/lock2", "owner-1", 30);
     let response2 = client.request(&acquire2, 2000).await.expect("ACQUIRE 2");
     let token2 =
         parse_lease_token_response(&parse_lease_response(&response2).2).expect("Expected token");
@@ -707,7 +722,7 @@ where
     let route = "lease://test/app/disconnect";
     let owner_id = "owner-1";
 
-    let acquire_frame = build_lease_acquire(route, owner_id, 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner_id, 30);
     let response = client.request(&acquire_frame, 1000).await.expect("ACQUIRE");
     let token =
         parse_lease_token_response(&parse_lease_response(&response).2).expect("Expected token");
@@ -1025,3 +1040,4 @@ async fn should_handle_connection_drop_during_lease_ws() {
         .expect("failed to start test server");
     should_handle_connection_drop_during_lease::<WsConnector>(&server).await;
 }
+

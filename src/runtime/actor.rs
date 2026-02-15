@@ -163,6 +163,15 @@ impl<A: Actor + ?Sized> Context<A> {
         &self.metrics
     }
 
+    /// Get the current envelope metadata being processed
+    ///
+    /// Returns Some if this context is processing a message; None if called
+    /// outside message processing (e.g., from timer callbacks where deferred
+    /// responses must be sent manually).
+    pub fn current_metadata(&self) -> &Option<crate::runtime::envelope::EnvelopeMetadata> {
+        &self.current_metadata
+    }
+
     /// Set the current envelope metadata being processed (internal use by scheduler)
     pub(crate) fn set_current_metadata(
         &mut self,

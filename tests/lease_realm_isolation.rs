@@ -72,6 +72,7 @@ fn should_isolate_leases_by_realm() {
         route: Route::new("lease://acme/locks/config"),
         owner_id: "app1".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg_acme, &mut ctx);
 
@@ -81,6 +82,7 @@ fn should_isolate_leases_by_realm() {
         route: Route::new("lease://evil/locks/config"),
         owner_id: "app2".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg_evil, &mut ctx);
 
@@ -131,6 +133,7 @@ fn should_enforce_realm_in_lease_operations() {
         route: Route::new("lease://realm1/locks/resource"),
         owner_id: "owner1".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg_acquire, &mut ctx);
 
@@ -162,6 +165,7 @@ fn should_prevent_cross_realm_lease_confusion() {
         route: Route::new("lease://realm-a/locks/resource"),
         owner_id: "owner-a".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg1, &mut ctx);
 
@@ -191,6 +195,7 @@ fn should_maintain_global_monotonic_tokens() {
         route: Route::new("lease://realm1/locks/resource"),
         owner_id: "owner1".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg1, &mut ctx);
 
@@ -200,6 +205,7 @@ fn should_maintain_global_monotonic_tokens() {
         route: Route::new("lease://realm2/locks/resource"),
         owner_id: "owner2".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg2, &mut ctx);
 
@@ -251,6 +257,7 @@ fn should_support_lease_operations_within_realm() {
         route: Route::new("lease://production/critical/database"),
         owner_id: "primary-db".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg_acquire, &mut ctx);
 
@@ -289,6 +296,7 @@ fn should_require_explicit_realm_in_lease_routes() {
         route: Route::new("lease://explicit-realm/locks/resource"),
         owner_id: "owner".to_string(),
         ttl_secs: 60,
+        wait_seconds: 0,
     };
     actor.receive(msg, &mut ctx);
 

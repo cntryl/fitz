@@ -35,6 +35,7 @@ impl SessionActor {
         route: Route,
         owner_id: String,
         ttl_secs: u64,
+        wait_seconds: u32,
         lease_actor: &mut LeaseActor,
         ctx: &mut Context<LeaseActor>,
     ) -> Result<(), String> {
@@ -48,6 +49,7 @@ impl SessionActor {
             route,
             owner_id,
             ttl_secs,
+            wait_seconds,
         };
         lease_actor.receive(msg, ctx);
         Ok(())
@@ -159,6 +161,7 @@ mod tests {
             Route::new("lease://realm/locks/db-migration"),
             "owner1".to_string(),
             30,
+            0,  // wait_seconds
             &mut actor,
             &mut ctx,
         );
@@ -185,6 +188,7 @@ mod tests {
             Route::new("lease://realm/locks/db-migration"),
             "owner1".to_string(),
             30,
+            0,  // wait_seconds
             &mut actor,
             &mut ctx,
         );
@@ -209,6 +213,7 @@ mod tests {
             Route::new("lease://realm/locks/db-migration"),
             "owner1".to_string(),
             30,
+            0,  // wait_seconds
             &mut actor,
             &mut ctx,
         );

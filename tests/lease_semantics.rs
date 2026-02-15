@@ -27,6 +27,7 @@ fn should_grant_lease_to_first_requester() {
         route: Route::new("lease://realm/locks/db-migration/acquire"),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
 
     // Act
@@ -51,6 +52,7 @@ fn should_reject_second_requester_when_lease_is_held() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg1, &mut ctx);
 
@@ -60,6 +62,7 @@ fn should_reject_second_requester_when_lease_is_held() {
         route: route.clone(),
         owner_id: "client-2".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg2, &mut ctx);
 
@@ -81,6 +84,7 @@ fn should_return_same_token_for_idempotent_acquire() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg1, &mut ctx);
 
@@ -89,6 +93,7 @@ fn should_return_same_token_for_idempotent_acquire() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg2, &mut ctx);
 
@@ -110,6 +115,7 @@ fn should_renew_lease_with_valid_token() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -141,6 +147,7 @@ fn should_release_lease_with_valid_token() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -171,6 +178,7 @@ fn should_allow_new_owner_after_release() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire1, &mut ctx);
 
@@ -188,6 +196,7 @@ fn should_allow_new_owner_after_release() {
         route: route.clone(),
         owner_id: "client-2".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire2, &mut ctx);
 
@@ -211,6 +220,7 @@ fn should_issue_monotonically_increasing_tokens() {
         route: route1,
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg1, &mut ctx);
 
@@ -219,6 +229,7 @@ fn should_issue_monotonically_increasing_tokens() {
         route: route2,
         owner_id: "client-2".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg2, &mut ctx);
 
@@ -227,6 +238,7 @@ fn should_issue_monotonically_increasing_tokens() {
         route: route3,
         owner_id: "client-3".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg3, &mut ctx);
 
@@ -248,6 +260,7 @@ fn should_isolate_leases_across_route_families() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg1, &mut ctx);
 
@@ -256,6 +269,7 @@ fn should_isolate_leases_across_route_families() {
         route: route.clone(),
         owner_id: "client-2".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(msg2, &mut ctx);
 
@@ -277,6 +291,7 @@ fn should_query_lease_status() {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 

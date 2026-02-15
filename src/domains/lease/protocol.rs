@@ -141,12 +141,19 @@ pub enum LeaseMessage {
     /// Lease identity: (family_id, realm, area, resource)
     /// If the lease is unowned or expired, grants it to the owner.
     /// If already owned by this owner, returns the existing token (idempotent).
-    /// If owned by another owner, fails.
+    /// If owned by another owner and wait_seconds > 0, queues the request.
+    /// If owned by another owner and wait_seconds = 0, fails immediately.
+    ///
+    /// wait_seconds: Maximum time to wait for lease to become available.
+    /// If 0, returns immediately with HeldByOther if unavailable.
+    /// If > 0, client waits up to this duration for the lease.
+    /// Must not exceed max_wait_seconds (default 30).
     Acquire {
         family_id: RouteFamily,
         route: Route,
         owner_id: String,
         ttl_secs: u64,
+        wait_seconds: u32,
     },
 
     /// Renew a lease
@@ -187,7 +194,8 @@ pub enum LeaseMessage {
 
     /// Periodic tick for runtime-driven expiration
     ///
-    /// The lease actor responds by proactively expiring old leases.
+    /// The lease actor responds by proactively expiring old leases
+    /// and checking if any waiting acquisitions can now be granted.
     /// This is sent periodically by the scheduler to ensure leases
     /// are expired even when not being actively accessed.
     Tick,
@@ -201,6 +209,31 @@ pub enum LeaseResponse {
 
     /// Lease already held by this owner (idempotent acquire)
     AlreadyHeld { fencing_token: u64 },
+
+    /// Acquire request queued and waiting for lease to become available
+    ///
+    /// The client should wait for a response with either Acquired, Timeout, or error.
+    /// The fencing_token is provisional and will be confirmed when the lease is granted.
+    Queued { fencing_token: u64 },
+
+    /// Already waiting for this lease with the same owner_id
+    ///
+    /// A second Acquire(wait) from the same owner while one is already pending.
+    /// Returns the existing queued state rather than queuing twice.
+    AlreadyQueued { fencing_token: u64 },
+
+    /// Acquire request timed out before lease became available
+    ///
+    /// The client waited the full wait_seconds duration but the lease
+    /// remained unavailable (held by another owner).
+    Timeout,
+
+    /// Too many waiters queued for this lease
+    ///
+    /// The pending queue depth has reached max_queue_depth.
+    /// Reject this acquire to prevent unbounded memory growth.
+    /// The client should back off and retry later.
+    QueueFull { pending_count: usize },
 
     /// Lease successfully renewed
     Renewed { fencing_token: u64 },
@@ -228,5 +261,6 @@ pub enum LeaseResponse {
         owner_id: String,
         fencing_token: u64,
         expires_in_secs: u64,
+        pending_waiters: usize,
     },
 }

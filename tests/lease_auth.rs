@@ -31,6 +31,7 @@ fn should_reject_unauthenticated_lease_acquire() {
         Route::new("lease://realm/locks/db-migration"),
         "owner1".to_string(),
         30,
+        0,  // wait_seconds
         &mut actor,
         &mut ctx,
     );
@@ -56,6 +57,7 @@ fn should_reject_lease_acquire_with_read_only_permission() {
         Route::new("lease://realm/locks/db-migration"),
         "owner1".to_string(),
         30,
+        0,  // wait_seconds
         &mut actor,
         &mut ctx,
     );
@@ -81,6 +83,7 @@ fn should_allow_lease_acquire_with_write_permission() {
         Route::new("lease://realm/locks/db-migration"),
         "owner1".to_string(),
         30,
+        0,  // wait_seconds
         &mut actor,
         &mut ctx,
     );
@@ -196,6 +199,7 @@ fn should_enforce_realm_boundary_for_lease_operations() {
         Route::new("lease://dev/locks/db-migration"),
         "owner1".to_string(),
         30,
+        0,  // wait_seconds
         &mut actor,
         &mut ctx,
     );

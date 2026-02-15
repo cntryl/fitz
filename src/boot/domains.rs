@@ -1788,6 +1788,7 @@ impl LeaseDomainSink {
                         owner_id: state.owner_id.clone(),
                         fencing_token: state.fencing_token,
                         expires_in_secs: expires_in.as_secs(),
+                        pending_waiters: 0,  // boot domain doesn't track waiters
                     }
                 }
             }
@@ -1854,6 +1855,7 @@ impl MailboxSink for LeaseDomainSink {
                 route,
                 owner_id,
                 ttl_secs,
+                wait_seconds: _,
             } => match LeaseKey::from_route(family_id, &route) {
                 Some(key) => self.handle_acquire(key, effective_owner(owner_id), ttl_secs),
                 None => LeaseResponse::NotFound,
@@ -1906,6 +1908,26 @@ impl MailboxSink for LeaseDomainSink {
                     token: Some(fencing_token),
                 }
             }
+            LeaseResponse::Queued { fencing_token } => {
+                // Wait-capable acquire - return Ok with token (response will be sent later)
+                crate::protocol::lease_codec::LeaseResponse::Ok {
+                    token: Some(fencing_token),
+                }
+            }
+            LeaseResponse::AlreadyQueued { fencing_token } => {
+                crate::protocol::lease_codec::LeaseResponse::Ok {
+                    token: Some(fencing_token),
+                }
+            }
+            LeaseResponse::Timeout => {
+                crate::protocol::lease_codec::LeaseResponse::Error("Acquire timeout".to_string())
+            }
+            LeaseResponse::QueueFull { pending_count } => {
+                crate::protocol::lease_codec::LeaseResponse::Error(format!(
+                    "Queue full: {} pending",
+                    pending_count
+                ))
+            }
             LeaseResponse::Renewed { fencing_token } => {
                 crate::protocol::lease_codec::LeaseResponse::Ok {
                     token: Some(fencing_token),
@@ -1939,6 +1961,7 @@ impl MailboxSink for LeaseDomainSink {
                 owner_id: _,
                 fencing_token,
                 expires_in_secs: _,
+                pending_waiters: _,
             } => crate::protocol::lease_codec::LeaseResponse::Ok {
                 token: Some(fencing_token),
             },

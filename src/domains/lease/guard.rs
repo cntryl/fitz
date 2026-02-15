@@ -432,6 +432,7 @@ mod tests {
                 route: test_route("/lease/expiring"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 2,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -449,6 +450,7 @@ mod tests {
                 route: test_route("/lease/expiring"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -472,6 +474,7 @@ mod tests {
                 route: test_route("/lease/test"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 1,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -487,6 +490,7 @@ mod tests {
                 route: test_route("/lease/test"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -522,6 +526,7 @@ mod tests {
                 route: test_route("/lease/lease1"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -531,6 +536,7 @@ mod tests {
                 route: test_route("/lease/lease2"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -569,6 +575,7 @@ mod tests {
                 route: test_route("/lease/lease1"),
                 owner_id: "new-owner".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -592,6 +599,7 @@ mod tests {
                 route: test_route("/lease/contended"),
                 owner_id: "owner-1".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -601,6 +609,7 @@ mod tests {
                 route: test_route("/lease/contended"),
                 owner_id: "owner-2".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
@@ -610,6 +619,7 @@ mod tests {
                 route: test_route("/lease/contended"),
                 owner_id: "owner-3".to_string(),
                 ttl_secs: 60,
+                wait_seconds: 0,
             })
             .unwrap();
 
