@@ -3,6 +3,8 @@
 use crate::domains::kv::{KvMessage, KvResponse, ScanQuery, TxMode};
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// KV domain message type IDs
 pub mod msg_type {
@@ -17,23 +19,34 @@ pub mod msg_type {
     pub const SCAN: u16 = 108;
 }
 
+/// Derive RouteFamily deterministically from a route string.
+///
+/// RouteFamily is a server-side concept for sharding/isolation and should never
+/// come from the client. This function derives it consistently from the route string
+/// so that the same route always maps to the same column family.
+fn derive_route_family(route_str: &str) -> RouteFamily {
+    let mut hasher = DefaultHasher::new();
+    route_str.hash(&mut hasher);
+    let hash = hasher.finish();
+    // Map to 1..=u64::MAX range (avoid 0 which is reserved for default CF)
+    let rf_id = (hash % (u64::MAX - 1)) + 1;
+    RouteFamily::new(rf_id)
+}
+
 /// Parse KV request from bytes
-/// Per CLIENT_SPEC: All operations now include full route on wire
-pub fn parse_request(
-    msg_type: u16,
-    route_family: RouteFamily,
-    payload: &[u8],
-) -> Result<KvMessage, String> {
+/// Per CLIENT_SPEC: All operations now include full route on wire.
+/// RouteFamily is derived server-side from the route string (NOT from client).
+pub fn parse_request(msg_type: u16, payload: &[u8]) -> Result<KvMessage, String> {
     match msg_type {
-        msg_type::BEGIN => parse_begin(route_family, payload),
-        msg_type::COMMIT => parse_commit(route_family, payload),
-        msg_type::ROLLBACK => parse_rollback(route_family, payload),
-        msg_type::GET => parse_get(route_family, payload),
-        msg_type::PUT => parse_put(route_family, payload),
-        msg_type::INSERT => parse_insert(route_family, payload),
-        msg_type::DELETE => parse_delete(route_family, payload),
-        msg_type::DELETE_RANGE => parse_delete_range(route_family, payload),
-        msg_type::SCAN => parse_scan(route_family, payload),
+        msg_type::BEGIN => parse_begin(payload),
+        msg_type::COMMIT => parse_commit(payload),
+        msg_type::ROLLBACK => parse_rollback(payload),
+        msg_type::GET => parse_get(payload),
+        msg_type::PUT => parse_put(payload),
+        msg_type::INSERT => parse_insert(payload),
+        msg_type::DELETE => parse_delete(payload),
+        msg_type::DELETE_RANGE => parse_delete_range(payload),
+        msg_type::SCAN => parse_scan(payload),
         _ => Err(format!("Unknown KV message type: {}", msg_type)),
     }
 }
@@ -130,7 +143,7 @@ fn parse_route(route_str: &str) -> Result<(String, String, String), String> {
     }
 }
 
-fn parse_commit(_route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route]
     if payload.len() < 12 {
         return Err("COMMIT payload too short".to_string());
@@ -176,7 +189,7 @@ fn parse_commit(_route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage,
     Ok(KvMessage::Commit { tx_id })
 }
 
-fn parse_rollback(_route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route]
     if payload.len() < 12 {
         return Err("ROLLBACK payload too short".to_string());
@@ -222,7 +235,7 @@ fn parse_rollback(_route_family: RouteFamily, payload: &[u8]) -> Result<KvMessag
     Ok(KvMessage::Rollback { tx_id })
 }
 
-fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_begin(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u32 route_len][route][u8 mode][u8 durability]
     if payload.len() < 6 {
         return Err("BEGIN payload too short".to_string());
@@ -246,6 +259,9 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
         .map_err(|_| "Invalid UTF-8 in BEGIN route".to_string())?;
     offset += route_len;
+
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
 
     // Parse route into realm/area/resource
     let (realm, area, resource) = parse_route(&route_str)?;
@@ -281,7 +297,7 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     })
 }
 
-fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_get(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key]
     if payload.len() < 16 {
         return Err("GET payload too short".to_string());
@@ -322,6 +338,9 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
         .map_err(|_| "Invalid UTF-8 in GET route".to_string())?;
     offset += route_len;
 
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
+
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let (_realm, _area, resource) = parse_route(&route_str)?;
 
@@ -351,7 +370,7 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     })
 }
 
-fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_put(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key][u32 value_len][value]
     if payload.len() < 20 {
         return Err("PUT payload too short".to_string());
@@ -391,6 +410,9 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
         .map_err(|_| "Invalid UTF-8 in PUT route".to_string())?;
     offset += route_len;
+
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let (_realm, _area, resource) = parse_route(&route_str)?;
@@ -441,7 +463,7 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     })
 }
 
-fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_insert(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key][u32 value_len][value]
     if payload.len() < 20 {
         return Err("INSERT payload too short".to_string());
@@ -481,6 +503,9 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
         .map_err(|_| "Invalid UTF-8 in INSERT route".to_string())?;
     offset += route_len;
+
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let (_realm, _area, resource) = parse_route(&route_str)?;
@@ -531,7 +556,7 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     })
 }
 
-fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_delete(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key]
     if payload.len() < 16 {
         return Err("DELETE payload too short".to_string());
@@ -572,6 +597,9 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
         .map_err(|_| "Invalid UTF-8 in DELETE route".to_string())?;
     offset += route_len;
 
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
+
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let (_realm, _area, resource) = parse_route(&route_str)?;
 
@@ -601,7 +629,7 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     })
 }
 
-fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_delete_range(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 start_len][start][u32 end_len][end]
     if payload.len() < 20 {
         return Err("DELETE_RANGE payload too short".to_string());
@@ -641,6 +669,9 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
     let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
         .map_err(|_| "Invalid UTF-8 in DELETE_RANGE route".to_string())?;
     offset += route_len;
+
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let (_realm, _area, resource) = parse_route(&route_str)?;
@@ -691,7 +722,7 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
     })
 }
 
-fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_scan(payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u8 has_start][start?][u8 has_end][end?][u8 has_limit][limit?][u8 reverse]
     if payload.len() < 15 {
         return Err("SCAN payload too short".to_string());
@@ -731,6 +762,9 @@ fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, St
     let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
         .map_err(|_| "Invalid UTF-8 in SCAN route".to_string())?;
     offset += route_len;
+
+    // Derive RouteFamily from route (server-side, not from client)
+    let route_family = derive_route_family(&route_str);
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let (_realm, _area, resource) = parse_route(&route_str)?;
@@ -850,7 +884,7 @@ mod tests {
         payload.put_u8(0); // buffered (per CLIENT_SPEC: 0=buffered, 1=sync)
 
         // Act
-        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+        let result = parse_request(msg_type::BEGIN, &payload);
 
         // Assert
         assert!(matches!(result, Ok(KvMessage::Begin { .. })));
@@ -869,7 +903,7 @@ mod tests {
         payload.put_slice(key);
 
         // Act
-        let result = parse_request(msg_type::GET, RouteFamily::new(1), &payload);
+        let result = parse_request(msg_type::GET, &payload);
 
         // Assert
         assert!(matches!(result, Ok(KvMessage::Get { tx_id: 1, .. })));
@@ -920,7 +954,7 @@ mod tests {
         payload.put_u8(1); // sync durability (per CLIENT_SPEC: 1=sync)
 
         // Act
-        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+        let result = parse_request(msg_type::BEGIN, &payload);
 
         // Assert
         match result {
@@ -946,7 +980,7 @@ mod tests {
         payload.put_u8(0); // buffered durability (per CLIENT_SPEC: 0=buffered)
 
         // Act
-        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+        let result = parse_request(msg_type::BEGIN, &payload);
 
         // Assert
         match result {
@@ -972,7 +1006,7 @@ mod tests {
         payload.put_u8(0); // buffered
 
         // Act
-        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+        let result = parse_request(msg_type::BEGIN, &payload);
 
         // Assert
         assert!(result.is_err());

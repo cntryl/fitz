@@ -6,7 +6,6 @@
 mod tests {
     use bytes::Bytes;
     use fitz::protocol::kv;
-    use fitz::runtime::routing::RouteFamily;
 
     #[test]
     fn should_parse_kv_get_message() {
@@ -25,11 +24,7 @@ mod tests {
         payload.extend_from_slice(key.as_bytes());
 
         // Act
-        let result = kv::parse_request(
-            103, // GET
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = kv::parse_request(103, &payload); // GET
 
         // Assert
         assert!(result.is_ok(), "Failed to parse KV GET message");
@@ -55,11 +50,7 @@ mod tests {
         payload.extend_from_slice(value.as_bytes());
 
         // Act
-        let result = kv::parse_request(
-            104, // PUT
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = kv::parse_request(104, &payload); // PUT
 
         // Assert
         assert!(result.is_ok(), "Failed to parse KV PUT message");
@@ -78,11 +69,7 @@ mod tests {
         payload.push(0); // Buffered write option
 
         // Act
-        let result = kv::parse_request(
-            100, // BEGIN
-            RouteFamily::new(1),
-            &payload,
-        );
+        let result = kv::parse_request(100, &payload); // BEGIN
 
         // Assert
         assert!(result.is_ok(), "Failed to parse KV BEGIN message");
@@ -162,11 +149,7 @@ mod tests {
 
         // Act
         // Parse the message
-        let parse_result = kv::parse_request(
-            103, // GET
-            RouteFamily::new(1),
-            &payload,
-        );
+        let parse_result = kv::parse_request(103, &payload); // GET
 
         assert!(parse_result.is_ok());
 

@@ -1,4 +1,4 @@
-﻿package lease
+package lease
 
 import (
 	"encoding/binary"

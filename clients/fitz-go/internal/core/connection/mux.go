@@ -31,7 +31,7 @@ type Multiplexer struct {
 
 	// Async delivery handlers (Notice NOTIFY, Schedule NOTIFY, RPC REQUEST to worker, RPC RESPONSE per CLIENT_SPEC.md)
 	notifyHandler         func(subID uint64, route string, payload []byte)
-	scheduleNotifyHandler func(subID uint64, route string, payload []byte)
+	scheduleNotifyHandler func(subID uint64, payload []byte)
 	rpcReqHandler         func(payload []byte) // incoming RPC REQUEST (302) dispatched to worker
 	rpcRespHandler        func(correlationID [16]byte, payload []byte)
 
@@ -230,7 +230,7 @@ func (m *Multiplexer) handleNotify(payload []byte) {
 }
 
 // handleScheduleNotify processes Schedule NOTIFY messages (705).
-// Per CLIENT_SPEC.md: [u64 BE subscription_id][u32 route_len][route][u32 payload_len][payload]
+// Per CLIENT_SPEC.md: [u64 BE subscription_id][u32 payload_len][payload]
 func (m *Multiplexer) handleScheduleNotify(payload []byte) {
 	if len(payload) < 8 {
 		return
@@ -241,16 +241,6 @@ func (m *Multiplexer) handleScheduleNotify(payload []byte) {
 	if len(payload) < offset+4 {
 		return
 	}
-	routeLen := binary.BigEndian.Uint32(payload[offset : offset+4])
-	offset += 4
-	if len(payload) < offset+int(routeLen) {
-		return
-	}
-	route := string(payload[offset : offset+int(routeLen)])
-	offset += int(routeLen)
-	if len(payload) < offset+4 {
-		return
-	}
 	payloadLen := binary.BigEndian.Uint32(payload[offset : offset+4])
 	offset += 4
 	if len(payload) < offset+int(payloadLen) {
@@ -258,7 +248,7 @@ func (m *Multiplexer) handleScheduleNotify(payload []byte) {
 	}
 	msgPayload := payload[offset : offset+int(payloadLen)]
 	if m.scheduleNotifyHandler != nil {
-		m.scheduleNotifyHandler(subID, route, msgPayload)
+		m.scheduleNotifyHandler(subID, msgPayload)
 	}
 }
 
@@ -303,7 +293,7 @@ func (m *Multiplexer) SetNotifyHandler(handler func(subID uint64, route string, 
 }
 
 // SetScheduleNotifyHandler registers the handler for Schedule NOTIFY messages (705).
-func (m *Multiplexer) SetScheduleNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
+func (m *Multiplexer) SetScheduleNotifyHandler(handler func(subID uint64, payload []byte)) {
 	m.scheduleNotifyHandler = handler
 }
 

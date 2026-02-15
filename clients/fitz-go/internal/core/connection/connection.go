@@ -526,7 +526,7 @@ func (c *Connection) RegisterNotifyHandler(handler func(subID uint64, route stri
 }
 
 // RegisterScheduleNotifyHandler registers handler for Schedule NOTIFY messages (705).
-func (c *Connection) RegisterScheduleNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
+func (c *Connection) RegisterScheduleNotifyHandler(handler func(subID uint64, payload []byte)) {
 	c.mux.SetScheduleNotifyHandler(handler)
 }
 

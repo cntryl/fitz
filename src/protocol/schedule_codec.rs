@@ -175,11 +175,10 @@ fn parse_unsubscribe(
 
 /// Encode a SCHEDULE_NOTIFY (705) payload.
 ///
-/// Wire format: `[u64 subscription_id][string route][bytes payload]`
-pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
+/// Wire format: `[u64 subscription_id][bytes payload]`
+pub fn encode_notify(subscription_id: u64, payload: &[u8]) -> Vec<u8> {
     let mut enc = TlvEncoder::new();
     enc.put_u64(subscription_id);
-    enc.put_string(route.as_str());
     enc.put_bytes(payload);
     enc.finish()
 }

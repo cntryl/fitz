@@ -1,4 +1,4 @@
-﻿package kv
+package kv
 
 import (
 	"testing"
@@ -526,4 +526,3 @@ func BenchmarkEncodeRollback(b *testing.B) {
 		_, _ = EncodeRollback(txID, route)
 	}
 }
-

@@ -772,12 +772,9 @@ impl RuntimeIngress {
         match mt {
             100..=108 => {
                 // KV domain: Per CLIENT_SPEC, all operations now include route on wire
+                // RouteFamily is derived server-side from the route (not from client)
                 // Parse message to extract route for authorization
-                match crate::protocol::kv::parse_request(
-                    mt,
-                    session_info.route_family,
-                    payload.as_ref(),
-                ) {
+                match crate::protocol::kv::parse_request(mt, payload.as_ref()) {
                     Ok(kmsg) => match kmsg {
                         crate::domains::kv::KvMessage::Begin {
                             realm,

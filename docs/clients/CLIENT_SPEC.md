@@ -4003,14 +4003,12 @@ Server pushes a schedule fire notification to a subscriber.
 
 ```
 [u64 BE]  subscription_id
-[u32 BE]  route_len
-[bytes]   route (exact schedule route, not subscription pattern)
 [u32 BE]  payload_len
 [bytes]   payload (the schedule's configured payload bytes)
 ```
 
 **Design Notes:**
-- `subscription_id` tells the client which subscription matched
+- `subscription_id` tells the client which subscription matched; the subscription already identifies the route pattern
 - Payload is the raw payload bytes configured when the schedule was created
 - Client demultiplexes to local handlers registered for that `subscription_id`
 - Delivery is best-effort; notifications may be dropped under backpressure

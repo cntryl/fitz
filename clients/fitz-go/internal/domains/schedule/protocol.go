@@ -35,49 +35,6 @@ func mapScheduleError(msg string) error {
 	}
 }
 
-// EncodeScheduleCreate encodes a SCHEDULE CREATE request per CLIENT_SPEC.md.
-// Wire format: [bytes payload] where payload is a nested TLV blob:
-// [u8 type=1][u16 BE cron_len][cron_bytes]
-// [u8 type=2][u16 BE target_resource_len][target_resource_bytes]
-// [u8 type=3][u16 BE target_operation_len][target_operation_bytes]
-func EncodeScheduleCreate(route string, cronExpr string, payload []byte) ([]byte, error) {
-	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
-		innerLen := schedulePayloadLen(cronExpr, route, payload)
-		encoding.WriteU32(buf, uint32(innerLen))
-		writeSchedulePayload(buf, cronExpr, route, payload)
-	}), nil
-}
-
-// EncodeScheduleCancel encodes a SCHEDULE CANCEL request per CLIENT_SPEC.md.
-// Wire format: [string schedule_id]
-func EncodeScheduleCancel(scheduleID string) ([]byte, error) {
-	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
-		encoding.WriteString(buf, scheduleID)
-	}), nil
-}
-
-// EncodeScheduleList encodes a SCHEDULE LIST request per CLIENT_SPEC.md.
-// Wire format: empty payload
-func EncodeScheduleList() ([]byte, error) {
-	return nil, nil
-}
-
-// EncodeScheduleSubscribe encodes a SCHEDULE SUBSCRIBE request per CLIENT_SPEC.md.
-// Wire format: [string route_pattern]
-func EncodeScheduleSubscribe(pattern string) ([]byte, error) {
-	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
-		encoding.WriteString(buf, pattern)
-	}), nil
-}
-
-// EncodeScheduleUnsubscribe encodes a SCHEDULE UNSUBSCRIBE request per CLIENT_SPEC.md.
-// Wire format: [string route_pattern]
-func EncodeScheduleUnsubscribe(pattern string) ([]byte, error) {
-	return encoding.EncodeWithBuffer(func(buf *bytes.Buffer) {
-		encoding.WriteString(buf, pattern)
-	}), nil
-}
-
 // writeSchedulePayload builds the nested TLV blob that the server's
 // SchedulePayload::decode expects. Format per record:
 //

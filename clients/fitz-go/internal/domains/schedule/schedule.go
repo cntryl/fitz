@@ -5,7 +5,6 @@ package schedule
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
@@ -17,14 +16,13 @@ type ScheduleEntry struct {
 	ID string
 }
 
-// FireNotification is the payload delivered when a schedule fires (SCHEDULE_NOTIFY 705).
-type FireNotification struct {
-	Route   string
+// Notification is the payload delivered when a schedule fires (SCHEDULE_NOTIFY 705).
+type Notification struct {
 	Payload []byte
 }
 
 // ScheduleHandler is called when a schedule fires for a subscribed pattern.
-type ScheduleHandler func(ctx context.Context, n FireNotification)
+type ScheduleHandler func(ctx context.Context, n Notification)
 
 // Subscription represents an active subscription to schedule fire notifications.
 // Call Unsubscribe to stop receiving notifications.
@@ -36,8 +34,10 @@ type Subscription struct {
 }
 
 // Unsubscribe stops receiving schedule fire notifications for this subscription.
-func (s *Subscription) Unsubscribe(ctx context.Context) error {
-	return s.client.Unsubscribe(ctx, s)
+func (s *Subscription) Unsubscribe() {
+	if s.client != nil {
+		s.client.unsubscribe(s)
+	}
 }
 
 // Client is the Schedule domain client interface.
@@ -52,12 +52,9 @@ type Client interface {
 	List(ctx context.Context, route string) ([]ScheduleEntry, error)
 
 	// Subscribe subscribes to schedule fire notifications for the given route pattern.
-	// When a schedule fires, the handler is invoked with the schedule's route and payload.
+	// When a schedule fires, the handler is invoked with the schedule's payload.
 	// Subscriptions are session-scoped and lost on disconnect.
 	Subscribe(ctx context.Context, pattern string, handler ScheduleHandler) (*Subscription, error)
-
-	// Unsubscribe stops receiving notifications for the subscription.
-	Unsubscribe(ctx context.Context, sub *Subscription) error
 }
 
 type client struct {
@@ -81,15 +78,14 @@ func (c *client) initScheduleNotifyHandler() {
 	c.conn.RegisterScheduleNotifyHandler(c.handleScheduleNotify)
 }
 
-func (c *client) handleScheduleNotify(subID uint64, route string, payload []byte) {
+func (c *client) handleScheduleNotify(subID uint64, payload []byte) {
 	c.mu.RLock()
 	sub, ok := c.subscriptions[subID]
 	c.mu.RUnlock()
 	if !ok {
 		return
 	}
-	msg := FireNotification{
-		Route:   route,
+	msg := Notification{
 		Payload: make([]byte, len(payload)),
 	}
 	copy(msg.Payload, payload)
@@ -208,17 +204,12 @@ func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error
 }
 
 // Subscribe per CLIENT_SPEC.md (703):
-// Request: [u32 BE route_pattern_len][bytes route_pattern]
-// Response (status=0): [u8 has_schedule_id (1)][u32 BE schedule_id_len][bytes schedule_id] (subscription_id as string)
+// Request: [string route_pattern]
+// Response (status=0): [u8 has_subscription_id (1)][u64 BE subscription_id]
 func (c *client) Subscribe(ctx context.Context, pattern string, handler ScheduleHandler) (*Subscription, error) {
 	c.initScheduleNotifyHandler()
 
-	encoded, err := EncodeScheduleSubscribe(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("encode SUBSCRIBE: %w", err)
-	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleSubscribe, encoded)
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleSubscribe, scheduleSubscribePayloadWriter(pattern))
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
 	}
@@ -234,17 +225,17 @@ func (c *client) Subscribe(ctx context.Context, pattern string, handler Schedule
 	if len(remaining) < 1 {
 		return nil, fmt.Errorf("SUBSCRIBE response too short")
 	}
-	hasScheduleID := remaining[0]
-	if hasScheduleID != 1 {
+	hasSubscriptionID := remaining[0]
+	if hasSubscriptionID != 1 {
 		return nil, fmt.Errorf("SUBSCRIBE response missing subscription_id")
 	}
-	subIDStr, _, err := connection.ReadString(remaining, 1)
+	if len(remaining) < 9 {
+		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
+	}
+
+	subID, _, err := connection.ReadU64BE(remaining, 1)
 	if err != nil {
 		return nil, fmt.Errorf("parse subscription_id: %w", err)
-	}
-	subID, err := strconv.ParseUint(subIDStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("subscription_id not numeric: %w", err)
 	}
 
 	sub := &Subscription{
@@ -260,27 +251,17 @@ func (c *client) Subscribe(ctx context.Context, pattern string, handler Schedule
 }
 
 // Unsubscribe per CLIENT_SPEC.md (704):
-// Request: [u32 BE route_pattern_len][bytes route_pattern]
-func (c *client) Unsubscribe(ctx context.Context, sub *Subscription) error {
+// Request: [string route_pattern]
+func (c *client) unsubscribe(sub *Subscription) {
 	c.mu.Lock()
 	delete(c.subscriptions, sub.subID)
 	c.mu.Unlock()
 
-	encoded, err := EncodeScheduleUnsubscribe(sub.pattern)
+	// Best-effort unsubscribe; ignore errors to match notice semantics.
+	ctx := context.Background()
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleUnsubscribe, scheduleUnsubscribePayloadWriter(sub.pattern))
 	if err != nil {
-		return fmt.Errorf("encode UNSUBSCRIBE: %w", err)
+		return
 	}
-
-	resp, err := c.conn.SendRequest(ctx, protocol.MessageTypeScheduleUnsubscribe, encoded)
-	if err != nil {
-		return fmt.Errorf("UNSUBSCRIBE request failed: %w", err)
-	}
-	success, _, err := connection.ParseStandardResponse(resp)
-	if err != nil {
-		return fmt.Errorf("UNSUBSCRIBE failed: %w", mapScheduleError(err.Error()))
-	}
-	if !success {
-		return fmt.Errorf("UNSUBSCRIBE failed: unexpected status")
-	}
-	return nil
+	connection.ParseStandardResponse(resp)
 }

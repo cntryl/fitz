@@ -149,14 +149,13 @@ impl MailboxSink for KvDomainSink {
             }
         };
 
-        let route_addr = envelope.destination();
-        let route_family = route_addr.family();
+        let _route_addr = envelope.destination();
 
         // Parse TLV frame using codec
         // Per CLIENT_SPEC: All KV operations now include full route on wire
+        // RouteFamily is derived server-side from the route string
         let kv_message = match crate::protocol::kv::parse_request(
             frame_ctx.msg_type.as_u16(),
-            *route_family,
             &frame_ctx.payload,
         ) {
             Ok(msg) => msg,
@@ -2079,7 +2078,6 @@ impl ScheduleDomainSink {
                 if sub.pattern.matches(&event.route) {
                     let notify_payload = crate::protocol::schedule_codec::encode_notify(
                         sub.subscription_id,
-                        &event.route,
                         &event.payload,
                     );
                     let notify_ctx = FrameContext::new(
