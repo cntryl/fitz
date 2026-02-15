@@ -12,6 +12,7 @@ import (
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
+	"github.com/cntryl/fitz-go/internal/core/retry"
 	"github.com/cntryl/fitz-go/internal/protocol"
 )
 
@@ -57,6 +58,10 @@ type Client interface {
 
 	// Call sends an RPC request and returns an iterator over response frames.
 	Call(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error)
+
+	// CallWithRetry sends an RPC request with exponential backoff retry on backpressure (error code 6003).
+	// Retries up to maxRetries times if the RPC system is overloaded.
+	CallWithRetry(ctx context.Context, route string, body []byte, timeout time.Duration, maxRetries int) (iter.Iterator[ResponseFrame], error)
 }
 
 type client struct {
@@ -328,6 +333,23 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 		correlationID: correlationID,
 		client:        c,
 	}, nil
+}
+
+// CallWithRetry sends an RPC request with exponential backoff retry on backpressure.
+// maxRetries controls how many times to retry on error code 6003 (RpcBackpressure).
+func (c *client) CallWithRetry(ctx context.Context, route string, body []byte, timeout time.Duration, maxRetries int) (iter.Iterator[ResponseFrame], error) {
+	var iterator iter.Iterator[ResponseFrame]
+
+	err := retry.Do(ctx, retry.DefaultBackoff, maxRetries, func() error {
+		var err error
+		iterator, err = c.Call(ctx, route, body, timeout)
+		return err
+	}, func(err error) bool {
+		// Retry on string matching for now; ideally would check error code
+		return err != nil && (mapRPCError(err.Error()) == ErrRPCBackpressure || mapRPCError(err.Error()) == ErrNoWorkers)
+	})
+
+	return iterator, err
 }
 
 // responseWriter implements ResponseWriter for workers.

@@ -179,3 +179,15 @@ pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWor
     enc.put_bytes(&work_item.body);
     enc.finish()
 }
+
+/// Encode RPC ACK to worker (message type 304)
+///
+/// Wire format: `[bytes correlation_id]`
+///
+/// Sent to acknowledge receipt of a worker's RESPONSE message (303).
+/// This unblocks the worker so they can send additional responses.
+pub fn encode_ack(correlation_id: &Uuid) -> Vec<u8> {
+    let mut enc = TlvEncoder::new();
+    enc.put_bytes(correlation_id.as_bytes());
+    enc.finish()
+}

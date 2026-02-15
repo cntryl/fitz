@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/core/retry"
 	"github.com/cntryl/fitz-go/internal/protocol"
 )
 
@@ -64,9 +65,16 @@ type Client interface {
 	// Send adds a message to the queue. Returns the server-assigned message ID.
 	Send(ctx context.Context, route string, body []byte) (msgID uint64, err error)
 
+	// SendWithRetry adds a message to the queue with exponential backoff retry on backpressure.
+	// Retries up to maxRetries times if the queue is full (error code 4005).
+	SendWithRetry(ctx context.Context, route string, body []byte, maxRetries int) (msgID uint64, err error)
+
 	// Receive reserves up to batchSize messages with the given lease duration.
 	// Each returned QueueItem has Extend and Complete methods.
 	Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error)
+
+	// ReceiveWithRetry reserves messages with exponential backoff retry on backpressure.
+	ReceiveWithRetry(ctx context.Context, route string, leaseSecs uint64, batchSize uint32, maxRetries int) ([]*QueueItem, error)
 }
 
 type client struct {
@@ -105,6 +113,39 @@ func (c *client) Send(ctx context.Context, route string, body []byte) (uint64, e
 	}
 
 	return msgID, nil
+}
+
+// SendWithRetry adds a message to the queue with exponential backoff retry on backpressure.
+// If maxRetries is 0, no retries are attempted; returns immediately on error.
+func (c *client) SendWithRetry(ctx context.Context, route string, body []byte, maxRetries int) (uint64, error) {
+	var msgID uint64
+
+	err := retry.Do(ctx, retry.DefaultBackoff, maxRetries, func() error {
+		var err error
+		msgID, err = c.Send(ctx, route, body)
+		return err
+	}, func(err error) bool {
+		// Retry on ErrQueueFull only
+		return err == ErrQueueFull
+	})
+
+	return msgID, err
+}
+
+// ReceiveWithRetry reserves messages with exponential backoff retry on backpressure.
+func (c *client) ReceiveWithRetry(ctx context.Context, route string, leaseSecs uint64, batchSize uint32, maxRetries int) ([]*QueueItem, error) {
+	var items []*QueueItem
+
+	err := retry.Do(ctx, retry.DefaultBackoff, maxRetries, func() error {
+		var err error
+		items, err = c.Receive(ctx, route, leaseSecs, batchSize)
+		return err
+	}, func(err error) bool {
+		// Retry on ErrQueueFull only
+		return err == ErrQueueFull
+	})
+
+	return items, err
 }
 
 // Receive per CLIENT_SPEC.md:

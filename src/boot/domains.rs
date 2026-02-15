@@ -934,11 +934,36 @@ impl MailboxSink for RpcDomainSink {
                     let forward_envelope = Envelope::new(caller_inbox_addr, forward_ctx);
                     let _ = self.router.route(forward_envelope);
 
+                    // Send ACK back to worker to unblock their SendRequest
+                    let ack_payload = crate::protocol::rpc_codec::encode_ack(&resp.correlation_id);
+                    let ack_ctx = FrameContext::new(
+                        frame_ctx.session_id,
+                        frame_ctx.channel_id,
+                        crate::protocol::tlv::MessageType::new(304), // ACK msg_type
+                        bytes::Bytes::from(ack_payload),
+                    );
+                    let worker_inbox_addr = crate::runtime::routing::RouteAddress::new(
+                        *envelope.destination().family(),
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            frame_ctx.session_id
+                        )),
+                    );
+                    let ack_envelope = Envelope::new(worker_inbox_addr, ack_ctx);
+                    if let Err(e) = self.router.route(ack_envelope) {
+                        tracing::warn!(
+                            domain = "rpc",
+                            correlation_id = %resp.correlation_id,
+                            error = ?e,
+                            "Failed to send ACK to worker"
+                        );
+                    }
+
                     tracing::debug!(
                         domain = "rpc",
                         correlation_id = %resp.correlation_id,
                         stream_end = resp.stream_end,
-                        "Response forwarded to requester"
+                        "Response forwarded to requester and ACK sent to worker"
                     );
                 } else {
                     tracing::warn!(

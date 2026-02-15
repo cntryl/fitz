@@ -19,8 +19,9 @@ const (
 
 // Domain-specific errors.
 var (
-	ErrNoWorkers  = errors.New("no workers available")
-	ErrRPCTimeout = errors.New("rpc timeout")
+	ErrNoWorkers       = errors.New("no workers available")
+	ErrRPCTimeout      = errors.New("rpc timeout")
+	ErrRPCBackpressure = errors.New("rpc backpressure")
 )
 
 // mapRPCError maps a broker error message to a domain-specific Go error.
@@ -29,6 +30,10 @@ func mapRPCError(msg string) error {
 	switch {
 	case strings.Contains(l, "no workers"):
 		return ErrNoWorkers
+	case strings.Contains(l, "timeout"):
+		return ErrRPCTimeout
+	case strings.Contains(l, "backpressure"):
+		return ErrRPCBackpressure
 	default:
 		return errors.New(msg)
 	}
