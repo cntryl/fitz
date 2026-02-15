@@ -54,7 +54,10 @@ struct PendingAcquire {
     timer_id: TimerId,
 
     /// Route address of the requester (for sending reply back)
-    source: RouteAddress,
+    source: Option<RouteAddress>,
+
+    /// Provisional fencing token reserved at enqueue time
+    queued_token: u64,
 
     /// TTL duration for the lease when/if acquired
     ttl_secs: u64,
@@ -352,10 +355,10 @@ impl LeaseActor {
     ) -> LeaseResponse {
         // Check if this owner is already waiting for this lease (idempotency)
         if let Some(queue) = self.pending_acquires.get(&key) {
-            if let Some(_existing) = queue.iter().find(|p| p.owner_id == owner_id) {
+            if let Some(existing) = queue.iter().find(|p| p.owner_id == owner_id) {
                 // Already queued - return AlreadyQueued with existing token
                 return LeaseResponse::AlreadyQueued {
-                    fencing_token: 0, // Placeholder; will be assigned on grant
+                    fencing_token: existing.queued_token,
                 };
             }
         }
@@ -374,20 +377,12 @@ impl LeaseActor {
         let timer_id = ctx.timer_manager().schedule_once(timeout_duration);
 
         // Enqueue waiter
-        // We must have a source to send the deferred reply
-        let source = match source {
-            Some(s) => s,
-            None => {
-                // No source available - can't queue waiter without a reply address
-                // Return error immediately
-                return LeaseResponse::QueueFull { pending_count: 0 };
-            }
-        };
-
+        let queued_token = self.next_fencing_token();
         let pending = PendingAcquire {
             owner_id,
             timer_id,
             source,
+            queued_token,
             ttl_secs,
         };
 
@@ -400,8 +395,10 @@ impl LeaseActor {
         // Track timer for validation
         self.timer_to_waiter.insert(timer_id, key);
 
-        // Return Queued response with a provisional token
-        LeaseResponse::Queued { fencing_token: 0 }
+        // Return Queued response with the provisional token
+        LeaseResponse::Queued {
+            fencing_token: queued_token,
+        }
     }
 
     /// Grant the next waiter in the pending queue for a lease (if any)
@@ -424,7 +421,7 @@ impl LeaseActor {
             self.timer_to_waiter.remove(&waiter.timer_id);
 
             // Generate new fencing token
-            let token = self.next_fencing_token();
+            let token = waiter.queued_token;
             let now = self.clock.now();
             let expiry = now + Duration::from_secs(waiter.ttl_secs);
 
@@ -439,13 +436,15 @@ impl LeaseActor {
             );
 
             // Send response to waiter's source address
-            let response = LeaseResponse::Acquired {
-                fencing_token: token,
-            };
+            if let Some(source) = waiter.source {
+                let response = LeaseResponse::Acquired {
+                    fencing_token: token,
+                };
 
-            // NOTE: We use send() directly because current_metadata is not set
-            // This is the deferred reply path
-            let _ = ctx.send(waiter.source, response).ok(); // Ignore send errors (best effort)
+                // NOTE: We use send() directly because current_metadata is not set
+                // This is the deferred reply path
+                let _ = ctx.send(source, response).ok(); // Ignore send errors (best effort)
+            }
 
             // Clean up empty queue
             if let Some(q) = self.pending_acquires.get(key) {
@@ -607,8 +606,10 @@ impl Actor for LeaseActor {
             self.timer_to_waiter.remove(&timer_id);
 
             // Send Timeout response to the waiter
-            let response = LeaseResponse::Timeout;
-            let _ = ctx.send(waiter.source, response).ok(); // Best effort
+            if let Some(source) = waiter.source {
+                let response = LeaseResponse::Timeout;
+                let _ = ctx.send(source, response).ok(); // Best effort
+            }
 
             // Clean up empty queue
             if queue.is_empty() {
