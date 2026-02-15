@@ -25,6 +25,7 @@ fn bench_acquire_renew_cycle(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -66,6 +67,7 @@ fn bench_full_lifecycle(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box("client-1".to_string()),
                 ttl_secs: black_box(30),
+                wait_seconds: 0,
             };
             actor.receive(acquire_msg, &mut ctx);
 
@@ -112,6 +114,7 @@ fn bench_contended_renewal(c: &mut Criterion) {
                     route,
                     owner_id: format!("client-{}", i),
                     ttl_secs: 30,
+                    wait_seconds: 0,
                 };
                 actor.receive(acquire_msg, &mut ctx);
             }
@@ -145,6 +148,7 @@ fn bench_token_validation(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -186,6 +190,7 @@ fn bench_multi_owner_contention(c: &mut Criterion) {
             route: route.clone(),
             owner_id: "client-1".to_string(),
             ttl_secs: 30,
+            wait_seconds: 0,
         };
         actor.receive(acquire_msg, &mut ctx);
 
@@ -195,6 +200,7 @@ fn bench_multi_owner_contention(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box("client-2".to_string()), // Different owner
                 ttl_secs: black_box(30),
+                wait_seconds: 0,
             };
             actor.receive(msg, &mut ctx);
         })

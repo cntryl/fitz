@@ -1788,7 +1788,7 @@ impl LeaseDomainSink {
                         owner_id: state.owner_id.clone(),
                         fencing_token: state.fencing_token,
                         expires_in_secs: expires_in.as_secs(),
-                        pending_waiters: 0,  // boot domain doesn't track waiters
+                        pending_waiters: 0, // boot domain doesn't track waiters
                     }
                 }
             }

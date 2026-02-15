@@ -38,9 +38,7 @@ fn bench_high_contention_single_lease_10_clients(c: &mut Criterion) {
         };
         let _ = actor.handle(holder_msg);
 
-        let client_ids: Vec<String> = (0..10)
-            .map(|i| format!("client-{}", i))
-            .collect();
+        let client_ids: Vec<String> = (0..10).map(|i| format!("client-{}", i)).collect();
 
         // Hot path: Queue all 10 clients contending for same lease
         b.iter(|| {
@@ -81,9 +79,7 @@ fn bench_high_contention_single_lease_50_clients(c: &mut Criterion) {
         };
         let _ = actor.handle(holder_msg);
 
-        let client_ids: Vec<String> = (0..50)
-            .map(|i| format!("client-{}", i))
-            .collect();
+        let client_ids: Vec<String> = (0..50).map(|i| format!("client-{}", i)).collect();
 
         // Hot path: Queue all 50 clients
         b.iter(|| {
@@ -124,9 +120,7 @@ fn bench_high_contention_single_lease_100_clients(c: &mut Criterion) {
         };
         let _ = actor.handle(holder_msg);
 
-        let client_ids: Vec<String> = (0..100)
-            .map(|i| format!("client-{}", i))
-            .collect();
+        let client_ids: Vec<String> = (0..100).map(|i| format!("client-{}", i)).collect();
 
         // Hot path: Queue all 100 clients (at max queue depth)
         b.iter(|| {
@@ -196,7 +190,7 @@ fn bench_mixed_immediate_and_queued_acquires(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_high_contention_single_lease_10_clients,
         bench_high_contention_single_lease_50_clients,
         bench_high_contention_single_lease_100_clients,

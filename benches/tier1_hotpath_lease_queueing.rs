@@ -10,9 +10,9 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode};
 use fitz::domains::lease::lease_actor::LeaseActor;
-use fitz::domains::lease::protocol::{LeaseMessage, LeaseResponse};
+use fitz::domains::lease::protocol::LeaseMessage;
 use fitz::runtime::routing::{Route, RouteFamily};
-use std::sync::Arc;
+use fitz::testkit::lease::create_test_lease_context;
 
 #[path = "config.rs"]
 mod config;
@@ -25,7 +25,8 @@ fn bench_lease_acquire_when_free(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/free-lock");
 
     group.bench_function("acquire_when_free", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let mut ctx = create_test_lease_context(None);
         b.iter(|| {
             let msg = LeaseMessage::Acquire {
                 family_id: black_box(family),
@@ -34,7 +35,7 @@ fn bench_lease_acquire_when_free(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(0),
             };
-            let _ = actor.handle(msg);
+            actor.receive(msg, &mut ctx);
         })
     });
 
@@ -49,7 +50,8 @@ fn bench_lease_acquire_immediate_rejection(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/held-lock");
 
     group.bench_function("acquire_immediate_rejection_held_by_other", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let mut ctx = create_test_lease_context(None);
 
         // Setup: Holder acquires lease outside hot loop
         let holder_msg = LeaseMessage::Acquire {
@@ -59,7 +61,7 @@ fn bench_lease_acquire_immediate_rejection(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        actor.receive(holder_msg, &mut ctx);
 
         // Hot path: Rejection on immediate acquire attempt
         b.iter(|| {
@@ -70,7 +72,7 @@ fn bench_lease_acquire_immediate_rejection(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(0),
             };
-            let _ = actor.handle(msg);
+            actor.receive(msg, &mut ctx);
         })
     });
 
@@ -85,7 +87,8 @@ fn bench_lease_acquire_enqueue_cost(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/queue-lock");
 
     group.bench_function("acquire_enqueue_first_waiter", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let mut ctx = create_test_lease_context(None);
 
         // Setup: Holder
         let holder_msg = LeaseMessage::Acquire {
@@ -95,7 +98,7 @@ fn bench_lease_acquire_enqueue_cost(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        actor.receive(holder_msg, &mut ctx);
 
         // Hot path: Enqueue first waiter with wait_seconds
         let mut waiter_counter = 0;
@@ -106,9 +109,9 @@ fn bench_lease_acquire_enqueue_cost(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box(format!("waiter-{}", waiter_counter)),
                 ttl_secs: black_box(60),
-                wait_seconds: black_box(10),  // Request wait
+                wait_seconds: black_box(10), // Request wait
             };
-            let _ = actor.handle(msg);
+            actor.receive(msg, &mut ctx);
         })
     });
 
@@ -123,7 +126,8 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/query-lock");
 
     group.bench_function("query_with_pending_waiters_count", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let mut ctx = create_test_lease_context(None);
 
         // Setup: Holder + 5 waiters
         let holder_msg = LeaseMessage::Acquire {
@@ -133,7 +137,7 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        actor.receive(holder_msg, &mut ctx);
 
         for i in 0..5 {
             let waiter_msg = LeaseMessage::Acquire {
@@ -143,7 +147,7 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
                 ttl_secs: 60,
                 wait_seconds: 10,
             };
-            let _ = actor.handle(waiter_msg);
+            actor.receive(waiter_msg, &mut ctx);
         }
 
         // Hot path: Query
@@ -152,7 +156,7 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
                 family_id: black_box(family),
                 route: black_box(route.clone()),
             };
-            let _ = actor.handle(msg);
+            actor.receive(msg, &mut ctx);
         })
     });
 
@@ -167,7 +171,8 @@ fn bench_idempotent_acquire_already_held(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/idempotent-lock");
 
     group.bench_function("idempotent_acquire_already_held", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let mut ctx = create_test_lease_context(None);
 
         // Setup: Client holds lease
         let hold_msg = LeaseMessage::Acquire {
@@ -177,7 +182,7 @@ fn bench_idempotent_acquire_already_held(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(hold_msg);
+        actor.receive(hold_msg, &mut ctx);
 
         // Hot path: Same client tries to acquire again (idempotent)
         b.iter(|| {
@@ -188,7 +193,7 @@ fn bench_idempotent_acquire_already_held(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(0),
             };
-            let _ = actor.handle(msg);
+            actor.receive(msg, &mut ctx);
         })
     });
 
@@ -203,7 +208,8 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/idempotent-queue-lock");
 
     group.bench_function("idempotent_acquire_already_queued", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let mut ctx = create_test_lease_context(None);
 
         // Setup: Holder + waiter already in queue
         let holder_msg = LeaseMessage::Acquire {
@@ -213,7 +219,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        actor.receive(holder_msg, &mut ctx);
 
         let waiter_msg = LeaseMessage::Acquire {
             family_id: family,
@@ -222,7 +228,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 10,
         };
-        let _ = actor.handle(waiter_msg);
+        actor.receive(waiter_msg, &mut ctx);
 
         // Hot path: Same waiter tries to acquire again (already queued)
         b.iter(|| {
@@ -233,7 +239,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(10),
             };
-            let _ = actor.handle(msg);
+            actor.receive(msg, &mut ctx);
         })
     });
 
@@ -243,7 +249,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_lease_acquire_when_free,
         bench_lease_acquire_immediate_rejection,
         bench_lease_acquire_enqueue_cost,

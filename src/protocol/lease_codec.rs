@@ -69,15 +69,25 @@ pub fn encode_response(response: &LeaseResponse) -> Vec<u8> {
 /// - etc.
 pub fn map_domain_response(response: &DomainLeaseResponse) -> LeaseResponse {
     match response {
-        DomainLeaseResponse::Acquired { fencing_token } => LeaseResponse::Ok { token: Some(*fencing_token) },
-        DomainLeaseResponse::AlreadyHeld { fencing_token } => LeaseResponse::Ok { token: Some(*fencing_token) },
-        DomainLeaseResponse::Queued { fencing_token } => LeaseResponse::Ok { token: Some(*fencing_token) },
-        DomainLeaseResponse::AlreadyQueued { fencing_token } => LeaseResponse::Ok { token: Some(*fencing_token) },
+        DomainLeaseResponse::Acquired { fencing_token } => LeaseResponse::Ok {
+            token: Some(*fencing_token),
+        },
+        DomainLeaseResponse::AlreadyHeld { fencing_token } => LeaseResponse::Ok {
+            token: Some(*fencing_token),
+        },
+        DomainLeaseResponse::Queued { fencing_token } => LeaseResponse::Ok {
+            token: Some(*fencing_token),
+        },
+        DomainLeaseResponse::AlreadyQueued { fencing_token } => LeaseResponse::Ok {
+            token: Some(*fencing_token),
+        },
         DomainLeaseResponse::Timeout => LeaseResponse::Error("Timeout".to_string()),
         DomainLeaseResponse::QueueFull { pending_count } => {
             LeaseResponse::Error(format!("QueueFull: {} pending", pending_count))
         }
-        DomainLeaseResponse::Renewed { fencing_token } => LeaseResponse::Ok { token: Some(*fencing_token) },
+        DomainLeaseResponse::Renewed { fencing_token } => LeaseResponse::Ok {
+            token: Some(*fencing_token),
+        },
         DomainLeaseResponse::Released => LeaseResponse::Ok { token: None },
         DomainLeaseResponse::HeldByOther { current_owner } => {
             LeaseResponse::Error(format!("HeldByOther: {}", current_owner))
@@ -88,9 +98,16 @@ pub fn map_domain_response(response: &DomainLeaseResponse) -> LeaseResponse {
         }
         DomainLeaseResponse::Expired => LeaseResponse::Error("Expired".to_string()),
         DomainLeaseResponse::NotFound => LeaseResponse::Error("NotFound".to_string()),
-        DomainLeaseResponse::Status { owner_id: _, fencing_token, expires_in_secs: _, pending_waiters: _ } => {
+        DomainLeaseResponse::Status {
+            owner_id: _,
+            fencing_token,
+            expires_in_secs: _,
+            pending_waiters: _,
+        } => {
             // Encode status as JSON or similar format
-            LeaseResponse::Ok { token: Some(*fencing_token) }
+            LeaseResponse::Ok {
+                token: Some(*fencing_token),
+            }
         }
     }
 }

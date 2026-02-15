@@ -34,6 +34,7 @@ fn bench_single_route_intensive(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box("client-1".to_string()),
                 ttl_secs: black_box(30),
+                wait_seconds: 0,
             };
             actor.receive(acquire_msg, &mut ctx);
 
@@ -64,6 +65,7 @@ fn bench_dual_route_concurrent(c: &mut Criterion) {
         route: route1.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire1, &mut ctx);
 
@@ -72,6 +74,7 @@ fn bench_dual_route_concurrent(c: &mut Criterion) {
         route: route2.clone(),
         owner_id: "client-2".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire2, &mut ctx);
 
@@ -126,6 +129,7 @@ fn bench_triple_route_contention(c: &mut Criterion) {
             route: route.clone(),
             owner_id: client.to_string(),
             ttl_secs: 30,
+            wait_seconds: 0,
         };
         actor.receive(acquire_msg, &mut ctx);
     }
@@ -179,6 +183,7 @@ fn bench_mixed_operations_high_load(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 

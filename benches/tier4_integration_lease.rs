@@ -29,6 +29,7 @@ fn bench_full_acquire_pipeline(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box("client-1".to_string()),
                 ttl_secs: black_box(30),
+                wait_seconds: 0,
             };
             actor.receive(msg, &mut ctx);
         })
@@ -48,6 +49,7 @@ fn bench_full_lifecycle_sequence(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -65,6 +67,7 @@ fn bench_full_lifecycle_sequence(c: &mut Criterion) {
                         route: black_box(route.clone()),
                         owner_id: black_box("client-1".to_string()),
                         ttl_secs: black_box(30),
+                        wait_seconds: 0,
                     };
                     actor.receive(msg, &mut ctx);
                 }
@@ -112,6 +115,7 @@ fn bench_multi_resource_leases(c: &mut Criterion) {
             route: route.clone(),
             owner_id: format!("client-{}", idx + 1),
             ttl_secs: 30,
+            wait_seconds: 0,
         };
         actor.receive(acquire_msg, &mut ctx);
     }
@@ -150,6 +154,7 @@ fn bench_cross_realm_isolation(c: &mut Criterion) {
         route: route_realm1.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire1, &mut ctx);
 
@@ -158,6 +163,7 @@ fn bench_cross_realm_isolation(c: &mut Criterion) {
         route: route_realm2.clone(),
         owner_id: "client-2".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire2, &mut ctx);
 

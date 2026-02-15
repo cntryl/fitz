@@ -71,16 +71,16 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
 
     // Wait for listeners to be ready before accepting traffic
     tcp_ready.await.map_err(|e| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("TCP listener failed to start: {}", e),
-        )) as Box<dyn std::error::Error>
+        Box::new(std::io::Error::other(format!(
+            "TCP listener failed to start: {}",
+            e
+        ))) as Box<dyn std::error::Error>
     })?;
     ws_ready.await.map_err(|e| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("WebSocket listener failed to start: {}", e),
-        )) as Box<dyn std::error::Error>
+        Box::new(std::io::Error::other(format!(
+            "WebSocket listener failed to start: {}",
+            e
+        ))) as Box<dyn std::error::Error>
     })?;
 
     // Mark startup complete

@@ -27,6 +27,7 @@ fn bench_lease_acquire(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box("client-1".to_string()),
                 ttl_secs: black_box(30),
+                wait_seconds: 0,
             };
             actor.receive(msg, &mut ctx);
         })
@@ -46,6 +47,7 @@ fn bench_lease_renew(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -78,6 +80,7 @@ fn bench_lease_release(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -109,6 +112,7 @@ fn bench_lease_query(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -138,6 +142,7 @@ fn bench_lease_idempotent_acquire(c: &mut Criterion) {
         route: route.clone(),
         owner_id: "client-1".to_string(),
         ttl_secs: 30,
+        wait_seconds: 0,
     };
     actor.receive(acquire_msg, &mut ctx);
 
@@ -150,6 +155,7 @@ fn bench_lease_idempotent_acquire(c: &mut Criterion) {
                 route: black_box(route.clone()),
                 owner_id: black_box("client-1".to_string()),
                 ttl_secs: black_box(30),
+                wait_seconds: 0,
             };
             actor.receive(msg, &mut ctx);
         })

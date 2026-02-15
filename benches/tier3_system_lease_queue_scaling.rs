@@ -190,13 +190,13 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
         };
         let holder_resp = actor.handle(holder_msg);
         let mut holder_token = 0u64;
-        if let fitz::domains::lease::protocol::LeaseResponse::Acquired { fencing_token } = holder_resp {
+        if let fitz::domains::lease::protocol::LeaseResponse::Acquired { fencing_token } =
+            holder_resp
+        {
             holder_token = fencing_token;
         }
 
-        let client_ids: Vec<String> = (0..50)
-            .map(|i| format!("backlog-{}", i))
-            .collect();
+        let client_ids: Vec<String> = (0..50).map(|i| format!("backlog-{}", i)).collect();
 
         for id in client_ids.iter() {
             let msg = LeaseMessage::Acquire {
@@ -227,7 +227,7 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = config::criterion_config();
-    targets = 
+    targets =
         bench_queue_depth_throughput_10_waiters,
         bench_queue_depth_throughput_50_waiters,
         bench_queue_depth_throughput_100_waiters,

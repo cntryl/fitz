@@ -1,5 +1,5 @@
-﻿use fitz::auth::Permission;
-use fitz::domains::lease::session::SessionActor;
+use fitz::auth::Permission;
+use fitz::domains::lease::session::{SessionActor, AcquireRequest, RenewRequest, ReleaseRequest};
 use fitz::domains::lease::LeaseActor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
@@ -27,11 +27,13 @@ fn should_reject_unauthenticated_lease_acquire() {
 
     // Act
     let res = session.acquire(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/db-migration"),
-        "owner1".to_string(),
-        30,
-        0,  // wait_seconds
+        AcquireRequest {
+            family: RouteFamily::new(1),
+            route: Route::new("lease://realm/locks/db-migration"),
+            owner_id: "owner1".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 0,
+        },
         &mut actor,
         &mut ctx,
     );
@@ -53,11 +55,13 @@ fn should_reject_lease_acquire_with_read_only_permission() {
 
     // Act
     let res = session.acquire(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/db-migration"),
-        "owner1".to_string(),
-        30,
-        0,  // wait_seconds
+        AcquireRequest {
+            family: RouteFamily::new(1),
+            route: Route::new("lease://realm/locks/db-migration"),
+            owner_id: "owner1".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 0,
+        },
         &mut actor,
         &mut ctx,
     );
@@ -79,11 +83,13 @@ fn should_allow_lease_acquire_with_write_permission() {
 
     // Act
     let res = session.acquire(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/db-migration"),
-        "owner1".to_string(),
-        30,
-        0,  // wait_seconds
+        AcquireRequest {
+            family: RouteFamily::new(1),
+            route: Route::new("lease://realm/locks/db-migration"),
+            owner_id: "owner1".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 0,
+        },
         &mut actor,
         &mut ctx,
     );
@@ -102,11 +108,13 @@ fn should_reject_unauthorized_lease_renew() {
 
     // Act
     let res = session.renew(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/db-migration"),
-        "owner1".to_string(),
-        1,
-        30,
+        RenewRequest {
+            family: RouteFamily::new(1),
+            route: Route::new("lease://realm/locks/db-migration"),
+            owner_id: "owner1".to_string(),
+            fencing_token: 1,
+            ttl_secs: 30,
+        },
         &mut actor,
         &mut ctx,
     );
@@ -126,10 +134,12 @@ fn should_reject_unauthorized_lease_release() {
 
     // Act
     let res = session.release(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/db-migration"),
-        "owner1".to_string(),
-        1,
+        ReleaseRequest {
+            family: RouteFamily::new(1),
+            route: Route::new("lease://realm/locks/db-migration"),
+            owner_id: "owner1".to_string(),
+            fencing_token: 1,
+        },
         &mut actor,
         &mut ctx,
     );
@@ -195,11 +205,13 @@ fn should_enforce_realm_boundary_for_lease_operations() {
 
     // Act - try to acquire in different realm
     let res = session.acquire(
-        RouteFamily::new(1),
-        Route::new("lease://dev/locks/db-migration"),
-        "owner1".to_string(),
-        30,
-        0,  // wait_seconds
+        AcquireRequest {
+            family: RouteFamily::new(1),
+            route: Route::new("lease://dev/locks/db-migration"),
+            owner_id: "owner1".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 0,
+        },
         &mut actor,
         &mut ctx,
     );

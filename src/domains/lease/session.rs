@@ -7,6 +7,32 @@ use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
+/// Parameters for an acquire lease operation
+pub struct AcquireRequest {
+    pub family: RouteFamily,
+    pub route: Route,
+    pub owner_id: String,
+    pub ttl_secs: u64,
+    pub wait_seconds: u32,
+}
+
+/// Parameters for a renew lease operation
+pub struct RenewRequest {
+    pub family: RouteFamily,
+    pub route: Route,
+    pub owner_id: String,
+    pub fencing_token: u64,
+    pub ttl_secs: u64,
+}
+
+/// Parameters for a release lease operation
+pub struct ReleaseRequest {
+    pub family: RouteFamily,
+    pub route: Route,
+    pub owner_id: String,
+    pub fencing_token: u64,
+}
+
 /// Lightweight SessionActor helpers for the lease domain.
 ///
 /// Responsibilities:
@@ -31,53 +57,44 @@ impl SessionActor {
     /// Attempt to acquire a lease. Returns Err if authorization fails.
     pub fn acquire(
         &self,
-        family: RouteFamily,
-        route: Route,
-        owner_id: String,
-        ttl_secs: u64,
-        wait_seconds: u32,
+        request: AcquireRequest,
         lease_actor: &mut LeaseActor,
         ctx: &mut Context<LeaseActor>,
     ) -> Result<(), String> {
         // Acquire requires write access (taking a lock is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
+        if !self.permissions.allows(&request.route, Access::Write) {
             return Err("unauthorized: acquire".to_string());
         }
 
         let msg = LeaseMessage::Acquire {
-            family_id: family,
-            route,
-            owner_id,
-            ttl_secs,
-            wait_seconds,
+            family_id: request.family,
+            route: request.route,
+            owner_id: request.owner_id,
+            ttl_secs: request.ttl_secs,
+            wait_seconds: request.wait_seconds,
         };
         lease_actor.receive(msg, ctx);
         Ok(())
     }
 
     /// Attempt to renew a lease. Returns Err if authorization fails.
-    #[allow(clippy::too_many_arguments)]
     pub fn renew(
         &self,
-        family: RouteFamily,
-        route: Route,
-        owner_id: String,
-        fencing_token: u64,
-        ttl_secs: u64,
+        request: RenewRequest,
         lease_actor: &mut LeaseActor,
         ctx: &mut Context<LeaseActor>,
     ) -> Result<(), String> {
         // Renew requires write access (maintaining a lock is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
+        if !self.permissions.allows(&request.route, Access::Write) {
             return Err("unauthorized: renew".to_string());
         }
 
         let msg = LeaseMessage::Renew {
-            family_id: family,
-            route,
-            owner_id,
-            fencing_token,
-            ttl_secs,
+            family_id: request.family,
+            route: request.route,
+            owner_id: request.owner_id,
+            fencing_token: request.fencing_token,
+            ttl_secs: request.ttl_secs,
         };
         lease_actor.receive(msg, ctx);
         Ok(())
@@ -86,23 +103,20 @@ impl SessionActor {
     /// Attempt to release a lease. Returns Err if authorization fails.
     pub fn release(
         &self,
-        family: RouteFamily,
-        route: Route,
-        owner_id: String,
-        fencing_token: u64,
+        request: ReleaseRequest,
         lease_actor: &mut LeaseActor,
         ctx: &mut Context<LeaseActor>,
     ) -> Result<(), String> {
         // Release requires write access (releasing a lock is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
+        if !self.permissions.allows(&request.route, Access::Write) {
             return Err("unauthorized: release".to_string());
         }
 
         let msg = LeaseMessage::Release {
-            family_id: family,
-            route,
-            owner_id,
-            fencing_token,
+            family_id: request.family,
+            route: request.route,
+            owner_id: request.owner_id,
+            fencing_token: request.fencing_token,
         };
         lease_actor.receive(msg, ctx);
         Ok(())
@@ -157,11 +171,13 @@ mod tests {
 
         // Act
         let res = session.acquire(
-            RouteFamily::new(1),
-            Route::new("lease://realm/locks/db-migration"),
-            "owner1".to_string(),
-            30,
-            0,  // wait_seconds
+            AcquireRequest {
+                family: RouteFamily::new(1),
+                route: Route::new("lease://realm/locks/db-migration"),
+                owner_id: "owner1".to_string(),
+                ttl_secs: 30,
+                wait_seconds: 0,
+            },
             &mut actor,
             &mut ctx,
         );
@@ -184,11 +200,13 @@ mod tests {
 
         // Act - try to acquire with only read permission
         let res = session.acquire(
-            RouteFamily::new(1),
-            Route::new("lease://realm/locks/db-migration"),
-            "owner1".to_string(),
-            30,
-            0,  // wait_seconds
+            AcquireRequest {
+                family: RouteFamily::new(1),
+                route: Route::new("lease://realm/locks/db-migration"),
+                owner_id: "owner1".to_string(),
+                ttl_secs: 30,
+                wait_seconds: 0,
+            },
             &mut actor,
             &mut ctx,
         );
@@ -209,11 +227,13 @@ mod tests {
 
         // Act
         let res = session.acquire(
-            RouteFamily::new(1),
-            Route::new("lease://realm/locks/db-migration"),
-            "owner1".to_string(),
-            30,
-            0,  // wait_seconds
+            AcquireRequest {
+                family: RouteFamily::new(1),
+                route: Route::new("lease://realm/locks/db-migration"),
+                owner_id: "owner1".to_string(),
+                ttl_secs: 30,
+                wait_seconds: 0,
+            },
             &mut actor,
             &mut ctx,
         );
@@ -232,11 +252,13 @@ mod tests {
 
         // Act
         let res = session.renew(
-            RouteFamily::new(1),
-            Route::new("lease://realm/locks/db-migration"),
-            "owner1".to_string(),
-            1,
-            30,
+            RenewRequest {
+                family: RouteFamily::new(1),
+                route: Route::new("lease://realm/locks/db-migration"),
+                owner_id: "owner1".to_string(),
+                fencing_token: 1,
+                ttl_secs: 30,
+            },
             &mut actor,
             &mut ctx,
         );
@@ -255,10 +277,12 @@ mod tests {
 
         // Act
         let res = session.release(
-            RouteFamily::new(1),
-            Route::new("lease://realm/locks/db-migration"),
-            "owner1".to_string(),
-            1,
+            ReleaseRequest {
+                family: RouteFamily::new(1),
+                route: Route::new("lease://realm/locks/db-migration"),
+                owner_id: "owner1".to_string(),
+                fencing_token: 1,
+            },
             &mut actor,
             &mut ctx,
         );

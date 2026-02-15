@@ -130,16 +130,16 @@ impl TestServer {
         // Wait for both listeners to be ready before returning
         // This ensures tests don't connect before accept loops are ready
         tcp_ready_rx.await.map_err(|e| {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("TCP readiness wait failed: {}", e),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::other(format!(
+                "TCP readiness wait failed: {}",
+                e
+            ))) as Box<dyn std::error::Error>
         })?;
         ws_ready_rx.await.map_err(|e| {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("WebSocket readiness wait failed: {}", e),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::other(format!(
+                "WebSocket readiness wait failed: {}",
+                e
+            ))) as Box<dyn std::error::Error>
         })?;
 
         // Mark startup complete

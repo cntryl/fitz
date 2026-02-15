@@ -34,7 +34,7 @@ mod basic_queueing {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Client-A acquires lease
         let acquire_a = LeaseMessage::Acquire {
             family_id: fam,
@@ -44,7 +44,7 @@ mod basic_queueing {
             wait_seconds: 0,
         };
         let response_a = actor.handle(acquire_a);
-        
+
         let token_a = match response_a {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired for first client"),
@@ -63,7 +63,10 @@ mod basic_queueing {
         // Assert
         match response_b {
             LeaseResponse::Queued { fencing_token } => {
-                assert!(fencing_token > 0, "Expected valid fencing token for queued waiter");
+                assert!(
+                    fencing_token > 0,
+                    "Expected valid fencing token for queued waiter"
+                );
             }
             _ => panic!("Expected Queued response, got {:?}", response_b),
         }
@@ -75,7 +78,7 @@ mod basic_queueing {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Client-A acquires lease
         let acquire_a = LeaseMessage::Acquire {
             family_id: fam,
@@ -111,7 +114,7 @@ mod basic_queueing {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Client-A acquires lease (holds it)
         let acquire_a = LeaseMessage::Acquire {
             family_id: fam,
@@ -145,7 +148,10 @@ mod basic_queueing {
         // Assert
         match response {
             LeaseResponse::AlreadyQueued { fencing_token } => {
-                assert!(fencing_token > 0, "Expected valid token for already-queued waiter");
+                assert!(
+                    fencing_token > 0,
+                    "Expected valid token for already-queued waiter"
+                );
             }
             _ => panic!("Expected AlreadyQueued response, got {:?}", response),
         }
@@ -157,7 +163,7 @@ mod basic_queueing {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Client-A acquires lease
         let acquire_a = LeaseMessage::Acquire {
             family_id: fam,
@@ -167,7 +173,7 @@ mod basic_queueing {
             wait_seconds: 0,
         };
         let response_a = actor.handle(acquire_a);
-        
+
         let token_a = match response_a {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -186,7 +192,10 @@ mod basic_queueing {
         // Assert
         match response {
             LeaseResponse::AlreadyHeld { fencing_token } => {
-                assert_eq!(fencing_token, token_a, "Expected same token for already-held");
+                assert_eq!(
+                    fencing_token, token_a,
+                    "Expected same token for already-held"
+                );
             }
             _ => panic!("Expected AlreadyHeld response, got {:?}", response),
         }
@@ -203,7 +212,7 @@ mod idempotent_acquire {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Client-A acquires and holds
         let acquire_a = LeaseMessage::Acquire {
             family_id: fam,
@@ -213,7 +222,7 @@ mod idempotent_acquire {
             wait_seconds: 0,
         };
         let response_a = actor.handle(acquire_a);
-        
+
         let token_a = match response_a {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -250,7 +259,7 @@ mod queue_overflow {
         let test_route = route("lease://test/app/lock");
         let fam = family();
         let max_queue_depth = 100; // Default server limit
-        
+
         // Client-A acquires the lease (holder)
         let acquire_holder = LeaseMessage::Acquire {
             family_id: fam,
@@ -293,7 +302,10 @@ mod queue_overflow {
         // Assert
         match response {
             LeaseResponse::QueueFull { pending_count } => {
-                assert_eq!(pending_count, max_queue_depth, "Expected queue at max capacity");
+                assert_eq!(
+                    pending_count, max_queue_depth,
+                    "Expected queue at max capacity"
+                );
             }
             _ => panic!("Expected QueueFull response, got {:?}", response),
         }
@@ -310,7 +322,7 @@ mod fifo_ordering {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Holder
         let acquire_holder = LeaseMessage::Acquire {
             family_id: fam,
@@ -372,7 +384,7 @@ mod renew_and_release {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Acquire
         let acquire = LeaseMessage::Acquire {
             family_id: fam,
@@ -382,7 +394,7 @@ mod renew_and_release {
             wait_seconds: 0,
         };
         let response_a = actor.handle(acquire);
-        
+
         let token_a = match response_a {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -400,7 +412,9 @@ mod renew_and_release {
 
         // Assert - Should get new token
         match response {
-            LeaseResponse::Renewed { fencing_token: new_token } => {
+            LeaseResponse::Renewed {
+                fencing_token: new_token,
+            } => {
                 assert_ne!(new_token, token_a, "Expected new token on renewal");
             }
             _ => panic!("Expected Renewed response, got {:?}", response),
@@ -413,7 +427,7 @@ mod renew_and_release {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Acquire
         let acquire = LeaseMessage::Acquire {
             family_id: fam,
@@ -429,7 +443,7 @@ mod renew_and_release {
             family_id: fam,
             route: test_route.clone(),
             owner_id: "client-a".to_string(),
-            fencing_token: 999,  // Wrong token
+            fencing_token: 999, // Wrong token
             ttl_secs: 120,
         };
         let response = actor.handle(renew_bad_token);
@@ -449,7 +463,7 @@ mod renew_and_release {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Acquire
         let acquire = LeaseMessage::Acquire {
             family_id: fam,
@@ -459,7 +473,7 @@ mod renew_and_release {
             wait_seconds: 0,
         };
         let response_a = actor.handle(acquire);
-        
+
         let token_a = match response_a {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -524,7 +538,7 @@ mod query_operations {
         let mut actor = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
-        
+
         // Holder
         let acquire_holder = LeaseMessage::Acquire {
             family_id: fam,
