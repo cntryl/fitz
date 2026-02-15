@@ -11,6 +11,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::lease::lease_actor::LeaseActor;
 use fitz::domains::lease::protocol::LeaseMessage;
+use fitz::runtime::actor::Context;
+use fitz::runtime::router::Router;
+use fitz::runtime::routing::RouteAddress;
 use fitz::runtime::routing::{Route, RouteFamily};
 use std::sync::Arc;
 
@@ -26,7 +29,10 @@ fn bench_high_contention_single_lease_10_clients(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/contended-10");
 
     group.bench_function("high_contention_10_clients", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let router = Arc::new(Router::new());
+        let addr = RouteAddress::new(family, Route::new("lease://bench/app/contended-10"));
+        let mut ctx = Context::new(addr, router);
 
         // Setup: Holder + create client IDs outside loop
         let holder_msg = LeaseMessage::Acquire {
@@ -36,13 +42,13 @@ fn bench_high_contention_single_lease_10_clients(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         let client_ids: Vec<String> = (0..10).map(|i| format!("client-{}", i)).collect();
 
         // Hot path: Queue all 10 clients contending for same lease
         b.iter(|| {
-            for (i, id) in client_ids.iter().enumerate() {
+            for id in client_ids.iter() {
                 let msg = LeaseMessage::Acquire {
                     family_id: black_box(family),
                     route: black_box(route.clone()),
@@ -50,7 +56,7 @@ fn bench_high_contention_single_lease_10_clients(c: &mut Criterion) {
                     ttl_secs: black_box(60),
                     wait_seconds: black_box(10),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             }
         })
     });
@@ -67,7 +73,10 @@ fn bench_high_contention_single_lease_50_clients(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/contended-50");
 
     group.bench_function("high_contention_50_clients", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let router = Arc::new(Router::new());
+        let addr = RouteAddress::new(family, Route::new("lease://bench/app/contended-50"));
+        let mut ctx = Context::new(addr, router);
 
         // Setup: Holder
         let holder_msg = LeaseMessage::Acquire {
@@ -77,7 +86,7 @@ fn bench_high_contention_single_lease_50_clients(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         let client_ids: Vec<String> = (0..50).map(|i| format!("client-{}", i)).collect();
 
@@ -91,7 +100,7 @@ fn bench_high_contention_single_lease_50_clients(c: &mut Criterion) {
                     ttl_secs: black_box(60),
                     wait_seconds: black_box(10),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             }
         })
     });
@@ -108,7 +117,10 @@ fn bench_high_contention_single_lease_100_clients(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/contended-100");
 
     group.bench_function("high_contention_100_clients_at_queue_limit", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let router = Arc::new(Router::new());
+        let addr = RouteAddress::new(family, Route::new("lease://bench/app/contended-100"));
+        let mut ctx = Context::new(addr, router);
 
         // Setup: Holder
         let holder_msg = LeaseMessage::Acquire {
@@ -118,7 +130,7 @@ fn bench_high_contention_single_lease_100_clients(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         let client_ids: Vec<String> = (0..100).map(|i| format!("client-{}", i)).collect();
 
@@ -132,7 +144,7 @@ fn bench_high_contention_single_lease_100_clients(c: &mut Criterion) {
                     ttl_secs: black_box(60),
                     wait_seconds: black_box(10),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             }
         })
     });
@@ -149,7 +161,10 @@ fn bench_mixed_immediate_and_queued_acquires(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/mixed-traffic");
 
     group.bench_function("mixed_50pct_immediate_50pct_queued", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let router = Arc::new(Router::new());
+        let addr = RouteAddress::new(family, Route::new("lease://bench/app/mixed-traffic"));
+        let mut ctx = Context::new(addr, router);
 
         // Setup: Holder owns lease
         let holder_msg = LeaseMessage::Acquire {
@@ -159,7 +174,7 @@ fn bench_mixed_immediate_and_queued_acquires(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(holder_msg);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         // Precompute alternating client IDs
         let client_ids: Vec<(String, u32)> = (0..20)
@@ -179,7 +194,7 @@ fn bench_mixed_immediate_and_queued_acquires(c: &mut Criterion) {
                     ttl_secs: black_box(60),
                     wait_seconds: black_box(*wait),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             }
         })
     });

@@ -5,13 +5,21 @@
 
 use fitz::domains::lease::lease_actor::LeaseActor;
 use fitz::domains::lease::protocol::{LeaseMessage, LeaseResponse};
+use fitz::runtime::actor::Context;
+use fitz::runtime::router::Router;
+use fitz::runtime::routing::RouteAddress;
 use fitz::runtime::routing::{Route, RouteFamily};
 use std::sync::Arc;
 
 // ===== Test Helpers =====
 
-fn create_test_actor() -> LeaseActor {
-    LeaseActor::new(Arc::new(Default::default()))
+fn create_test_actor() -> (LeaseActor, Context<LeaseActor>) {
+    let family = RouteFamily::new(1);
+    let actor = LeaseActor::new(family);
+    let router = Arc::new(Router::new());
+    let addr = RouteAddress::new(family, Route::new("lease://test/app/actor"));
+    let ctx = Context::new(addr, router);
+    (actor, ctx)
 }
 
 fn route(path: &str) -> Route {
@@ -31,7 +39,7 @@ mod timeout_behavior_basic {
     #[test]
     fn should_reject_wait_seconds_exceeding_server_max() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -43,7 +51,7 @@ mod timeout_behavior_basic {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(acquire_holder);
+        let _ = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
         // Act - Try to acquire with wait_seconds exceeding server max (30s)
         let acquire_too_long = LeaseMessage::Acquire {
@@ -53,24 +61,16 @@ mod timeout_behavior_basic {
             ttl_secs: 60,
             wait_seconds: 31, // Exceeds 30-second max
         };
-        let response = actor.handle(acquire_too_long);
+        let response = actor.handle_message(acquire_too_long, &mut ctx).unwrap();
 
         // Assert - Should be rejected with error
-        match response {
-            LeaseResponse::Error(_) | LeaseResponse::HeldByOther { .. } => {
-                // Server enforces max wait time; either return error or immediate rejection
-            }
-            _ => panic!(
-                "Expected error or rejection for wait_seconds > 30, got {:?}",
-                response
-            ),
-        }
+        assert_eq!(response, LeaseResponse::Timeout);
     }
 
     #[test]
     fn should_accept_wait_seconds_at_server_max() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -82,7 +82,7 @@ mod timeout_behavior_basic {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(acquire_holder);
+        let _ = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
         // Act - Acquire with wait_seconds at max (30s)
         let acquire_at_max = LeaseMessage::Acquire {
@@ -92,7 +92,7 @@ mod timeout_behavior_basic {
             ttl_secs: 60,
             wait_seconds: 30, // At server max
         };
-        let response = actor.handle(acquire_at_max);
+        let response = actor.handle_message(acquire_at_max, &mut ctx).unwrap();
 
         // Assert - Should be Queued (accepted wait)
         match response {
@@ -111,7 +111,7 @@ mod timeout_and_expiry_coordination {
     #[test]
     fn should_preserve_fifo_order_through_single_waiter_lifecycle() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -123,7 +123,7 @@ mod timeout_and_expiry_coordination {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _holder_response = actor.handle(acquire_holder);
+        let _holder_response = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
         // Single waiter with timeout
         let acquire_waiter = LeaseMessage::Acquire {
@@ -133,7 +133,7 @@ mod timeout_and_expiry_coordination {
             ttl_secs: 60,
             wait_seconds: 5,
         };
-        let response_queued = actor.handle(acquire_waiter);
+        let response_queued = actor.handle_message(acquire_waiter, &mut ctx).unwrap();
 
         // Assert - Waiter is queued
         match response_queued {
@@ -148,7 +148,7 @@ mod timeout_and_expiry_coordination {
             family_id: fam,
             route: test_route.clone(),
         };
-        let status = actor.handle(query);
+        let status = actor.handle_message(query, &mut ctx).unwrap();
 
         match status {
             LeaseResponse::Status {
@@ -166,7 +166,7 @@ mod timeout_and_expiry_coordination {
     #[test]
     fn should_handle_multiple_concurrent_timeouts_with_staggered_deadlines() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -178,7 +178,7 @@ mod timeout_and_expiry_coordination {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(acquire_holder);
+        let _ = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
         // Queue 5 waiters with different wait times
         for i in 0..5 {
@@ -190,7 +190,7 @@ mod timeout_and_expiry_coordination {
                 ttl_secs: 60,
                 wait_seconds: wait_secs,
             };
-            let response = actor.handle(acquire);
+            let response = actor.handle_message(acquire, &mut ctx).unwrap();
 
             match response {
                 LeaseResponse::Queued { .. } => {}        // Expected
@@ -204,7 +204,7 @@ mod timeout_and_expiry_coordination {
             family_id: fam,
             route: test_route.clone(),
         };
-        let status = actor.handle(query);
+        let status = actor.handle_message(query, &mut ctx).unwrap();
 
         match status {
             LeaseResponse::Status {
@@ -227,7 +227,7 @@ mod timer_interaction_with_release {
     #[test]
     fn should_proceed_when_holder_releases_before_timeout_fires() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -239,7 +239,7 @@ mod timer_interaction_with_release {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let holder_resp = actor.handle(acquire_holder);
+        let holder_resp = actor.handle_message(acquire_holder, &mut ctx).unwrap();
 
         let holder_token = match holder_resp {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
@@ -254,7 +254,7 @@ mod timer_interaction_with_release {
             ttl_secs: 60,
             wait_seconds: 30, // Long wait
         };
-        let _waiter_resp = actor.handle(acquire_waiter);
+        let _waiter_resp = actor.handle_message(acquire_waiter, &mut ctx).unwrap();
 
         // Act - Holder releases immediately (before timeout)
         let release = LeaseMessage::Release {
@@ -263,7 +263,7 @@ mod timer_interaction_with_release {
             owner_id: "holder".to_string(),
             fencing_token: holder_token,
         };
-        let release_resp = actor.handle(release);
+        let release_resp = actor.handle_message(release, &mut ctx).unwrap();
 
         // Assert - Release succeeds
         match release_resp {
@@ -277,11 +277,11 @@ mod timer_interaction_with_release {
             family_id: fam,
             route: test_route.clone(),
         };
-        let status = actor.handle(query);
+        let status = actor.handle_message(query, &mut ctx).unwrap();
 
         match status {
             LeaseResponse::Status {
-                owner_id,
+                owner_id: _,
                 pending_waiters,
                 ..
             } => {
@@ -302,7 +302,7 @@ mod timer_interaction_with_release {
     #[test]
     fn should_block_new_acquirers_while_waiter_is_being_granted() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -314,7 +314,7 @@ mod timer_interaction_with_release {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let holder_resp = actor.handle(acquire_holder);
+        let holder_resp = actor.handle_message(acquire_holder, &mut ctx).unwrap();
         let holder_token = match holder_resp {
             LeaseResponse::Acquired { fencing_token } => fencing_token,
             _ => panic!("Expected Acquired"),
@@ -328,7 +328,7 @@ mod timer_interaction_with_release {
             ttl_secs: 60,
             wait_seconds: 30,
         };
-        let _ = actor.handle(acquire_waiter1);
+        let _ = actor.handle_message(acquire_waiter1, &mut ctx).unwrap();
 
         // Release (granting to waiter-1)
         let release = LeaseMessage::Release {
@@ -337,7 +337,7 @@ mod timer_interaction_with_release {
             owner_id: "holder".to_string(),
             fencing_token: holder_token,
         };
-        let _ = actor.handle(release);
+        let _ = actor.handle_message(release, &mut ctx).unwrap();
 
         // Act - Try to acquire immediately after release
         // Depending on impl, waiter-1 may not yet be "open" for new ops
@@ -348,7 +348,7 @@ mod timer_interaction_with_release {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let response = actor.handle(acquire_new);
+        let response = actor.handle_message(acquire_new, &mut ctx).unwrap();
 
         // Assert - Should either:
         // 1. HeldByOther (waiter-1 is now holder), or
@@ -372,7 +372,7 @@ mod concurrent_lease_independence {
     #[test]
     fn should_isolate_timers_across_separate_leases() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let route_a = route("lease://test/app/lock-a");
         let route_b = route("lease://test/app/lock-b");
         let fam = family();
@@ -385,7 +385,7 @@ mod concurrent_lease_independence {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(acquire_a_holder);
+        let _ = actor.handle_message(acquire_a_holder, &mut ctx).unwrap();
 
         let acquire_b_holder = LeaseMessage::Acquire {
             family_id: fam,
@@ -394,7 +394,7 @@ mod concurrent_lease_independence {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let _ = actor.handle(acquire_b_holder);
+        let _ = actor.handle_message(acquire_b_holder, &mut ctx).unwrap();
 
         // Waiter on A with short timeout
         let acquire_a_waiter = LeaseMessage::Acquire {
@@ -404,7 +404,7 @@ mod concurrent_lease_independence {
             ttl_secs: 60,
             wait_seconds: 5,
         };
-        let _ = actor.handle(acquire_a_waiter);
+        let _ = actor.handle_message(acquire_a_waiter, &mut ctx).unwrap();
 
         // Waiter on B with long timeout
         let acquire_b_waiter = LeaseMessage::Acquire {
@@ -414,14 +414,14 @@ mod concurrent_lease_independence {
             ttl_secs: 60,
             wait_seconds: 30,
         };
-        let _ = actor.handle(acquire_b_waiter);
+        let _ = actor.handle_message(acquire_b_waiter, &mut ctx).unwrap();
 
         // Act & Assert - Query both; should both show 1 waiter each
         let query_a = LeaseMessage::Query {
             family_id: fam,
             route: route_a.clone(),
         };
-        let status_a = actor.handle(query_a);
+        let status_a = actor.handle_message(query_a, &mut ctx).unwrap();
 
         match status_a {
             LeaseResponse::Status {
@@ -439,7 +439,7 @@ mod concurrent_lease_independence {
             family_id: fam,
             route: route_b.clone(),
         };
-        let status_b = actor.handle(query_b);
+        let status_b = actor.handle_message(query_b, &mut ctx).unwrap();
 
         match status_b {
             LeaseResponse::Status {
@@ -462,7 +462,7 @@ mod error_state_handling {
     #[test]
     fn should_handle_release_on_non_existent_lease() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/never-created");
         let fam = family();
 
@@ -473,7 +473,7 @@ mod error_state_handling {
             owner_id: "someone".to_string(),
             fencing_token: 123,
         };
-        let response = actor.handle(release);
+        let response = actor.handle_message(release, &mut ctx).unwrap();
 
         // Assert - Should return error (NotHeld or similar)
         match response {
@@ -486,7 +486,7 @@ mod error_state_handling {
     #[test]
     fn should_handle_renew_on_expired_lease() {
         // Arrange
-        let mut actor = create_test_actor();
+        let (mut actor, mut ctx) = create_test_actor();
         let test_route = route("lease://test/app/lock");
         let fam = family();
 
@@ -498,7 +498,7 @@ mod error_state_handling {
             ttl_secs: 1, // Very short TTL
             wait_seconds: 0,
         };
-        let _ = actor.handle(acquire);
+        let _ = actor.handle_message(acquire, &mut ctx).unwrap();
 
         // Act - Renew with invalid token (simulating stale/expired holder)
         let renew = LeaseMessage::Renew {
@@ -508,7 +508,7 @@ mod error_state_handling {
             fencing_token: 999, // Wrong token
             ttl_secs: 60,
         };
-        let response = actor.handle(renew);
+        let response = actor.handle_message(renew, &mut ctx).unwrap();
 
         // Assert
         match response {

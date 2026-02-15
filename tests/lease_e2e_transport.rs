@@ -105,16 +105,6 @@ fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: u64) -> 
     build_lease_acquire(route, owner_id, ttl_secs, None)
 }
 
-/// Helper: Build Lease ACQUIRE with wait
-fn build_lease_acquire_with_wait(
-    route: &str,
-    owner_id: &str,
-    ttl_secs: u64,
-    wait_seconds: u32,
-) -> Vec<u8> {
-    build_lease_acquire(route, owner_id, ttl_secs, Some(wait_seconds))
-}
-
 /// Build Lease RENEW request frame
 /// Wire format: [u32 BE route_len][route][u32 BE owner_len][owner_id][u64 BE fencing_token][u64 BE ttl_secs]
 fn build_lease_renew(route: &str, owner_id: &str, fencing_token: u64, ttl_secs: u64) -> Vec<u8> {

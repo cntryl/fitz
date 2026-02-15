@@ -1,5 +1,5 @@
 use fitz::auth::Permission;
-use fitz::domains::lease::session::{SessionActor, AcquireRequest, RenewRequest, ReleaseRequest};
+use fitz::domains::lease::session::{AcquireRequest, ReleaseRequest, RenewRequest, SessionActor};
 use fitz::domains::lease::LeaseActor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;

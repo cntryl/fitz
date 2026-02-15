@@ -175,6 +175,93 @@ impl LeaseActor {
         }
     }
 
+    /// Handle a lease message and return an optional response.
+    ///
+    /// Returns None for messages that should not emit a reply (e.g., Tick)
+    /// or when the message is misrouted.
+    pub fn handle_message(
+        &mut self,
+        msg: LeaseMessage,
+        ctx: &mut Context<LeaseActor>,
+    ) -> Option<LeaseResponse> {
+        let response = match msg {
+            LeaseMessage::Acquire {
+                family_id,
+                route,
+                owner_id,
+                ttl_secs,
+                wait_seconds,
+            } => {
+                if family_id != self.family {
+                    return None;
+                }
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => {
+                        let source = ctx
+                            .current_metadata()
+                            .as_ref()
+                            .and_then(|m| m.source.clone());
+
+                        self.handle_acquire(key, owner_id, ttl_secs, wait_seconds, source, ctx)
+                    }
+                    None => LeaseResponse::NotFound,
+                }
+            }
+            LeaseMessage::Renew {
+                family_id,
+                route,
+                owner_id,
+                fencing_token,
+                ttl_secs,
+            } => {
+                if family_id != self.family {
+                    return None;
+                }
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
+                    None => LeaseResponse::NotFound,
+                }
+            }
+            LeaseMessage::Release {
+                family_id,
+                route,
+                owner_id,
+                fencing_token,
+            } => {
+                if family_id != self.family {
+                    return None;
+                }
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => {
+                        let response = self.handle_release(key.clone(), owner_id, fencing_token);
+
+                        if matches!(response, LeaseResponse::Released) {
+                            self.grant_next_waiter(&key, ctx);
+                        }
+
+                        response
+                    }
+                    None => LeaseResponse::NotFound,
+                }
+            }
+            LeaseMessage::Query { family_id, route } => {
+                if family_id != self.family {
+                    return None;
+                }
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_query(key),
+                    None => LeaseResponse::NotFound,
+                }
+            }
+            LeaseMessage::Tick => {
+                self.expire_old_leases(ctx);
+                return None;
+            }
+        };
+
+        Some(response)
+    }
+
     /// Allocate and return the next fencing token
     fn next_fencing_token(&mut self) -> u64 {
         let token = self.next_token;
@@ -489,91 +576,9 @@ impl Actor for LeaseActor {
     type Message = LeaseMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        let response = match msg {
-            LeaseMessage::Acquire {
-                family_id,
-                route,
-                owner_id,
-                ttl_secs,
-                wait_seconds,
-            } => {
-                // Validate family_id matches actor's family
-                if family_id != self.family {
-                    return; // Silently drop misrouted messages
-                }
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => {
-                        // Get source address for potential deferred reply
-                        let source = ctx
-                            .current_metadata()
-                            .as_ref()
-                            .and_then(|m| m.source.clone());
-
-                        self.handle_acquire(key, owner_id, ttl_secs, wait_seconds, source, ctx)
-                    }
-                    None => LeaseResponse::NotFound,
-                }
-            }
-            LeaseMessage::Renew {
-                family_id,
-                route,
-                owner_id,
-                fencing_token,
-                ttl_secs,
-            } => {
-                // Validate family_id matches actor's family
-                if family_id != self.family {
-                    return; // Silently drop misrouted messages
-                }
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
-                    None => LeaseResponse::NotFound,
-                }
-            }
-            LeaseMessage::Release {
-                family_id,
-                route,
-                owner_id,
-                fencing_token,
-            } => {
-                // Validate family_id matches actor's family
-                if family_id != self.family {
-                    return; // Silently drop misrouted messages
-                }
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => {
-                        let response = self.handle_release(key.clone(), owner_id, fencing_token);
-
-                        // After successful release, grant to next waiter if any
-                        if matches!(response, LeaseResponse::Released) {
-                            self.grant_next_waiter(&key, ctx);
-                        }
-
-                        response
-                    }
-                    None => LeaseResponse::NotFound,
-                }
-            }
-            LeaseMessage::Query { family_id, route } => {
-                // Validate family_id matches actor's family
-                if family_id != self.family {
-                    return; // Silently drop misrouted messages
-                }
-                match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_query(key),
-                    None => LeaseResponse::NotFound,
-                }
-            }
-            LeaseMessage::Tick => {
-                // Proactively expire old leases and grant to waiters
-                self.expire_old_leases(ctx);
-                return; // No response needed
-            }
-        };
-
-        // Send response back to the client via reply (if the message came from another actor)
-        // For testing/benchmarking without a proper source, this is a no-op
-        let _ = ctx.reply(response).ok();
+        if let Some(response) = self.handle_message(msg, ctx) {
+            let _ = ctx.reply(response).ok();
+        }
     }
 
     /// Handle timer callback for waiter timeouts

@@ -10,6 +10,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::lease::lease_actor::LeaseActor;
 use fitz::domains::lease::protocol::LeaseMessage;
+use fitz::runtime::actor::Context;
+use fitz::runtime::router::Router;
+use fitz::runtime::routing::RouteAddress;
 use fitz::runtime::routing::{Route, RouteFamily};
 use std::sync::Arc;
 
@@ -27,7 +30,11 @@ fn bench_queue_depth_throughput_10_waiters(c: &mut Criterion) {
     group.bench_function("queue_depth_10_waiters", |b| {
         b.iter_batched(
             || {
-                let mut actor = LeaseActor::new(Arc::new(Default::default()));
+                let mut actor = LeaseActor::new(family);
+                let router = Arc::new(Router::new());
+                let addr =
+                    RouteAddress::new(family, Route::new("lease://bench/app/queue-scale-10"));
+                let mut ctx = Context::new(addr, router);
 
                 // Setup: Holder + 10 waiters already queued
                 let holder_msg = LeaseMessage::Acquire {
@@ -37,7 +44,7 @@ fn bench_queue_depth_throughput_10_waiters(c: &mut Criterion) {
                     ttl_secs: 60,
                     wait_seconds: 0,
                 };
-                let _ = actor.handle(holder_msg);
+                let _ = actor.handle_message(holder_msg, &mut ctx);
 
                 for i in 0..10 {
                     let waiter_msg = LeaseMessage::Acquire {
@@ -47,18 +54,18 @@ fn bench_queue_depth_throughput_10_waiters(c: &mut Criterion) {
                         ttl_secs: 60,
                         wait_seconds: 30,
                     };
-                    let _ = actor.handle(waiter_msg);
+                    let _ = actor.handle_message(waiter_msg, &mut ctx);
                 }
 
-                actor
+                (actor, ctx)
             },
-            |mut actor| {
+            |(mut actor, mut ctx)| {
                 // Measure: Single additional operation in deep queue
                 let msg = LeaseMessage::Query {
                     family_id: black_box(family),
                     route: black_box(route.clone()),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -78,7 +85,11 @@ fn bench_queue_depth_throughput_50_waiters(c: &mut Criterion) {
     group.bench_function("queue_depth_50_waiters", |b| {
         b.iter_batched(
             || {
-                let mut actor = LeaseActor::new(Arc::new(Default::default()));
+                let mut actor = LeaseActor::new(family);
+                let router = Arc::new(Router::new());
+                let addr =
+                    RouteAddress::new(family, Route::new("lease://bench/app/queue-scale-50"));
+                let mut ctx = Context::new(addr, router);
 
                 // Setup: Holder + 50 waiters
                 let holder_msg = LeaseMessage::Acquire {
@@ -88,7 +99,7 @@ fn bench_queue_depth_throughput_50_waiters(c: &mut Criterion) {
                     ttl_secs: 60,
                     wait_seconds: 0,
                 };
-                let _ = actor.handle(holder_msg);
+                let _ = actor.handle_message(holder_msg, &mut ctx);
 
                 for i in 0..50 {
                     let waiter_msg = LeaseMessage::Acquire {
@@ -98,18 +109,18 @@ fn bench_queue_depth_throughput_50_waiters(c: &mut Criterion) {
                         ttl_secs: 60,
                         wait_seconds: 30,
                     };
-                    let _ = actor.handle(waiter_msg);
+                    let _ = actor.handle_message(waiter_msg, &mut ctx);
                 }
 
-                actor
+                (actor, ctx)
             },
-            |mut actor| {
+            |(mut actor, mut ctx)| {
                 // Measure: Single operation with 50 waiters pending
                 let msg = LeaseMessage::Query {
                     family_id: black_box(family),
                     route: black_box(route.clone()),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -129,7 +140,11 @@ fn bench_queue_depth_throughput_100_waiters(c: &mut Criterion) {
     group.bench_function("queue_depth_100_waiters_at_max", |b| {
         b.iter_batched(
             || {
-                let mut actor = LeaseActor::new(Arc::new(Default::default()));
+                let mut actor = LeaseActor::new(family);
+                let router = Arc::new(Router::new());
+                let addr =
+                    RouteAddress::new(family, Route::new("lease://bench/app/queue-scale-100-max"));
+                let mut ctx = Context::new(addr, router);
 
                 // Setup: Holder + 100 waiters (at max queue depth)
                 let holder_msg = LeaseMessage::Acquire {
@@ -139,7 +154,7 @@ fn bench_queue_depth_throughput_100_waiters(c: &mut Criterion) {
                     ttl_secs: 60,
                     wait_seconds: 0,
                 };
-                let _ = actor.handle(holder_msg);
+                let _ = actor.handle_message(holder_msg, &mut ctx);
 
                 for i in 0..100 {
                     let waiter_msg = LeaseMessage::Acquire {
@@ -149,18 +164,18 @@ fn bench_queue_depth_throughput_100_waiters(c: &mut Criterion) {
                         ttl_secs: 60,
                         wait_seconds: 30,
                     };
-                    let _ = actor.handle(waiter_msg);
+                    let _ = actor.handle_message(waiter_msg, &mut ctx);
                 }
 
-                actor
+                (actor, ctx)
             },
-            |mut actor| {
+            |(mut actor, mut ctx)| {
                 // Measure: Single operation at max queue depth
                 let msg = LeaseMessage::Query {
                     family_id: black_box(family),
                     route: black_box(route.clone()),
                 };
-                let _ = actor.handle(msg);
+                let _ = actor.handle_message(msg, &mut ctx);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -178,7 +193,10 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
     let route = Route::new("lease://bench/app/turnover-backlog");
 
     group.bench_function("lease_turnover_with_50_waiter_backlog", |b| {
-        let mut actor = LeaseActor::new(Arc::new(Default::default()));
+        let mut actor = LeaseActor::new(family);
+        let router = Arc::new(Router::new());
+        let addr = RouteAddress::new(family, Route::new("lease://bench/app/turnover-backlog"));
+        let mut ctx = Context::new(addr, router);
 
         // Setup: 50 clients already waiting
         let holder_msg = LeaseMessage::Acquire {
@@ -188,7 +206,7 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        let holder_resp = actor.handle(holder_msg);
+        let holder_resp = actor.handle_message(holder_msg, &mut ctx).unwrap();
         let mut holder_token = 0u64;
         if let fitz::domains::lease::protocol::LeaseResponse::Acquired { fencing_token } =
             holder_resp
@@ -206,7 +224,7 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
                 ttl_secs: 60,
                 wait_seconds: 30,
             };
-            let _ = actor.handle(msg);
+            let _ = actor.handle_message(msg, &mut ctx);
         }
 
         // Hot path: Holder releases (triggers domain processing to grant next waiter)
@@ -217,7 +235,7 @@ fn bench_lease_turnover_with_backlog(c: &mut Criterion) {
                 owner_id: black_box("initial-holder".to_string()),
                 fencing_token: black_box(holder_token),
             };
-            let _ = actor.handle(msg);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 

@@ -35,7 +35,7 @@ fn bench_lease_acquire_when_free(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(0),
             };
-            actor.receive(msg, &mut ctx);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 
@@ -61,7 +61,7 @@ fn bench_lease_acquire_immediate_rejection(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        actor.receive(holder_msg, &mut ctx);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         // Hot path: Rejection on immediate acquire attempt
         b.iter(|| {
@@ -72,7 +72,7 @@ fn bench_lease_acquire_immediate_rejection(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(0),
             };
-            actor.receive(msg, &mut ctx);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 
@@ -98,7 +98,7 @@ fn bench_lease_acquire_enqueue_cost(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        actor.receive(holder_msg, &mut ctx);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         // Hot path: Enqueue first waiter with wait_seconds
         let mut waiter_counter = 0;
@@ -111,7 +111,7 @@ fn bench_lease_acquire_enqueue_cost(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(10), // Request wait
             };
-            actor.receive(msg, &mut ctx);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 
@@ -137,7 +137,7 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        actor.receive(holder_msg, &mut ctx);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         for i in 0..5 {
             let waiter_msg = LeaseMessage::Acquire {
@@ -147,7 +147,7 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
                 ttl_secs: 60,
                 wait_seconds: 10,
             };
-            actor.receive(waiter_msg, &mut ctx);
+            let _ = actor.handle_message(waiter_msg, &mut ctx);
         }
 
         // Hot path: Query
@@ -156,7 +156,7 @@ fn bench_lease_query_pending_waiters(c: &mut Criterion) {
                 family_id: black_box(family),
                 route: black_box(route.clone()),
             };
-            actor.receive(msg, &mut ctx);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 
@@ -182,7 +182,7 @@ fn bench_idempotent_acquire_already_held(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        actor.receive(hold_msg, &mut ctx);
+        let _ = actor.handle_message(hold_msg, &mut ctx);
 
         // Hot path: Same client tries to acquire again (idempotent)
         b.iter(|| {
@@ -193,7 +193,7 @@ fn bench_idempotent_acquire_already_held(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(0),
             };
-            actor.receive(msg, &mut ctx);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 
@@ -219,7 +219,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 0,
         };
-        actor.receive(holder_msg, &mut ctx);
+        let _ = actor.handle_message(holder_msg, &mut ctx);
 
         let waiter_msg = LeaseMessage::Acquire {
             family_id: family,
@@ -228,7 +228,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
             ttl_secs: 60,
             wait_seconds: 10,
         };
-        actor.receive(waiter_msg, &mut ctx);
+        let _ = actor.handle_message(waiter_msg, &mut ctx);
 
         // Hot path: Same waiter tries to acquire again (already queued)
         b.iter(|| {
@@ -239,7 +239,7 @@ fn bench_idempotent_acquire_already_queued(c: &mut Criterion) {
                 ttl_secs: black_box(60),
                 wait_seconds: black_box(10),
             };
-            actor.receive(msg, &mut ctx);
+            let _ = actor.handle_message(msg, &mut ctx);
         })
     });
 
