@@ -952,12 +952,10 @@ impl RuntimeIngress {
                         payload: _,
                     }) => Ok(Some(Route::new(route))),
                     Ok(crate::domains::schedule::ScheduleMessage::Subscribe {
-                        pattern,
-                        ..
+                        pattern, ..
                     }) => Ok(Some(pattern.clone())),
                     Ok(crate::domains::schedule::ScheduleMessage::Unsubscribe {
-                        pattern,
-                        ..
+                        pattern, ..
                     }) => Ok(Some(pattern.clone())),
                     Ok(_) => Ok(None),
                     Err(e) => Err(e),

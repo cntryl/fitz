@@ -6,8 +6,8 @@
 //! - Cron expressions determine when schedules fire
 
 use bytes::Bytes;
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::domains::schedule::protocol::CronSchedule;
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 
@@ -350,7 +350,7 @@ fn should_list_all_schedules() {
     match response {
         ScheduleResponse::ListDefs(entries) => {
             assert_eq!(entries.len(), 3);
-            
+
             // Verify all routes present
             let routes: Vec<String> = entries.iter().map(|e| e.route.clone()).collect();
             assert!(routes.contains(&"schedule://acme/jobs/backup".to_string()));
@@ -407,7 +407,7 @@ fn should_preserve_payload_in_schedule() {
 #[test]
 fn should_handle_subscribe_operation() {
     use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-    
+
     // Arrange
     let mut actor = test_actor();
     let pattern = Route::new("schedule://acme/jobs/*");
@@ -429,7 +429,7 @@ fn should_handle_subscribe_operation() {
 #[test]
 fn should_handle_unsubscribe_operation() {
     use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-    
+
     // Arrange
     let mut actor = test_actor();
     let pattern = Route::new("schedule://acme/jobs/*");
@@ -462,10 +462,14 @@ fn should_calculate_next_fire_time_for_every_minute() {
     // Assert
     // Should be in the future
     assert!(next_fire > now);
-    
+
     // Should be less than 2 minutes away (next minute boundary)
     let elapsed = next_fire.duration_since(now);
-    assert!(elapsed.as_secs() <= 120, "Next fire should be within 2 minutes, got {} seconds", elapsed.as_secs());
+    assert!(
+        elapsed.as_secs() <= 120,
+        "Next fire should be within 2 minutes, got {} seconds",
+        elapsed.as_secs()
+    );
 }
 
 #[test]
@@ -480,7 +484,7 @@ fn should_calculate_next_fire_time_for_specific_hour() {
     // Assert
     // Should be in the future (basic sanity check)
     assert!(next_fire > now);
-    
+
     // Should be less than 25 hours away (next occurrence of 3 AM)
     let elapsed = next_fire.duration_since(now);
     assert!(elapsed.as_secs() < 25 * 3600);

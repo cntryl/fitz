@@ -9,11 +9,13 @@
 //! No TLV encoding, no session layer, no router overhead.
 //! Pure domain logic microbenching.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput, SamplingMode};
+use bytes::Bytes;
+use criterion::{
+    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
+};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
-use bytes::Bytes;
 
 #[path = "../benches/config.rs"]
 mod config;
@@ -38,16 +40,16 @@ fn precompute_routes(count: usize) -> Vec<String> {
 /// Precompute cron expressions (varied but deterministic)
 fn precompute_crons(count: usize) -> Vec<String> {
     let patterns = [
-        "* * * * *",         // Every minute
-        "0 * * * *",         // Every hour
-        "0 0 * * *",         // Daily
-        "0 0 * * 0",         // Weekly
-        "0 2 1 * *",         // Monthly
-        "*/5 * * * *",       // Every 5 minutes
-        "0 */6 * * *",       // Every 6 hours
-        "0 9-17 * * 1-5",    // Business hours
+        "* * * * *",      // Every minute
+        "0 * * * *",      // Every hour
+        "0 0 * * *",      // Daily
+        "0 0 * * 0",      // Weekly
+        "0 2 1 * *",      // Monthly
+        "*/5 * * * *",    // Every 5 minutes
+        "0 */6 * * *",    // Every 6 hours
+        "0 9-17 * * 1-5", // Business hours
     ];
-    
+
     (0..count)
         .map(|i| patterns[i % patterns.len()].to_string())
         .collect()
@@ -66,10 +68,10 @@ fn bench_create_schedule_single(c: &mut Criterion) {
     let routes = precompute_routes(1);
     let crons = precompute_crons(1);
     let payloads = precompute_payloads(1);
-    
+
     let mut group = c.benchmark_group("schedule_create_single");
     group.sampling_mode(SamplingMode::Flat);
-    
+
     group.bench_function("create", |b| {
         b.iter(|| {
             let _response = actor.handle(black_box(ScheduleMessage::Create {
@@ -79,7 +81,7 @@ fn bench_create_schedule_single(c: &mut Criterion) {
             }));
         });
     });
-    
+
     group.finish();
 }
 
@@ -87,12 +89,12 @@ fn bench_create_schedule_single(c: &mut Criterion) {
 fn bench_create_schedule_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("schedule_create_batch");
     group.sampling_mode(SamplingMode::Flat);
-    
+
     for count in [10, 100, 1000] {
         let routes = precompute_routes(count);
         let crons = precompute_crons(count);
         let payloads = precompute_payloads(count);
-        
+
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
             b.iter(|| {
@@ -107,7 +109,7 @@ fn bench_create_schedule_batch(c: &mut Criterion) {
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -116,11 +118,11 @@ fn bench_delete_schedule(c: &mut Criterion) {
     let routes = precompute_routes(100);
     let crons = precompute_crons(100);
     let payloads = precompute_payloads(100);
-    
+
     let mut group = c.benchmark_group("schedule_delete");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
-    
+
     group.bench_function("delete", |b| {
         b.iter(|| {
             // Setup: Create schedule
@@ -130,14 +132,14 @@ fn bench_delete_schedule(c: &mut Criterion) {
                 cron: crons[0].clone(),
                 payload: payloads[0].clone(),
             });
-            
+
             // Measure: Delete
             let _response = actor.handle(black_box(ScheduleMessage::Cancel {
                 route: routes[0].clone(),
             }));
         });
     });
-    
+
     group.finish();
 }
 
@@ -145,7 +147,7 @@ fn bench_delete_schedule(c: &mut Criterion) {
 fn bench_list_schedules(c: &mut Criterion) {
     let mut group = c.benchmark_group("schedule_list");
     group.sampling_mode(SamplingMode::Flat);
-    
+
     for count in [0, 10, 100, 1000] {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -154,7 +156,7 @@ fn bench_list_schedules(c: &mut Criterion) {
             let routes = precompute_routes(count);
             let crons = precompute_crons(count);
             let payloads = precompute_payloads(count);
-            
+
             for i in 0..count {
                 actor.handle(ScheduleMessage::Create {
                     route: routes[i].clone(),
@@ -162,14 +164,14 @@ fn bench_list_schedules(c: &mut Criterion) {
                     payload: payloads[i].clone(),
                 });
             }
-            
+
             // Measure: List
             b.iter(|| {
                 let _response = actor.handle(black_box(ScheduleMessage::List));
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -177,7 +179,7 @@ fn bench_list_schedules(c: &mut Criterion) {
 fn bench_scan_and_fire(c: &mut Criterion) {
     let mut group = c.benchmark_group("schedule_scan_and_fire");
     group.sampling_mode(SamplingMode::Flat);
-    
+
     for count in [10, 100, 1000] {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &count| {
@@ -186,7 +188,7 @@ fn bench_scan_and_fire(c: &mut Criterion) {
             let routes = precompute_routes(count);
             let crons = precompute_crons(count);
             let payloads = precompute_payloads(count);
-            
+
             for i in 0..count {
                 actor.handle(ScheduleMessage::Create {
                     route: routes[i].clone(),
@@ -194,14 +196,14 @@ fn bench_scan_and_fire(c: &mut Criterion) {
                     payload: payloads[i].clone(),
                 });
             }
-            
+
             // Measure: Scan (no schedules ready, so measures overhead)
             b.iter(|| {
                 let _fired = actor.scan_and_fire();
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -210,11 +212,11 @@ fn bench_upsert_schedule(c: &mut Criterion) {
     let route = "schedule://acme/jobs/recurring".to_string();
     let crons = precompute_crons(2);
     let payloads = precompute_payloads(2);
-    
+
     let mut group = c.benchmark_group("schedule_upsert");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
-    
+
     group.bench_function("upsert", |b| {
         b.iter(|| {
             // Setup: Create initial schedule
@@ -224,7 +226,7 @@ fn bench_upsert_schedule(c: &mut Criterion) {
                 cron: crons[0].clone(),
                 payload: payloads[0].clone(),
             });
-            
+
             // Measure: Upsert (overwrite)
             let _response = actor.handle(black_box(ScheduleMessage::Create {
                 route: route.clone(),
@@ -233,7 +235,7 @@ fn bench_upsert_schedule(c: &mut Criterion) {
             }));
         });
     });
-    
+
     group.finish();
 }
 

@@ -44,9 +44,7 @@ fn bench_full_pipeline_create_cancel(c: &mut Criterion) {
                 }));
 
                 // Cancel schedule
-                actor.handle(black_box(ScheduleMessage::Cancel {
-                    route,
-                }));
+                actor.handle(black_box(ScheduleMessage::Cancel { route }));
             },
             criterion::BatchSize::SmallInput,
         )
@@ -74,12 +72,12 @@ fn bench_full_pipeline_batch_create(c: &mut Criterion) {
             for i in 0..10 {
                 let route = format!("schedule://integration/batch/task{:06}", counter + i);
                 let cron = match i % 4 {
-                    0 => "* * * * *",      // Every minute
-                    1 => "0 * * * *",      // Every hour
-                    2 => "0 0 * * *",      // Daily
-                    _ => "0 2 1 * *",      // Monthly at 2am on 1st
+                    0 => "* * * * *", // Every minute
+                    1 => "0 * * * *", // Every hour
+                    2 => "0 0 * * *", // Daily
+                    _ => "0 2 1 * *", // Monthly at 2am on 1st
                 };
-                
+
                 actor.handle(black_box(ScheduleMessage::Create {
                     route,
                     cron: cron.to_string(),
@@ -174,9 +172,7 @@ fn bench_full_pipeline_mixed_workload(c: &mut Criterion) {
             actor.handle(black_box(ScheduleMessage::List));
 
             // Cancel the schedule we just created
-            actor.handle(black_box(ScheduleMessage::Cancel {
-                route,
-            }));
+            actor.handle(black_box(ScheduleMessage::Cancel { route }));
 
             // List again to verify removal
             actor.handle(black_box(ScheduleMessage::List));
@@ -198,11 +194,11 @@ fn bench_full_pipeline_cron_patterns(c: &mut Criterion) {
     );
 
     let patterns = vec![
-        ("simple", "* * * * *"),              // All wildcards
-        ("hourly", "0 * * * *"),              // Specific minute
-        ("daily", "0 0 * * *"),               // Specific hour
-        ("monthly", "0 0 1 * *"),             // Specific day
-        ("complex", "*/15 9-17 * * 1-5"),    // Ranges and steps
+        ("simple", "* * * * *"),          // All wildcards
+        ("hourly", "0 * * * *"),          // Specific minute
+        ("daily", "0 0 * * *"),           // Specific hour
+        ("monthly", "0 0 1 * *"),         // Specific day
+        ("complex", "*/15 9-17 * * 1-5"), // Ranges and steps
     ];
 
     let mut group = c.benchmark_group("schedule_integration_cron_patterns");

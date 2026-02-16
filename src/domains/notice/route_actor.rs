@@ -404,8 +404,8 @@ mod tests {
     #[test]
     fn should_preserve_notify_order_for_single_subscriber() {
         // Arrange
-        use crate::runtime::router::MailboxSink;
         use crate::runtime::envelope::Envelope;
+        use crate::runtime::router::MailboxSink;
         use std::sync::Mutex;
 
         // Local sink that records notification payloads in delivery order
@@ -414,21 +414,31 @@ mod tests {
         }
         impl OrderSink {
             fn new() -> Self {
-                Self { seen: std::sync::Arc::new(Mutex::new(Vec::new())) }
+                Self {
+                    seen: std::sync::Arc::new(Mutex::new(Vec::new())),
+                }
             }
             fn recorded(&self) -> Vec<Vec<u8>> {
                 self.seen.lock().unwrap().clone()
             }
         }
         impl MailboxSink for OrderSink {
-            fn deliver(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
-                if let Some(crate::domains::notice::protocol::NotificationMessage::Notify(n)) = envelope.payload::<crate::domains::notice::protocol::NotificationMessage>() {
+            fn deliver(
+                &self,
+                envelope: Envelope,
+            ) -> Result<(), crate::runtime::router::DeliveryError> {
+                if let Some(crate::domains::notice::protocol::NotificationMessage::Notify(n)) =
+                    envelope.payload::<crate::domains::notice::protocol::NotificationMessage>()
+                {
                     // Record payload bytes
                     self.seen.lock().unwrap().push(n.payload.as_ref().to_vec());
                 }
                 Ok(())
             }
-            fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
+            fn deliver_high_priority(
+                &self,
+                envelope: Envelope,
+            ) -> Result<(), crate::runtime::router::DeliveryError> {
                 self.deliver(envelope)
             }
         }
@@ -452,8 +462,16 @@ mod tests {
         actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
 
         // Act - publish two messages in order
-        let pub1 = PublishMessage::new(family, test_route("notify://realm/area/ordered/a"), bytes::Bytes::from("one"));
-        let pub2 = PublishMessage::new(family, test_route("notify://realm/area/ordered/a"), bytes::Bytes::from("two"));
+        let pub1 = PublishMessage::new(
+            family,
+            test_route("notify://realm/area/ordered/a"),
+            bytes::Bytes::from("one"),
+        );
+        let pub2 = PublishMessage::new(
+            family,
+            test_route("notify://realm/area/ordered/a"),
+            bytes::Bytes::from("two"),
+        );
         actor.receive(NotificationMessage::Publish(pub1), &mut ctx);
         actor.receive(NotificationMessage::Publish(pub2), &mut ctx);
 
@@ -520,7 +538,10 @@ mod tests {
         actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
 
         let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), subscriber.clone());
-        actor.receive(NotificationMessage::UnsubscribeAll(unsubscribe_all), &mut ctx);
+        actor.receive(
+            NotificationMessage::UnsubscribeAll(unsubscribe_all),
+            &mut ctx,
+        );
 
         // Assert - no subscriptions remain
         assert_eq!(actor.subscription_count(), 0);

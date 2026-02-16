@@ -2101,9 +2101,8 @@ impl ScheduleDomainSink {
         if let Some(state) = families.get(&family_id) {
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
-                    let notify_payload = crate::protocol::schedule_codec::encode_notify(
-                        &event.payload,
-                    );
+                    let notify_payload =
+                        crate::protocol::schedule_codec::encode_notify(&event.payload);
                     let notify_ctx = FrameContext::new(
                         sub.session_id,
                         crate::protocol::frame::ChannelId::Sub, // notification channel
@@ -2198,7 +2197,7 @@ impl MailboxSink for ScheduleDomainSink {
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
 
-        use crate::domains::schedule::{ScheduleMessage, ScheduleResponse, ScheduleListEntry};
+        use crate::domains::schedule::{ScheduleListEntry, ScheduleMessage, ScheduleResponse};
 
         let response = {
             let store = self.store.clone();
@@ -2212,23 +2211,27 @@ impl MailboxSink for ScheduleDomainSink {
             });
 
             match schedule_msg {
-                ScheduleMessage::Create { route, cron, payload } => {
-                    match actor.create_schedule(route, cron, payload) {
-                        Ok(()) => ScheduleResponse::Ok,
-                        Err(e) => ScheduleResponse::Error(e),
-                    }
-                }
-                ScheduleMessage::Cancel { route } => {
-                    match actor.delete_schedule(route) {
-                        Ok(()) => ScheduleResponse::Ok,
-                        Err(e) => ScheduleResponse::Error(e),
-                    }
-                }
+                ScheduleMessage::Create {
+                    route,
+                    cron,
+                    payload,
+                } => match actor.create_schedule(route, cron, payload) {
+                    Ok(()) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(e),
+                },
+                ScheduleMessage::Cancel { route } => match actor.delete_schedule(route) {
+                    Ok(()) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(e),
+                },
                 ScheduleMessage::List => {
                     let defs = actor.list_defs();
                     let entries = defs
                         .into_iter()
-                        .map(|(route, cron, payload)| ScheduleListEntry { route, cron, payload })
+                        .map(|(route, cron, payload)| ScheduleListEntry {
+                            route,
+                            cron,
+                            payload,
+                        })
                         .collect();
                     ScheduleResponse::ListDefs(entries)
                 }

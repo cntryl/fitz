@@ -34,23 +34,26 @@ impl ScheduleStore {
 
     /// Decode value: `{cron_expr}|{payload_bytes}` -> (cron, payload)
     fn decode_value(val: &[u8]) -> Result<(String, Bytes), String> {
-        let sep_pos = val.iter().position(|&b| b == b'|')
+        let sep_pos = val
+            .iter()
+            .position(|&b| b == b'|')
             .ok_or_else(|| "Invalid value format: missing separator".to_string())?;
-        
+
         let cron = String::from_utf8(val[..sep_pos].to_vec())
             .map_err(|e| format!("Invalid cron encoding: {}", e))?;
         let payload = Bytes::copy_from_slice(&val[sep_pos + 1..]);
-        
+
         Ok((cron, payload))
     }
 
     /// Convert Instant to milliseconds since UNIX_EPOCH
     fn instant_to_ms(instant: Instant) -> Result<u64, String> {
         let now = SystemTime::now();
-        let elapsed = now.duration_since(UNIX_EPOCH)
+        let elapsed = now
+            .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("System time error: {}", e))?;
         let elapsed_secs = elapsed.as_secs();
-        
+
         // Rough approximation: assume Instant started around now
         // In practice, Instant is monotonic but not wall-clock time
         // For schedules, we'll convert using now() as reference
@@ -73,7 +76,7 @@ impl ScheduleStore {
         let next_fire_ms = Self::instant_to_ms(next_fire_time)?;
         let key = Self::encode_key(next_fire_ms, route);
         let value = Self::encode_value(cron, payload);
-        
+
         // TTL = time until next fire + grace period
         let now = Instant::now();
         let time_until_fire = if next_fire_time > now {
@@ -118,7 +121,7 @@ impl ScheduleStore {
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan failed: {:?}", e))?;
-        
+
         let results = iter.collect_all();
         for (k, _v) in results {
             let key_str = String::from_utf8_lossy(&k);
@@ -152,15 +155,15 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let mut ready = Vec::new();
-        
+
         // Range scan: all keys from start (00000000000000000000) up to now (now_ms formatted)
         // Keys are formatted as "TIMESTAMP:ROUTE" so we can sort/compare lexicographically
         let query = cntryl_midge::Query::new();
-        
+
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan ready failed: {:?}", e))?;
-        
+
         let results = iter.collect_all();
         for (k, v) in results {
             let key_str = String::from_utf8_lossy(&k);
@@ -190,22 +193,19 @@ impl ScheduleStore {
 
     /// Load all schedules (for LIST operation)
     /// Returns Vec<(route, cron, payload)>
-    pub fn load_all(
-        &self,
-        cf_id: u64,
-    ) -> Result<Vec<(String, String, Bytes)>, String> {
+    pub fn load_all(&self, cf_id: u64) -> Result<Vec<(String, String, Bytes)>, String> {
         let txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let mut all = Vec::new();
-        
+
         let query = cntryl_midge::Query::new();
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan all failed: {:?}", e))?;
-        
+
         let results = iter.collect_all();
         for (k, v) in results {
             let key_str = String::from_utf8_lossy(&k);

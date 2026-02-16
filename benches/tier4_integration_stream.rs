@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{create_bench_event_payloads, create_local_bench_stream_actor};
-use fitz::domains::stream::protocol::{LeaseGrant, StreamMessage, StreamWriteMode, DEFAULT_LEASE_SIZE};
+use fitz::domains::stream::protocol::{
+    LeaseGrant, StreamMessage, StreamWriteMode, DEFAULT_LEASE_SIZE,
+};
 use fitz::prelude::Actor;
 use fitz::runtime::routing::Route;
 use std::time::Duration;
@@ -195,7 +197,13 @@ fn bench_multipartition_read_scan(c: &mut Criterion) {
             || {
                 // Create 4 actors and precompute payloads per partition
                 let actors: Vec<_> = (0..4)
-                    .map(|i| create_local_bench_stream_actor("bench", "integration", &format!("partition{}", i)))
+                    .map(|i| {
+                        create_local_bench_stream_actor(
+                            "bench",
+                            "integration",
+                            &format!("partition{}", i),
+                        )
+                    })
                     .collect();
                 let payloads = create_bench_event_payloads(25, 64);
 
@@ -222,7 +230,8 @@ fn bench_multipartition_read_scan(c: &mut Criterion) {
                 // Append 25 events into each partition and commit
                 for (i, (actor, ctx, _td)) in actors_with_ctx.iter_mut().enumerate() {
                     let family = *ctx.address().family();
-                    let route = Route::new(format!("stream://bench/integration/partition{}/append", i));
+                    let route =
+                        Route::new(format!("stream://bench/integration/partition{}/append", i));
 
                     actor.receive(
                         StreamMessage::Begin {
@@ -273,7 +282,8 @@ fn bench_consumer_offset_commit_workflow(c: &mut Criterion) {
     group.bench_function("stream_integration_commit_consumer_offset", |b| {
         b.iter_batched(
             || {
-                let (mut actor, mut ctx, _temp_dir) = create_local_bench_stream_actor("bench", "integration", "offset_commit");
+                let (mut actor, mut ctx, _temp_dir) =
+                    create_local_bench_stream_actor("bench", "integration", "offset_commit");
                 actor.receive(
                     StreamMessage::LeaseGranted {
                         grant: LeaseGrant {
@@ -338,7 +348,8 @@ fn bench_long_running_append_read_interleave(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let payload = Bytes::from_static(b"interleaved op");
-                let (mut actor, mut ctx, _temp_dir) = create_local_bench_stream_actor("bench", "integration", "long_running");
+                let (mut actor, mut ctx, _temp_dir) =
+                    create_local_bench_stream_actor("bench", "integration", "long_running");
                 actor.receive(
                     StreamMessage::LeaseGranted {
                         grant: LeaseGrant {

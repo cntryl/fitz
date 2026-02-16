@@ -1,4 +1,6 @@
-use crate::domains::schedule::protocol::{CronSchedule, ScheduleDef, ScheduleMessage, ScheduleResponse, ScheduleListEntry};
+use crate::domains::schedule::protocol::{
+    CronSchedule, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
+};
 use crate::domains::schedule::store::ScheduleStore;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
@@ -181,18 +183,18 @@ impl ScheduleActor {
     /// Handle schedule message (synchronous)
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
         match msg {
-            ScheduleMessage::Create { route, cron, payload } => {
-                match self.create_schedule(route, cron, payload) {
-                    Ok(()) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(e),
-                }
-            }
-            ScheduleMessage::Cancel { route } => {
-                match self.delete_schedule(route) {
-                    Ok(()) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(e),
-                }
-            }
+            ScheduleMessage::Create {
+                route,
+                cron,
+                payload,
+            } => match self.create_schedule(route, cron, payload) {
+                Ok(()) => ScheduleResponse::Ok,
+                Err(e) => ScheduleResponse::Error(e),
+            },
+            ScheduleMessage::Cancel { route } => match self.delete_schedule(route) {
+                Ok(()) => ScheduleResponse::Ok,
+                Err(e) => ScheduleResponse::Error(e),
+            },
             ScheduleMessage::List => {
                 let defs = self.list_defs();
                 let entries = defs

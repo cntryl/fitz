@@ -507,7 +507,12 @@ impl KvActor {
                 let mut items = Vec::new();
 
                 while let Some((key, value)) = iterator.next() {
-                    let user_key = match Self::strip_scoped_prefix(&realm, &active.bound_area, &resource, &key) {
+                    let user_key = match Self::strip_scoped_prefix(
+                        &realm,
+                        &active.bound_area,
+                        &resource,
+                        &key,
+                    ) {
                         Some(k) => k,
                         None => continue,
                     };
@@ -574,7 +579,12 @@ impl KvActor {
         out
     }
 
-    fn strip_scoped_prefix(realm: &str, area: &str, resource: &str, scoped_key: &[u8]) -> Option<Vec<u8>> {
+    fn strip_scoped_prefix(
+        realm: &str,
+        area: &str,
+        resource: &str,
+        scoped_key: &[u8],
+    ) -> Option<Vec<u8>> {
         let prefix = Self::realm_resource_prefix(realm, area, resource);
         scoped_key
             .strip_prefix(prefix.as_slice())
@@ -1254,8 +1264,14 @@ mod tests {
 
         match (get_a, get_b) {
             (
-                KvResponse::GetResult { found: true, value: Some(va) },
-                KvResponse::GetResult { found: true, value: Some(vb) },
+                KvResponse::GetResult {
+                    found: true,
+                    value: Some(va),
+                },
+                KvResponse::GetResult {
+                    found: true,
+                    value: Some(vb),
+                },
             ) => {
                 assert_eq!(va, Bytes::from("value_in_a"));
                 assert_eq!(vb, Bytes::from("value_in_b"));
@@ -1411,7 +1427,10 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        let tx1 = match b1 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+        let tx1 = match b1 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let b2 = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -1421,7 +1440,10 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        let tx2 = match b2 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+        let tx2 = match b2 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Act
         actor.handle(KvMessage::Put {
@@ -1446,7 +1468,15 @@ mod tests {
 
         // Second commit may conflict or succeed depending on storage semantics.
         let c2 = actor.handle(KvMessage::Commit { tx_id: tx2 });
-        assert!(matches!(c2, KvResponse::CommitOk) || matches!(c2, KvResponse::Error { error: KvError::Conflict(_) }));
+        assert!(
+            matches!(c2, KvResponse::CommitOk)
+                || matches!(
+                    c2,
+                    KvResponse::Error {
+                        error: KvError::Conflict(_)
+                    }
+                )
+        );
 
         // Verify final stored value is one of the two candidates (v1 or v2)
         let b3 = actor.handle(KvMessage::Begin {
@@ -1457,7 +1487,10 @@ mod tests {
             mode: TxMode::ReadOnly,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        let tx3 = match b3 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Begin failed") };
+        let tx3 = match b3 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Begin failed"),
+        };
 
         let got = actor.handle(KvMessage::Get {
             tx_id: tx3,
@@ -1467,7 +1500,10 @@ mod tests {
         });
 
         match got {
-            KvResponse::GetResult { found: true, value: Some(v) } => {
+            KvResponse::GetResult {
+                found: true,
+                value: Some(v),
+            } => {
                 assert!(v.as_ref() == b"v1" || v.as_ref() == b"v2");
             }
             _ => panic!("Expected stored value after commits"),
@@ -1489,7 +1525,10 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        let tx1 = match r1 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+        let tx1 = match r1 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         let r2 = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -1499,7 +1538,10 @@ mod tests {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        let tx2 = match r2 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+        let tx2 = match r2 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
 
         // Act
         actor.handle(KvMessage::Put {
@@ -1520,7 +1562,10 @@ mod tests {
 
         // Assert - different area must not see the value
         match get_in_b {
-            KvResponse::GetResult { found: false, value: None } => {}
+            KvResponse::GetResult {
+                found: false,
+                value: None,
+            } => {}
             _ => panic!("Expected not-found across different area"),
         }
     }
@@ -1534,7 +1579,11 @@ mod tests {
         let res = actor.handle(KvMessage::Commit { tx_id: 99999 });
 
         // Assert
-        assert!(matches!(res, KvResponse::Error { error: KvError::InvalidTxId }));
+        assert!(matches!(
+            res,
+            KvResponse::Error {
+                error: KvError::InvalidTxId
+            }
+        ));
     }
 }
-

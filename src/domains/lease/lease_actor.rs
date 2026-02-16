@@ -1105,7 +1105,11 @@ mod tests {
 
         let status = actor.handle_query(key.clone());
         match status {
-            LeaseResponse::Status { owner_id, fencing_token, .. } => {
+            LeaseResponse::Status {
+                owner_id,
+                fencing_token,
+                ..
+            } => {
                 assert_eq!(owner_id, "owner2");
                 assert_eq!(fencing_token, queued_token);
             }
@@ -1169,8 +1173,14 @@ mod tests {
 
         // Assert - initial acquire succeeded, others queued
         assert!(matches!(a1, LeaseResponse::Acquired { .. }));
-        let t2 = match q2 { LeaseResponse::Queued { fencing_token } => fencing_token, _ => panic!("expected queued") };
-        let t3 = match q3 { LeaseResponse::Queued { fencing_token } => fencing_token, _ => panic!("expected queued") };
+        let t2 = match q2 {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued"),
+        };
+        let t3 = match q3 {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued"),
+        };
         assert!(t3 > t2, "queued tokens should be monotonic");
 
         // Act - release owner1 via the public message path so the waiter is promoted
@@ -1186,7 +1196,12 @@ mod tests {
         // Query to verify owner2 now holds the lease (promotion happened via handle_message)
         let status = actor.handle_query(key.clone());
         match status {
-            LeaseResponse::Status { owner_id, fencing_token, pending_waiters, .. } => {
+            LeaseResponse::Status {
+                owner_id,
+                fencing_token,
+                pending_waiters,
+                ..
+            } => {
                 assert_eq!(owner_id, "owner2");
                 assert_eq!(fencing_token, t2);
                 assert_eq!(pending_waiters, 1);
@@ -1206,7 +1221,12 @@ mod tests {
 
         let status2 = actor.handle_query(key.clone());
         match status2 {
-            LeaseResponse::Status { owner_id, fencing_token, pending_waiters, .. } => {
+            LeaseResponse::Status {
+                owner_id,
+                fencing_token,
+                pending_waiters,
+                ..
+            } => {
                 assert_eq!(owner_id, "owner3");
                 assert_eq!(fencing_token, t3);
                 assert_eq!(pending_waiters, 0);
@@ -1218,7 +1238,8 @@ mod tests {
     #[test]
     fn should_scale_under_high_contention_queueing() {
         // Arrange - create actor with a larger queue depth so the benchmark-style stress can enqueue many waiters
-        let mut actor = LeaseActor::with_config(RouteFamily::new(1), Box::new(SystemClock), 30, 1000);
+        let mut actor =
+            LeaseActor::with_config(RouteFamily::new(1), Box::new(SystemClock), 30, 1000);
         let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         let key = test_key("bench", "locks", "contend");
 
@@ -1234,14 +1255,16 @@ mod tests {
         // Assert - queue depth reflects the enqueued waiters
         let status = actor.handle_query(key.clone());
         match status {
-            LeaseResponse::Status { pending_waiters, .. } => {
-                assert!(pending_waiters >= 200, "expected at least 200 waiters, got {}", pending_waiters);
+            LeaseResponse::Status {
+                pending_waiters, ..
+            } => {
+                assert!(
+                    pending_waiters >= 200,
+                    "expected at least 200 waiters, got {}",
+                    pending_waiters
+                );
             }
             _ => panic!("expected status"),
         }
     }
-
-
 }
-
-
