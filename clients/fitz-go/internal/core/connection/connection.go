@@ -546,10 +546,6 @@ func (c *Connection) setState(state State) {
 	c.state.Store(int32(state))
 }
 
-func (c *Connection) getState() State {
-	return State(c.state.Load())
-}
-
 func (c *Connection) isAuthenticated() bool {
 	select {
 	case <-c.authConfirmed:
