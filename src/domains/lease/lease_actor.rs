@@ -1074,4 +1074,82 @@ mod tests {
             } if owner_id == "owner1"
         ));
     }
+
+    #[test]
+    fn should_enqueue_waiter_and_grant_on_release() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("acme", "locks", "queue-test");
+
+        // Act
+        let r1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+        let queued = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 5, None, &mut ctx);
+        let release_msg = LeaseMessage::Release {
+            family_id: RouteFamily::new(1),
+            route: crate::runtime::routing::Route::new("lease://acme/locks/queue-test/release"),
+            owner_id: "owner1".to_string(),
+            fencing_token: 1,
+        };
+        let released = actor.handle_message(release_msg, &mut ctx);
+
+        // Assert
+        assert!(matches!(r1, LeaseResponse::Acquired { .. }));
+
+        let queued_token = match queued {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("Expected Queued response"),
+        };
+
+        assert_eq!(released, Some(LeaseResponse::Released));
+
+        let status = actor.handle_query(key.clone());
+        match status {
+            LeaseResponse::Status { owner_id, fencing_token, .. } => {
+                assert_eq!(owner_id, "owner2");
+                assert_eq!(fencing_token, queued_token);
+            }
+            _ => panic!("Expected Status after promotion"),
+        }
+    }
+
+    #[test]
+    fn should_isolate_leases_by_realm_and_area() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+
+        // Act - acquire identical resource name in two different realms/areas
+        let r1 = test_acquire(
+            &mut actor,
+            test_key("realm_a", "locks", "shared-resource"),
+            "owner-a".to_string(),
+            60,
+        );
+        let r2 = test_acquire(
+            &mut actor,
+            test_key("realm_b", "locks", "shared-resource"),
+            "owner-b".to_string(),
+            60,
+        );
+
+        // Assert - both succeed and are independent
+        assert!(matches!(r1, LeaseResponse::Acquired { fencing_token: 1 }));
+        assert!(matches!(r2, LeaseResponse::Acquired { fencing_token: 2 }));
+
+        // Verify queries reflect different owners
+        let s1 = actor.handle_query(test_key("realm_a", "locks", "shared-resource"));
+        let s2 = actor.handle_query(test_key("realm_b", "locks", "shared-resource"));
+
+        match (s1, s2) {
+            (
+                LeaseResponse::Status { owner_id: o1, .. },
+                LeaseResponse::Status { owner_id: o2, .. },
+            ) => {
+                assert_eq!(o1, "owner-a");
+                assert_eq!(o2, "owner-b");
+            }
+            _ => panic!("Expected Status for both realms"),
+        }
+    }
 }
+
