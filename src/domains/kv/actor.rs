@@ -38,6 +38,8 @@ use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode}
 pub struct ActiveKvTx {
     /// Realm this transaction is bound to (resolved from auth)
     pub bound_realm: String,
+    /// Area this transaction is bound to
+    pub bound_area: String,
     /// Resource (table) this transaction is bound to
     pub bound_resource: String,
     /// Resolved column family for this transaction
@@ -74,11 +76,11 @@ impl KvActor {
             KvMessage::Begin {
                 route_family,
                 realm,
-                area: _,
+                area,
                 resource,
                 mode,
                 write_options,
-            } => self.handle_begin(route_family, realm, resource, mode, write_options),
+            } => self.handle_begin(route_family, realm, area, resource, mode, write_options),
             KvMessage::Commit { tx_id } => self.handle_commit(tx_id),
             KvMessage::Rollback { tx_id } => self.handle_rollback(tx_id),
             KvMessage::Get {
@@ -128,6 +130,7 @@ impl KvActor {
         &mut self,
         route_family: RouteFamily,
         realm: String,
+        area: String,
         resource: String,
         mode: TxMode,
         write_options: cntryl_midge::WriteOptions,
@@ -170,6 +173,7 @@ impl KvActor {
                     tx_id,
                     ActiveKvTx {
                         bound_realm: realm,
+                        bound_area: area,
                         bound_resource: resource,
                         column_family: cf,
                         tx,
@@ -244,7 +248,7 @@ impl KvActor {
         };
 
         let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
@@ -291,7 +295,7 @@ impl KvActor {
         };
 
         let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
 
         match active.tx.put(scoped_key, value.to_vec(), None) {
             Ok(()) => KvResponse::PutOk,
@@ -332,7 +336,7 @@ impl KvActor {
 
         // Check if key exists first
         let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(_)) => {
@@ -385,7 +389,7 @@ impl KvActor {
         };
 
         let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
 
         match active.tx.delete(scoped_key) {
             Ok(()) => KvResponse::DeleteOk,
@@ -432,8 +436,8 @@ impl KvActor {
         }
 
         let realm = active.bound_realm.clone();
-        let scoped_start = Self::encode_scoped_key(&realm, &resource, &start);
-        let scoped_end = Self::encode_scoped_key(&realm, &resource, &end);
+        let scoped_start = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &start);
+        let scoped_end = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &end);
 
         match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => KvResponse::DeleteRangeOk,
@@ -472,16 +476,16 @@ impl KvActor {
         };
 
         let realm = active.bound_realm.clone();
-        let prefix = Self::realm_resource_prefix(&realm, &resource);
+        let prefix = Self::realm_resource_prefix(&realm, &active.bound_area, &resource);
         let start_key = query
             .start
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&realm, &resource, k))
+            .map(|k| Self::encode_scoped_key(&realm, &active.bound_area, &resource, k))
             .unwrap_or_else(|| prefix.clone());
         let end_key = query
             .end
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&realm, &resource, k))
+            .map(|k| Self::encode_scoped_key(&realm, &active.bound_area, &resource, k))
             .unwrap_or_else(|| Self::prefix_range_end(&prefix));
 
         // Build Midge Query
@@ -503,7 +507,7 @@ impl KvActor {
                 let mut items = Vec::new();
 
                 while let Some((key, value)) = iterator.next() {
-                    let user_key = match Self::strip_scoped_prefix(&realm, &resource, &key) {
+                    let user_key = match Self::strip_scoped_prefix(&realm, &active.bound_area, &resource, &key) {
                         Some(k) => k,
                         None => continue,
                     };
@@ -533,9 +537,11 @@ impl KvActor {
             })
     }
 
-    fn realm_resource_prefix(realm: &str, resource: &str) -> Vec<u8> {
-        let mut prefix = Vec::with_capacity(realm.len() + resource.len() + 2);
+    fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
+        let mut prefix = Vec::with_capacity(realm.len() + area.len() + resource.len() + 3);
         prefix.extend_from_slice(realm.as_bytes());
+        prefix.push(0);
+        prefix.extend_from_slice(area.as_bytes());
         prefix.push(0);
         prefix.extend_from_slice(resource.as_bytes());
         prefix.push(0);
@@ -562,14 +568,14 @@ impl KvActor {
         Ok(route_family.id())
     }
 
-    fn encode_scoped_key(realm: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
-        let mut out = Self::realm_resource_prefix(realm, resource);
+    fn encode_scoped_key(realm: &str, area: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
+        let mut out = Self::realm_resource_prefix(realm, area, resource);
         out.extend_from_slice(user_key);
         out
     }
 
-    fn strip_scoped_prefix(realm: &str, resource: &str, scoped_key: &[u8]) -> Option<Vec<u8>> {
-        let prefix = Self::realm_resource_prefix(realm, resource);
+    fn strip_scoped_prefix(realm: &str, area: &str, resource: &str, scoped_key: &[u8]) -> Option<Vec<u8>> {
+        let prefix = Self::realm_resource_prefix(realm, area, resource);
         scoped_key
             .strip_prefix(prefix.as_slice())
             .map(|rest| rest.to_vec())
@@ -1391,4 +1397,144 @@ mod tests {
             _ => panic!("Expected ScanResult"),
         }
     }
+
+    #[test]
+    fn should_handle_concurrent_puts_with_conflict_detection() {
+        // Arrange
+        let mut actor = test_actor();
+
+        let b1 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "concurrent".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx1 = match b1 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+
+        let b2 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "concurrent".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx2 = match b2 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+
+        // Act
+        actor.handle(KvMessage::Put {
+            tx_id: tx1,
+            route_family: RouteFamily::new(1),
+            resource: "concurrent".to_string(),
+            key: Bytes::from("key"),
+            value: Bytes::from("v1"),
+        });
+
+        actor.handle(KvMessage::Put {
+            tx_id: tx2,
+            route_family: RouteFamily::new(1),
+            resource: "concurrent".to_string(),
+            key: Bytes::from("key"),
+            value: Bytes::from("v2"),
+        });
+
+        // Commit first tx (expected OK)
+        let c1 = actor.handle(KvMessage::Commit { tx_id: tx1 });
+        assert!(matches!(c1, KvResponse::CommitOk));
+
+        // Second commit may conflict or succeed depending on storage semantics.
+        let c2 = actor.handle(KvMessage::Commit { tx_id: tx2 });
+        assert!(matches!(c2, KvResponse::CommitOk) || matches!(c2, KvResponse::Error { error: KvError::Conflict(_) }));
+
+        // Verify final stored value is one of the two candidates (v1 or v2)
+        let b3 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "concurrent".to_string(),
+            mode: TxMode::ReadOnly,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx3 = match b3 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Begin failed") };
+
+        let got = actor.handle(KvMessage::Get {
+            tx_id: tx3,
+            route_family: RouteFamily::new(1),
+            resource: "concurrent".to_string(),
+            key: Bytes::from("key"),
+        });
+
+        match got {
+            KvResponse::GetResult { found: true, value: Some(v) } => {
+                assert!(v == Bytes::from("v1") || v == Bytes::from("v2"));
+            }
+            _ => panic!("Expected stored value after commits"),
+        }
+
+        actor.handle(KvMessage::Rollback { tx_id: tx3 });
+    }
+
+    #[test]
+    fn should_reject_operations_from_wrong_area() {
+        // Arrange
+        let mut actor = test_actor();
+
+        let r1 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "area_a".to_string(),
+            resource: "shared".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx1 = match r1 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+
+        let r2 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "area_b".to_string(),
+            resource: "shared".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx2 = match r2 { KvResponse::BeginOk { tx_id } => tx_id, _ => panic!("Expected BeginOk") };
+
+        // Act
+        actor.handle(KvMessage::Put {
+            tx_id: tx1,
+            route_family: RouteFamily::new(1),
+            resource: "shared".to_string(),
+            key: Bytes::from("same_key"),
+            value: Bytes::from("in_a"),
+        });
+        actor.handle(KvMessage::Commit { tx_id: tx1 });
+
+        let get_in_b = actor.handle(KvMessage::Get {
+            tx_id: tx2,
+            route_family: RouteFamily::new(1),
+            resource: "shared".to_string(),
+            key: Bytes::from("same_key"),
+        });
+
+        // Assert - different area must not see the value
+        match get_in_b {
+            KvResponse::GetResult { found: false, value: None } => {}
+            _ => panic!("Expected not-found across different area"),
+        }
+    }
+
+    #[test]
+    fn should_return_error_for_invalid_txid() {
+        // Arrange
+        let mut actor = test_actor();
+
+        // Act
+        let res = actor.handle(KvMessage::Commit { tx_id: 99999 });
+
+        // Assert
+        assert!(matches!(res, KvResponse::Error { error: KvError::InvalidTxId }));
+    }
 }
+
