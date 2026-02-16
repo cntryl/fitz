@@ -1468,7 +1468,7 @@ mod tests {
 
         match got {
             KvResponse::GetResult { found: true, value: Some(v) } => {
-                assert!(v == Bytes::from("v1") || v == Bytes::from("v2"));
+                assert!(v.as_ref() == b"v1" || v.as_ref() == b"v2");
             }
             _ => panic!("Expected stored value after commits"),
         }
