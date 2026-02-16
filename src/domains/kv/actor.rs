@@ -1182,6 +1182,82 @@ mod tests {
     }
 
     #[test]
+    fn should_enforce_realm_isolation_for_kv() {
+        // Arrange
+        let mut actor = test_actor();
+
+        // Begin transactions in two different realms but same resource/key
+        let r1 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "realm_a".to_string(),
+            area: "kv".to_string(),
+            resource: "users".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx1 = match r1 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk for realm_a"),
+        };
+
+        let r2 = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "realm_b".to_string(),
+            area: "kv".to_string(),
+            resource: "users".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx2 = match r2 {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk for realm_b"),
+        };
+
+        let key = Bytes::from("same_key");
+
+        // Act
+        actor.handle(KvMessage::Put {
+            tx_id: tx1,
+            route_family: RouteFamily::new(1),
+            resource: "users".to_string(),
+            key: key.clone(),
+            value: Bytes::from("value_in_a"),
+        });
+
+        actor.handle(KvMessage::Put {
+            tx_id: tx2,
+            route_family: RouteFamily::new(1),
+            resource: "users".to_string(),
+            key: key.clone(),
+            value: Bytes::from("value_in_b"),
+        });
+
+        // Assert - reads in each transaction return the realm-scoped value
+        let get_a = actor.handle(KvMessage::Get {
+            tx_id: tx1,
+            route_family: RouteFamily::new(1),
+            resource: "users".to_string(),
+            key: key.clone(),
+        });
+        let get_b = actor.handle(KvMessage::Get {
+            tx_id: tx2,
+            route_family: RouteFamily::new(1),
+            resource: "users".to_string(),
+            key: key.clone(),
+        });
+
+        match (get_a, get_b) {
+            (
+                KvResponse::GetResult { found: true, value: Some(va) },
+                KvResponse::GetResult { found: true, value: Some(vb) },
+            ) => {
+                assert_eq!(va, Bytes::from("value_in_a"));
+                assert_eq!(vb, Bytes::from("value_in_b"));
+            }
+            _ => panic!("Expected realm-scoped values to be returned"),
+        }
+    }
+    #[test]
     fn should_reject_delete_range_with_invalid_bounds() {
         // Arrange
         let mut actor = test_actor();

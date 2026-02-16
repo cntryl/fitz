@@ -30,7 +30,7 @@ fn bench_complete_append_read_workflow(c: &mut Criterion) {
             || {
                 // Setup: actor + payload + pre-grant lease so commit proceeds
                 let payload = Bytes::from_static(b"append read workflow");
-                let (mut actor, mut ctx, temp_dir) =
+                let (mut actor, mut ctx, _temp_dir) =
                     create_local_bench_stream_actor("bench", "integration", "append_read");
 
                 // Pre-grant a generous lease so commits succeed immediately in bench
@@ -46,7 +46,7 @@ fn bench_complete_append_read_workflow(c: &mut Criterion) {
                     &mut ctx,
                 );
 
-                (actor, ctx, temp_dir, payload)
+                (actor, ctx, _temp_dir, payload)
             },
             |(mut actor, mut ctx, _temp_dir, payload)| {
                 // Measured hot-path: begin -> append -> commit -> read
@@ -111,7 +111,7 @@ fn bench_batch_append_consumer_read(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let payloads = create_bench_event_payloads(50, 128);
-                let (mut actor, mut ctx, temp_dir) =
+                let (mut actor, mut ctx, _temp_dir) =
                     create_local_bench_stream_actor("bench", "integration", "batch");
 
                 // Pre-grant lease for the batch
@@ -127,7 +127,7 @@ fn bench_batch_append_consumer_read(c: &mut Criterion) {
                     &mut ctx,
                 );
 
-                (actor, ctx, temp_dir, payloads)
+                (actor, ctx, _temp_dir, payloads)
             },
             |(mut actor, mut ctx, _temp_dir, payloads)| {
                 let family = *ctx.address().family();
