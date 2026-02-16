@@ -1151,5 +1151,116 @@ mod tests {
             _ => panic!("Expected Status for both realms"),
         }
     }
+
+    #[test]
+    fn should_handle_concurrent_acquire_race() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("race", "locks", "res");
+
+        // Act - owner1 acquires immediately; owner2 and owner3 queue
+        // Arrange
+        let a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+
+        // Act - two concurrent waiters
+        let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
+        let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
+
+        // Assert - initial acquire succeeded, others queued
+        assert!(matches!(a1, LeaseResponse::Acquired { .. }));
+        let t2 = match q2 { LeaseResponse::Queued { fencing_token } => fencing_token, _ => panic!("expected queued") };
+        let t3 = match q3 { LeaseResponse::Queued { fencing_token } => fencing_token, _ => panic!("expected queued") };
+        assert!(t3 > t2, "queued tokens should be monotonic");
+
+        // Act - release owner1, expect owner2 to be promoted
+        let rel = actor.handle_release(key.clone(), "owner1".to_string(), 1);
+        assert_eq!(rel, LeaseResponse::Released);
+
+        // Simulate grant processing (grant_next_waiter called by release path)
+        // Query to verify owner2 now holds the lease
+        let status = actor.handle_query(key.clone());
+        match status {
+            LeaseResponse::Status { owner_id, fencing_token, pending_waiters, .. } => {
+                assert_eq!(owner_id, "owner2");
+                assert_eq!(fencing_token, t2);
+                assert_eq!(pending_waiters, 1);
+            }
+            _ => panic!("expected status after promotion"),
+        }
+
+        // Act - release owner2, expect owner3 to be promoted
+        let rel2 = actor.handle_release(key.clone(), "owner2".to_string(), t2);
+        assert_eq!(rel2, LeaseResponse::Released);
+        let status2 = actor.handle_query(key.clone());
+        match status2 {
+            LeaseResponse::Status { owner_id, fencing_token, pending_waiters, .. } => {
+                assert_eq!(owner_id, "owner3");
+                assert_eq!(fencing_token, t3);
+                assert_eq!(pending_waiters, 0);
+            }
+            _ => panic!("expected status after second promotion"),
+        }
+    }
+
+    #[test]
+    fn should_scale_under_high_contention_queueing() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("bench", "locks", "contend");
+
+        // Act - holder acquires first
+        let _ = actor.handle_acquire(key.clone(), "holder".to_string(), 60, 0, None, &mut ctx);
+
+        // Rapidly enqueue many waiters
+        for i in 0..200 {
+            let owner = format!("w{:03}", i);
+            let _ = actor.handle_acquire(key.clone(), owner, 30, 10, None, &mut ctx);
+        }
+
+        // Assert - queue depth reflects the enqueued waiters
+        let status = actor.handle_query(key.clone());
+        match status {
+            LeaseResponse::Status { pending_waiters, .. } => {
+                assert!(pending_waiters >= 200);
+            }
+            _ => panic!("expected status"),
+        }
+    }
+
+    // NOTE: Lease persistence is not implemented yet. The test below is a placeholder
+    // for the durability behaviour once WAL/persistence for leases exists. It is
+    // intentionally ignored so CI remains green until persistence is implemented.
+    #[test]
+    #[ignore]
+    fn should_recover_lease_state_after_restart() {
+        // Arrange
+        // This test will be enabled once lease persistence is implemented.
+        // It mirrors the KV durability test and will verify that an acquired,
+        // committed lease survives process/actor restart.
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let key = test_key("dur", "locks", "r1");
+
+        // Act - acquire and commit (persistence assumed)
+        let a = test_acquire(&mut actor, key.clone(), "owner1".to_string(), 60);
+        let token = match a { LeaseResponse::Acquired { fencing_token } => fencing_token, _ => panic!("expected acquired") };
+
+        // Simulate restart by dropping actor and creating a new one that would
+        // load persisted state (in future implementation)
+        drop(actor);
+        let mut actor2 = LeaseActor::new(RouteFamily::new(1));
+
+        // Assert - after restart the lease should be held by owner1 with same token
+        let s = actor2.handle_query(key.clone());
+        match s {
+            LeaseResponse::Status { owner_id, fencing_token, .. } => {
+                assert_eq!(owner_id, "owner1");
+                assert_eq!(fencing_token, token);
+            }
+            _ => panic!("expected persisted lease after restart"),
+        }
+    }
 }
+
 
