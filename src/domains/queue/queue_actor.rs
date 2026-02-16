@@ -1364,6 +1364,50 @@ pub mod tests {
     }
 
     #[test]
+    fn should_enqueue_and_dequeue_in_fifo_order() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("fifo-order");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        // Enqueue messages in known order
+        for i in 0..5 {
+            let body = Bytes::from(format!("msg-{}", i));
+            let _ = actor.handle_enqueue(body, None);
+        }
+
+        // Act & Assert - Reserve and ensure IDs and bodies are returned in FIFO order
+        let mut reserved_all = Vec::new();
+        loop {
+            match actor.handle_reserve(30, Some(2)) {
+                QueueResponse::Reserved { messages } => {
+                    if messages.is_empty() {
+                        break;
+                    }
+                    for m in messages {
+                        reserved_all.push(m.body);
+                        // Simulate immediate completion to prevent redelivery
+                        let _ = actor.handle_complete(m.id, m.token);
+                    }
+                }
+                _ => panic!("Expected Reserved response"),
+            }
+        }
+
+        let expected: Vec<Bytes> = (0..5).map(|i| Bytes::from(format!("msg-{}", i))).collect();
+        assert_eq!(reserved_all, expected);
+    }
+
+    #[test]
     fn should_ignore_stale_timer_after_extend() {
         // Arrange
         let clock = MockClock::new();
