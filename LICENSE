@@ -1,1 +1,62 @@
-Copyright (c) 2025 Jeffrey Repanich. All rights reserved.
+Below is a clean, copy-paste version.
+
+# Fitz Source License 1.0 (FSL-1.0)
+
+Copyright (c) 2026 Jeffrey Repanich
+
+The Software is licensed, not sold.
+
+Permission is granted to use, copy, modify, and distribute the Software, subject to the terms below.
+
+## 1. Permitted Use
+
+You may:
+
+1. Use the Software for any internal purpose, including commercial production use.
+2. Modify the Software.
+3. Distribute unmodified or modified copies of the Software, provided that:
+   - This license is included with the distribution.
+   - Modified files are clearly marked.
+   - All copyright and attribution notices are retained.
+
+## 2. Managed Service Restriction
+
+You may not, without a separate commercial agreement with the Licensor:
+
+Provide the Software to third parties as a managed or hosted service where:
+
+- The Software’s primary functionality is made available to third parties, and
+- You operate or control the infrastructure on which the Software runs.
+
+This includes offering the Software as:
+
+- Database-as-a-Service (DBaaS)
+- Broker-as-a-Service
+- Platform-as-a-Service
+- Infrastructure-as-a-Service where the Software itself is the service
+- Any similar hosted service model
+
+For clarity:
+
+- Internal use within your own organization is permitted.
+- Use by subsidiaries under common control is permitted.
+- Consulting, integration, and support services are permitted, provided the Software is deployed under the end customer’s control and not operated by you as a managed service.
+- Running the Software on infrastructure owned and controlled by the end customer is permitted.
+
+## 3. No Trademark License
+
+This license does not grant any rights to use the Licensor’s trademarks, service marks, or product names, except as required for accurate attribution.
+
+## 4. Patent Grant
+
+Subject to the terms of this license, the Licensor grants you a perpetual, worldwide, non-exclusive, royalty-free patent license to make, use, sell, offer for sale, import, and otherwise transfer the Software.
+
+If you initiate patent litigation alleging that the Software infringes a patent, this patent license terminates automatically.
+
+## 5. No Warranty
+
+THE SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+## 6. Limitation of Liability
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
