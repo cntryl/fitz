@@ -1,0 +1,52 @@
+warning: error finalizing incremental compilation session directory `\\?\D:\repos\cntryl\fitz\target\debug\incremental\fitz-2jo7smr51y22c\s-hfubrmjdpv-07sg93t-working`: Access is denied. (os error 5)
+
+warning: `fitz` (lib) generated 1 warning
+    Checking fitz v0.0.1 (D:\repos\cntryl\fitz)
+warning: unused import: `super::*`
+   --> src\domains\schedule\actor.rs:182:9
+    |
+182 |     use super::*;
+    |         ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `fitz` (lib test) generated 1 warning (run `cargo fix --lib -p fitz --tests` to apply 1 suggestion)
+warning: unused import: `bytes::Bytes`
+ --> tests\schedule_e2e_basic.rs:8:5
+  |
+8 | use bytes::Bytes;
+  |     ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0432]: unresolved import `fitz::domains::schedule::protocol::SchedulePayload`
+ --> benches\tier4_integration_schedule.rs:7:5
+  |
+7 | use fitz::domains::schedule::protocol::SchedulePayload;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `SchedulePayload` in `domains::schedule::protocol`
+
+warning: `fitz` (test "schedule_e2e_basic") generated 1 warning (run `cargo fix --test "schedule_e2e_basic" -p fitz` to apply 1 suggestion)
+error[E0282]: type annotations needed
+  --> benches\tier4_integration_schedule.rs:77:25
+   |
+77 |                 let _ = payload.clone().encode();
+   |                         ^^^^^^^ cannot infer type
+
+error[E0599]: no method named `matches_dt` found for struct `CronSchedule` in the current scope
+  --> benches\tier1_hotpath_schedule.rs:71:24
+   |
+71 |         b.iter(|| cron.matches_dt(black_box(&dt)))
+   |                        ^^^^^^^^^^ method not found in `CronSchedule`
+
+error[E0599]: no method named `matches_dt` found for struct `CronSchedule` in the current scope
+  --> benches\tier1_hotpath_schedule.rs:87:24
+   |
+87 |         b.iter(|| cron.matches_dt(black_box(&dt)))
+   |                        ^^^^^^^^^^ method not found in `CronSchedule`
+
+Some errors have detailed explanations: E0282, E0432.
+For more information about an error, try `rustc --explain E0282`.
+error: could not compile `fitz` (bench "tier4_integration_schedule") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `fitz` (bench "tier1_hotpath_schedule") due to 2 previous errors

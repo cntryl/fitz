@@ -156,6 +156,7 @@ impl MailboxSink for KvDomainSink {
         // RouteFamily is derived server-side from the route string
         let kv_message = match crate::protocol::kv::parse_request(
             frame_ctx.msg_type.as_u16(),
+            frame_ctx.route_family,
             &frame_ctx.payload,
         ) {
             Ok(msg) => msg,
@@ -373,6 +374,7 @@ impl MailboxSink for KvDomainSink {
             frame_ctx.channel_id,
             crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
             bytes::Bytes::from(response_bytes),
+            frame_ctx.route_family,
         );
         let response_envelope = match envelope.try_reply_to(response_ctx) {
             Some(env) => env,
@@ -487,6 +489,9 @@ impl NoticeDomainSink {
                         crate::protocol::frame::ChannelId::Sub, // notification channel
                         crate::protocol::tlv::MessageType::new(504), // NOTICE NOTIFY
                         bytes::Bytes::from(notify_payload),
+                        crate::runtime::routing::RouteFamily::from_u32(
+                            sub.subscriber.family().id(),
+                        ),
                     );
                     let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
                     let _ = self.router.route(notify_envelope);
@@ -591,6 +596,9 @@ impl MailboxSink for NoticeDomainSink {
                                 crate::protocol::frame::ChannelId::Sub,
                                 crate::protocol::tlv::MessageType::new(504), // NOTICE NOTIFY
                                 bytes::Bytes::from(notify_payload),
+                                crate::runtime::routing::RouteFamily::from_u32(
+                                    sub.subscriber.family().id(),
+                                ),
                             );
                             let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
                             let _ = self.router.route(notify_envelope);
@@ -698,6 +706,7 @@ impl MailboxSink for NoticeDomainSink {
                 frame_ctx.channel_id,
                 crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
                 bytes::Bytes::from(response_bytes),
+                frame_ctx.route_family,
             );
             if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                 let _ = self.router.route(response_envelope);
@@ -860,19 +869,22 @@ impl MailboxSink for RpcDomainSink {
                     let pick = *idx % worker_count;
                     *idx = idx.wrapping_add(1);
 
-                    let worker = &state.workers[&route_key][pick];
-                    let worker_inbox_addr = crate::runtime::routing::RouteAddress::new(
-                        worker.route_family,
-                        crate::runtime::routing::Route::new(format!(
-                            "inbox://session/{}",
-                            worker.session_id
-                        )),
-                    );
-
                     // Store pending: caller session_id and family for response routing to caller inbox
                     state.pending.insert(
                         req.correlation_id,
                         (frame_ctx.session_id, *envelope.destination().family()),
+                    );
+
+                    let (worker_route_family, worker_session_id) = {
+                        let worker = &state.workers[&route_key][pick];
+                        (worker.route_family, worker.session_id)
+                    };
+                    let worker_inbox_addr = crate::runtime::routing::RouteAddress::new(
+                        worker_route_family,
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            worker_session_id
+                        )),
                     );
 
                     // Drop state lock before routing
@@ -889,6 +901,7 @@ impl MailboxSink for RpcDomainSink {
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(302), // Request msg_type
                         bytes::Bytes::from(request_payload),
+                        worker_route_family,
                     );
                     let forward_envelope = Envelope::new(worker_inbox_addr, forward_ctx);
                     let _ = self.router.route(forward_envelope);
@@ -929,6 +942,7 @@ impl MailboxSink for RpcDomainSink {
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(303), // Response msg_type
                         frame_ctx.payload.clone(),
+                        caller_family_id,
                     );
                     let forward_envelope = Envelope::new(caller_inbox_addr, forward_ctx);
                     let _ = self.router.route(forward_envelope);
@@ -940,6 +954,9 @@ impl MailboxSink for RpcDomainSink {
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(304), // ACK msg_type
                         bytes::Bytes::from(ack_payload),
+                        crate::runtime::routing::RouteFamily::from_u32(
+                            envelope.destination().family().id(),
+                        ),
                     );
                     let worker_inbox_addr = crate::runtime::routing::RouteAddress::new(
                         *envelope.destination().family(),
@@ -1000,6 +1017,7 @@ impl MailboxSink for RpcDomainSink {
                 frame_ctx.channel_id,
                 crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
                 bytes::Bytes::from(response_bytes),
+                frame_ctx.route_family,
             );
             if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                 let _ = self.router.route(response_envelope);
@@ -1230,6 +1248,7 @@ impl MailboxSink for QueueDomainSink {
             frame_ctx.channel_id,
             crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
             bytes::Bytes::from(response_bytes),
+            frame_ctx.route_family,
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             match self.router.route(response_envelope) {
@@ -1349,6 +1368,9 @@ impl StreamDomainSink {
                         crate::protocol::frame::ChannelId::Sub, // notification channel
                         crate::protocol::tlv::MessageType::new(609), // STREAM_NOTIFY
                         bytes::Bytes::from(notify_payload),
+                        crate::runtime::routing::RouteFamily::from_u32(
+                            sub.subscriber.family().id(),
+                        ),
                     );
                     let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
                     let _ = self.router.route(notify_envelope);
@@ -1463,6 +1485,7 @@ impl MailboxSink for StreamDomainSink {
                             frame_ctx.channel_id,
                             crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
                             bytes::Bytes::from(response_bytes),
+                            frame_ctx.route_family,
                         );
                         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                             let _ = self.router.route(response_envelope);
@@ -1610,6 +1633,7 @@ impl MailboxSink for StreamDomainSink {
             frame_ctx.channel_id,
             crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
             bytes::Bytes::from(response_bytes),
+            frame_ctx.route_family,
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);
@@ -1997,6 +2021,7 @@ impl MailboxSink for LeaseDomainSink {
             frame_ctx.channel_id,
             crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
             bytes::Bytes::from(response_bytes),
+            frame_ctx.route_family,
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);
@@ -2077,7 +2102,6 @@ impl ScheduleDomainSink {
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
                     let notify_payload = crate::protocol::schedule_codec::encode_notify(
-                        sub.subscription_id,
                         &event.payload,
                     );
                     let notify_ctx = FrameContext::new(
@@ -2085,6 +2109,9 @@ impl ScheduleDomainSink {
                         crate::protocol::frame::ChannelId::Sub, // notification channel
                         crate::protocol::tlv::MessageType::new(705), // SCHEDULE_NOTIFY
                         bytes::Bytes::from(notify_payload),
+                        crate::runtime::routing::RouteFamily::from_u32(
+                            sub.subscriber.family().id(),
+                        ),
                     );
                     let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
                     let _ = self.router.route(notify_envelope);
@@ -2171,7 +2198,7 @@ impl MailboxSink for ScheduleDomainSink {
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
 
-        use crate::protocol::schedule_codec::{ScheduleMessage, ScheduleResponse};
+        use crate::protocol::schedule_codec::{ScheduleMessage, ScheduleResponse, ScheduleListEntry};
 
         let response = {
             let store = self.store.clone();
@@ -2185,32 +2212,26 @@ impl MailboxSink for ScheduleDomainSink {
             });
 
             match schedule_msg {
-                ScheduleMessage::Create { payload } => {
-                    // Build route matching authorization check pattern (realm/resource/operation)
-                    let route_str = format!(
-                        "schedule://{}/{}/{}",
-                        frame_ctx.realm, payload.target_resource, payload.target_operation
-                    );
-                    let route = crate::runtime::routing::Route::new(route_str);
-                    let payload_bytes = payload.encode();
-
-                    match actor.create_schedule(route, payload_bytes) {
-                        Ok(id) => ScheduleResponse::Ok {
-                            schedule_id: Some(id.to_string()),
-                        },
+                ScheduleMessage::Create { route, cron, payload } => {
+                    match actor.create_schedule(route, cron, payload) {
+                        Ok(()) => ScheduleResponse::Ok,
                         Err(e) => ScheduleResponse::Error(e),
                     }
                 }
-                ScheduleMessage::Cancel { schedule_id } => match schedule_id.parse::<u64>() {
-                    Ok(id) => match actor.delete_schedule(id) {
-                        Ok(()) => ScheduleResponse::Ok { schedule_id: None },
+                ScheduleMessage::Cancel { route } => {
+                    match actor.delete_schedule(route) {
+                        Ok(()) => ScheduleResponse::Ok,
                         Err(e) => ScheduleResponse::Error(e),
-                    },
-                    Err(_) => {
-                        ScheduleResponse::Error(format!("Invalid schedule ID: {}", schedule_id))
                     }
-                },
-                ScheduleMessage::List => ScheduleResponse::ListIds(actor.list_schedule_ids()),
+                }
+                ScheduleMessage::List => {
+                    let defs = actor.list_defs();
+                    let entries = defs
+                        .into_iter()
+                        .map(|(route, cron, payload)| ScheduleListEntry { route, cron, payload })
+                        .collect();
+                    ScheduleResponse::ListDefs(entries)
+                }
                 ScheduleMessage::Subscribe {
                     family_id,
                     pattern,
@@ -2235,7 +2256,7 @@ impl MailboxSink for ScheduleDomainSink {
                         })
                         .map(|s| s.subscription_id);
 
-                    let sub_id = if let Some(id) = existing_sub_id {
+                    let _sub_id = if let Some(id) = existing_sub_id {
                         tracing::debug!(
                             domain = "schedule",
                             session = session_id,
@@ -2265,9 +2286,7 @@ impl MailboxSink for ScheduleDomainSink {
                         new_id
                     };
 
-                    ScheduleResponse::Ok {
-                        schedule_id: Some(sub_id.to_string()),
-                    }
+                    ScheduleResponse::Ok
                 }
                 ScheduleMessage::Unsubscribe {
                     family_id,
@@ -2282,11 +2301,11 @@ impl MailboxSink for ScheduleDomainSink {
                             !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
                         });
                     }
-                    ScheduleResponse::Ok { schedule_id: None }
+                    ScheduleResponse::Ok
                 }
                 ScheduleMessage::UnsubscribeAll { session_id, .. } => {
                     self.unsubscribe_all(session_id);
-                    ScheduleResponse::Ok { schedule_id: None }
+                    ScheduleResponse::Ok
                 }
             }
         };
@@ -2298,6 +2317,7 @@ impl MailboxSink for ScheduleDomainSink {
             frame_ctx.channel_id,
             crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
             bytes::Bytes::from(response_bytes),
+            frame_ctx.route_family,
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);

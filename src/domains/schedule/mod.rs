@@ -1,15 +1,19 @@
-//! Schedule domain: time-based event scheduling with durable cron expressions
+//! Schedule domain: route-based time-triggered fanout with cron expressions
 //!
-//! - Schedules are TLV-only payloads persisted in Midge
-//! - On Tick, scan for due schedules and emit events via DomainPublishEvent:
-//!   1. To schedule:// subscribers (SCHEDULE_NOTIFY for clients observing fires)
-//!   2. To target_resource route (cross-domain execution, e.g. notice://)
-//! - Uses coarse coalescing semantics: missed ticks emit at most once and advance last_fire_at to now
+//! Schedules are identified by route string (not auto-generated IDs).
+//! Each schedule stores:
+//! - route: String - unique identity (e.g., "schedule://realm/area/resource/operation")
+//! - cron: String - 5-field cron expression for timing
+//! - payload: Bytes - arbitrary data to fanout to subscribers when fired
+//!
+//! On fire, schedule is published to all subscribers matching the route pattern.
+//! Storage uses time-indexed keys with TTL for automatic expiry.
 
 pub mod actor;
 pub mod protocol;
-pub mod session;
 pub mod store;
 
-pub use actor::{CronSchedule, ScheduleActor, ScheduleMessage};
-pub use session::SessionActor;
+pub use actor::ScheduleActor;
+pub use protocol::{CronSchedule, ScheduleDef, ScheduleError};
+pub use store::ScheduleStore;
+

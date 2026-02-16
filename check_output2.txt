@@ -1,0 +1,13 @@
+    Checking fitz v0.0.1 (D:\repos\cntryl\fitz)
+warning: unused variable: `realm`
+   --> src\session\manager.rs:751:13
+    |
+751 |         let realm = session_info
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_realm`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: error finalizing incremental compilation session directory `\\?\D:\repos\cntryl\fitz\target\debug\incremental\fitz-2opf75509vs0v\s-hfubqrt6i3-1fqut2g-working`: Access is denied. (os error 5)
+
+warning: `fitz` (lib) generated 2 warnings (run `cargo fix --lib -p fitz` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.28s

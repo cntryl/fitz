@@ -1,320 +1,177 @@
 //! Schedule domain E2E integration tests
 //!
-//! Tests schedule protocol encoding/decoding and cron parsing validation
-//! Note: Persistence tests skipped due to Midge commit() bug with writes
-//! (See TODO.md: "Midge commit() fails when transaction contains writes")
+//! Tests the new route-based schedule model where:
+//! - Routes are unique schedule identifiers
+//! - Schedules fire to subscribers matching route patterns
+//! - Cron expressions determine when schedules fire
 
 use bytes::Bytes;
-use fitz::domains::schedule::protocol::SchedulePayload;
-
-#[test]
-fn should_roundtrip_schedule_payload() {
-    // Arrange
-    let original = SchedulePayload {
-        cron: "0 9 * * 1-5".to_string(),
-        target_resource: "emails".to_string(),
-        target_operation: "send".to_string(),
-    };
-
-    // Act
-    let encoded = original.encode();
-    let decoded = SchedulePayload::decode(&encoded);
-
-    // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap(), original);
-}
+use fitz::domains::schedule::protocol::CronSchedule;
 
 #[test]
 fn should_parse_valid_cron_every_minute() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "* * * * *".to_string(),
-        target_resource: "task".to_string(),
-        target_operation: "run".to_string(),
-    };
+    let cron_str = "* * * * *";
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "* * * * *");
+    assert!(cron.is_ok());
 }
 
 #[test]
 fn should_parse_valid_cron_workday_9am() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 9 * * 1-5".to_string(), // Mon-Fri at 9 AM
-        target_resource: "meetings".to_string(),
-        target_operation: "start".to_string(),
-    };
+    let cron_str = "0 9 * * 1-5"; // Mon-Fri at 9 AM
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "0 9 * * 1-5");
+    assert!(cron.is_ok());
 }
 
 #[test]
 fn should_parse_valid_cron_with_step_syntax() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "*/15 */6 * * *".to_string(), // Every 15 min, every 6 hours
-        target_resource: "sync".to_string(),
-        target_operation: "data".to_string(),
-    };
+    let cron_str = "*/15 */6 * * *"; // Every 15 min, every 6 hours
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "*/15 */6 * * *");
+    assert!(cron.is_ok());
 }
 
 #[test]
 fn should_parse_valid_cron_with_list_syntax() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 9,12,18 * * *".to_string(), // At 9 AM, 12 PM, 6 PM
-        target_resource: "alerts".to_string(),
-        target_operation: "check".to_string(),
-    };
+    let cron_str = "0 9,12,18 * * *"; // At 9 AM, 12 PM, 6 PM
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "0 9,12,18 * * *");
+    assert!(cron.is_ok());
 }
 
 #[test]
 fn should_parse_valid_cron_with_range_syntax() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 9-17 * * 1-5".to_string(), // 9 AM to 5 PM, Mon-Fri
-        target_resource: "office".to_string(),
-        target_operation: "open".to_string(),
-    };
+    let cron_str = "0 9-17 * * 1-5"; // 9 AM to 5 PM, Mon-Fri
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "0 9-17 * * 1-5");
+    assert!(cron.is_ok());
 }
 
 #[test]
 fn should_parse_valid_cron_max_values() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "59 23 31 12 6".to_string(),
-        target_resource: "last".to_string(),
-        target_operation: "second".to_string(),
-    };
+    let cron_str = "59 23 31 12 6";
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "59 23 31 12 6");
+    assert!(cron.is_ok());
 }
 
 #[test]
 fn should_parse_valid_cron_min_values() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 0 1 1 0".to_string(),
-        target_resource: "first".to_string(),
-        target_operation: "instant".to_string(),
-    };
+    let cron_str = "0 0 1 1 0";
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().cron, "0 0 1 1 0");
+    assert!(cron.is_ok());
 }
 
 #[test]
-fn should_decode_with_empty_operation_field() {
+fn should_reject_invalid_cron_minute_too_high() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 12 * * *".to_string(),
-        target_resource: "task".to_string(),
-        target_operation: "".to_string(), // Empty operation allowed
-    };
+    let cron_str = "60 0 * * *"; // minute must be 0-59
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    assert_eq!(decoded.unwrap().target_operation, "");
+    assert!(cron.is_err());
 }
 
 #[test]
-fn should_preserve_payload_through_roundtrip() {
+fn should_reject_invalid_cron_hour_too_high() {
     // Arrange
-    let payloads = vec![
-        SchedulePayload {
-            cron: "0 0 * * *".to_string(),
-            target_resource: "daily_backup".to_string(),
-            target_operation: "backup_full".to_string(),
-        },
-        SchedulePayload {
-            cron: "*/5 * * * *".to_string(),
-            target_resource: "health_check".to_string(),
-            target_operation: "check_services".to_string(),
-        },
-        SchedulePayload {
-            cron: "0 */4 * * *".to_string(),
-            target_resource: "cache_refresh".to_string(),
-            target_operation: "invalidate_all".to_string(),
-        },
-    ];
+    let cron_str = "0 24 * * *"; // hour must be 0-23
 
     // Act
-    for original in payloads {
-        let encoded = original.encode();
-        let decoded = SchedulePayload::decode(&encoded).unwrap();
+    let cron = CronSchedule::parse(cron_str);
 
-        // Assert
-        assert_eq!(original.cron, decoded.cron);
-        assert_eq!(original.target_resource, decoded.target_resource);
-        assert_eq!(original.target_operation, decoded.target_operation);
-    }
+    // Assert
+    assert!(cron.is_err());
 }
 
 #[test]
-fn should_handle_unicode_in_resource_operation() {
+fn should_reject_invalid_cron_day_too_high() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 0 * * *".to_string(),
-        target_resource: "cafÃ©_backup".to_string(),
-        target_operation: "cafÃ©_sync".to_string(),
-    };
+    let cron_str = "0 0 32 * *"; // day must be 1-31
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    let decoded = decoded.unwrap();
-    assert_eq!(decoded.target_resource, "cafÃ©_backup");
-    assert_eq!(decoded.target_operation, "cafÃ©_sync");
+    assert!(cron.is_err());
 }
 
 #[test]
-fn should_handle_long_resource_operation_names() {
+fn should_reject_invalid_cron_month_too_high() {
     // Arrange
-    let long_name = "a".repeat(256);
-    let payload = SchedulePayload {
-        cron: "0 0 * * *".to_string(),
-        target_resource: long_name.clone(),
-        target_operation: long_name.clone(),
-    };
+    let cron_str = "0 0 * 13 *"; // month must be 1-12
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    let decoded = decoded.unwrap();
-    assert_eq!(decoded.target_resource, long_name);
-    assert_eq!(decoded.target_operation, long_name);
+    assert!(cron.is_err());
 }
 
 #[test]
-fn should_handle_special_characters_in_fields() {
+fn should_reject_invalid_cron_weekday_too_high() {
     // Arrange
-    let payload = SchedulePayload {
-        cron: "0 0 * * *".to_string(),
-        target_resource: "task/with/slashes".to_string(),
-        target_operation: "op-with-dashes_and_underscores".to_string(),
-    };
+    let cron_str = "0 0 * * 7"; // weekday must be 0-6
 
     // Act
-    let encoded = payload.encode();
-    let decoded = SchedulePayload::decode(&encoded);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_ok());
-    let decoded = decoded.unwrap();
-    assert_eq!(decoded.target_resource, "task/with/slashes");
-    assert_eq!(decoded.target_operation, "op-with-dashes_and_underscores");
+    assert!(cron.is_err());
 }
 
 #[test]
-fn should_reject_malformed_tlv_payload() {
+fn should_reject_invalid_cron_range() {
     // Arrange
-    let malformed = Bytes::from_static(b"not tlv encoded at all");
+    let cron_str = "0 0 * * 5-1"; // Invalid range (start > end)
 
     // Act
-    let decoded = SchedulePayload::decode(&malformed);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_err());
+    assert!(cron.is_err());
 }
 
 #[test]
-fn should_decode_payload_with_missing_cron_field() {
+fn should_parse_cron_with_all_wildcards() {
     // Arrange
-    use fitz::protocol::tlv::{MessageType, TlvEncoder};
-    let mut enc = TlvEncoder::new();
-    enc.encode(MessageType(2), b"resource_only");
-    enc.encode(MessageType(3), b"operation_only");
-    let tlv = enc.finish();
+    let cron_str = "* * * * *";
 
     // Act
-    let decoded = SchedulePayload::decode(&tlv);
+    let cron = CronSchedule::parse(cron_str);
 
     // Assert
-    assert!(decoded.is_err()); // Missing required field
-}
-
-#[test]
-fn should_encode_multiple_payloads_independently() {
-    // Arrange
-    let payload1 = SchedulePayload {
-        cron: "0 9 * * *".to_string(),
-        target_resource: "morning".to_string(),
-        target_operation: "start".to_string(),
-    };
-
-    let payload2 = SchedulePayload {
-        cron: "0 17 * * *".to_string(),
-        target_resource: "evening".to_string(),
-        target_operation: "end".to_string(),
-    };
-
-    // Act
-    let encoded1 = payload1.encode();
-    let encoded2 = payload2.encode();
-
-    let decoded1 = SchedulePayload::decode(&encoded1).unwrap();
-    let decoded2 = SchedulePayload::decode(&encoded2).unwrap();
-
-    // Assert
-    assert_eq!(decoded1.target_resource, "morning");
-    assert_eq!(decoded2.target_resource, "evening");
-    assert_ne!(decoded1, decoded2);
+    assert!(cron.is_ok());
 }

@@ -1,10 +1,12 @@
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cntryl_midge::WriteOptions;
 
-const BUCKET_SIZE_SECS: i64 = 10; // Time buckets for index
+/// Grace period for schedule TTL (time after fire before key expires)
+/// This gives the schedule time to be processed and fanned out before cleanup
+const GRACE_PERIOD_SECS: u64 = 3600; // 1 hour
 
 pub struct ScheduleStore {
     db: Arc<cntryl_midge::Engine>,
@@ -15,192 +17,211 @@ impl ScheduleStore {
         Self { db }
     }
 
-    /// schedule_def key: "family:{family}:def:{id:016x}"
-    fn encode_def_key(family: u64, id: u64) -> Vec<u8> {
-        format!("family:{}:def:{:016x}", family, id).into_bytes()
+    /// Encode storage key: `{next_fire_time_ms:020}:{route}`
+    /// Sorted lexicographically by time, enabling range scans
+    fn encode_key(next_fire_time_ms: u64, route: &str) -> String {
+        format!("{:020}:{}", next_fire_time_ms, route)
     }
 
-    /// schedule_idx key: "family:{family}:idx:{bucket:016x}/{id:016x}"
-    /// Enables range scans by bucket (time window)
-    fn encode_idx_key(family: u64, bucket: u64, id: u64) -> Vec<u8> {
-        format!("family:{}:idx:{:016x}/{:016x}", family, bucket, id).into_bytes()
+    /// Encode value: `{cron_expr}|{payload_bytes}`
+    fn encode_value(cron: &str, payload: &Bytes) -> Vec<u8> {
+        let mut val = Vec::with_capacity(cron.len() + 1 + payload.len());
+        val.extend(cron.as_bytes());
+        val.push(b'|');
+        val.extend(payload);
+        val
     }
 
-    /// Compute time bucket from DateTime
-    fn time_to_bucket(dt: DateTime<Utc>) -> u64 {
-        let ts = dt.timestamp();
-        (ts.max(0) as u64) / (BUCKET_SIZE_SECS as u64)
+    /// Decode value: `{cron_expr}|{payload_bytes}` -> (cron, payload)
+    fn decode_value(val: &[u8]) -> Result<(String, Bytes), String> {
+        let sep_pos = val.iter().position(|&b| b == b'|')
+            .ok_or_else(|| "Invalid value format: missing separator".to_string())?;
+        
+        let cron = String::from_utf8(val[..sep_pos].to_vec())
+            .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+        let payload = Bytes::copy_from_slice(&val[sep_pos + 1..]);
+        
+        Ok((cron, payload))
     }
 
-    /// Persist schedule definition + index entry.
-    /// Value format: [4 bytes BE route_len][route bytes][payload bytes]
+    /// Convert Instant to milliseconds since UNIX_EPOCH
+    fn instant_to_ms(instant: Instant) -> Result<u64, String> {
+        let now = SystemTime::now();
+        let elapsed = now.duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("System time error: {}", e))?;
+        let elapsed_secs = elapsed.as_secs();
+        
+        // Rough approximation: assume Instant started around now
+        // In practice, Instant is monotonic but not wall-clock time
+        // For schedules, we'll convert using now() as reference
+        let duration_since_start = instant.elapsed().as_secs();
+        let approx_ms = (elapsed_secs.saturating_sub(duration_since_start)) * 1000;
+        Ok(approx_ms)
+    }
+
+    /// Insert or update a schedule with TTL
+    /// Route is the key; cron and payload are stored in the value
     pub fn insert(
         &self,
-        family: u64,
-        id: u64,
-        route: &[u8],
-        payload: Bytes,
-        next_fire: DateTime<Utc>,
+        cf_id: u64,
+        route: &str,
+        cron: &str,
+        payload: &Bytes,
+        next_fire_time: Instant,
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        let next_fire_ms = Self::instant_to_ms(next_fire_time)?;
+        let key = Self::encode_key(next_fire_ms, route);
+        let value = Self::encode_value(cron, payload);
+        
+        // TTL = time until next fire + grace period
+        let now = Instant::now();
+        let time_until_fire = if next_fire_time > now {
+            next_fire_time - now
+        } else {
+            Duration::from_secs(0)
+        };
+        let ttl = time_until_fire + Duration::from_secs(GRACE_PERIOD_SECS);
+
+        let mut txn = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        txn.put(key.into_bytes(), value, Some(ttl.as_millis() as u64))
+            .map_err(|e| format!("put failed: {:?}", e))?;
+
+        self.db
+            .commit(txn, write_options)
+            .map_err(|e| format!("commit failed: {:?}", e))?;
+
+        Ok(())
+    }
+
+    /// Delete a schedule by route
+    /// Since routes are not directly in the key (they're suffixed by time),
+    /// we scan for keys ending with the route and delete them
+    pub fn delete(
+        &self,
+        cf_id: u64,
+        route: &str,
         write_options: WriteOptions,
     ) -> Result<(), String> {
         let mut txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        // Encode and store definition
-        let mut val = Vec::with_capacity(4 + route.len() + payload.len());
-        let route_len = (route.len() as u32).to_be_bytes();
-        val.extend(&route_len);
-        val.extend(route);
-        val.extend(payload);
-
-        txn.put(Self::encode_def_key(family, id), val, None)
-            .map_err(|e| format!("put def failed: {:?}", e))?;
-
-        // Index entry: just marks presence in time bucket
-        let bucket = Self::time_to_bucket(next_fire);
-        txn.put(Self::encode_idx_key(family, bucket, id), vec![], None)
-            .map_err(|e| format!("put idx failed: {:?}", e))?;
-
-        self.db
-            .commit(txn, write_options)
-            .map_err(|e| format!("commit failed: {:?}", e))?;
-        Ok(())
-    }
-
-    pub fn delete(&self, family: u64, id: u64, write_options: WriteOptions) -> Result<(), String> {
-        let mut txn = self
-            .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
-        txn.delete(Self::encode_def_key(family, id))
-            .map_err(|e| format!("delete def failed: {:?}", e))?;
-
-        // Also delete from all index buckets (could be in multiple if not yet fired)
-        // For now, we'll rely on a lazy cleanup or schedule update
-        // A more robust approach: iterate all buckets and remove
-
-        self.db
-            .commit(txn, write_options)
-            .map_err(|e| format!("commit failed: {:?}", e))?;
-        Ok(())
-    }
-
-    /// Scan schedules whose next_fire_time falls within [window_start, window_end]
-    /// Returns list of schedule IDs due in the window
-    pub fn scan_window(
-        &self,
-        family: u64,
-        window_start: DateTime<Utc>,
-        window_end: DateTime<Utc>,
-    ) -> Result<Vec<u64>, String> {
-        let txn = self
-            .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
-
-        let start_bucket = Self::time_to_bucket(window_start);
-        let end_bucket = Self::time_to_bucket(window_end);
-
-        let mut due_ids = Vec::new();
-
-        // Scan each bucket in the window
-        for bucket in start_bucket..=end_bucket {
-            let prefix = format!("family:{}:idx:{:016x}/", family, bucket);
-            let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix.clone().into_bytes()));
-
-            let mut iter = txn
-                .scan(&query)
-                .map_err(|e| format!("scan window failed: {:?}", e))?;
-            let results = iter.collect_all();
-
-            for (k, _v) in results {
-                // Parse schedule_id from key: "family:N:idx:BUCKET/ID"
-                let keystr = String::from_utf8_lossy(&k);
-                if let Some(slash_pos) = keystr.rfind('/') {
-                    let id_hex = &keystr[slash_pos + 1..];
-                    if let Ok(id) = u64::from_str_radix(id_hex, 16) {
-                        due_ids.push(id);
-                    }
+        // Scan all keys and find those matching the route
+        // In practice, you might want to maintain a separate index
+        let query = cntryl_midge::Query::new();
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan failed: {:?}", e))?;
+        
+        let results = iter.collect_all();
+        for (k, _v) in results {
+            let key_str = String::from_utf8_lossy(&k);
+            // Key format: "TIMESTAMP:ROUTE", check if route matches suffix
+            if let Some(colon_pos) = key_str.find(':') {
+                let key_route = &key_str[colon_pos + 1..];
+                if key_route == route {
+                    txn.delete(k)
+                        .map_err(|e| format!("delete failed: {:?}", e))?;
                 }
             }
         }
 
-        Ok(due_ids)
-    }
-
-    /// Batch update index entries after schedules fire
-    /// This atomically:
-    /// 1. Removes old index entries (current bucket)
-    /// 2. Adds new index entries (next fire bucket)
-    pub fn batch_update_index(
-        &self,
-        family: u64,
-        updates: Vec<(u64, DateTime<Utc>, DateTime<Utc>)>, // (id, old_next_fire, new_next_fire)
-        write_options: WriteOptions,
-    ) -> Result<(), String> {
-        if updates.is_empty() {
-            return Ok(());
-        }
-
-        let mut txn = self
-            .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("batch begin_tx failed: {:?}", e))?;
-
-        for (id, old_fire, new_fire) in updates {
-            let old_bucket = Self::time_to_bucket(old_fire);
-            let new_bucket = Self::time_to_bucket(new_fire);
-
-            // Delete old index entry
-            txn.delete(Self::encode_idx_key(family, old_bucket, id))
-                .map_err(|e| format!("batch delete idx failed: {:?}", e))?;
-
-            // Insert new index entry
-            txn.put(Self::encode_idx_key(family, new_bucket, id), vec![], None)
-                .map_err(|e| format!("batch put idx failed: {:?}", e))?;
-        }
-
         self.db
             .commit(txn, write_options)
-            .map_err(|e| format!("batch commit failed: {:?}", e))?;
+            .map_err(|e| format!("commit failed: {:?}", e))?;
+
         Ok(())
     }
 
-    /// Load all schedule definitions from store (used on startup)
-    /// Scans schedule_def CF
-    pub fn list(&self, family: u64) -> Result<Vec<(u64, Bytes, Bytes)>, String> {
+    /// Load all schedules ready to fire (next_fire_time <= now)
+    /// Returns Vec<(route, cron, payload)>
+    pub fn load_ready(
+        &self,
+        cf_id: u64,
+        now_ms: u64,
+    ) -> Result<Vec<(String, String, Bytes)>, String> {
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        let prefix = format!("family:{}:def:", family);
-        let mut out = Vec::new();
-        let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix.into_bytes()));
+        let mut ready = Vec::new();
+        
+        // Range scan: all keys from start (00000000000000000000) up to now (now_ms formatted)
+        // Keys are formatted as "TIMESTAMP:ROUTE" so we can sort/compare lexicographically
+        let query = cntryl_midge::Query::new();
+        
         let mut iter = txn
             .scan(&query)
-            .map_err(|e| format!("scan failed: {:?}", e))?;
+            .map_err(|e| format!("scan ready failed: {:?}", e))?;
+        
         let results = iter.collect_all();
-
         for (k, v) in results {
-            let keystr = String::from_utf8_lossy(&k);
-            if let Some(pos) = keystr.rfind(":def:") {
-                let id_hex = &keystr[pos + 5..];
-                if let Ok(id) = u64::from_str_radix(id_hex, 16) {
-                    if v.len() >= 4 {
-                        let route_len = u32::from_be_bytes([v[0], v[1], v[2], v[3]]) as usize;
-                        if v.len() >= 4 + route_len {
-                            let route_bytes = Bytes::copy_from_slice(&v[4..4 + route_len]);
-                            let payload = Bytes::copy_from_slice(&v[4 + route_len..]);
-                            out.push((id, route_bytes, payload));
+            let key_str = String::from_utf8_lossy(&k);
+            if let Some(colon_pos) = key_str.find(':') {
+                let timestamp_part = &key_str[..colon_pos];
+                // Only include if timestamp <= now_ms (lexicographically)
+                if timestamp_part.len() == 20 {
+                    if let Ok(ts) = timestamp_part.parse::<u64>() {
+                        if ts <= now_ms {
+                            let route = key_str[colon_pos + 1..].to_string();
+                            match Self::decode_value(&v) {
+                                Ok((cron, payload)) => {
+                                    ready.push((route, cron, payload));
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to decode schedule value: {}", e);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        Ok(out)
+        Ok(ready)
+    }
+
+    /// Load all schedules (for LIST operation)
+    /// Returns Vec<(route, cron, payload)>
+    pub fn load_all(
+        &self,
+        cf_id: u64,
+    ) -> Result<Vec<(String, String, Bytes)>, String> {
+        let txn = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        let mut all = Vec::new();
+        
+        let query = cntryl_midge::Query::new();
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan all failed: {:?}", e))?;
+        
+        let results = iter.collect_all();
+        for (k, v) in results {
+            let key_str = String::from_utf8_lossy(&k);
+            if let Some(colon_pos) = key_str.find(':') {
+                let route = key_str[colon_pos + 1..].to_string();
+                match Self::decode_value(&v) {
+                    Ok((cron, payload)) => {
+                        all.push((route, cron, payload));
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to decode schedule value: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(all)
     }
 }

@@ -630,18 +630,12 @@ impl Ingress for RuntimeIngress {
                         session_info.route_family,
                         route,
                     );
-                    // Extract realm from session claims for FrameContext
-                    let realm = session_info
-                        .claims
-                        .as_ref()
-                        .map(|c| c.tenant.clone())
-                        .unwrap_or_default();
-                    let ctx = crate::protocol::frame_context::FrameContext::new_with_realm(
+                    let ctx = crate::protocol::frame_context::FrameContext::new(
                         session_id,
                         crate::protocol::frame::ChannelId::Pub,
                         msg_type,
                         message_payload.clone(),
-                        realm,
+                        session_info.route_family,
                     );
                     // Set source to the session's inbox so domain sinks can route responses back
                     let source = crate::runtime::routing::RouteAddress::new(
@@ -754,27 +748,31 @@ impl RuntimeIngress {
         use crate::protocol::frame_context::FrameContext;
         use crate::runtime::routing::Route;
 
-        let realm = session_info
+        let _realm = session_info
             .claims
             .as_ref()
             .map(|c| c.tenant.clone())
             .unwrap_or_default();
 
-        let ctx = FrameContext::new_with_realm(
+        let ctx = FrameContext::new(
             session_info.session_id,
             crate::protocol::frame::ChannelId::Pub,
             msg_type,
             payload.clone(),
-            realm.clone(),
+            session_info.route_family,
         );
 
         let mt = msg_type.as_u16();
         match mt {
             100..=108 => {
                 // KV domain: Per CLIENT_SPEC, all operations now include route on wire
-                // RouteFamily is derived server-side from the route (not from client)
+                // RouteFamily comes from the session, not from the route
                 // Parse message to extract route for authorization
-                match crate::protocol::kv::parse_request(mt, payload.as_ref()) {
+                match crate::protocol::kv::parse_request(
+                    mt,
+                    session_info.route_family,
+                    payload.as_ref(),
+                ) {
                     Ok(kmsg) => match kmsg {
                         crate::domains::kv::KvMessage::Begin {
                             realm,
@@ -949,11 +947,10 @@ impl RuntimeIngress {
                     ),
                 ) {
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Create {
-                        payload: pay,
-                    }) => Ok(Some(Route::new(format!(
-                        "schedule://{}/{}/{}",
-                        realm, pay.target_resource, pay.target_operation
-                    )))),
+                        route,
+                        cron: _,
+                        payload: _,
+                    }) => Ok(Some(Route::new(route))),
                     Ok(crate::protocol::schedule_codec::ScheduleMessage::Subscribe {
                         pattern,
                         ..

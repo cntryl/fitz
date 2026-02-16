@@ -221,16 +221,6 @@ harness = false
 path = "benches/tier4_integration_kv.rs"
 
 [[bench]]
-name = "tier1_hotpath_schedule"
-harness = false
-path = "benches/tier1_hotpath_schedule.rs"
-
-[[bench]]
-name = "tier4_integration_schedule"
-harness = false
-path = "benches/tier4_integration_schedule.rs"
-
-[[bench]]
 name = "tier1_hotpath_lease"
 harness = false
 path = "benches/tier1_hotpath_lease.rs"

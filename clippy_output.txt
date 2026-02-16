@@ -1,0 +1,30 @@
+    Blocking waiting for file lock on build directory
+warning: useless conversion to the same type: `bytes::Bytes`
+   --> src\protocol\schedule_codec.rs:122:19
+    |
+122 |     let payload = Bytes::from(dec.get_bytes()?);
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider removing `Bytes::from()`: `dec.get_bytes()?`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#useless_conversion
+    = note: `#[warn(clippy::useless_conversion)]` on by default
+
+warning: error finalizing incremental compilation session directory `\\?\D:\repos\cntryl\fitz\target\debug\incremental\fitz-02lv7fje7gum1\s-hfubrernhz-0p1dpku-working`: Access is denied. (os error 5)
+
+warning: `fitz` (lib) generated 2 warnings (run `cargo clippy --fix --lib -p fitz` to apply 1 suggestion)
+    Checking fitz v0.0.1 (D:\repos\cntryl\fitz)
+error[E0432]: unresolved import `fitz::domains::schedule::protocol::SchedulePayload`
+ --> tests\schedule_e2e_basic.rs:8:5
+  |
+8 | use fitz::domains::schedule::protocol::SchedulePayload;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `SchedulePayload` in `domains::schedule::protocol`
+
+error[E0282]: type annotations needed
+   --> tests\schedule_e2e_basic.rs:195:23
+    |
+195 |         let encoded = original.encode();
+    |                       ^^^^^^^^ cannot infer type
+
+Some errors have detailed explanations: E0282, E0432.
+For more information about an error, try `rustc --explain E0282`.
+error: could not compile `fitz` (test "schedule_e2e_basic") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
