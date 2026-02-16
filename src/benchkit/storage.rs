@@ -50,6 +50,11 @@ pub fn create_local_bench_store() -> (Arc<cntryl_midge::Engine>, tempfile::TempD
             .expect("Failed to create local disk store"),
     );
 
+    // Ensure column family 1 exists for durable benchmark/tests that rely on explicit
+    // RouteFamily -> ColumnFamily mapping (many tests expect CF=1 to be present).
+    // If creation fails because it already exists, ignore the error.
+    let _ = store.create_column_family("cf_1");
+
     // Restore original directory
     std::env::set_current_dir(&original_dir).expect("Failed to restore original directory");
 
