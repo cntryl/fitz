@@ -367,4 +367,163 @@ mod tests {
         // Assert: Just verify the actor exists and has no auth logic
         assert_eq!(actor.subscriptions.len(), 0);
     }
+
+    #[test]
+    fn should_match_wildcard_subscriptions_correctly() {
+        // Arrange
+        let router = crate::testkit::notice::make_router();
+        let sink = std::sync::Arc::new(crate::testkit::notice::TestSink::new());
+        let subscriber = test_address("notify://realm/area/a/b/recv");
+        router.register(subscriber.clone(), sink.clone());
+
+        let mut actor = NoticeRouteActor::new(test_family());
+        let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+
+        // Subscribe using a double-star suffix pattern
+        let family = *ctx.address().family();
+        let subscribe = SubscribeMessage::new(
+            family,
+            test_route("notify://realm/**/recv"),
+            test_session_id(1),
+            subscriber.clone(),
+        );
+        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
+
+        // Act - publish to a nested path that should match the ** suffix
+        let pubmsg = PublishMessage::new(
+            family,
+            test_route("notify://realm/area/a/b/recv"),
+            bytes::Bytes::from("payload"),
+        );
+        actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
+
+        // Assert - subscriber received the notification
+        assert_eq!(sink.count(), 1);
+    }
+
+    #[test]
+    fn should_preserve_notify_order_for_single_subscriber() {
+        // Arrange
+        use crate::runtime::router::MailboxSink;
+        use crate::runtime::envelope::Envelope;
+        use std::sync::Mutex;
+
+        // Local sink that records notification payloads in delivery order
+        struct OrderSink {
+            seen: std::sync::Arc<Mutex<Vec<Vec<u8>>>>,
+        }
+        impl OrderSink {
+            fn new() -> Self {
+                Self { seen: std::sync::Arc::new(Mutex::new(Vec::new())) }
+            }
+            fn recorded(&self) -> Vec<Vec<u8>> {
+                self.seen.lock().unwrap().clone()
+            }
+        }
+        impl MailboxSink for OrderSink {
+            fn deliver(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
+                if let Some(crate::domains::notice::protocol::NotificationMessage::Notify(n)) = envelope.payload::<crate::domains::notice::protocol::NotificationMessage>() {
+                    // Record payload bytes
+                    self.seen.lock().unwrap().push(n.payload.as_ref().to_vec());
+                }
+                Ok(())
+            }
+            fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
+                self.deliver(envelope)
+            }
+        }
+
+        let router = crate::testkit::notice::make_router();
+        let sink = std::sync::Arc::new(OrderSink::new());
+        let subscriber = test_address("notify://realm/area/ordered/recv");
+        router.register(subscriber.clone(), sink.clone());
+
+        let mut actor = NoticeRouteActor::new(test_family());
+        let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+
+        // Subscribe
+        let family = *ctx.address().family();
+        let subscribe = SubscribeMessage::new(
+            family,
+            test_route("notify://realm/area/ordered/*"),
+            test_session_id(1),
+            subscriber.clone(),
+        );
+        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
+
+        // Act - publish two messages in order
+        let pub1 = PublishMessage::new(family, test_route("notify://realm/area/ordered/a"), bytes::Bytes::from("one"));
+        let pub2 = PublishMessage::new(family, test_route("notify://realm/area/ordered/a"), bytes::Bytes::from("two"));
+        actor.receive(NotificationMessage::Publish(pub1), &mut ctx);
+        actor.receive(NotificationMessage::Publish(pub2), &mut ctx);
+
+        // Assert - payloads delivered in same order
+        let recorded = sink.recorded();
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(recorded[0], b"one".to_vec());
+        assert_eq!(recorded[1], b"two".to_vec());
+    }
+
+    #[test]
+    fn should_not_leak_subscriptions_across_realms() {
+        // Arrange
+        let router = crate::testkit::notice::make_router();
+        let sink = std::sync::Arc::new(crate::testkit::notice::TestSink::new());
+        let subscriber = test_address("notify://realm/area/leak/recv");
+        router.register(subscriber.clone(), sink.clone());
+
+        // Create actor for family 1 and subscribe
+        let mut actor1 = NoticeRouteActor::new(test_family());
+        let mut ctx1 = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+        let family1 = *ctx1.address().family();
+        let subscribe = SubscribeMessage::new(
+            family1,
+            test_route("notify://realm/area/leak/*"),
+            test_session_id(1),
+            subscriber.clone(),
+        );
+        actor1.receive(NotificationMessage::Subscribe(subscribe), &mut ctx1);
+
+        // Create a different actor for a different family and publish
+        let mut actor2 = NoticeRouteActor::new(crate::runtime::routing::RouteFamily::new(2));
+        let mut ctx2 = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+        let pubmsg = PublishMessage::new(
+            *ctx2.address().family(),
+            test_route("notify://realm/area/leak/recv"),
+            bytes::Bytes::from("x"),
+        );
+        actor2.receive(NotificationMessage::Publish(pubmsg), &mut ctx2);
+
+        // Assert - actor2 (different family) did not deliver to actor1's subscription
+        assert_eq!(sink.count(), 0);
+    }
+
+    #[test]
+    fn should_handle_subscribe_unsubscribe_race() {
+        // Arrange
+        let router = crate::testkit::notice::make_router();
+        let sink = std::sync::Arc::new(crate::testkit::notice::TestSink::new());
+        let subscriber = test_address("notify://realm/area/race/recv");
+        router.register(subscriber.clone(), sink.clone());
+
+        let mut actor = NoticeRouteActor::new(test_family());
+        let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+        let family = *ctx.address().family();
+
+        // Act - subscribe then immediately unsubscribe all
+        let subscribe = SubscribeMessage::new(
+            family,
+            test_route("notify://realm/area/race/*"),
+            test_session_id(1),
+            subscriber.clone(),
+        );
+        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
+
+        let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), subscriber.clone());
+        actor.receive(NotificationMessage::UnsubscribeAll(unsubscribe_all), &mut ctx);
+
+        // Assert - no subscriptions remain
+        assert_eq!(actor.subscription_count(), 0);
+        assert_eq!(actor.index_count(), 0);
+    }
 }
