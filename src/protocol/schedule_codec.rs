@@ -3,64 +3,11 @@
 //! Encodes/decodes TLV messages for the schedule domain.
 //! Supports Create, Cancel, List operations with route-based identity.
 
+use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
-use bytes::Bytes;
-
-/// Schedule operation messages
-#[derive(Debug, Clone)]
-pub enum ScheduleMessage {
-    /// Create or update a schedule (route is identity, upsert)
-    Create {
-        route: String,
-        cron: String,
-        payload: Bytes,
-    },
-    /// Cancel an existing schedule by route
-    Cancel { route: String },
-    /// List all schedules
-    List,
-    /// Subscribe to schedule fire notifications by pattern (client -> server)
-    Subscribe {
-        family_id: RouteFamily,
-        pattern: Route,
-        session_id: u64,
-        subscriber: RouteAddress,
-    },
-    /// Unsubscribe from schedule fire notifications by pattern (client -> server)
-    Unsubscribe {
-        family_id: RouteFamily,
-        pattern: Route,
-        session_id: u64,
-        subscriber: RouteAddress,
-    },
-    /// Unsubscribe all schedule subscriptions for a session (called on disconnect)
-    UnsubscribeAll {
-        session_id: u64,
-        subscriber: RouteAddress,
-    },
-}
-
-/// Response from schedule operations
-#[derive(Debug, Clone)]
-pub enum ScheduleResponse {
-    /// Operation succeeded (no schedule_id returned - route is identity)
-    Ok,
-    /// LIST operation: returns all schedules as (route, cron, payload) tuples
-    ListDefs(Vec<ScheduleListEntry>),
-    /// Operation failed with error message
-    Error(String),
-}
-
-/// Single schedule entry in LIST response
-#[derive(Debug, Clone)]
-pub struct ScheduleListEntry {
-    pub route: String,
-    pub cron: String,
-    pub payload: Bytes,
-}
 
 /// Parse incoming message from TLV-encoded bytes.
 ///

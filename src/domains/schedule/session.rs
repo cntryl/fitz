@@ -2,12 +2,10 @@
 //!
 //! Responsibilities:
 //! - Enforce session-level authorization for schedule operations
-//! - Forward authorized operations to the ScheduleActor
+//! - Validate permissions before forwarding to ScheduleActor
 
 use crate::auth::Access;
-use crate::domains::schedule::actor::ScheduleActor;
-use crate::domains::schedule::ScheduleMessage;
-use crate::runtime::actor::{Actor, Context};
+use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use crate::runtime::routing::Route;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
@@ -16,7 +14,7 @@ use crate::session::session::SessionId;
 ///
 /// Responsibilities:
 /// - Enforce session-level authorization for schedule operations
-/// - Forward authorized operations to the ScheduleActor
+/// - Validate route access based on operation type
 pub struct SessionActor {
     pub session_id: SessionId,
     pub permissions: SessionPermissions,
@@ -30,54 +28,28 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to schedule a job. Returns Err if authorization fails.
-    pub fn schedule(
-        &self,
-        route: Route,
-        msg: ScheduleMessage,
-        actor: &mut ScheduleActor,
-        ctx: &mut Context<ScheduleActor>,
-    ) -> Result<(), String> {
-        // Schedule requires write access (creating a scheduled job is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
-            return Err("unauthorized: schedule".to_string());
+    /// Validate authorization for a schedule operation
+    pub fn authorize(&self, route: &Route, msg: &ScheduleMessage) -> Result<(), String> {
+        match msg {
+            ScheduleMessage::Create { .. } | ScheduleMessage::Cancel { .. } => {
+                // Create/Cancel requires write access
+                if !self.permissions.allows(route, Access::Write) {
+                    return Err("unauthorized: write access required".to_string());
+                }
+            }
+            ScheduleMessage::List => {
+                // List requires read access
+                if !self.permissions.allows(route, Access::Read) {
+                    return Err("unauthorized: read access required".to_string());
+                }
+            }
+            ScheduleMessage::Subscribe { .. } | ScheduleMessage::Unsubscribe { .. } | ScheduleMessage::UnsubscribeAll { .. } => {
+                // Subscribe requires read access (receiving notifications)
+                if !self.permissions.allows(route, Access::Read) {
+                    return Err("unauthorized: read access required".to_string());
+                }
+            }
         }
-
-        actor.receive(msg, ctx);
-        Ok(())
-    }
-
-    /// Attempt to cancel a scheduled job. Returns Err if authorization fails.
-    pub fn cancel(
-        &self,
-        route: Route,
-        msg: ScheduleMessage,
-        actor: &mut ScheduleActor,
-        ctx: &mut Context<ScheduleActor>,
-    ) -> Result<(), String> {
-        // Cancel requires write access (modifying a scheduled job is a write operation)
-        if !self.permissions.allows(&route, Access::Write) {
-            return Err("unauthorized: cancel".to_string());
-        }
-
-        actor.receive(msg, ctx);
-        Ok(())
-    }
-
-    /// Attempt to get job status. Returns Err if authorization fails.
-    pub fn status(
-        &self,
-        route: Route,
-        msg: ScheduleMessage,
-        actor: &mut ScheduleActor,
-        ctx: &mut Context<ScheduleActor>,
-    ) -> Result<(), String> {
-        // Status query requires read access
-        if !self.permissions.allows(&route, Access::Read) {
-            return Err("unauthorized: status".to_string());
-        }
-
-        actor.receive(msg, ctx);
         Ok(())
     }
 }

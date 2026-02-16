@@ -2198,7 +2198,7 @@ impl MailboxSink for ScheduleDomainSink {
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
 
-        use crate::protocol::schedule_codec::{ScheduleMessage, ScheduleResponse, ScheduleListEntry};
+        use crate::domains::schedule::{ScheduleMessage, ScheduleResponse, ScheduleListEntry};
 
         let response = {
             let store = self.store.clone();

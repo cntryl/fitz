@@ -3751,55 +3751,71 @@ elif response.type == "Fenced":
 
 #### CREATE Request
 
+**Wire Format:**
 ```
 [u32 BE]  route_len
 [bytes]   route (e.g., "schedule://realm/area/resource")
 [u32 BE]  cron_len
-[bytes]   cron (UTF-8 cron expression)
-[u32 BE]  target_resource_len
-[bytes]   target_resource
-[u32 BE]  target_operation_len
-[bytes]   target_operation
-Response (status=0):
+[bytes]   cron (UTF-8 cron expression, 5-field format)
+[u32 BE]  payload_len
+[bytes]   payload (arbitrary bytes to deliver on notification)
+
+Response (success=0):
   [u8]     0
-  [u8]     has_schedule_id
-  [u32 BE] schedule_id_len (if present)
-  [bytes]  schedule_id
-Response (status=1):
+
+Response (error=1):
   [u8]     1
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
+**Semantics:**
+- Route serves as the unique schedule identifier (upsert behavior)
+- Creating a schedule with an existing route updates that schedule
+- Payload is arbitrary binary data delivered to subscribers on notification
+- Invalid cron expression returns error code 7002
+
 #### CANCEL Request
 
+**Wire Format:**
 ```
 [u32 BE]  route_len
 [bytes]   route
-[u32 BE]  schedule_id_len
-[bytes]   schedule_id
-Response: status + optional schedule_id
+
+Response (success=0):
+  [u8]     0
+
+Response (error=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
+
+**Semantics:**
+- Canceling a nonexistent schedule succeeds (idempotent)
+- Cancel prevents all future executions
+- Already-running notifications may still be delivered
 
 #### LIST Request
 
+**Wire Format:**
 ```
-[u32 BE]  route_len
-[bytes]   route
-Response 1..N (streaming):
-  [u8]     0 (status)
-  [u8]     1 (has_schedule_id=true)
-  [u32 BE] schedule_id_len
-  [bytes]  schedule_id
+(no parameters - lists all schedules in current realm)
+
+Response 1..N (streaming, one schedule per response):
+  [u8]     0 (status=success)
+  [u8]     1 (has_entry=true)
+  [u32 BE] route_len
+  [bytes]   route
   [u32 BE] cron_len
-  [bytes]  cron
-  [u32 BE] target_resource_len
-  [bytes]  target_resource
-  [u32 BE] target_operation_len
-  [bytes]  target_operation
+  [bytes]   cron
+  [u32 BE] payload_len
+  [bytes]  payload
+
 Response N+1 (final, end-of-stream):
-  [u8]     0 (status)
-  [u8]     0 (has_schedule_id=false, no more schedules)
+  [u8]     0 (status=success)
+  [u8]     0 (has_entry=false, no more schedules)
+
 Response (error):
   [u8]     1 (status=error)
   [u32 BE] error_len
@@ -3807,9 +3823,9 @@ Response (error):
 ```
 
 **Streaming Protocol:**
-- Client continues reading until response with `has_schedule_id=0`
-- Empty result set: Single response with `status=0, has_schedule_id=0`
-- Non-empty result: N responses with schedules, then final response with `has_schedule_id=0`
+- Client continues reading until response with `has_entry=0`
+- Empty result set: Single response with `status=0, has_entry=0`
+- Non-empty result: N responses with schedules, then final response with `has_entry=0`
 - Client MUST NOT assume stream ends after fixed count
 
 #### Cron Syntax (Broker-Enforced)
@@ -3876,58 +3892,57 @@ Client MUST continue reading until `has_schedule_id=0`.
 
 #### Usage Example
 
-```python
-# Create schedule
-schedule_id = client.schedule_create(
+```python (notification-only model)
+client.schedule_create(
     route="schedule://prod/app/reminders",
     cron="0 9 * * 1",  # Every Monday at 9 AM
-    target_resource="notice://prod/app/notifications",
-    target_operation="PUBLISH"
+    payload=b"weekly-reminder-config"
 )
 
-# List schedules
-schedules = client.schedule_list(
-    route="schedule://prod/app/reminders"
+# Subscribe to schedule notifications
+client.schedule_subscribe(
+    route_pattern="schedule://prod/app/*"
 )
+
+# Receive notification when schedule fires (Message Type 705)
+# Server sends: SCHEDULE_NOTIFY with payload bytes
+
+# List schedules
+schedules = client.schedule_list()
 
 # Cancel schedule
 client.schedule_cancel(
-    route="schedule://prod/app/reminders",
+    route="schedule://prod/app/reminders"app/reminders",
     schedule_id=schedule_id
 )
-```
+```uses route as identity:
 
-**Wire Protocol:**
-
-Every operation includes route:
-
-- `CREATE`: `[route_len][route][cron_len][cron][target_resource_len][target_resource][target_operation_len][target_operation]`
-- `LIST`: `[route_len][route]`
-- `CANCEL`: `[route_len][route][schedule_id_len][schedule_id]`
+- `CREATE`: `[route_len][route][cron_len][cron][payload_len][payload]`
+- `LIST`: (no parameters, lists all schedules)
+- `CANCEL`: `[route_len][route]`
 
 #### Semantics
 
-- **Self-Contained Operations**: Every request includes route for stateless processing
+- **Route-Based Identity**: Routes uniquely identify schedules (CREATE is upsert)
 - **Durability**: Schedules persist across broker restarts
-- **Strict Timing**: Tasks execute at designated times (best-effort)
+- **Notification-Only**: When schedules fire, SCHEDULE_NOTIFY (705) is sent to subscribers
 - **Recurring**: Interval-based recurring tasks (cron-like)
-- **Cancellation**: Cancels future runs; already-running tasks may not abort
-- **Route Scoped**: Independent schedules per route
+- **Cancellation**: Cancels future runs; already-delivered notifications cannot be revoked
+- **Realm Scoped**: Schedules isolated per realm
 
-##### Execution Model (Dual-Emit)
+##### Execution Model (Notification-Only)
 
-When a schedule fires, the broker performs **two actions**:
+When a schedule fires, the broker performs **one action**:
 
-1. **SCHEDULE_NOTIFY (705):** The broker emits a `SCHEDULE_NOTIFY` to all clients subscribed to the schedule's route pattern via `SCHEDULE_SUBSCRIBE (703)`. This delivers the schedule's configured payload bytes directly to subscribers.
+**SCHEDULE_NOTIFY (705):** The broker emits a `SCHEDULE_NOTIFY` message to all clients subscribed to the schedule's route pattern via `SCHEDULE_SUBSCRIBE (703)`. The notification contains the schedule's configured payload bytes.
 
-2. **DomainPublishEvent (target execution):** The broker executes the `target_operation` on the `target_resource` internally via the DomainPublishEvent system. For example:
-   - `target_resource="notice://prod/app/notifications"` + `target_operation="PUBLISH"` → broker publishes a Notice to that route
-   - `target_resource="queue://prod/app/tasks"` + `target_operation="ENQUEUE"` → broker enqueues a message to that queue
+**Client observability:** Clients observe schedule execution by subscribing to schedule routes via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when schedules fire.
 
-Both actions occur on every fire. They serve complementary purposes:
-
-- **SCHEDULE_NOTIFY** provides direct, low-latency observability of schedule fires — clients learn *that* a schedule fired and receive its payload without needing to poll or subscribe to a secondary domain.
-- **DomainPublishEvent** performs the schedule's intended side effect in the target domain (enqueue a message, publish a notice, etc.).
+**Payload semantics:** The payload is opaque to Fitz — clients can encode configuration, task identifiers, or any data needed to handle the notification. Common patterns:
+- JSON-encoded task config
+- Protobuf-serialized parameters  
+- Simple string identifiers
+- Arbitrary binary data
 
 **Client observability:** Clients have two options for observing schedule execution:
 - **Direct:** Subscribe to the schedule route via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when the schedule fires
@@ -3936,21 +3951,24 @@ Both actions occur on every fire. They serve complementary purposes:
 #### Error Codes (7xxx)
 
 - 7001 = ERR_SCHEDULE_NOT_FOUND
+- 7002 = ERR_INVALID_CRON (informational - cancel is idempotent)
 - 7002 = ERR_INVALID_CRON
 - 7003 = ERR_SCHEDULE_LIMIT
 - 7004 = ERR_PARSE_ERROR
-- 7005 = ERR_INVALID_TARGET
+- 7005 = ERR_INVALID_ROUTE
 - 7006 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 7007 = ERR_SUBSCRIPTION_LIMIT
 
 #### Acceptance Tests
 
-- create_once schedules task and executes at delay
-- create_recurring executes at intervals
-- cancel prevents future runs
-- list returns created schedules
-- schedule persists across restart
-
+- create schedules task with cron expression
+- create on existing route updates (upsert)
+- cancel prevents future notifications
+- cancel on nonexistent route succeeds (idempotent)
+- list returns all created schedules
+- schedule persists across broker restart
+- subscribers receive SCHEDULE_NOTIFY when schedule fires
+- invalid cron expression rejected with 7002
 #### Schedule SUBSCRIBE (703)
 
 Subscribe to schedule fire notifications for a route pattern.

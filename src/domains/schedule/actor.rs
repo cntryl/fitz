@@ -1,5 +1,7 @@
-use crate::domains::schedule::protocol::{CronSchedule, ScheduleDef};
+use crate::domains::schedule::protocol::{CronSchedule, ScheduleDef, ScheduleMessage, ScheduleResponse, ScheduleListEntry};
 use crate::domains::schedule::store::ScheduleStore;
+use crate::prelude::Actor;
+use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -175,11 +177,61 @@ impl ScheduleActor {
             0
         }
     }
+
+    /// Handle schedule message (synchronous)
+    pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
+        match msg {
+            ScheduleMessage::Create { route, cron, payload } => {
+                match self.create_schedule(route, cron, payload) {
+                    Ok(()) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(e),
+                }
+            }
+            ScheduleMessage::Cancel { route } => {
+                match self.delete_schedule(route) {
+                    Ok(()) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(e),
+                }
+            }
+            ScheduleMessage::List => {
+                let defs = self.list_defs();
+                let entries = defs
+                    .into_iter()
+                    .map(|(route, cron, payload)| ScheduleListEntry {
+                        route,
+                        cron,
+                        payload,
+                    })
+                    .collect();
+                ScheduleResponse::ListDefs(entries)
+            }
+            ScheduleMessage::Subscribe { .. } => {
+                // Subscription handled by router, not actor
+                ScheduleResponse::Ok
+            }
+            ScheduleMessage::Unsubscribe { .. } => {
+                // Unsubscription handled by router, not actor
+                ScheduleResponse::Ok
+            }
+            ScheduleMessage::UnsubscribeAll { .. } => {
+                // Unsubscription handled by router, not actor
+                ScheduleResponse::Ok
+            }
+        }
+    }
+}
+
+impl Actor for ScheduleActor {
+    type Message = ScheduleMessage;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        // Schedule operations are synchronous and return via response channel
+        let _response = self.handle(msg);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn should_create_schedule() {

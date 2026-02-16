@@ -946,16 +946,16 @@ impl RuntimeIngress {
                         Route::new(""),
                     ),
                 ) {
-                    Ok(crate::protocol::schedule_codec::ScheduleMessage::Create {
+                    Ok(crate::domains::schedule::ScheduleMessage::Create {
                         route,
                         cron: _,
                         payload: _,
                     }) => Ok(Some(Route::new(route))),
-                    Ok(crate::protocol::schedule_codec::ScheduleMessage::Subscribe {
+                    Ok(crate::domains::schedule::ScheduleMessage::Subscribe {
                         pattern,
                         ..
                     }) => Ok(Some(pattern.clone())),
-                    Ok(crate::protocol::schedule_codec::ScheduleMessage::Unsubscribe {
+                    Ok(crate::domains::schedule::ScheduleMessage::Unsubscribe {
                         pattern,
                         ..
                     }) => Ok(Some(pattern.clone())),

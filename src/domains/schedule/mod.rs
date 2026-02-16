@@ -14,6 +14,6 @@ pub mod protocol;
 pub mod store;
 
 pub use actor::ScheduleActor;
-pub use protocol::{CronSchedule, ScheduleDef, ScheduleError};
+pub use protocol::{CronSchedule, ScheduleDef, ScheduleError, ScheduleMessage, ScheduleResponse, ScheduleListEntry};
 pub use store::ScheduleStore;
 
