@@ -5,7 +5,6 @@
 //! - Schedules fire to subscribers matching route patterns
 //! - Cron expressions determine when schedules fire
 
-use bytes::Bytes;
 use fitz::domains::schedule::protocol::CronSchedule;
 
 #[test]

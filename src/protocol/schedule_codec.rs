@@ -3,11 +3,11 @@
 //! Encodes/decodes TLV messages for the schedule domain.
 //! Supports Create, Cancel, List operations with route-based identity.
 
-use bytes::Bytes;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
+use bytes::Bytes;
 
 /// Schedule operation messages
 #[derive(Debug, Clone)]
@@ -119,7 +119,7 @@ pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
 fn parse_create(dec: &mut TlvDecoder) -> Result<ScheduleMessage, String> {
     let route = dec.get_string()?;
     let cron = dec.get_string()?;
-    let payload = Bytes::from(dec.get_bytes()?);
+    let payload = dec.get_bytes()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
