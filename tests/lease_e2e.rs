@@ -1,5 +1,42 @@
-// Deprecated — consolidated into `tests/lease_e2e.rs`.
-/// E2E basic test: renew an acquired lease
+// Consolidated lease end-to-end tests (domain-level)
+// Moved from: lease_e2e_basic.rs
+
+use fitz::domains::lease::{LeaseActor, LeaseMessage};
+use fitz::runtime::actor::{Actor, Context};
+use fitz::runtime::router::Router;
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use std::sync::Arc;
+
+fn make_ctx() -> Context<LeaseActor> {
+    let router = Router::new();
+    let addr = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("lease://realm/locks/test/acquire"),
+    );
+    Context::new(addr, Arc::new(router))
+}
+
+#[test]
+fn should_acquire_lease_successfully() {
+    // Arrange
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
+    let mut ctx = make_ctx();
+
+    let msg = LeaseMessage::Acquire {
+        family_id: RouteFamily::new(1),
+        route: Route::new("lease://realm/locks/db-migration/acquire"),
+        owner_id: "client-1".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 0,
+    };
+
+    // Act
+    actor.receive(msg, &mut ctx);
+
+    // Assert
+    assert_eq!(actor.lease_count(), 1);
+}
+
 #[test]
 fn should_renew_lease_successfully() {
     // Arrange
@@ -32,7 +69,6 @@ fn should_renew_lease_successfully() {
     assert_eq!(actor.lease_count(), 1);
 }
 
-/// E2E basic test: release a lease
 #[test]
 fn should_release_lease_successfully() {
     // Arrange

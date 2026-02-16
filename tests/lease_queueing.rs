@@ -1,7 +1,4 @@
-//! Lease domain queueing semantics tests
-//!
-//! These tests verify FIFO queue behavior, wait timeouts, queue overflow,
-//! and deferred response semantics when multiple clients contend for a single lease.
+// Deprecated — consolidated into `tests/lease_advanced.rs`. (Kept as a stub.)
 
 use fitz::domains::lease::lease_actor::LeaseActor;
 use fitz::domains::lease::protocol::{LeaseMessage, LeaseResponse};

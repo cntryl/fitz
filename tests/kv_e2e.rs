@@ -4,8 +4,8 @@
 
 use fitz::testkit::create_test_engine_with_cfs;
 mod fixtures;
-use fixtures::transport::*;
 use bytes::Bytes;
+use fixtures::transport::*;
 
 // ===== TCP tests =====
 

@@ -1,43 +1,4 @@
-use fitz::domains::lease::{LeaseActor, LeaseMessage};
-use fitz::runtime::actor::{Actor, Context};
-use fitz::runtime::router::Router;
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::sync::Arc;
-
-// This file asserts lease semantics: verifies lease acquisition, renewal, release, and expiration rules.
-// It MUST NOT test implementation details such as internal data structures.
-
-fn make_ctx() -> Context<LeaseActor> {
-    let router = Router::new();
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/test/acquire"),
-    );
-    Context::new(addr, Arc::new(router))
-}
-
-#[test]
-fn should_grant_lease_to_first_requester() {
-    // Arrange
-    let mut actor = LeaseActor::new(RouteFamily::new(1));
-    let mut ctx = make_ctx();
-
-    let msg = LeaseMessage::Acquire {
-        family_id: RouteFamily::new(1),
-        route: Route::new("lease://realm/locks/db-migration/acquire"),
-        owner_id: "client-1".to_string(),
-        ttl_secs: 30,
-        wait_seconds: 0,
-    };
-
-    // Act
-    actor.receive(msg, &mut ctx);
-
-    // Assert
-    // Verify the lease was acquired by checking actor state
-    assert_eq!(actor.lease_count(), 1);
-}
-
+// Deprecated — tests consolidated into `tests/lease_basics.rs`. (Kept as a stub.)
 #[test]
 fn should_reject_second_requester_when_lease_is_held() {
     // Arrange

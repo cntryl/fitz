@@ -1,48 +1,5 @@
-use fitz::auth::Permission;
-use fitz::domains::lease::session::{AcquireRequest, ReleaseRequest, RenewRequest, SessionActor};
-use fitz::domains::lease::LeaseActor;
-use fitz::runtime::actor::Context;
-use fitz::runtime::router::Router;
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::session::permissions::SessionPermissions;
-use fitz::session::session::SessionId;
-use std::sync::Arc;
-
-fn make_ctx() -> Context<LeaseActor> {
-    let router = Router::new();
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/session"),
-    );
-    Context::new(addr, Arc::new(router))
-}
-
-#[test]
-fn should_reject_unauthenticated_lease_acquire() {
-    // Arrange
-    let mut actor = LeaseActor::new(RouteFamily::new(1));
-    let mut ctx = make_ctx();
-
-    let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
-
-    // Act
-    let res = session.acquire(
-        AcquireRequest {
-            family: RouteFamily::new(1),
-            route: Route::new("lease://realm/locks/db-migration"),
-            owner_id: "owner1".to_string(),
-            ttl_secs: 30,
-            wait_seconds: 0,
-        },
-        &mut actor,
-        &mut ctx,
-    );
-
-    // Assert
-    assert!(res.is_err());
-    assert_eq!(res.unwrap_err(), "unauthorized: acquire");
-}
-
+// Deprecated — tests consolidated into `tests/lease_basics.rs`
+// Kept as a stub for history and to avoid breaking test binaries.
 #[test]
 fn should_reject_lease_acquire_with_read_only_permission() {
     // Arrange

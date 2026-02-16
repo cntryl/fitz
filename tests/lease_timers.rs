@@ -1,7 +1,4 @@
-//! Lease domain timer and clock integration tests
-//!
-//! These tests verify timeout callback behavior, timer scheduling coordination,
-//! and clock-based expiration using MockClock for deterministic timing.
+// Deprecated — consolidated into `tests/lease_advanced.rs`. (Kept as a stub.)
 
 use fitz::domains::lease::lease_actor::LeaseActor;
 use fitz::domains::lease::protocol::{LeaseMessage, LeaseResponse};
