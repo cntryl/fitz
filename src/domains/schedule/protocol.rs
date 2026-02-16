@@ -267,7 +267,8 @@ fn seconds_to_datetime(seconds: u64) -> (u32, u32, u32, u32, u32, u32) {
 }
 
 fn is_leap_year(year: u32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    // Use `is_multiple_of` for clarity and to satisfy clippy
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String> {

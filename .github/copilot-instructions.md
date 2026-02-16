@@ -3,50 +3,6 @@
 - did you validate tests? `python ./scripts/validate_tests.py --summary`
 - did you fix all clippy warnings? `cargo clippy --all-targets`
 
-## Terminology Rules - STRICTLY ENFORCE
-
-**CRITICAL: Use correct Fitz terminology in ALL code, tests, documentation, and comments.**
-
-### Correct Terms
-
-- ✅ **realm** - The isolation boundary for resources (NOT "tenant")
-- ✅ **area** - Namespace within a realm
-- ✅ **resource** - Specific entity within an area
-- ✅ **operation** - Action performed on a resource
-
-### Forbidden Terms
-
-- ❌ **tenant** - NEVER use this term, always use "realm"
-- ❌ **namespace** - Use "area" instead (namespace is too generic)
-- ❌ **endpoint** - Use "route" for Fitz routing paths
-- ❌ **topic** - Use "route" for pub/sub patterns (in notice domain)
-- ❌ **channel** - This has a specific meaning (connection ID), don't use for routes
-
-### Examples
-
-```rust
-// ✅ CORRECT
-let realm = "realm123";
-let route = "ftz://realm123/kv/users/get";
-pub struct RealmMap { ... }
-
-// ❌ WRONG
-let tenant = "tenant123";
-let endpoint = "ftz://tenant123/kv/users/get";
-pub struct TenantMap { ... }
-```
-
-**This applies to:**
-- Variable names
-- Function names
-- Struct/enum names
-- Comments and documentation
-- Test names and descriptions
-- Error messages
-- Log statements
-
----
-
 ## Test Writing Guidelines - STRICTLY ENFORCE
 
 When generating or suggesting tests, **ALWAYS** follow these rules:
@@ -375,11 +331,11 @@ Copilot must follow these rules when generating domain code:
 
 Domain functions:
 
-* **MUST NOT be async**
-* **MUST NOT return futures**
-* **MUST NOT use `.await`**
-* **MUST NOT use tokio types** (`tokio::spawn`, `oneshot`, `tokio::sync::Mutex`, `tokio::sync::RwLock`, etc.)
-* **MUST NOT perform async I/O**
+- **MUST NOT be async**
+- **MUST NOT return futures**
+- **MUST NOT use `.await`**
+- **MUST NOT use tokio types** (`tokio::spawn`, `oneshot`, `tokio::sync::Mutex`, `tokio::sync::RwLock`, etc.)
+- **MUST NOT perform async I/O**
 
 A domain handler signature must look like:
 
@@ -389,21 +345,21 @@ fn handle(&self, req: DomainContext) -> DomainResponse
 
 All work is synchronous and returns immediately.
 
-### 2. Async boundaries are *before* domain handlers
+### 2. Async boundaries are _before_ domain handlers
 
 WebSocket tasks do:
 
-* framing
-* read/write
-* correlation
-* passing bytes into the engine
+- framing
+- read/write
+- correlation
+- passing bytes into the engine
 
 The engine does:
 
-* parsing
-* route lookup
-* **calls the domain handler synchronously**
-* returns a `DomainResponse` immediately
+- parsing
+- route lookup
+- **calls the domain handler synchronously**
+- returns a `DomainResponse` immediately
 
 The domain itself does **zero async** work.
 
@@ -411,19 +367,19 @@ The domain itself does **zero async** work.
 
 If a domain needs to:
 
-* block
-* wait for a lease
-* contest ownership
-* coordinate state
+- block
+- wait for a lease
+- contest ownership
+- coordinate state
 
 …then it must use **synchronous concurrency primitives**:
 
-* `std::sync::Mutex` / `RwLock`
-* `parking_lot::Mutex` / `RwLock`
-* `DashMap`
-* `std::sync::Condvar`
-* lock-free structures
-* sharded state
+- `std::sync::Mutex` / `RwLock`
+- `parking_lot::Mutex` / `RwLock`
+- `DashMap`
+- `std::sync::Condvar`
+- lock-free structures
+- sharded state
 
 **Not tokio waits, not timers, not async sleepers.**
 
@@ -431,11 +387,11 @@ If a domain needs to:
 
 Transport + engine provide:
 
-* parsed route
-* borrowed payload slice
-* channel ID
-* route family
-* possibly a sender for publish-style operations
+- parsed route
+- borrowed payload slice
+- channel ID
+- route family
+- possibly a sender for publish-style operations
 
 Domains never parse HTTP, never deal with WebSocket framing, never work with async readers/writers.
 
@@ -501,10 +457,10 @@ These are **forbidden** in domain code.
 
 ### 8. The only async code in Fitz lives in:
 
-* HTTP transport
-* WebSocket transport
-* TLS upgrade
-* async file/network ops for *external* systems (never internal operations)
+- HTTP transport
+- WebSocket transport
+- TLS upgrade
+- async file/network ops for _external_ systems (never internal operations)
 
 Everything else is deterministic synchronous Rust.
 
@@ -524,34 +480,35 @@ Copilot must generate code that follows these rules:
 
 ### 1. Transport layers are async
 
-* HTTP (Hyper)
-* WebSockets (tokio-tungstenite)
-* TLS upgrades
-* Socket I/O
+- HTTP (Hyper)
+- WebSockets (tokio-tungstenite)
+- TLS upgrades
+- Socket I/O
 
 These layers are responsible only for:
-* accepting connections
-* reading frames
-* writing frames
-* performing upgrades
-* lightweight routing to the engine boundary
+
+- accepting connections
+- reading frames
+- writing frames
+- performing upgrades
+- lightweight routing to the engine boundary
 
 **No domain logic may run inside async tasks.**
 
 ### 2. Engine is 100% synchronous
 
-* The core engine is a **single-threaded or sharded deterministic loop**
-* No async, no `.await`, no tokio tasks, no oneshot channels
-* All domain logic (routing, RPC, queues, leases, streams, KV, WAL interaction) occurs synchronously
-* The engine is driven by an event queue (`EngineEvent`)
-* Domain handlers are synchronous functions returning results immediately
+- The core engine is a **single-threaded or sharded deterministic loop**
+- No async, no `.await`, no tokio tasks, no oneshot channels
+- All domain logic (routing, RPC, queues, leases, streams, KV, WAL interaction) occurs synchronously
+- The engine is driven by an event queue (`EngineEvent`)
+- Domain handlers are synchronous functions returning results immediately
 
 ### 3. Async ↔ Sync boundary
 
-* WebSocket tasks forward inbound frames to the engine via a **crossbeam or SPSC queue**
-* The engine pushes outbound frames via a per-connection **Sender<Vec<u8>>**
-* Async tasks must not hold or call any engine domain types directly
-* The boundary is always:
+- WebSocket tasks forward inbound frames to the engine via a **crossbeam or SPSC queue**
+- The engine pushes outbound frames via a per-connection **Sender<Vec<u8>>**
+- Async tasks must not hold or call any engine domain types directly
+- The boundary is always:
   ```
   WS frame → engine.on_frame(conn_id, bytes)
   engine → outbound_tx.send(binary_frame)
@@ -559,9 +516,9 @@ These layers are responsible only for:
 
 ### 4. No "spawn per request" patterns
 
-* The previous async spawn-per-dispatch model is removed
-* Domain operations must *never* spawn tokio tasks
-* Domain concurrency must only come from engine sharding (realm/tenant partitioning), not async tasks
+- The previous async spawn-per-dispatch model is removed
+- Domain operations must _never_ spawn tokio tasks
+- Domain concurrency must only come from engine sharding (realm/tenant partitioning), not async tasks
 
 ### 5. Data flow summary
 
@@ -581,21 +538,21 @@ These layers are responsible only for:
 
 ### 6. Performance intent
 
-* Minimize jitter and remove async scheduling from hot paths
-* Maintain strong ordering, deterministic processing, and predictable latency
-* Avoid tokio locks; prefer parking_lot and lock-free structures
-* No async IO inside engine code
+- Minimize jitter and remove async scheduling from hot paths
+- Maintain strong ordering, deterministic processing, and predictable latency
+- Avoid tokio locks; prefer parking_lot and lock-free structures
+- No async IO inside engine code
 
 ### 7. What Copilot should produce
 
 Copilot must:
 
-* Keep transport async but extremely thin
-* Keep all engine and domain logic synchronous
-* Use crossbeam channels or SPSC ring buffers for engine event queues
-* Avoid introducing any async constructs inside engine code
-* Prefer small, deterministic synchronous functions
-* Assume thousands of WS connections but only a handful of engine threads/shards
+- Keep transport async but extremely thin
+- Keep all engine and domain logic synchronous
+- Use crossbeam channels or SPSC ring buffers for engine event queues
+- Avoid introducing any async constructs inside engine code
+- Prefer small, deterministic synchronous functions
+- Assume thousands of WS connections but only a handful of engine threads/shards
 
 **Examples of CORRECT patterns:**
 
@@ -828,19 +785,22 @@ For each domain service:
 
 ### Benchmark Tiers
 
-**Hotpath** (benches/hotpath/*):
+**Hotpath** (benches/hotpath/\*):
+
 - Pure service logic
 - No Arc/RwLock overhead
 - Measures <100ns to <10µs operations
 - Target: <1s total runtime
 
-**Subsystem** (benches/subsystem/*):
+**Subsystem** (benches/subsystem/\*):
+
 - Service + handler coordination
 - TLV parsing included
 - No engine/transport
 - Target: <3s total runtime
 
-**System** (benches/system/*):
+**System** (benches/system/\*):
+
 - Full engine pipeline
 - Frame parsing, routing, authorization
 - Most realistic measurement
@@ -868,9 +828,11 @@ See these files for excellent benchmark patterns:
 **REMEMBER: Benchmarks should be allocation-free, deterministic, and fast!**
 
 ---
+
 ## Build, Test & Lint Commands - QUICK REFERENCE
 
 **Local development:**
+
 ```bash
 cargo test                          # Run all tests
 cargo test --lib                    # Unit tests only
@@ -882,12 +844,14 @@ cargo build --release               # Optimized build
 ```
 
 **Common patterns:**
+
 - Run tests with output: `cargo test -- --nocapture`
 - Run specific integration test: `cargo test --test kv_e2e_basic`
 - Check single domain: `cargo test kv::` (tests containing "kv::")
 - Run with backtrace: `RUST_BACKTRACE=1 cargo test`
 
 **Before committing:**
+
 ```bash
 cargo fmt --all
 cargo clippy -D warnings
@@ -901,47 +865,57 @@ cargo test
 Fitz has **4 distinct layers**, each with strict responsibilities and boundaries:
 
 ### Layer 1: API (Transport Edge)
+
 **Location:** `src/api/`  
 **Responsibility:** Socket I/O only  
 **MUST contain:**
+
 - Tokio async loops (TCP, WebSocket)
 - Socket accept/read/write
 - Protocol framing (TCP length-prefix, WebSocket framing)
 - Session creation and lifecycle management
 
 **MUST NOT contain:**
+
 - Routing logic
 - Domain business logic
 - Message parsing beyond framing
 
 **Example files:**
+
 - `src/api/tcp.rs` - TCP listener, length-prefixed frames
 - `src/api/ws.rs` - WebSocket upgrade, frame forwarding
 - `src/api/ingress.rs` - Async accept loop
 
 ### Layer 2: Session (Middleware/Dispatcher)
+
 **Location:** `src/session/`  
 **Responsibility:** Frame parsing and permission checking  
 **MUST contain:**
+
 - TLV/codec parsing (calls Protocol layer)
 - Session-scoped state (realm, permissions, auth)
 - Permission enforcement
 - Frame → Message translation
 
 **MUST NOT contain:**
+
 - Actor routing
 - Domain logic
 - Async work beyond reading frames
 
 **Example files:**
+
 - `src/session/session.rs` - Frame receiving, routing to Runtime
 - `src/session/permissions.rs` - Authorization rules
 - `src/session/manager.rs` - Session lifecycle
 
 ### Layer 3: Runtime (Deterministic Actor Engine)
+
 **Location:** `src/runtime/`  
 **Responsibility:** Actor lifecycle, message routing, scheduling  
 **MUST contain:**
+
 - `routing/` - Route addressing (RouteFamily, Route, RouteAddress)
 - `actor/` - Actor trait, mailboxes, lifecycle
 - `router/` - Message delivery and subscription indexing
@@ -950,6 +924,7 @@ Fitz has **4 distinct layers**, each with strict responsibilities and boundaries
 - `subscriptions/` - High-performance subscription lookup
 
 **MUST NOT contain:**
+
 - Async code
 - Domain business logic
 - Socket I/O
@@ -957,21 +932,25 @@ Fitz has **4 distinct layers**, each with strict responsibilities and boundaries
 **100% Synchronous. No `.await`, no tokio types.**
 
 **Example files:**
+
 - `src/runtime/routing.rs` - Route parsing, RouteFamily management
 - `src/runtime/router.rs` - Fanout, delivery
 - `src/runtime/actor.rs` - Actor trait, ActorRef, Context
 
 ### Layer 4: Domains (Business Logic)
+
 **Location:** `src/domains/`  
 **Domains:** `kv/`, `lease/`, `notice/`, `queue/`, `rpc/`, `stream/`, `schedule/`  
 **Responsibility:** Domain-specific actor implementations  
 **MUST contain:**
+
 - Domain-specific `Actor` implementations
 - Request/response message types (e.g., `KvMessage`, `KvResponse`)
 - Domain state management
 - Business logic (transactions, leasing, fanout, etc.)
 
 **MUST NOT contain:**
+
 - Async code
 - Socket I/O
 - Routing or frame dispatch
@@ -979,6 +958,7 @@ Fitz has **4 distinct layers**, each with strict responsibilities and boundaries
 **100% Synchronous. All message handling is deterministic.**
 
 **Example structure:**
+
 ```rust
 pub struct KvActor { /* state */ }
 impl Actor for KvActor {
@@ -1071,12 +1051,14 @@ impl Actor for MyDomainActor {
 ### Sending Messages to Actors
 
 **From within domain:**
+
 ```rust
 // Send to another actor by ActorRef
 let response = ctx.send_to(&target_ref, MyMessage::RequestA { param: "test".into() })?;
 ```
 
 **From Session/Runtime layer:**
+
 ```rust
 // Runtime routes messages to correct actor automatically
 // No manual actor addressing needed - Runtime.router handles it
@@ -1096,10 +1078,13 @@ let response = ctx.send_to(&target_ref, MyMessage::RequestA { param: "test".into
 Fitz uses **TLV (Tag-Length-Value) encoding** for all domain operations.
 
 ### Layer Location
+
 **Location:** `src/protocol/`
 
 ### Codec Files Structure
+
 Each domain has a codec:
+
 - `src/protocol/kv_codec.rs` - KV encoding/decoding
 - `src/protocol/lease_codec.rs` - Lease encoding/decoding
 - `src/protocol/notice_codec.rs` - Notice encoding/decoding
@@ -1142,6 +1127,7 @@ impl CodecTrait for MyDomainCodec {
 ```
 
 ### TLV Encoding Helpers
+
 **Location:** `src/protocol/tlv.rs`
 
 ```rust
@@ -1154,7 +1140,9 @@ buffer.extend(encode_string(TAG_NAME, "lease-1")?);
 ```
 
 ### RouteFamily Routing
+
 Every codec must handle `RouteFamily`:
+
 ```rust
 // In KvMessage or similar:
 pub struct BeginRequest {
@@ -1175,19 +1163,21 @@ pub struct BeginRequest {
 ### Test Organization
 
 **Unit tests:** Inside domain modules, test `Actor::receive()` directly
+
 ```rust
 // In src/domains/kv/mod.rs or tests file
 #[test]
 fn should_return_value_when_key_exists() {
     // Arrange
     let mut actor = KvActor::new(test_store());
-    
+
     // Act & Assert
     // Direct actor testing
 }
 ```
 
 **Integration tests:** `tests/*.rs` files, test full pipeline
+
 ```
 tests/
   kv_e2e_basic.rs           # Happy path
@@ -1286,7 +1276,7 @@ fn should_isolate_transactions_across_resources() {
         resource: "posts".to_string(),  // Should fail or isolate
         // ...
     });
-    
+
     // Assert - Verify isolation
     assert!(response_indicates_isolation_or_error(&response));
 }
@@ -1299,6 +1289,7 @@ fn should_isolate_transactions_across_resources() {
 Fitz routes are hierarchical and strictly structured.
 
 ### Route Format
+
 ```
 ftz://[route_family]/[domain]/[realm]/[area]/[resource]/[operation]
 ftz://1/kv/acme/app/users/get
@@ -1306,6 +1297,7 @@ ftz://1/kv/acme/app/users/get
 ```
 
 ### RouteFamily
+
 - **Numeric identifier** for route partitioning
 - Used for **sharding state** across multiple instances
 - Set by client in every request
@@ -1314,17 +1306,18 @@ ftz://1/kv/acme/app/users/get
 
 ### Route Components
 
-| Component | Example | Purpose |
-|-----------|---------|------|
-| `domain` | `kv`, `notice`, `rpc`, `lease`, `queue`, `stream` | Service selector |
-| `realm` | `acme`, `tenant-123`, `prod` | Isolation boundary |
-| `area` | `app`, `system`, `cache` | Namespace within realm |
-| `resource` | `users`, `posts`, `events` | Entity type |
-| `operation` | `get`, `put`, `subscribe` | Action verb |
+| Component   | Example                                           | Purpose                |
+| ----------- | ------------------------------------------------- | ---------------------- |
+| `domain`    | `kv`, `notice`, `rpc`, `lease`, `queue`, `stream` | Service selector       |
+| `realm`     | `acme`, `tenant-123`, `prod`                      | Isolation boundary     |
+| `area`      | `app`, `system`, `cache`                          | Namespace within realm |
+| `resource`  | `users`, `posts`, `events`                        | Entity type            |
+| `operation` | `get`, `put`, `subscribe`                         | Action verb            |
 
 ### Pattern Matching (Subscriptions)
 
 Routes support **wildcard patterns** for subscriptions:
+
 ```rust
 // Exact
 "ftz://1/notice/acme/app/users/change"
@@ -1340,6 +1333,7 @@ Routes support **wildcard patterns** for subscriptions:
 ### Routing in Domain Handlers
 
 Session layer routes based on domain prefix:
+
 ```
 kv://     → KvActor
 notice:// → NoticeActor

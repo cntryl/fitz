@@ -6,11 +6,10 @@
 //! - Cron expressions determine when schedules fire
 
 use bytes::Bytes;
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleListEntry};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::domains::schedule::protocol::CronSchedule;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
-use std::sync::Arc;
 
 /// Helper to create a test Schedule actor
 fn test_actor() -> ScheduleActor {

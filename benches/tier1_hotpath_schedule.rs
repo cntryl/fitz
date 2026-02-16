@@ -10,7 +10,7 @@
 //! Pure domain logic microbenching.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput, SamplingMode};
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use bytes::Bytes;

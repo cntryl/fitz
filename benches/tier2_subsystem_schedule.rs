@@ -11,7 +11,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Benchmark
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleListEntry};
 use fitz::protocol::schedule_codec;
 use fitz::protocol::frame_context::FrameContext;
-use fitz::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
+use fitz::protocol::tlv_codec::TlvEncoder;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::SessionId;
 use fitz::testkit::create_test_engine_with_cfs;
