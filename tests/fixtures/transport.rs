@@ -534,6 +534,20 @@ impl RpcConnector for WsRpcConnector {
     }
 }
 
+/// Build RPC SUBSCRIBE frame (msg_type 300) to register a worker
+pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string worker_addr]
+    let mut buf = Vec::new();
+    buf.put_u32(worker_addr.len() as u32);
+    buf.put_slice(worker_addr.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(300, &buf);
+    builder.build()
+}
+
 /// Build RPC REQUEST frame (msg_type 302)
 pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> {
     use bytes::BufMut;
