@@ -686,6 +686,7 @@ impl Ingress for RuntimeIngress {
 
         // Dispatch cleanup to all subscribable domains BEFORE removing session state.
         // This ensures subscriptions are cleaned up for Notice, Stream, and Schedule.
+        // Also cleans up KV transactions and resource locks.
         if let Some(router) = &self.router {
             let cleanup = crate::runtime::SessionCleanup { session_id };
 
@@ -695,6 +696,14 @@ impl Ingress for RuntimeIngress {
                 .get(&session_id)
                 .map(|s| s.route_family)
                 .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
+
+            // Send cleanup to KV domain
+            let kv_addr = crate::runtime::routing::RouteAddress::new(
+                route_family,
+                crate::runtime::routing::Route::new("kv://cleanup"),
+            );
+            let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
+            let _ = router.route(kv_envelope);
 
             // Send cleanup to Notice domain
             let notice_addr = crate::runtime::routing::RouteAddress::new(
@@ -722,7 +731,7 @@ impl Ingress for RuntimeIngress {
 
             tracing::debug!(
                 session_id = session_id,
-                "Ingress: dispatched cleanup to Notice, Stream, and Schedule domains"
+                "Ingress: dispatched cleanup to KV, Notice, Stream, and Schedule domains"
             );
         }
 

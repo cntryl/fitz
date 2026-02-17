@@ -107,12 +107,38 @@ impl KvDomainSink {
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
     }
+
+    /// Remove actor and release all resource locks for a session (called on disconnect cleanup).
+    pub fn cleanup_session(&self, session_id: u64) {
+        // Remove the actor for this session
+        self.actors.lock().remove(&session_id);
+
+        // Release all resource locks held by this session
+        let mut locks = self.resource_locks.lock();
+        locks.retain(|_key, holder_id| *holder_id != session_id);
+
+        // Clean up tx_to_resource mappings for this session
+        let mut tx_map = self.tx_to_resource.lock();
+        tx_map.retain(|(sid, _tx_id), _key| *sid != session_id);
+
+        tracing::debug!(
+            domain = "kv",
+            session = session_id,
+            "All KV transactions and resource locks released for session (disconnect cleanup)"
+        );
+    }
 }
 
 impl MailboxSink for KvDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
+        }
+
+        // Handle SessionCleanup event (disconnect cleanup)
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return Ok(());
         }
 
         tracing::debug!(
