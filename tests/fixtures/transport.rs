@@ -720,69 +720,100 @@ pub type TcpConnector = TcpClient;
 pub type WsConnector = WsClient;
 
 /// Build KV BEGIN frame (msg_type 100)
-pub fn build_kv_begin(route: &str, mode: u8, flags: u8) -> Vec<u8> {
+pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
+    let mut payload = Vec::new();
+    // [u32 BE route_len][route][u8 mode][u8 durability]
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
+    payload.push(mode);
+    payload.push(durability);
+    
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(100, route.as_bytes()); // Route
-    builder.encode_field(101, &[mode]); // Mode (0=RO, 1=RW)
-    builder.encode_field(102, &[flags]); // Flags
+    builder.encode_field(100, &payload);
     builder.build()
 }
 
-/// Build KV PUT frame (msg_type 110)
+/// Build KV PUT frame (msg_type 104)
 pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    // [u64 BE tx_id][u32 BE route_len][route][u32 BE key_len][key][u32 BE value_len][value]
+    payload.extend_from_slice(&tx_id.to_be_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
+    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
+    payload.extend_from_slice(key);
+    payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    payload.extend_from_slice(value);
+    
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(110, &tx_id.to_le_bytes()); // Transaction ID
-    builder.encode_field(111, route.as_bytes()); // Route
-    builder.encode_field(112, key); // Key
-    builder.encode_field(113, value); // Value
+    builder.encode_field(104, &payload);
     builder.build()
 }
 
-/// Build KV GET frame (msg_type 120)
+/// Build KV GET frame (msg_type 103)
 pub fn build_kv_get(tx_id: u64, route: &str, key: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    // [u64 BE tx_id][u32 BE route_len][route][u32 BE key_len][key]
+    payload.extend_from_slice(&tx_id.to_be_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
+    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
+    payload.extend_from_slice(key);
+    
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(120, &tx_id.to_le_bytes()); // Transaction ID
-    builder.encode_field(121, route.as_bytes()); // Route
-    builder.encode_field(122, key); // Key
+    builder.encode_field(103, &payload);
     builder.build()
 }
 
-/// Build KV COMMIT frame (msg_type 130)
+/// Build KV COMMIT frame (msg_type 101)
 pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    // [u64 BE tx_id][u32 BE route_len][route]
+    payload.extend_from_slice(&tx_id.to_be_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
+    
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(130, &tx_id.to_le_bytes()); // Transaction ID
-    builder.encode_field(131, route.as_bytes()); // Route
+    builder.encode_field(101, &payload);
     builder.build()
 }
 
-/// Build KV ROLLBACK frame (msg_type 140)
+/// Build KV ROLLBACK frame (msg_type 102)
 pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    // [u64 BE tx_id][u32 BE route_len][route]
+    payload.extend_from_slice(&tx_id.to_be_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
+    
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(140, &tx_id.to_le_bytes()); // Transaction ID
-    builder.encode_field(141, route.as_bytes()); // Route
+    builder.encode_field(102, &payload);
     builder.build()
 }
 
 /// Parse KV response
+/// Format: [u8 status][optional data...]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
-
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // TLV format: [u8 msg_type][u16 be length][payload]
+    // Payload format: [u8 status][data...]
+    if response.len() < 4 {
+        return (0, 0, Vec::new());
     }
-
+    
+    let msg_type = response[0];
+    // Skip length (2 bytes at positions 1-2)
+    let status = response[3]; // Position 3 = after type + length
+    let data = if response.len() > 4 {
+        response[4..].to_vec()
+    } else {
+        Vec::new()
+    };
+    
+    // Return (msg_type, status, data)
     (msg_type, status, data)
 }
 
-/// Parse KV transaction ID from response
+/// Parse KV transaction ID from response (big-endian u64)
 pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
     if data.len() < 8 {
         return Err("TX ID too short".to_string());
@@ -790,7 +821,7 @@ pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
     let bytes = [
         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ];
-    Ok(u64::from_le_bytes(bytes))
+    Ok(u64::from_be_bytes(bytes))
 }
 
 /// Parse KV value from response

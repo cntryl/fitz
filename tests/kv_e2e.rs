@@ -298,7 +298,7 @@ where
     let commit_frame = build_kv_commit(1, route);
     client.request(&commit_frame, 2000).await.expect("COMMIT");
 
-    let begin_frame = build_kv_begin(route, 2, 0);
+    let begin_frame = build_kv_begin(route, 1, 0);
     let response = client.request(&begin_frame, 2000).await.expect("BEGIN 2");
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
@@ -405,7 +405,7 @@ where
     let (_msg_type, status1, _data) = parse_kv_response(&response1);
     assert_eq!(status1, 0);
 
-    let begin2 = build_kv_begin("kv://test/app/resource2", 2, 0);
+    let begin2 = build_kv_begin("kv://test/app/resource2", 1, 0);
     let response2 = client.request(&begin2, 2000).await.expect("BEGIN 2");
     let (_msg_type, status2, _data) = parse_kv_response(&response2);
     assert_eq!(status2, 0);
