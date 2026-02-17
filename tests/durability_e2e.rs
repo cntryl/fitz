@@ -265,7 +265,7 @@ where
     {
         let mut client1 = C1::connect(server).await.expect("connect 1");
 
-        let append_frame = build_stream_append("stream://test/durable", b"durable-event-1");
+        let append_frame = build_stream_append_simple("stream://test/durable", b"durable-event-1");
         let response = client1
             .send_and_receive(&append_frame, 2000)
             .await
@@ -317,11 +317,11 @@ where
     // Act - Append multiple events
     for i in 1..=5 {
         let data = format!("event-{}", i).into_bytes();
-        let frame = build_stream_append("stream://test/monotonic", &data);
+        let frame = build_stream_append_simple("stream://test/monotonic", &data);
         let response = client
             .send_and_receive(&frame, 2000)
             .await
-            .expect(&format!("append {}", i));
+            .unwrap_or_else(|_| panic!("append {}", i));
 
         let (_msg_type, status, _data) = parse_stream_response(&response);
         assert_eq!(status, 0, "Append {} should succeed", i);

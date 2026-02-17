@@ -12,7 +12,7 @@
 use bytes::{BufMut, BytesMut};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
+use fitz::testkit::transport::TestServer;
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -99,6 +99,7 @@ fn encode_commit_request(session_id: u64) -> Vec<u8> {
 }
 
 /// Encode a stream read request
+#[allow(dead_code)]
 fn encode_read_request(
     route_family: RouteFamily,
     route_str: &str,

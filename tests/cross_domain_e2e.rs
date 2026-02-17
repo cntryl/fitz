@@ -95,7 +95,7 @@ async fn should_coordinate_queue_and_lease_for_multiple_messages_tcp() {
         let response = queue_client
             .send_and_receive(&frame, 2000)
             .await
-            .expect(&format!("enqueue {}", i));
+            .unwrap_or_else(|_| panic!("enqueue {}", i));
 
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 0);
@@ -132,7 +132,7 @@ async fn should_coordinate_queue_and_lease_for_multiple_messages_ws() {
         let response = queue_client
             .send_and_receive(&frame, 2000)
             .await
-            .expect(&format!("enqueue {}", i));
+            .unwrap_or_else(|_| panic!("enqueue {}", i));
 
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 0);
@@ -166,8 +166,17 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_tcp() {
         .await
         .expect("notice connect");
 
-    // Act
-    let append_frame = build_stream_append("events", b"event-1");
+    // Act - First create a stream session with BEGIN
+    let begin_frame = build_stream_begin("test/stream/events/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
+    // Act - Now append to the session
+    let append_frame = build_stream_append(session_id, b"event-1");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -201,8 +210,17 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_ws() {
         .await
         .expect("notice connect");
 
-    // Act
-    let append_frame = build_stream_append("events", b"event-1");
+    // Act - First create a stream session with BEGIN
+    let begin_frame = build_stream_begin("test/stream/events/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
+    // Act - Now append to the session
+    let append_frame = build_stream_append(session_id, b"event-1");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -239,7 +257,17 @@ async fn should_isolate_stream_reads_and_notice_subscriptions_tcp() {
         .send_and_receive(&subscribe_frame, 2000)
         .await
         .expect("notice subscribe");
-    let append_frame = build_stream_append("stream-data", b"record");
+
+    // Create stream session
+    let begin_frame = build_stream_begin("test/stream/data/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
+    let append_frame = build_stream_append(session_id, b"record");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -279,7 +307,17 @@ async fn should_isolate_stream_reads_and_notice_subscriptions_ws() {
         .send_and_receive(&subscribe_frame, 2000)
         .await
         .expect("notice subscribe");
-    let append_frame = build_stream_append("stream-data", b"record");
+
+    // Create stream session
+    let begin_frame = build_stream_begin("test/stream/data/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
+    let append_frame = build_stream_append(session_id, b"record");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -320,7 +358,17 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_tcp() {
         .send_and_receive(&rpc_frame, 2000)
         .await
         .expect("rpc request");
-    let append_frame = build_stream_append("results", b"result-123");
+
+    // Create stream session
+    let begin_frame = build_stream_begin("test/stream/results/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
+    let append_frame = build_stream_append(session_id, b"result-123");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -353,7 +401,17 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_ws() {
         .send_and_receive(&rpc_frame, 2000)
         .await
         .expect("rpc request");
-    let append_frame = build_stream_append("results", b"result-123");
+
+    // Create stream session
+    let begin_frame = build_stream_begin("test/stream/results/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
+    let append_frame = build_stream_append(session_id, b"result-123");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -380,12 +438,21 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
         .expect("stream connect");
 
     // Act
+    // Create stream session first
+    let begin_frame = build_stream_begin("test/stream/audit/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
     let rpc1_frame = build_rpc_request("services/api", "getConfig", b"");
     let rpc1_response = rpc_client
         .send_and_receive(&rpc1_frame, 2000)
         .await
         .expect("rpc 1");
-    let append1_frame = build_stream_append("audit", b"config-requested");
+    let append1_frame = build_stream_append(session_id, b"config-requested");
     let append1_response = stream_client
         .send_and_receive(&append1_frame, 2000)
         .await
@@ -395,7 +462,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
         .send_and_receive(&rpc2_frame, 2000)
         .await
         .expect("rpc 2");
-    let append2_frame = build_stream_append("audit", b"config-updated");
+    let append2_frame = build_stream_append(session_id, b"config-updated");
     let append2_response = stream_client
         .send_and_receive(&append2_frame, 2000)
         .await
@@ -427,12 +494,21 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
         .expect("stream connect");
 
     // Act
+    // Create stream session first
+    let begin_frame = build_stream_begin("test/stream/audit/write", 0);
+    let begin_response = stream_client
+        .send_and_receive(&begin_frame, 2000)
+        .await
+        .expect("stream begin");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+
     let rpc1_frame = build_rpc_request("services/api", "getConfig", b"");
     let rpc1_response = rpc_client
         .send_and_receive(&rpc1_frame, 2000)
         .await
         .expect("rpc 1");
-    let append1_frame = build_stream_append("audit", b"config-requested");
+    let append1_frame = build_stream_append(session_id, b"config-requested");
     let append1_response = stream_client
         .send_and_receive(&append1_frame, 2000)
         .await
@@ -442,7 +518,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
         .send_and_receive(&rpc2_frame, 2000)
         .await
         .expect("rpc 2");
-    let append2_frame = build_stream_append("audit", b"config-updated");
+    let append2_frame = build_stream_append(session_id, b"config-updated");
     let append2_response = stream_client
         .send_and_receive(&append2_frame, 2000)
         .await
@@ -480,11 +556,11 @@ async fn should_use_lease_as_lock_before_kv_write_tcp() {
         .send_and_receive(&lease_frame, 2000)
         .await
         .expect("acquire lock");
-    let kv_begin = build_kv_begin("protected-data", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/protected", 1, 0);
     let begin_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
-    let kv_put = build_kv_put(1, "protected-data", b"key", b"value");
+    let kv_put = build_kv_put(1, "test/kv/protected", b"key", b"value");
     let put_response = kv_client.request(&kv_put, 2000).await.expect("kv put");
-    let kv_commit = build_kv_commit(1, "protected-data");
+    let kv_commit = build_kv_commit(1, "test/kv/protected");
     let commit_response = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -518,11 +594,11 @@ async fn should_use_lease_as_lock_before_kv_write_ws() {
         .send_and_receive(&lease_frame, 2000)
         .await
         .expect("acquire lock");
-    let kv_begin = build_kv_begin("protected-data", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/protected", 1, 0);
     let begin_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
-    let kv_put = build_kv_put(1, "protected-data", b"key", b"value");
+    let kv_put = build_kv_put(1, "test/kv/protected", b"key", b"value");
     let put_response = kv_client.request(&kv_put, 2000).await.expect("kv put");
-    let kv_commit = build_kv_commit(1, "protected-data");
+    let kv_commit = build_kv_commit(1, "test/kv/protected");
     let commit_response = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -558,13 +634,13 @@ async fn should_release_lock_after_kv_transaction_complete_tcp() {
         .expect("acquire");
     let (_msg_type, status, data) = parse_lease_response(&lease_response);
     let token = parse_lease_token_response(&data).expect("parse token");
-    let kv_begin = build_kv_begin("locked-data", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/locked", 1, 0);
     let _ = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
 
-    let kv_put = build_kv_put(1, "locked-data", b"k", b"v");
+    let kv_put = build_kv_put(1, "test/kv/locked", b"k", b"v");
     let _ = kv_client.request(&kv_put, 2000).await.expect("kv put");
 
-    let kv_commit = build_kv_commit(1, "locked-data");
+    let kv_commit = build_kv_commit(1, "test/kv/locked");
     let _ = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -601,13 +677,13 @@ async fn should_release_lock_after_kv_transaction_complete_ws() {
         .expect("acquire");
     let (_msg_type, status, data) = parse_lease_response(&lease_response);
     let token = parse_lease_token_response(&data).expect("parse token");
-    let kv_begin = build_kv_begin("locked-data", 1, 0);
+    let kv_begin = build_kv_begin("test/kv/locked", 1, 0);
     let _ = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
 
-    let kv_put = build_kv_put(1, "locked-data", b"k", b"v");
+    let kv_put = build_kv_put(1, "test/kv/locked", b"k", b"v");
     let _ = kv_client.request(&kv_put, 2000).await.expect("kv put");
 
-    let kv_commit = build_kv_commit(1, "locked-data");
+    let kv_commit = build_kv_commit(1, "test/kv/locked");
     let _ = kv_client
         .request(&kv_commit, 2000)
         .await
@@ -641,7 +717,7 @@ async fn should_isolate_realms_across_domains_tcp() {
         .expect("queue connect");
 
     // Act
-    let kv_begin = build_kv_begin("data", 1, 0);
+    let kv_begin = build_kv_begin("test/realm1/data", 1, 0);
     let kv_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
     let queue_frame = build_queue_enqueue("tasks", b"task");
     let queue_response = queue_client
@@ -671,7 +747,7 @@ async fn should_isolate_realms_across_domains_ws() {
         .expect("queue connect");
 
     // Act
-    let kv_begin = build_kv_begin("data", 1, 0);
+    let kv_begin = build_kv_begin("test/realm1/data", 1, 0);
     let kv_response = kv_client.request(&kv_begin, 2000).await.expect("kv begin");
     let queue_frame = build_queue_enqueue("tasks", b"task");
     let queue_response = queue_client

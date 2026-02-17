@@ -6,7 +6,6 @@
 //! - notice_fanout_math.rs: Fanout delivery count verification
 
 use bytes::Bytes;
-use bytes::{BufMut, BytesMut};
 use fitz::auth::Permission;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
 use fitz::domains::notice::route_actor::NoticeRouteActor;
@@ -14,15 +13,8 @@ use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
-use fitz::testkit::{
-    addr, make_router, route, session_id, TestClient, TestServer, TestSink, TestWebSocketClient,
-    TlvFrameBuilder,
-};
-use futures::future::BoxFuture;
-use std::error::Error;
+use fitz::testkit::{addr, make_router, route, session_id, TestSink};
 use std::sync::Arc;
-
-type BoxError = Box<dyn Error>;
 
 // ===== Tier 1: Authorization Tests =====
 

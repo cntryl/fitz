@@ -8,6 +8,7 @@ mod config;
 
 // Simple message type for benchmarking
 #[derive(Clone)]
+#[allow(dead_code)]
 struct TestMessage {
     value: u64,
 }

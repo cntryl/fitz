@@ -238,7 +238,7 @@ where
         let response = client
             .send_and_receive(&frame, 2000)
             .await
-            .expect(&format!("create {}", cron));
+            .unwrap_or_else(|_| panic!("create {}", cron));
 
         let (_msg_type, status, _data) = parse_schedule_response(&response);
         assert_eq!(status, 0, "Should accept cron: {}", cron);

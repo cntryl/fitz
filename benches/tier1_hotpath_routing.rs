@@ -28,31 +28,31 @@ fn bench_route_family_creation(c: &mut Criterion) {
 
 fn bench_route_parsing(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - precompute test routes with varying depths
-    let routes_2_segments = vec![
+    let routes_2_segments = [
         "rpc://acme/auth".to_string(),
         "notify://prod/events".to_string(),
         "queue://staging/jobs".to_string(),
     ];
 
-    let routes_3_segments = vec![
+    let _routes_3_segments = [
         "rpc://acme/auth/users".to_string(),
         "notify://prod/events/orders".to_string(),
         "queue://staging/jobs/worker".to_string(),
     ];
 
-    let routes_4_segments = vec![
+    let routes_4_segments = [
         "rpc://acme/auth/users/authenticate".to_string(),
         "notify://prod/events/orders/created".to_string(),
         "queue://staging/jobs/worker/process".to_string(),
     ];
 
-    let routes_5_segments = vec![
+    let _routes_5_segments = [
         "rpc://acme/auth/users/session/create".to_string(),
         "notify://prod/events/orders/items/added".to_string(),
         "queue://staging/jobs/worker/task/execute".to_string(),
     ];
 
-    let routes_6_segments = vec![
+    let routes_6_segments = [
         "rpc://acme/auth/users/session/token/refresh".to_string(),
         "notify://prod/events/orders/items/status/changed".to_string(),
         "queue://staging/jobs/worker/task/result/complete".to_string(),
@@ -206,7 +206,7 @@ fn bench_route_address_clone_overhead(c: &mut Criterion) {
 
 fn bench_full_address_construction_from_string(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - precompute route strings
-    let route_strings = vec![
+    let route_strings = [
         "rpc://acme/auth/users/authenticate",
         "notify://prod/events/orders/created",
         "queue://staging/jobs/worker/process",
@@ -246,14 +246,14 @@ fn bench_route_equality(c: &mut Criterion) {
     group.bench_function("route_equality_same", |b| {
         b.iter(|| {
             // ONLY hot path - string equality check (equal routes)
-            let _equal = black_box(&route1 == &route2);
+            let _equal = black_box(route1 == route2);
         })
     });
 
     group.bench_function("route_equality_different", |b| {
         b.iter(|| {
             // ONLY hot path - string equality check (different routes)
-            let _equal = black_box(&route1 == &route3);
+            let _equal = black_box(route1 == route3);
         })
     });
 

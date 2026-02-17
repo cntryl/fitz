@@ -3,11 +3,13 @@
 //! Provides connector traits and frame builders for each domain.
 //! Tests use generic async functions parameterized by connector type.
 
+#![allow(dead_code)]
+
 // Re-export testkit types for test files
+use bytes::BufMut;
 pub use fitz::testkit::{
     TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser,
 };
-use std::net::SocketAddr;
 
 // ============================================================================
 // GENERIC CONNECTOR TRAITS
@@ -123,30 +125,70 @@ impl LeaseConnector for WsLeaseConnector {
 
 /// Build LEASE ACQUIRE frame (msg_type 400)
 pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32) -> Vec<u8> {
+    // Wire format: [string route][string owner_id][u64 ttl_secs][u32 wait_seconds (optional)]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Owner ID (length-prefixed string)
+    buf.put_u32(owner_id.len() as u32);
+    buf.put_slice(owner_id.as_bytes());
+
+    // TTL seconds (u64)
+    buf.put_u64(ttl_secs as u64);
+
+    // Wait seconds (u32, 0 for immediate)
+    buf.put_u32(0);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(400, route.as_bytes()); // Route
-    builder.encode_field(401, owner_id.as_bytes()); // Owner ID
-    builder.encode_field(402, &ttl_secs.to_le_bytes()); // TTL
-    builder.encode_field(403, &0u32.to_le_bytes()); // Wait seconds = 0 (immediate)
+    builder.encode_field(400, &buf);
     builder.build()
 }
 
-/// Build LEASE RENEW frame (msg_type 410)
+/// Build LEASE RENEW frame (msg_type 401)
 pub fn build_lease_renew(route: &str, owner_id: &str, token: u64, ttl_secs: i32) -> Vec<u8> {
+    // Wire format: [string route][string owner_id][u64 fencing_token][u64 ttl_secs]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Owner ID (length-prefixed string)
+    buf.put_u32(owner_id.len() as u32);
+    buf.put_slice(owner_id.as_bytes());
+
+    // Fencing token (u64)
+    buf.put_u64(token);
+
+    // TTL seconds (u64)
+    buf.put_u64(ttl_secs as u64);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(410, route.as_bytes()); // Route
-    builder.encode_field(411, owner_id.as_bytes()); // Owner ID
-    builder.encode_field(412, &token.to_le_bytes()); // Token
-    builder.encode_field(413, &ttl_secs.to_le_bytes()); // TTL
+    builder.encode_field(401, &buf);
     builder.build()
 }
 
-/// Build LEASE RELEASE frame (msg_type 420)
+/// Build LEASE RELEASE frame (msg_type 402)
 pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
+    // Wire format: [string route][string owner_id][u64 fencing_token]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Owner ID (length-prefixed string)
+    buf.put_u32(owner_id.len() as u32);
+    buf.put_slice(owner_id.as_bytes());
+
+    // Fencing token (u64)
+    buf.put_u64(token);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(420, route.as_bytes()); // Route
-    builder.encode_field(421, owner_id.as_bytes()); // Owner ID
-    builder.encode_field(422, &token.to_le_bytes()); // Token
+    builder.encode_field(402, &buf);
     builder.build()
 }
 
@@ -160,8 +202,8 @@ pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     while let Some((field_type, field_data)) = parser.next_field() {
         match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
+            1 => msg_type = field_data.first().copied().unwrap_or(0),
+            2 => status = field_data.first().copied().unwrap_or(0),
             3 => data = field_data,
             _ => {}
         }
@@ -171,14 +213,33 @@ pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Parse lease token from response data
+/// Wire format: [u8 status][u8 has_token][u64 token] (if has_token == 1)
 pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
-    if data.len() < 8 {
+    if data.len() < 2 {
         return Err("Token data too short".to_string());
     }
+
+    // Byte 0: status (0 = success, 1 = error)
+    let status = data[0];
+    if status != 0 {
+        return Err("Lease operation failed".to_string());
+    }
+
+    // Byte 1: has_token flag (1 = Some, 0 = None)
+    let has_token = data[1];
+    if has_token == 0 {
+        return Err("No token in response".to_string());
+    }
+
+    // Bytes 2-9: token value (u64 big-endian)
+    if data.len() < 10 {
+        return Err("Token data incomplete".to_string());
+    }
+
     let bytes = [
-        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
     ];
-    Ok(u64::from_le_bytes(bytes))
+    Ok(u64::from_be_bytes(bytes))
 }
 
 // ============================================================================
@@ -248,18 +309,38 @@ impl NoticeConnector for WsNoticeConnector {
 }
 
 /// Build NOTICE PUBLISH frame (msg_type 500)
-pub fn build_notice_publish(route: &str, realm: &str, data: &[u8]) -> Vec<u8> {
+pub fn build_notice_publish(route: &str, _realm: &str, data: &[u8]) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string route][bytes payload]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Payload (length-prefixed bytes)
+    buf.put_u32(data.len() as u32);
+    buf.put_slice(data);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(500, route.as_bytes()); // Route
-    builder.encode_field(501, realm.as_bytes()); // Realm
-    builder.encode_field(502, data); // Payload
+    builder.encode_field(500, &buf);
     builder.build()
 }
 
-/// Build NOTICE SUBSCRIBE frame (msg_type 510)
+/// Build NOTICE SUBSCRIBE frame (msg_type 501)
 pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string pattern]
+    let mut buf = Vec::new();
+
+    // Pattern (length-prefixed string)
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(510, route_pattern.as_bytes()); // Route pattern
+    builder.encode_field(501, &buf);
     builder.build()
 }
 
@@ -272,8 +353,8 @@ pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     while let Some((field_type, field_data)) = parser.next_field() {
         match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
+            1 => msg_type = field_data.first().copied().unwrap_or(0),
+            2 => status = field_data.first().copied().unwrap_or(0),
             3 => data = field_data,
             _ => {}
         }
@@ -348,18 +429,33 @@ impl QueueConnector for WsQueueConnector {
     }
 }
 
-/// Build QUEUE ENQUEUE frame (msg_type 600)
+/// Build QUEUE ENQUEUE frame (msg_type 200)
 pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
+    // Wire format: [u32 route_len][route][u32 body_len][body][u8 has_delay=0]
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
+    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    payload.extend_from_slice(data);
+    payload.push(0); // has_delay = false
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(600, queue_name.as_bytes()); // Queue name
-    builder.encode_field(601, data); // Payload
+    builder.encode_field(200, &payload);
     builder.build()
 }
 
-/// Build QUEUE DEQUEUE frame (msg_type 610)
+/// Build QUEUE RESERVE frame (msg_type 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
+    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0][u8 has_wait=0]
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
+    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&30_u64.to_be_bytes()); // lease_seconds = 30
+    payload.push(0); // has_batch_size = false
+    payload.push(0); // has_wait = false
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(610, queue_name.as_bytes()); // Queue name
+    builder.encode_field(202, &payload);
     builder.build()
 }
 
@@ -372,8 +468,8 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     while let Some((field_type, field_data)) = parser.next_field() {
         match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
+            1 => msg_type = field_data.first().copied().unwrap_or(0),
+            2 => status = field_data.first().copied().unwrap_or(0),
             3 => data = field_data,
             _ => {}
         }
@@ -448,12 +544,34 @@ impl RpcConnector for WsRpcConnector {
     }
 }
 
-/// Build RPC REQUEST frame (msg_type 700)
-pub fn build_rpc_request(route: &str, method: &str, payload: &[u8]) -> Vec<u8> {
+/// Build RPC REQUEST frame (msg_type 302)
+pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> {
+    use bytes::BufMut;
+    use uuid::Uuid;
+
+    // Wire format: [bytes correlation_id(16)][string route][string reply_route][bytes body]
+    let mut buf = Vec::new();
+
+    // Correlation ID (UUID as length-prefixed bytes: u32 len + 16 bytes)
+    let uuid = Uuid::new_v4();
+    buf.put_u32(16); // Length prefix
+    buf.put_slice(uuid.as_bytes());
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Reply route (use inbox pattern)
+    let reply_route = format!("inbox://session/1/{}", uuid);
+    buf.put_u32(reply_route.len() as u32);
+    buf.put_slice(reply_route.as_bytes());
+
+    // Body (length-prefixed bytes)
+    buf.put_u32(payload.len() as u32);
+    buf.put_slice(payload);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(700, route.as_bytes()); // Route
-    builder.encode_field(701, method.as_bytes()); // Method
-    builder.encode_field(702, payload); // Payload
+    builder.encode_field(302, &buf);
     builder.build()
 }
 
@@ -466,8 +584,8 @@ pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     while let Some((field_type, field_data)) = parser.next_field() {
         match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
+            1 => msg_type = field_data.first().copied().unwrap_or(0),
+            2 => status = field_data.first().copied().unwrap_or(0),
             3 => data = field_data,
             _ => {}
         }
@@ -542,19 +660,78 @@ impl StreamConnector for WsStreamConnector {
     }
 }
 
-/// Build STREAM APPEND frame (msg_type 800)
-pub fn build_stream_append(route: &str, data: &[u8]) -> Vec<u8> {
+/// Build STREAM BEGIN frame (msg_type 600)
+/// Wire format: [string route][u64 expected_offset][optional bytes ingest_metadata]
+pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Expected offset (u64)
+    buf.put_u64(expected_offset);
+
+    // Optional ingest metadata (flag = 0 for none)
+    buf.put_u8(0);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(800, route.as_bytes()); // Route
-    builder.encode_field(801, data); // Data
+    builder.encode_field(600, &buf);
     builder.build()
 }
 
-/// Build STREAM READ frame (msg_type 810)
-pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
+/// Build STREAM APPEND frame (msg_type 601)
+pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [u64 session_id][bytes body][optional metadata]
+    let mut buf = Vec::new();
+
+    // Session ID
+    buf.put_u64(session_id);
+
+    // Body (length-prefixed bytes)
+    buf.put_u32(data.len() as u32);
+    buf.put_slice(data);
+
+    // Optional metadata (flag = 0 for none)
+    buf.put_u8(0);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(810, route.as_bytes()); // Route
-    builder.encode_field(811, &start_offset.to_le_bytes()); // Start offset
+    builder.encode_field(601, &buf);
+    builder.build()
+}
+
+/// Build STREAM APPEND frame with default session ID (for simple tests)
+/// Uses session_id = 1 by default - tests should call BEGIN first if they need a real session
+pub fn build_stream_append_simple(_route: &str, data: &[u8]) -> Vec<u8> {
+    build_stream_append(1, data)
+}
+
+/// Build STREAM READ frame (msg_type 604)
+pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string route][u64 from_offset][u64 limit][optional max_bytes]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // From offset
+    buf.put_u64(start_offset);
+
+    // Limit (read up to 1000 entries)
+    buf.put_u64(1000);
+
+    // Optional max_bytes (flag = 0 for none)
+    buf.put_u8(0);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(604, &buf);
     builder.build()
 }
 
@@ -567,14 +744,44 @@ pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     while let Some((field_type, field_data)) = parser.next_field() {
         match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
+            1 => msg_type = field_data.first().copied().unwrap_or(0),
+            2 => status = field_data.first().copied().unwrap_or(0),
             3 => data = field_data,
             _ => {}
         }
     }
 
     (msg_type, status, data)
+}
+
+/// Parse session_id from STREAM BEGIN response data
+/// Wire format: [u8 status][u8 has_session_id][u64 session_id][bytes data]
+pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
+    if data.len() < 2 {
+        return Err("Stream response data too short".to_string());
+    }
+
+    // Byte 0: status (0 = success, 1 = error)
+    let status = data[0];
+    if status != 0 {
+        return Err("Stream BEGIN operation failed".to_string());
+    }
+
+    // Byte 1: has_session_id flag (1 = Some, 0 = None)
+    let has_session_id = data[1];
+    if has_session_id == 0 {
+        return Err("No session_id in response".to_string());
+    }
+
+    // Bytes 2-9: session_id value (u64 big-endian)
+    if data.len() < 10 {
+        return Err("Session ID data incomplete".to_string());
+    }
+
+    let bytes = [
+        data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
+    ];
+    Ok(u64::from_be_bytes(bytes))
 }
 
 // ============================================================================
@@ -643,27 +850,53 @@ impl ScheduleConnector for WsScheduleConnector {
     }
 }
 
-/// Build SCHEDULE CREATE frame (msg_type 900)
+/// Build SCHEDULE CREATE frame (msg_type 700)
 pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string route][string cron][bytes payload]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    // Cron expression (length-prefixed string)
+    buf.put_u32(cron.len() as u32);
+    buf.put_slice(cron.as_bytes());
+
+    // Payload (length-prefixed bytes)
+    buf.put_u32(payload.len() as u32);
+    buf.put_slice(payload);
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(900, route.as_bytes()); // Route
-    builder.encode_field(901, cron.as_bytes()); // Cron expression
-    builder.encode_field(902, payload); // Payload
+    builder.encode_field(700, &buf);
     builder.build()
 }
 
-/// Build SCHEDULE CANCEL frame (msg_type 910)
+/// Build SCHEDULE CANCEL frame (msg_type 701)
 pub fn build_schedule_cancel(route: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string route]
+    let mut buf = Vec::new();
+
+    // Route (length-prefixed string)
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(910, route.as_bytes()); // Route
+    builder.encode_field(701, &buf);
     builder.build()
 }
 
-/// Build SCHEDULE LIST frame (msg_type 920)
+/// Build SCHEDULE LIST frame (msg_type 702)
 pub fn build_schedule_list() -> Vec<u8> {
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(920, &[]); // No payload for LIST
-    builder.build()
+    // Wire format: empty payload
+    let builder = TlvFrameBuilder::new();
+    let mut frame_builder = builder;
+    frame_builder.encode_field(702, &[]);
+    frame_builder.build()
 }
 
 /// Parse SCHEDULE response
@@ -675,8 +908,8 @@ pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     while let Some((field_type, field_data)) = parser.next_field() {
         match field_type {
-            1 => msg_type = field_data.get(0).copied().unwrap_or(0),
-            2 => status = field_data.get(0).copied().unwrap_or(0),
+            1 => msg_type = field_data.first().copied().unwrap_or(0),
+            2 => status = field_data.first().copied().unwrap_or(0),
             3 => data = field_data,
             _ => {}
         }

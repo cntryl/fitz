@@ -12,7 +12,7 @@
 use bytes::{BufMut, BytesMut};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
+use fitz::testkit::transport::TestServer;
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -90,6 +90,7 @@ fn encode_cancel_request(route_family: RouteFamily, route_str: &str) -> Vec<u8> 
 }
 
 /// Encode a schedule list request
+#[allow(dead_code)]
 fn encode_list_request(route_family: RouteFamily) -> Vec<u8> {
     let mut buf = BytesMut::new();
     let msg_type: u16 = 702; // LIST

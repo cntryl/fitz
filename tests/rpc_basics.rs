@@ -849,7 +849,7 @@ fn should_reassemble_multi_chunk_streaming_response() {
     assert_eq!(chunk1.seq, 0);
     assert_eq!(chunk2.seq, 1);
     assert_eq!(chunk3.seq, 2);
-    assert_eq!(chunk3.stream_end, true);
+    assert!(chunk3.stream_end);
 }
 
 #[test]
@@ -879,7 +879,7 @@ fn should_handle_single_chunk_as_complete_response() {
 
     // Assert
     assert_eq!(response.seq, 0);
-    assert_eq!(response.stream_end, true);
+    assert!(response.stream_end);
     assert_eq!(response.correlation_id, correlation_id);
 }
 

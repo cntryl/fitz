@@ -196,7 +196,7 @@ where
         let response = client
             .send_and_receive(&frame, 2000)
             .await
-            .expect(&format!("enqueue {}", i));
+            .unwrap_or_else(|_| panic!("enqueue {}", i));
 
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 0, "Enqueue {} should succeed", i);

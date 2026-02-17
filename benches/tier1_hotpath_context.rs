@@ -197,7 +197,7 @@ fn bench_timer_manager_scaling(c: &mut Criterion) {
 fn bench_timer_manager_repeating_reschedule(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - repeating timer that fires
     let mut tm = TimerManager::new();
-    let timer_id = tm.schedule_repeat(Duration::from_millis(1), Duration::from_millis(1000));
+    let _timer_id = tm.schedule_repeat(Duration::from_millis(1), Duration::from_millis(1000));
 
     // Let timer fire once
     std::thread::sleep(Duration::from_millis(10));

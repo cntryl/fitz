@@ -189,13 +189,10 @@ where
         .expect("publish");
 
     // Assert - Should not match (or error)
-    let (_msg_type, status, _data) = parse_notice_response(&pub_response);
+    let (_msg_type, _status, _data) = parse_notice_response(&pub_response);
     // Status may be non-zero if subscription was rejected/not found, or still 0 if published
     // The key is that deep publish doesn't match non-wildcard subscribe
-    assert!(
-        status == 0 || status != 0,
-        "Pattern matching should work correctly"
-    );
+    // Any status is acceptable here - we're just validating the request completes
 }
 
 // ===== TCP TESTS =====

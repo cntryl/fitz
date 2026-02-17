@@ -421,7 +421,7 @@ fn bench_ws_begin_put_rollback(c: &mut Criterion) {
 // ============================================================================
 
 fn encode_begin_request(
-    route_family: RouteFamily,
+    _route_family: RouteFamily,
     realm: &str,
     area: &str,
     resource: &str,
@@ -447,7 +447,7 @@ fn encode_begin_request(
 
 fn encode_put_request(
     tx_id: u64,
-    route_family: RouteFamily,
+    _route_family: RouteFamily,
     resource: &str,
     key: &[u8],
     value: &[u8],

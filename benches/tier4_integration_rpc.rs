@@ -12,7 +12,7 @@
 use bytes::{BufMut, BytesMut};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
+use fitz::testkit::transport::TestServer;
 use std::time::Duration;
 use uuid::Uuid;
 

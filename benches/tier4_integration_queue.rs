@@ -153,14 +153,14 @@ fn bench_tcp_enqueue_reserve_complete(c: &mut Criterion) {
                 // Enqueue
                 let enqueue_frame =
                     encode_enqueue_request(route_family, route_str, b"test_message", None);
-                let enqueue_resp = client.request(&enqueue_frame, 5000).await.unwrap();
+                let _enqueue_resp = client.request(&enqueue_frame, 5000).await.unwrap();
 
                 // For simplicity, assume message_id = 1 (we'd need to parse the response)
                 // In a real implementation, parse enqueue_resp to extract message_id
 
                 // Reserve
                 let reserve_frame = encode_reserve_request(route_family, route_str, 30, Some(1));
-                let reserve_resp = client.request(&reserve_frame, 5000).await.unwrap();
+                let _reserve_resp = client.request(&reserve_frame, 5000).await.unwrap();
 
                 // For simplicity, assume message_id=1, token=1 (we'd parse reserve_resp)
 

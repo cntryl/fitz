@@ -229,6 +229,7 @@ fn should_enforce_realm_boundary_for_lease_operations() {
 use fitz::domains::lease::lease_actor::LeaseActor as InnerLeaseActor;
 use fitz::domains::lease::protocol::LeaseMessage;
 
+#[allow(dead_code)]
 fn make_lease_actor() -> (InnerLeaseActor, Context<InnerLeaseActor>) {
     let router = Arc::new(Router::new());
     let family = RouteFamily::new(1);

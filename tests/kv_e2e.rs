@@ -2,9 +2,7 @@
 //!
 //! Merged from: `kv_e2e_transport.rs`, `kv_e2e_basic.rs`, `kv_e2e_domain_routing.rs`, `ws_domain_flow.rs`.
 
-use fitz::testkit::create_test_engine_with_cfs;
 mod fixtures;
-use bytes::Bytes;
 use fixtures::transport::*;
 
 // ===== TCP tests =====
@@ -292,7 +290,7 @@ where
 
     let begin_frame = build_kv_begin(route, 1, 0);
     let response = client.request(&begin_frame, 2000).await.expect("BEGIN 1");
-    let (_msg_type, status, data) = parse_kv_response(&response);
+    let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
 
     let commit_frame = build_kv_commit(1, route);
@@ -632,7 +630,7 @@ where
         let response = client
             .request(&put_frame, 2000)
             .await
-            .expect(&format!("PUT {} failed", i));
+            .unwrap_or_else(|_| panic!("PUT {} failed", i));
 
         let (_msg_type, status, _data) = parse_kv_response(&response);
         assert_eq!(status, 0, "PUT {} should succeed", i);
