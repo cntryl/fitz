@@ -692,6 +692,9 @@ pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 #[async_trait::async_trait]
 pub trait KvConnector: TestConnectorClient + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
