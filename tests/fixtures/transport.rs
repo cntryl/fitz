@@ -196,20 +196,16 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
 
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
-
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.first().copied().unwrap_or(0),
-            2 => status = field_data.first().copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][optional u64 token]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 /// Parse lease token from response data
@@ -347,20 +343,17 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
 /// Parse NOTICE response
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
 
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.first().copied().unwrap_or(0),
-            2 => status = field_data.first().copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][...response data...]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 // ============================================================================
@@ -462,20 +455,17 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
 /// Parse QUEUE response
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
 
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.first().copied().unwrap_or(0),
-            2 => status = field_data.first().copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][...response data...]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 // ============================================================================
@@ -578,20 +568,17 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
 /// Parse RPC response
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
 
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.first().copied().unwrap_or(0),
-            2 => status = field_data.first().copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][...response data...]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 // ============================================================================
@@ -738,20 +725,17 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
 /// Parse STREAM response
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
 
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.first().copied().unwrap_or(0),
-            2 => status = field_data.first().copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][optional u64 session_id][...response data...]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 /// Parse session_id from STREAM BEGIN response data
@@ -902,20 +886,17 @@ pub fn build_schedule_list() -> Vec<u8> {
 /// Parse SCHEDULE response
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
-    let mut msg_type = 0u8;
-    let mut status = 0u8;
-    let mut data = Vec::new();
 
-    while let Some((field_type, field_data)) = parser.next_field() {
-        match field_type {
-            1 => msg_type = field_data.first().copied().unwrap_or(0),
-            2 => status = field_data.first().copied().unwrap_or(0),
-            3 => data = field_data,
-            _ => {}
-        }
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][...response data...]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 // ============================================================================
@@ -1030,23 +1011,18 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 /// Parse KV response
 /// Format: [u8 status][optional data...]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    // TLV format: [u8 msg_type][u16 be length][payload]
-    // Payload format: [u8 status][data...]
-    if response.len() < 4 {
-        return (0, 0, Vec::new());
+    let mut parser = TlvFrameParser::new(response.to_vec());
+
+    // Server sends single TLV record: [msg_type][len][payload]
+    // Payload format: [u8 status][...response data...]
+    if let Some((msg_type, payload)) = parser.next_field() {
+        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        // Return msg_type (as u8), status, and full payload for further parsing
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
-    let msg_type = response[0];
-    // Skip length (2 bytes at positions 1-2)
-    let status = response[3]; // Position 3 = after type + length
-    let data = if response.len() > 4 {
-        response[4..].to_vec()
-    } else {
-        Vec::new()
-    };
-
-    // Return (msg_type, status, data)
-    (msg_type, status, data)
+    // Fallback if no data
+    (0, 1, Vec::new())
 }
 
 /// Parse KV transaction ID from response (big-endian u64)

@@ -1,4 +1,4 @@
-//! Cross-domain end-to-end tests
+﻿//! Cross-domain end-to-end tests
 //!
 //! Tests interactions between multiple domains (queue+lease, notice+stream, rpc+stream, etc.)
 //! to verify correct coordination across domain boundaries.
@@ -30,7 +30,7 @@ async fn should_extend_queue_message_lease_before_expiry_tcp() {
         .send_and_receive(&enqueue_frame, 2000)
         .await
         .expect("enqueue");
-    let lease_frame = build_lease_acquire_immediate("task-coordination", "queue-handler", 30);
+    let lease_frame = build_lease_acquire_immediate("lease://test/locks/task", "queue-handler", 30);
     let lease_response = lease_client
         .send_and_receive(&lease_frame, 2000)
         .await
@@ -62,7 +62,7 @@ async fn should_extend_queue_message_lease_before_expiry_ws() {
         .send_and_receive(&enqueue_frame, 2000)
         .await
         .expect("enqueue");
-    let lease_frame = build_lease_acquire_immediate("task-coordination", "queue-handler", 30);
+    let lease_frame = build_lease_acquire_immediate("lease://test/locks/task", "queue-handler", 30);
     let lease_response = lease_client
         .send_and_receive(&lease_frame, 2000)
         .await
@@ -101,7 +101,7 @@ async fn should_coordinate_queue_and_lease_for_multiple_messages_tcp() {
         assert_eq!(status, 0);
     }
 
-    let lease_frame = build_lease_acquire_immediate("multi-coordination", "worker", 60);
+    let lease_frame = build_lease_acquire_immediate("lease://test/locks/multi", "worker", 60);
     let lease_response = lease_client
         .send_and_receive(&lease_frame, 2000)
         .await
@@ -138,7 +138,7 @@ async fn should_coordinate_queue_and_lease_for_multiple_messages_ws() {
         assert_eq!(status, 0);
     }
 
-    let lease_frame = build_lease_acquire_immediate("multi-coordination", "worker", 60);
+    let lease_frame = build_lease_acquire_immediate("lease://test/locks/multi", "worker", 60);
     let lease_response = lease_client
         .send_and_receive(&lease_frame, 2000)
         .await
@@ -167,7 +167,7 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_tcp() {
         .expect("notice connect");
 
     // Act - First create a stream session with BEGIN
-    let begin_frame = build_stream_begin("test/stream/events/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/events/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -181,7 +181,7 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_tcp() {
         .send_and_receive(&append_frame, 2000)
         .await
         .expect("stream append");
-    let publish_frame = build_notice_publish("notifications", "realm", b"event-1-notification");
+    let publish_frame = build_notice_publish("notice://test/notifications", "realm", b"event-1-notification");
     let publish_response = notice_client
         .send_and_receive(&publish_frame, 2000)
         .await
@@ -211,7 +211,7 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_ws() {
         .expect("notice connect");
 
     // Act - First create a stream session with BEGIN
-    let begin_frame = build_stream_begin("test/stream/events/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/events/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -225,7 +225,7 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_ws() {
         .send_and_receive(&append_frame, 2000)
         .await
         .expect("stream append");
-    let publish_frame = build_notice_publish("notifications", "realm", b"event-1-notification");
+    let publish_frame = build_notice_publish("notice://test/notifications", "realm", b"event-1-notification");
     let publish_response = notice_client
         .send_and_receive(&publish_frame, 2000)
         .await
@@ -259,7 +259,7 @@ async fn should_isolate_stream_reads_and_notice_subscriptions_tcp() {
         .expect("notice subscribe");
 
     // Create stream session
-    let begin_frame = build_stream_begin("test/stream/data/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/data/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -309,7 +309,7 @@ async fn should_isolate_stream_reads_and_notice_subscriptions_ws() {
         .expect("notice subscribe");
 
     // Create stream session
-    let begin_frame = build_stream_begin("test/stream/data/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/data/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -353,14 +353,14 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_tcp() {
         .expect("stream connect");
 
     // Act
-    let rpc_frame = build_rpc_request("services/processor", "process", b"input-data");
+    let rpc_frame = build_rpc_request("rpc://test/services/processor", "process", b"input-data");
     let rpc_response = rpc_client
         .send_and_receive(&rpc_frame, 2000)
         .await
         .expect("rpc request");
 
     // Create stream session
-    let begin_frame = build_stream_begin("test/stream/results/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/results/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -396,14 +396,14 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_ws() {
         .expect("stream connect");
 
     // Act
-    let rpc_frame = build_rpc_request("services/processor", "process", b"input-data");
+    let rpc_frame = build_rpc_request("rpc://test/services/processor", "process", b"input-data");
     let rpc_response = rpc_client
         .send_and_receive(&rpc_frame, 2000)
         .await
         .expect("rpc request");
 
     // Create stream session
-    let begin_frame = build_stream_begin("test/stream/results/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/results/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -439,7 +439,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
 
     // Act
     // Create stream session first
-    let begin_frame = build_stream_begin("test/stream/audit/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/audit/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -447,7 +447,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    let rpc1_frame = build_rpc_request("services/api", "getConfig", b"");
+    let rpc1_frame = build_rpc_request("rpc://test/services/api", "getConfig", b"");
     let rpc1_response = rpc_client
         .send_and_receive(&rpc1_frame, 2000)
         .await
@@ -457,7 +457,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
         .send_and_receive(&append1_frame, 2000)
         .await
         .expect("append 1");
-    let rpc2_frame = build_rpc_request("services/api", "setConfig", b"key=value");
+    let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
     let rpc2_response = rpc_client
         .send_and_receive(&rpc2_frame, 2000)
         .await
@@ -495,7 +495,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
 
     // Act
     // Create stream session first
-    let begin_frame = build_stream_begin("test/stream/audit/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/audit/write", 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -503,7 +503,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    let rpc1_frame = build_rpc_request("services/api", "getConfig", b"");
+    let rpc1_frame = build_rpc_request("rpc://test/services/api", "getConfig", b"");
     let rpc1_response = rpc_client
         .send_and_receive(&rpc1_frame, 2000)
         .await
@@ -513,7 +513,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
         .send_and_receive(&append1_frame, 2000)
         .await
         .expect("append 1");
-    let rpc2_frame = build_rpc_request("services/api", "setConfig", b"key=value");
+    let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
     let rpc2_response = rpc_client
         .send_and_receive(&rpc2_frame, 2000)
         .await
@@ -551,7 +551,7 @@ async fn should_use_lease_as_lock_before_kv_write_tcp() {
     let mut kv_client = TcpConnector::connect(&server).await.expect("kv connect");
 
     // Act
-    let lease_frame = build_lease_acquire_immediate("resource-lock", "owner1", 30);
+    let lease_frame = build_lease_acquire_immediate("lease://test/locks/resource", "owner1", 30);
     let lease_response = lease_client
         .send_and_receive(&lease_frame, 2000)
         .await
@@ -589,7 +589,7 @@ async fn should_use_lease_as_lock_before_kv_write_ws() {
     let mut kv_client = WsConnector::connect(&server).await.expect("kv connect");
 
     // Act
-    let lease_frame = build_lease_acquire_immediate("resource-lock", "owner1", 30);
+    let lease_frame = build_lease_acquire_immediate("lease://test/locks/resource", "owner1", 30);
     let lease_response = lease_client
         .send_and_receive(&lease_frame, 2000)
         .await
@@ -627,7 +627,7 @@ async fn should_release_lock_after_kv_transaction_complete_tcp() {
     let mut kv_client = TcpConnector::connect(&server).await.expect("kv connect");
 
     // Act
-    let lease_acquire = build_lease_acquire_immediate("seq-lock", "owner1", 60);
+    let lease_acquire = build_lease_acquire_immediate("lease://test/locks/seq", "owner1", 60);
     let lease_response = lease_client
         .send_and_receive(&lease_acquire, 2000)
         .await
@@ -646,7 +646,7 @@ async fn should_release_lock_after_kv_transaction_complete_tcp() {
         .await
         .expect("kv commit");
 
-    let lease_release = build_lease_release("seq-lock", "owner1", token);
+    let lease_release = build_lease_release("lease://test/locks/seq", "owner1", token);
     let release_response = lease_client
         .send_and_receive(&lease_release, 2000)
         .await
@@ -670,7 +670,7 @@ async fn should_release_lock_after_kv_transaction_complete_ws() {
     let mut kv_client = WsConnector::connect(&server).await.expect("kv connect");
 
     // Act
-    let lease_acquire = build_lease_acquire_immediate("seq-lock", "owner1", 60);
+    let lease_acquire = build_lease_acquire_immediate("lease://test/locks/seq", "owner1", 60);
     let lease_response = lease_client
         .send_and_receive(&lease_acquire, 2000)
         .await
@@ -689,7 +689,7 @@ async fn should_release_lock_after_kv_transaction_complete_ws() {
         .await
         .expect("kv commit");
 
-    let lease_release = build_lease_release("seq-lock", "owner1", token);
+    let lease_release = build_lease_release("lease://test/locks/seq", "owner1", token);
     let release_response = lease_client
         .send_and_receive(&lease_release, 2000)
         .await
@@ -761,3 +761,4 @@ async fn should_isolate_realms_across_domains_ws() {
     let (_msg_type, status, _data) = parse_queue_response(&queue_response);
     assert_eq!(status, 0);
 }
+
