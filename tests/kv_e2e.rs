@@ -446,6 +446,209 @@ where
     assert_eq!(status, 0);
 }
 
+async fn should_put_and_get_same_key_in_transaction<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/putget";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    // Act - PUT a key
+    let put_frame = build_kv_put(1, route, b"key1", b"value1");
+    let put_response = client.request(&put_frame, 2000).await.expect("PUT failed");
+
+    let (_msg_type, status, _data) = parse_kv_response(&put_response);
+    assert_eq!(status, 0, "PUT should succeed");
+
+    // Act - GET the same key
+    let get_frame = build_kv_get(1, route, b"key1");
+    let get_response = client.request(&get_frame, 2000).await.expect("GET failed");
+
+    // Assert
+    let (_msg_type, status, data) = parse_kv_response(&get_response);
+    assert_eq!(status, 0, "GET should succeed");
+    assert_eq!(data, b"value1", "GET should return correct value");
+}
+
+async fn should_execute_multiple_puts_in_transaction<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/multiputs";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    // Act - PUT first key
+    let put1_frame = build_kv_put(1, route, b"key1", b"value1");
+    let put1_response = client
+        .request(&put1_frame, 2000)
+        .await
+        .expect("PUT 1 failed");
+
+    let (_msg_type, status1, _data) = parse_kv_response(&put1_response);
+    assert_eq!(status1, 0, "First PUT should succeed");
+
+    // Act - PUT second key
+    let put2_frame = build_kv_put(1, route, b"key2", b"value2");
+    let put2_response = client
+        .request(&put2_frame, 2000)
+        .await
+        .expect("PUT 2 failed");
+
+    let (_msg_type, status2, _data) = parse_kv_response(&put2_response);
+    assert_eq!(status2, 0, "Second PUT should succeed");
+
+    // Act - PUT third key
+    let put3_frame = build_kv_put(1, route, b"key3", b"value3");
+    let put3_response = client
+        .request(&put3_frame, 2000)
+        .await
+        .expect("PUT 3 failed");
+
+    let (_msg_type, status3, _data) = parse_kv_response(&put3_response);
+    assert_eq!(status3, 0, "Third PUT should succeed");
+
+    // Act - COMMIT
+    let commit_frame = build_kv_commit(1, route);
+    let commit_response = client
+        .request(&commit_frame, 2000)
+        .await
+        .expect("COMMIT failed");
+
+    // Assert
+    let (_msg_type, status, _data) = parse_kv_response(&commit_response);
+    assert_eq!(status, 0, "COMMIT should succeed");
+}
+
+async fn should_execute_put_get_get_sequence_in_transaction<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/sequence";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    // Act - PUT initial value
+    let put_frame = build_kv_put(1, route, b"counter", b"1");
+    let put_response = client.request(&put_frame, 2000).await.expect("PUT failed");
+
+    let (_msg_type, status, _data) = parse_kv_response(&put_response);
+    assert_eq!(status, 0);
+
+    // Act - GET the value
+    let get1_frame = build_kv_get(1, route, b"counter");
+    let get1_response = client
+        .request(&get1_frame, 2000)
+        .await
+        .expect("GET 1 failed");
+
+    let (_msg_type, status, data1) = parse_kv_response(&get1_response);
+    assert_eq!(status, 0);
+    assert_eq!(data1, b"1");
+
+    // Act - PUT new value (overwrite)
+    let put2_frame = build_kv_put(1, route, b"counter", b"2");
+    let put2_response = client
+        .request(&put2_frame, 2000)
+        .await
+        .expect("PUT 2 failed");
+
+    let (_msg_type, status, _data) = parse_kv_response(&put2_response);
+    assert_eq!(status, 0);
+
+    // Act - GET again to verify overwrite
+    let get2_frame = build_kv_get(1, route, b"counter");
+    let get2_response = client
+        .request(&get2_frame, 2000)
+        .await
+        .expect("GET 2 failed");
+
+    // Assert
+    let (_msg_type, status, data2) = parse_kv_response(&get2_response);
+    assert_eq!(status, 0);
+    assert_eq!(data2, b"2", "GET should return updated value");
+}
+
+async fn should_verify_get_succeeds_after_put_commit<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/putcommitget";
+
+    // First transaction: BEGIN, PUT, COMMIT
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN 1");
+
+    let put_frame = build_kv_put(1, route, b"persistent", b"data");
+    client.request(&put_frame, 2000).await.expect("PUT");
+
+    let commit_frame = build_kv_commit(1, route);
+    let commit_response = client.request(&commit_frame, 2000).await.expect("COMMIT");
+
+    let (_msg_type, status, _data) = parse_kv_response(&commit_response);
+    assert_eq!(status, 0);
+
+    // Act - Second transaction: BEGIN, GET to verify persistence
+    let begin2_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin2_frame, 2000).await.expect("BEGIN 2");
+
+    let get_frame = build_kv_get(1, route, b"persistent");
+    let get_response = client.request(&get_frame, 2000).await.expect("GET failed");
+
+    // Assert
+    let (_msg_type, status, data) = parse_kv_response(&get_response);
+    assert_eq!(status, 0, "GET should succeed");
+    assert_eq!(data, b"data", "GET should retrieve committed data");
+}
+
+async fn should_handle_large_batch_writes_in_transaction<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/batch";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    // Act - Write 50 key-value pairs
+    for i in 0..50 {
+        let key = format!("key_{:03}", i).into_bytes();
+        let value = format!("value_{:03}", i).into_bytes();
+        let put_frame = build_kv_put(1, route, &key, &value);
+        let response = client
+            .request(&put_frame, 2000)
+            .await
+            .expect(&format!("PUT {} failed", i));
+
+        let (_msg_type, status, _data) = parse_kv_response(&response);
+        assert_eq!(status, 0, "PUT {} should succeed", i);
+    }
+
+    let commit_frame = build_kv_commit(1, route);
+    let commit_response = client
+        .request(&commit_frame, 2000)
+        .await
+        .expect("COMMIT failed");
+
+    // Assert
+    let (_msg_type, status, _data) = parse_kv_response(&commit_response);
+    assert_eq!(status, 0, "COMMIT should succeed");
+}
+
 // ===== TCP wrapper tests (added AAA comments) =====
 
 #[tokio::test]
@@ -714,6 +917,76 @@ async fn should_handle_connection_drop_during_transaction_tcp() {
     // (assertions are in the helper)
 }
 
+#[tokio::test]
+async fn should_put_and_get_same_key_in_transaction_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_put_and_get_same_key_in_transaction::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_execute_multiple_puts_in_transaction_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_execute_multiple_puts_in_transaction::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_execute_put_get_get_sequence_in_transaction_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_execute_put_get_get_sequence_in_transaction::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_verify_get_succeeds_after_put_commit_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_verify_get_succeeds_after_put_commit::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_handle_large_batch_writes_in_transaction_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_handle_large_batch_writes_in_transaction::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
 // ===== WebSocket wrapper tests (added AAA comments) =====
 
 #[tokio::test]
@@ -795,6 +1068,76 @@ async fn should_require_connect_message_when_auth_enabled_ws() {
 
     // Act
     should_require_connect_message_when_auth_enabled::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_put_and_get_same_key_in_transaction_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_put_and_get_same_key_in_transaction::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_execute_multiple_puts_in_transaction_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_execute_multiple_puts_in_transaction::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_execute_put_get_get_sequence_in_transaction_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_execute_put_get_get_sequence_in_transaction::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_verify_get_succeeds_after_put_commit_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_verify_get_succeeds_after_put_commit::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_handle_large_batch_writes_in_transaction_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_handle_large_batch_writes_in_transaction::<WsConnector>(&server).await;
 
     // Assert
     // (assertions are in the helper)

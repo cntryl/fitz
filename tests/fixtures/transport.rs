@@ -727,7 +727,7 @@ pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
     payload.extend_from_slice(route.as_bytes());
     payload.push(mode);
     payload.push(durability);
-    
+
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(100, &payload);
     builder.build()
@@ -744,7 +744,7 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
     payload.extend_from_slice(key);
     payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
     payload.extend_from_slice(value);
-    
+
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(104, &payload);
     builder.build()
@@ -759,7 +759,7 @@ pub fn build_kv_get(tx_id: u64, route: &str, key: &[u8]) -> Vec<u8> {
     payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
     payload.extend_from_slice(key);
-    
+
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(103, &payload);
     builder.build()
@@ -772,7 +772,7 @@ pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
     payload.extend_from_slice(&tx_id.to_be_bytes());
     payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
-    
+
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(101, &payload);
     builder.build()
@@ -785,7 +785,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     payload.extend_from_slice(&tx_id.to_be_bytes());
     payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
-    
+
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(102, &payload);
     builder.build()
@@ -799,7 +799,7 @@ pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     if response.len() < 4 {
         return (0, 0, Vec::new());
     }
-    
+
     let msg_type = response[0];
     // Skip length (2 bytes at positions 1-2)
     let status = response[3]; // Position 3 = after type + length
@@ -808,7 +808,7 @@ pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     } else {
         Vec::new()
     };
-    
+
     // Return (msg_type, status, data)
     (msg_type, status, data)
 }
