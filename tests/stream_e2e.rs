@@ -2,8 +2,8 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
-use fixtures::transport::*;
 use fitz::testkit::TestServer;
+use fixtures::transport::*;
 
 // Generic test helper for appending to stream
 async fn should_append_data_to_stream<C>(server: &TestServer)
@@ -130,7 +130,10 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_stream_response(&response);
     // Status can be success (empty read) or not found - both acceptable
-    assert!(status == 0 || status != 0, "Expected determined result for out-of-bounds read");
+    assert!(
+        status == 0 || status != 0,
+        "Expected determined result for out-of-bounds read"
+    );
 }
 
 #[tokio::test]

@@ -2,8 +2,8 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
-use fixtures::transport::*;
 use fitz::testkit::TestServer;
+use fixtures::transport::*;
 
 // Generic test helper for request-response
 async fn should_send_rpc_request<C>(server: &TestServer)

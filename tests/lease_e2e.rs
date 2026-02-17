@@ -3,8 +3,8 @@
 //! Tests full lease domain functionality across TCP and WebSocket transports.
 
 mod fixtures;
-use fixtures::transport::*;
 use fitz::testkit::TestServer;
+use fixtures::transport::*;
 
 // ===== GENERIC TEST IMPLEMENTATIONS =====
 
@@ -33,7 +33,10 @@ where
 
     // Act
     let renew_frame = build_lease_renew("lease://test/locks/db", "owner1", 999_999_999, 30);
-    let response = client.send_and_receive(&renew_frame, 2000).await.expect("send");
+    let response = client
+        .send_and_receive(&renew_frame, 2000)
+        .await
+        .expect("send");
 
     // Assert
     let (_msg_type, status, _data) = parse_lease_response(&response);

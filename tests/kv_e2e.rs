@@ -1,4 +1,4 @@
-﻿//! Consolidated KV end-to-end tests â€” transport, codec, and integration
+//! Consolidated KV end-to-end tests â€” transport, codec, and integration
 //!
 //! Merged from: `kv_e2e_transport.rs`, `kv_e2e_basic.rs`, `kv_e2e_domain_routing.rs`, `ws_domain_flow.rs`.
 
@@ -233,10 +233,7 @@ where
     assert_eq!(status, 0);
 
     let put_frame = build_kv_put(1, route, b"key1", b"value1");
-    let response = client
-        .request(&put_frame, 2000)
-        .await
-        .expect("PUT failed");
+    let response = client.request(&put_frame, 2000).await.expect("PUT failed");
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
 

@@ -10,9 +10,9 @@
 //! (Direct actor testing skipped - requires complex storage setup, see tier3 for actor-level benchmarks)
 
 use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::{TestServer, TestClient, TestWebSocketClient};
+use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -144,6 +144,13 @@ fn encode_read_request(
 // ============================================================================
 
 fn bench_tcp_begin_append_commit(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let client = server.connect().await.unwrap();
+        (server, client)
+    });
+
     let mut group = c.benchmark_group("stream_tcp_ingest_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -151,18 +158,8 @@ fn bench_tcp_begin_append_commit(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("tcp_begin_append_commit", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let client = server.connect().await.unwrap();
-                    (server, client)
-                })
-            },
-            |(server, mut client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "stream://realm/area/events";
 
@@ -180,14 +177,13 @@ fn bench_tcp_begin_append_commit(c: &mut Criterion) {
                 // Commit
                 let commit_frame = encode_commit_request(session_id);
                 let _ = black_box(client.request(&commit_frame, 5000).await.unwrap());
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+            })
+        })
     });
 
     group.finish();
+    drop(client);
+    drop(server);
 }
 
 // ============================================================================
@@ -195,6 +191,13 @@ fn bench_tcp_begin_append_commit(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_ws_begin_append_commit(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut ws_client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let ws_client = server.connect_ws().await.unwrap();
+        (server, ws_client)
+    });
+
     let mut group = c.benchmark_group("stream_ws_ingest_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -202,18 +205,8 @@ fn bench_ws_begin_append_commit(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("ws_begin_append_commit", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let ws_client = server.connect_ws().await.unwrap();
-                    (server, ws_client)
-                })
-            },
-            |(server, mut ws_client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "stream://realm/area/events";
 
@@ -229,20 +222,14 @@ fn bench_ws_begin_append_commit(c: &mut Criterion) {
 
                 // Commit
                 let commit_frame = encode_commit_request(session_id);
-                let _ = black_box(
-                    ws_client
-                        .request(&commit_frame, 5000)
-                        .await
-                        .unwrap()
-                );
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+                let _ = black_box(ws_client.request(&commit_frame, 5000).await.unwrap());
+            })
+        })
     });
 
     group.finish();
+    drop(ws_client);
+    drop(server);
 }
 
 criterion_group! {

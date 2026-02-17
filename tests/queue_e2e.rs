@@ -2,8 +2,8 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
-use fixtures::transport::*;
 use fitz::testkit::TestServer;
+use fixtures::transport::*;
 
 // Generic test helper for enqueue
 async fn should_enqueue_message<C>(server: &TestServer)
@@ -43,11 +43,17 @@ where
     let mut client = C::connect(server).await.expect("connect");
     let data = b"task-data";
     let enqueue_frame = build_queue_enqueue("queue://test/jobs", data);
-    let _ = client.send_and_receive(&enqueue_frame, 2000).await.expect("enqueue");
+    let _ = client
+        .send_and_receive(&enqueue_frame, 2000)
+        .await
+        .expect("enqueue");
 
     // Act
     let dequeue_frame = build_queue_dequeue("queue://test/jobs");
-    let response = client.send_and_receive(&dequeue_frame, 2000).await.expect("dequeue");
+    let response = client
+        .send_and_receive(&dequeue_frame, 2000)
+        .await
+        .expect("dequeue");
 
     // Assert
     let (_msg_type, status, _data) = parse_queue_response(&response);
@@ -118,7 +124,10 @@ where
 
     // Assert - should fail (different queue is empty)
     let (_msg_type, status, _data) = parse_queue_response(&response);
-    assert_ne!(status, 0, "Expected failure for dequeue from different queue");
+    assert_ne!(
+        status, 0,
+        "Expected failure for dequeue from different queue"
+    );
 }
 
 #[tokio::test]

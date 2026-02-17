@@ -10,6 +10,7 @@
 use bytes::Bytes;
 use fitz::auth::Permission;
 use fitz::domains::rpc::session::SessionActor;
+use fitz::domains::rpc::{RpcError, RpcErrorCode, RpcResponse};
 use fitz::domains::rpc::{RpcMessage, RpcRequest, RpcRouteActor};
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
@@ -18,7 +19,6 @@ use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
 use std::sync::Arc;
 use uuid::Uuid;
-use fitz::domains::rpc::{RpcError, RpcErrorCode, RpcResponse};
 
 fn make_ctx() -> Context<RpcRouteActor> {
     let router = Arc::new(fitz::runtime::router::Router::new());
@@ -909,7 +909,13 @@ fn should_include_reply_route_in_request() {
     let body = Bytes::from("test");
 
     // Act
-    let request = RpcRequest::new(family, correlation_id, route, reply_route.clone(), body.clone());
+    let request = RpcRequest::new(
+        family,
+        correlation_id,
+        route,
+        reply_route.clone(),
+        body.clone(),
+    );
 
     // Assert
     assert_eq!(request.reply_route, reply_route);

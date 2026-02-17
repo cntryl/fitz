@@ -311,14 +311,10 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
 fn bench_tcp_begin_put_rollback(c: &mut Criterion) {
     // Setup: Start server and connect TCP client
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    
-    let server = runtime.block_on(async {
-        fitz::testkit::TestServer::start().await.unwrap()
-    });
 
-    let mut client = runtime.block_on(async {
-        server.connect().await.unwrap()
-    });
+    let server = runtime.block_on(async { fitz::testkit::TestServer::start().await.unwrap() });
+
+    let mut client = runtime.block_on(async { server.connect().await.unwrap() });
 
     // Precompute request frames
     let begin_frame = encode_begin_request(
@@ -371,14 +367,10 @@ fn bench_tcp_begin_put_rollback(c: &mut Criterion) {
 fn bench_ws_begin_put_rollback(c: &mut Criterion) {
     // Setup: Start server and connect WebSocket client
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    
-    let server = runtime.block_on(async {
-        fitz::testkit::TestServer::start().await.unwrap()
-    });
 
-    let mut ws_client = runtime.block_on(async {
-        server.connect_ws().await.unwrap()
-    });
+    let server = runtime.block_on(async { fitz::testkit::TestServer::start().await.unwrap() });
+
+    let mut ws_client = runtime.block_on(async { server.connect_ws().await.unwrap() });
 
     // Precompute request frames (same as TCP, different framing)
     let begin_frame = encode_begin_request(
@@ -436,20 +428,20 @@ fn encode_begin_request(
     mode: TxMode,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    
+
     // Message type
     buf.put_u16(msg_type::BEGIN);
-    
+
     // Payload: [u8 mode][u32 route_len][route]
     buf.put_u8(match mode {
         TxMode::ReadOnly => 0,
         TxMode::ReadWrite => 1,
     });
-    
+
     let route = format!("kv://{}/{}/{}", realm, area, resource);
     buf.put_u32(route.len() as u32);
     buf.extend_from_slice(route.as_bytes());
-    
+
     buf
 }
 
@@ -461,35 +453,35 @@ fn encode_put_request(
     value: &[u8],
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    
+
     // Message type
     buf.put_u16(msg_type::PUT);
-    
+
     // Payload: [u64 tx_id][u32 route_len][route][u32 key_len][key][u32 value_len][value]
     buf.put_u64(tx_id);
-    
+
     let route = format!("kv://{}", resource);
     buf.put_u32(route.len() as u32);
     buf.extend_from_slice(route.as_bytes());
-    
+
     buf.put_u32(key.len() as u32);
     buf.extend_from_slice(key);
-    
+
     buf.put_u32(value.len() as u32);
     buf.extend_from_slice(value);
-    
+
     buf
 }
 
 fn encode_rollback_request(tx_id: u64) -> Vec<u8> {
     let mut buf = Vec::new();
-    
+
     // Message type
     buf.put_u16(msg_type::ROLLBACK);
-    
+
     // Payload: [u64 tx_id]
     buf.put_u64(tx_id);
-    
+
     buf
 }
 
@@ -497,16 +489,16 @@ fn parse_begin_response(response: &[u8]) -> Result<u64, String> {
     if response.is_empty() {
         return Err("Empty response".to_string());
     }
-    
+
     let status = response[0];
     if status != 0 {
         return Err("BEGIN failed".to_string());
     }
-    
+
     if response.len() < 9 {
         return Err("Response too short".to_string());
     }
-    
+
     let tx_id = u64::from_be_bytes([
         response[1],
         response[2],
@@ -517,7 +509,7 @@ fn parse_begin_response(response: &[u8]) -> Result<u64, String> {
         response[7],
         response[8],
     ]);
-    
+
     Ok(tx_id)
 }
 

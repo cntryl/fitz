@@ -28,6 +28,4 @@ pub use stream::{
     addr_with_family, create_test_area_actor, create_test_db, create_test_store,
     create_test_stream_actor,
 };
-pub use transport::{
-    TestClient, TestWebSocketClient, TestServer, TlvFrameBuilder, TlvFrameParser,
-};
+pub use transport::{TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser};

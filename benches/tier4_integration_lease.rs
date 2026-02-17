@@ -10,9 +10,9 @@
 //! (Direct actor testing skipped - requires complex storage setup, see tier3 for actor-level benchmarks)
 
 use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::{TestServer, TestClient, TestWebSocketClient};
+use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -23,11 +23,7 @@ mod config;
 // ============================================================================
 
 /// Encode a lease acquire request
-fn encode_acquire_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    ttl_seconds: u64,
-) -> Vec<u8> {
+fn encode_acquire_request(route_family: RouteFamily, route_str: &str, ttl_seconds: u64) -> Vec<u8> {
     let mut buf = BytesMut::new();
     let msg_type: u16 = 400; // ACQUIRE
 
@@ -124,6 +120,13 @@ fn encode_release_request(route_family: RouteFamily, route_str: &str, token: u64
 // ============================================================================
 
 fn bench_tcp_acquire_renew_release(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let client = server.connect().await.unwrap();
+        (server, client)
+    });
+
     let mut group = c.benchmark_group("lease_tcp_lock_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -131,18 +134,8 @@ fn bench_tcp_acquire_renew_release(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("tcp_acquire_renew_release", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let client = server.connect().await.unwrap();
-                    (server, client)
-                })
-            },
-            |(server, mut client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "lease://realm/area/lock1";
 
@@ -160,14 +153,13 @@ fn bench_tcp_acquire_renew_release(c: &mut Criterion) {
                 // Release
                 let release_frame = encode_release_request(route_family, route_str, token);
                 let _ = black_box(client.request(&release_frame, 5000).await.unwrap());
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+            })
+        })
     });
 
     group.finish();
+    drop(client);
+    drop(server);
 }
 
 // ============================================================================
@@ -175,6 +167,13 @@ fn bench_tcp_acquire_renew_release(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_ws_acquire_renew_release(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut ws_client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let ws_client = server.connect_ws().await.unwrap();
+        (server, ws_client)
+    });
+
     let mut group = c.benchmark_group("lease_ws_lock_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -182,18 +181,8 @@ fn bench_ws_acquire_renew_release(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("ws_acquire_renew_release", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let ws_client = server.connect_ws().await.unwrap();
-                    (server, ws_client)
-                })
-            },
-            |(server, mut ws_client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "lease://realm/area/lock1";
 
@@ -209,20 +198,14 @@ fn bench_ws_acquire_renew_release(c: &mut Criterion) {
 
                 // Release
                 let release_frame = encode_release_request(route_family, route_str, token);
-                let _ = black_box(
-                    ws_client
-                        .request(&release_frame, 5000)
-                        .await
-                        .unwrap()
-                );
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+                let _ = black_box(ws_client.request(&release_frame, 5000).await.unwrap());
+            })
+        })
     });
 
     group.finish();
+    drop(ws_client);
+    drop(server);
 }
 
 criterion_group! {

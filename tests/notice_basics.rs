@@ -1,4 +1,4 @@
-﻿//! Consolidated notice basic/unit tests
+//! Consolidated notice basic/unit tests
 //!
 //! Combines:
 //! - notice_auth.rs: Authorization and permission checks
@@ -6,7 +6,7 @@
 //! - notice_fanout_math.rs: Fanout delivery count verification
 
 use bytes::Bytes;
-use bytes::{BytesMut, BufMut};
+use bytes::{BufMut, BytesMut};
 use fitz::auth::Permission;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
 use fitz::domains::notice::route_actor::NoticeRouteActor;
@@ -15,7 +15,7 @@ use fitz::runtime::actor::Context;
 use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
 use fitz::testkit::{
-    addr, make_router, route, session_id, TestSink, TestServer, TestClient, TestWebSocketClient,
+    addr, make_router, route, session_id, TestClient, TestServer, TestSink, TestWebSocketClient,
     TlvFrameBuilder,
 };
 use futures::future::BoxFuture;
@@ -529,4 +529,3 @@ fn should_deliver_single_notification_to_single_subscription() {
     // Assert
     assert_eq!(sink.count(), 1);
 }
-

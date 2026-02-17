@@ -1,9 +1,9 @@
 //! Storage initialization
 
 use crate::boot::runtime::{BootConfig, BootResult, StorageMode};
+use cntryl_midge::testkit::MidgeOptions;
 use std::sync::Arc;
 use tracing::info;
-use cntryl_midge::testkit::MidgeOptions;
 
 /// Initialize Midge storage engine based on configured storage mode
 ///

@@ -10,8 +10,7 @@
 //! This reveals where performance cliffs occur in pub/sub operations.
 
 use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
-use fitz::domains::notice::route_actor::NoticeRouteActor;
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::time::Duration;
@@ -60,11 +59,7 @@ fn encode_subscribe_request(
 }
 
 /// Encode a publish request frame with TLV format
-fn encode_publish_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    payload: &[u8],
-) -> Vec<u8> {
+fn encode_publish_request(route_family: RouteFamily, route_str: &str, payload: &[u8]) -> Vec<u8> {
     let mut buf = BytesMut::new();
     let msg_type: u16 = 500; // PUBLISH
 
@@ -127,69 +122,17 @@ fn encode_unsubscribe_request(
 }
 
 // ============================================================================
-// DIRECT INTEGRATION BENCHMARKS - Domain actor only (baseline)
-// ============================================================================
-
-fn bench_direct_subscribe_publish_unsubscribe(c: &mut Criterion) {
-    let mut group = c.benchmark_group("notice_direct_pubsub_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3)); // subscribe + publish + unsubscribe
-    group.warm_up_time(Duration::from_millis(100));
-    group.measurement_time(Duration::from_millis(500));
-
-    group.bench_function("direct_subscribe_publish_unsubscribe", |b| {
-        b.iter_batched(
-            || {
-                let actor = NoticeRouteActor::new(RouteFamily::new(1));
-                actor
-            },
-            |mut actor| {
-                let route_family = RouteFamily::new(1);
-                let route_str = "notice://realm/area/events";
-                let subscriber_id = 1;
-                let payload = b"test_event";
-
-                // Subscribe
-                let subscribe_msg = NoticeMessage::Subscribe {
-                    route_family,
-                    route: route_str.to_string(),
-                    subscriber_id,
-                };
-                let subscribe_addr = RouteAddress::from_str(route_str).unwrap();
-                let subscribe_env = Envelope::new(subscribe_addr.clone(), subscribe_msg);
-                let _ = actor.receive(subscribe_env);
-
-                // Publish
-                let publish_msg = NoticeMessage::Publish {
-                    route_family,
-                    route: route_str.to_string(),
-                    payload: payload.to_vec(),
-                    source_session_id: None,
-                };
-                let publish_env = Envelope::new(subscribe_addr.clone(), publish_msg);
-                let _ = actor.receive(publish_env);
-
-                // Unsubscribe
-                let unsubscribe_msg = NoticeMessage::Unsubscribe {
-                    route_family,
-                    route: route_str.to_string(),
-                    subscriber_id,
-                };
-                let unsubscribe_env = Envelope::new(subscribe_addr, unsubscribe_msg);
-                let _ = black_box(actor.receive(unsubscribe_env));
-            },
-            BatchSize::SmallInput,
-        )
-    });
-
-    group.finish();
-}
-
-// ============================================================================
 // TCP INTEGRATION BENCHMARKS - Full socket stack
 // ============================================================================
 
 fn bench_tcp_subscribe_publish_unsubscribe(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let client = server.connect().await.unwrap();
+        (server, client)
+    });
+
     let mut group = c.benchmark_group("notice_tcp_pubsub_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -197,18 +140,8 @@ fn bench_tcp_subscribe_publish_unsubscribe(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("tcp_subscribe_publish_unsubscribe", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let client = server.connect().await.unwrap();
-                    (server, client)
-                })
-            },
-            |(server, mut client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "notice://realm/area/events";
                 let subscriber_id = 1;
@@ -219,22 +152,20 @@ fn bench_tcp_subscribe_publish_unsubscribe(c: &mut Criterion) {
                 let _ = client.request(&subscribe_frame, 5000).await.unwrap();
 
                 // Publish
-                let publish_frame =
-                    encode_publish_request(route_family, route_str, b"test_event");
+                let publish_frame = encode_publish_request(route_family, route_str, b"test_event");
                 let _ = client.request(&publish_frame, 5000).await.unwrap();
 
                 // Unsubscribe
                 let unsubscribe_frame =
                     encode_unsubscribe_request(route_family, route_str, subscriber_id);
                 let _ = black_box(client.request(&unsubscribe_frame, 5000).await.unwrap());
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+            })
+        })
     });
 
     group.finish();
+    drop(client);
+    drop(server);
 }
 
 // ============================================================================
@@ -242,6 +173,13 @@ fn bench_tcp_subscribe_publish_unsubscribe(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_ws_subscribe_publish_unsubscribe(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut ws_client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let ws_client = server.connect_ws().await.unwrap();
+        (server, ws_client)
+    });
+
     let mut group = c.benchmark_group("notice_ws_pubsub_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -249,18 +187,8 @@ fn bench_ws_subscribe_publish_unsubscribe(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("ws_subscribe_publish_unsubscribe", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let ws_client = server.connect_ws().await.unwrap();
-                    (server, ws_client)
-                })
-            },
-            |(server, mut ws_client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "notice://realm/area/events";
                 let subscriber_id = 1;
@@ -271,34 +199,26 @@ fn bench_ws_subscribe_publish_unsubscribe(c: &mut Criterion) {
                 let _ = ws_client.request(&subscribe_frame, 5000).await.unwrap();
 
                 // Publish
-                let publish_frame =
-                    encode_publish_request(route_family, route_str, b"test_event");
+                let publish_frame = encode_publish_request(route_family, route_str, b"test_event");
                 let _ = ws_client.request(&publish_frame, 5000).await.unwrap();
 
                 // Unsubscribe
                 let unsubscribe_frame =
                     encode_unsubscribe_request(route_family, route_str, subscriber_id);
-                let _ = black_box(
-                    ws_client
-                        .request(&unsubscribe_frame, 5000)
-                        .await
-                        .unwrap()
-                );
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+                let _ = black_box(ws_client.request(&unsubscribe_frame, 5000).await.unwrap());
+            })
+        })
     });
 
     group.finish();
+    drop(ws_client);
+    drop(server);
 }
 
 criterion_group! {
     name = benches;
     config = config::criterion_config();
     targets =
-        bench_direct_subscribe_publish_unsubscribe,
         bench_tcp_subscribe_publish_unsubscribe,
         bench_ws_subscribe_publish_unsubscribe,
 }

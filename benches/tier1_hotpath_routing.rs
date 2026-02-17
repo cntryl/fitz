@@ -106,10 +106,7 @@ fn bench_route_address_creation(c: &mut Criterion) {
     group.bench_function("route_address_new", |b| {
         b.iter(|| {
             // ONLY hot path - RouteAddress construction
-            let _address = RouteAddress::new(
-                black_box(family),
-                black_box(route.clone()),
-            );
+            let _address = RouteAddress::new(black_box(family), black_box(route.clone()));
         })
     });
 

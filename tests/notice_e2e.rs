@@ -3,8 +3,8 @@
 //! Tests notice (pub/sub) domain functionality across TCP and WebSocket transports.
 
 mod fixtures;
-use fixtures::transport::*;
 use fitz::testkit::TestServer;
+use fixtures::transport::*;
 
 // ===== GENERIC TEST IMPLEMENTATIONS =====
 
@@ -17,11 +17,17 @@ where
 
     // Act - Subscribe first
     let subscribe_frame = build_notice_subscribe("notice://test/events");
-    let _sub_response = client.send_and_receive(&subscribe_frame, 2000).await.expect("subscribe");
+    let _sub_response = client
+        .send_and_receive(&subscribe_frame, 2000)
+        .await
+        .expect("subscribe");
 
     // Act - Then publish
     let publish_frame = build_notice_publish("notice://test/events", "test-realm", b"hello");
-    let pub_response = client.send_and_receive(&publish_frame, 2000).await.expect("publish");
+    let pub_response = client
+        .send_and_receive(&publish_frame, 2000)
+        .await
+        .expect("publish");
 
     // Assert
     let (_msg_type, status, _data) = parse_notice_response(&pub_response);
@@ -37,15 +43,15 @@ where
 
     // Act - Try to subscribe with badly formed pattern
     let bad_frame = build_notice_subscribe("");
-    let response = client.send_and_receive(&bad_frame, 2000).await.expect("send");
+    let response = client
+        .send_and_receive(&bad_frame, 2000)
+        .await
+        .expect("send");
 
     // Assert
     let (_msg_type, status, _data) = parse_notice_response(&response);
     // Should either error or timeout - either way, something's wrong with empty pattern
-    assert!(
-        status != 0,
-        "Should reject empty subscription pattern"
-    );
+    assert!(status != 0, "Should reject empty subscription pattern");
 }
 
 // ===== TCP TESTS =====

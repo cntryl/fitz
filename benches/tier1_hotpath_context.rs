@@ -64,7 +64,7 @@ fn bench_timer_manager_schedule_repeat(c: &mut Criterion) {
 fn bench_timer_manager_cancel(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let mut tm = TimerManager::new();
-    
+
     // Precompute timer IDs
     let timer_ids: Vec<TimerId> = (0..1000)
         .map(|_| tm.schedule_once(Duration::from_secs(3600)))
@@ -114,7 +114,7 @@ fn bench_timer_manager_fired_timers_with_fired(c: &mut Criterion) {
     for _ in 0..10 {
         tm.schedule_once(Duration::from_millis(1)); // Will fire immediately
     }
-    
+
     // Let timers expire before benchmark
     std::thread::sleep(Duration::from_millis(10));
 
@@ -170,7 +170,7 @@ fn bench_timer_manager_scaling(c: &mut Criterion) {
             for _ in 0..*count {
                 tm.schedule_once(Duration::from_secs(3600));
             }
-            
+
             b.iter(|| {
                 // ONLY hot path - schedule into populated manager
                 let _timer_id = tm.schedule_once(black_box(Duration::from_secs(30)));
@@ -183,7 +183,7 @@ fn bench_timer_manager_scaling(c: &mut Criterion) {
             for _ in 0..*count {
                 tm.schedule_once(Duration::from_secs(3600));
             }
-            
+
             b.iter(|| {
                 // ONLY hot path - check fired timers with many active
                 let _fired = black_box(tm.fired_timers());
@@ -198,7 +198,7 @@ fn bench_timer_manager_repeating_reschedule(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - repeating timer that fires
     let mut tm = TimerManager::new();
     let timer_id = tm.schedule_repeat(Duration::from_millis(1), Duration::from_millis(1000));
-    
+
     // Let timer fire once
     std::thread::sleep(Duration::from_millis(10));
 

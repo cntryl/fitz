@@ -2,8 +2,8 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
-use fixtures::transport::*;
 use fitz::testkit::TestServer;
+use fixtures::transport::*;
 
 // Generic test helper for creating schedule
 async fn should_create_cron_schedule<C>(server: &TestServer)
@@ -114,7 +114,10 @@ where
 
     // Assert
     let (_msg_type, status, _data) = parse_schedule_response(&response);
-    assert_ne!(status, 0, "Expected failure for cancel nonexistent schedule");
+    assert_ne!(
+        status, 0,
+        "Expected failure for cancel nonexistent schedule"
+    );
 }
 
 #[tokio::test]

@@ -223,7 +223,8 @@ fn bench_type_erasure_overhead(c: &mut Criterion) {
         let dest_clone = dest.clone();
         b.iter(|| {
             // ONLY hot path - box + type erasure for small message
-            let _envelope = Envelope::new(black_box(dest_clone.clone()), black_box(small_msg.clone()));
+            let _envelope =
+                Envelope::new(black_box(dest_clone.clone()), black_box(small_msg.clone()));
         })
     });
 
@@ -231,7 +232,8 @@ fn bench_type_erasure_overhead(c: &mut Criterion) {
         let dest_clone = dest.clone();
         b.iter(|| {
             // ONLY hot path - box + type erasure for larger message
-            let _envelope = Envelope::new(black_box(dest_clone.clone()), black_box(large_msg.clone()));
+            let _envelope =
+                Envelope::new(black_box(dest_clone.clone()), black_box(large_msg.clone()));
         })
     });
 

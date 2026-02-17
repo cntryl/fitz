@@ -165,17 +165,18 @@ fn bench_permission_allows_doublestar_match(c: &mut Criterion) {
 
 fn bench_permission_allows_access_levels(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
-    let read_perms = SessionPermissions::from_permissions(vec![
-        Permission::parse("rpc://acme/**#read").unwrap(),
-    ]);
+    let read_perms = SessionPermissions::from_permissions(vec![Permission::parse(
+        "rpc://acme/**#read",
+    )
+    .unwrap()]);
 
-    let write_perms = SessionPermissions::from_permissions(vec![
-        Permission::parse("rpc://acme/**#write").unwrap(),
-    ]);
+    let write_perms =
+        SessionPermissions::from_permissions(vec![
+            Permission::parse("rpc://acme/**#write").unwrap()
+        ]);
 
-    let all_perms = SessionPermissions::from_permissions(vec![
-        Permission::parse("rpc://acme/**#*").unwrap(),
-    ]);
+    let all_perms =
+        SessionPermissions::from_permissions(vec![Permission::parse("rpc://acme/**#*").unwrap()]);
 
     let route = Route::new("rpc://acme/auth/users".to_string());
 

@@ -2,20 +2,16 @@
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Tests three integration levels:
-//! 1. **Direct** - Domain actor (no network) - baseline integration overhead
-//! 2. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
-//! 3. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
+//! Tests two integration levels:
+//! 1. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
+//! 2. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
 //!
 //! This reveals where performance cliffs occur in queue message workflows.
 
 use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
-use fitz::benchkit::create_local_bench_queue_actor;
-use fitz::domains::queue::{QueueMessage, QueueResponse};
-use fitz::runtime::envelope::Envelope;
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::testkit::transport::{TestServer, TestClient, TestWebSocketClient};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::transport::TestServer;
 use std::time::Duration;
 
 #[path = "config.rs"]
@@ -131,79 +127,17 @@ fn encode_complete_request(
 }
 
 // ============================================================================
-// DIRECT INTEGRATION BENCHMARKS - Domain actor only (baseline)
-// ============================================================================
-
-fn bench_direct_enqueue_reserve_complete(c: &mut Criterion) {
-    let mut group = c.benchmark_group("queue_direct_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3)); // enqueue + reserve + complete
-    group.warm_up_time(Duration::from_millis(100));
-    group.measurement_time(Duration::from_millis(500));
-
-    group.bench_function("direct_enqueue_reserve_complete", |b| {
-        b.iter_batched(
-            || create_local_bench_queue_actor("bench", "queue", "tasks", None),
-            |(mut actor, _temp_dir)| {
-                let route_family = RouteFamily::new(1);
-                let route = Route::from_str("queue://bench/queue/tasks").unwrap();
-                let route_addr = RouteAddress::from_str("queue://bench/queue/tasks").unwrap();
-                let body = b"test_message".to_vec();
-
-                // Enqueue
-                let enqueue_msg = QueueMessage::Enqueue {
-                    family_id: route_family,
-                    route: route.clone(),
-                    body: body.into(),
-                    delay_seconds: None,
-                };
-                let enqueue_env = Envelope::new(route_addr.clone(), enqueue_msg);
-               let enqueue_resp = actor.receive(enqueue_env);
-
-                // Extract message_id from enqueue response
-                let message_id = match enqueue_resp {
-                    QueueResponse::Enqueued { id } => id.as_u64(),
-                    _ => return,
-                };
-
-                // Reserve
-                let reserve_msg = QueueMessage::Reserve {
-                    family_id: route_family,
-                    route: route.clone(),
-                    lease_seconds: 30,
-                    batch_size: Some(1),
-                    wait_seconds: None,
-                };
-                let reserve_env = Envelope::new(route_addr.clone(), reserve_msg);
-                let reserve_resp = actor.receive(reserve_env);
-
-                // Extract token from reserve response
-                if let QueueResponse::Reserved { messages } = reserve_resp {
-                    if let Some(msg) = messages.first() {
-                        // Complete
-                        let complete_msg = QueueMessage::Complete {
-                            family_id: route_family,
-                            route: route.clone(),
-                            id: msg.id,
-                            token: msg.token,
-                        };
-                        let complete_env = Envelope::new(route_addr, complete_msg);
-                        let _ = black_box(actor.receive(complete_env));
-                    }
-                }
-            },
-            BatchSize::SmallInput,
-        )
-    });
-
-    group.finish();
-}
-
-// ============================================================================
 // TCP INTEGRATION BENCHMARKS - Full socket stack
 // ============================================================================
 
 fn bench_tcp_enqueue_reserve_complete(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let client = server.connect().await.unwrap();
+        (server, client)
+    });
+
     let mut group = c.benchmark_group("queue_tcp_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -211,18 +145,8 @@ fn bench_tcp_enqueue_reserve_complete(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("tcp_enqueue_reserve_complete", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let client = server.connect().await.unwrap();
-                    (server, client)
-                })
-            },
-            |(server, mut client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "queue://bench/queue/tasks";
 
@@ -243,14 +167,13 @@ fn bench_tcp_enqueue_reserve_complete(c: &mut Criterion) {
                 // Complete
                 let complete_frame = encode_complete_request(route_family, route_str, 1, 1);
                 let _ = black_box(client.request(&complete_frame, 5000).await.unwrap());
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+            })
+        })
     });
 
     group.finish();
+    drop(client);
+    drop(server);
 }
 
 // ============================================================================
@@ -258,6 +181,13 @@ fn bench_tcp_enqueue_reserve_complete(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_ws_enqueue_reserve_complete(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, mut ws_client) = runtime.block_on(async {
+        let server = TestServer::start().await.unwrap();
+        let ws_client = server.connect_ws().await.unwrap();
+        (server, ws_client)
+    });
+
     let mut group = c.benchmark_group("queue_ws_workflow");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(3));
@@ -265,18 +195,8 @@ fn bench_ws_enqueue_reserve_complete(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(1));
 
     group.bench_function("ws_enqueue_reserve_complete", |b| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        b.to_async(&rt).iter_batched(
-            || {
-                let rt_handle = tokio::runtime::Handle::current();
-                rt_handle.block_on(async {
-                    let server = TestServer::start().await.unwrap();
-                    let ws_client = server.connect_ws().await.unwrap();
-                    (server, ws_client)
-                })
-            },
-            |(server, mut ws_client)| async move {
+        b.iter(|| {
+            runtime.block_on(async {
                 let route_family = RouteFamily::new(1);
                 let route_str = "queue://bench/queue/tasks";
 
@@ -292,21 +212,19 @@ fn bench_ws_enqueue_reserve_complete(c: &mut Criterion) {
                 // Complete
                 let complete_frame = encode_complete_request(route_family, route_str, 1, 1);
                 let _ = black_box(ws_client.request(&complete_frame, 5000).await.unwrap());
-
-                drop(server);
-            },
-            BatchSize::SmallInput,
-        )
+            })
+        })
     });
 
     group.finish();
+    drop(ws_client);
+    drop(server);
 }
 
 criterion_group! {
     name = benches;
     config = config::criterion_config();
     targets =
-        bench_direct_enqueue_reserve_complete,
         bench_tcp_enqueue_reserve_complete,
         bench_ws_enqueue_reserve_complete,
 }

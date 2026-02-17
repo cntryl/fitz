@@ -37,8 +37,8 @@
 //! 3. **Production parity**: Tests must match production behavior
 //! 4. **Architectural invariant**: Explicit mapping is foundational to Fitz design
 
-use cntryl_midge::Engine;
 use cntryl_midge::testkit::MidgeOptions;
+use cntryl_midge::Engine;
 use std::sync::Arc;
 
 /// Create a test Midge engine with support for multiple column families

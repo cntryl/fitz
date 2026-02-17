@@ -107,7 +107,8 @@ fn should_not_exhibit_quadratic_fanout_growth() {
 
         // Act
         let mut pubctx = Context::new(addr("notice://realm/area/q/p"), Arc::new(router.clone()));
-        let pubmsg = PublishMessage::new(family, route("notice://realm/area/q/p"), Bytes::from("x"));
+        let pubmsg =
+            PublishMessage::new(family, route("notice://realm/area/q/p"), Bytes::from("x"));
         actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
         let total: usize = sinks.iter().map(|s| s.count()).sum();
