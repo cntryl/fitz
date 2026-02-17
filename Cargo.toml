@@ -67,24 +67,7 @@ serial_test = "0.5"
 tempfile = "3"
 rand = "0.8"
 
-# Note: Benchmarks will be added as persona actors are implemented
-# Benchmark framework set up, but implementations need API updates for current context/actor design
-
-[[bench]]
-name = "tier1_hotpath_send_local"
-harness = false
-path = "benches/tier1_hotpath_send_local.rs"
-
-[[bench]]
-name = "tier1_hotpath_self_send"
-harness = false
-path = "benches/tier1_hotpath_self_send.rs"
-
-[[bench]]
-name = "tier1_hotpath_reply"
-harness = false
-path = "benches/tier1_hotpath_reply.rs"
-
+# Tier 1: Hot Path (Infrastructure - Pure sync internals, <1s, <100ns-10µs ops)
 [[bench]]
 name = "tier1_hotpath_matcher"
 harness = false
@@ -101,10 +84,31 @@ harness = false
 path = "benches/tier1_hotpath_mux.rs"
 
 [[bench]]
-name = "tier2_subsystem_router"
+name = "tier1_hotpath_actor_messaging"
 harness = false
-path = "benches/tier2_subsystem_router.rs"
+path = "benches/tier1_hotpath_actor_messaging.rs"
 
+[[bench]]
+name = "tier1_hotpath_envelope"
+harness = false
+path = "benches/tier1_hotpath_envelope.rs"
+
+[[bench]]
+name = "tier1_hotpath_routing"
+harness = false
+path = "benches/tier1_hotpath_routing.rs"
+
+[[bench]]
+name = "tier1_hotpath_permissions"
+harness = false
+path = "benches/tier1_hotpath_permissions.rs"
+
+[[bench]]
+name = "tier1_hotpath_context"
+harness = false
+path = "benches/tier1_hotpath_context.rs"
+
+# Tier 2: Subsystem (Infrastructure integration, <3s, sync only)
 [[bench]]
 name = "tier2_subsystem_mailbox"
 harness = false
@@ -121,114 +125,15 @@ harness = false
 path = "benches/tier2_subsystem_subscriptions.rs"
 
 [[bench]]
-name = "tier2_subsystem_protocol"
+name = "tier2_subsystem_tlv_pipeline"
 harness = false
-path = "benches/tier2_subsystem_protocol.rs"
+path = "benches/tier2_subsystem_tlv_pipeline.rs"
 
-[[bench]]
-name = "tier1_hotpath_notice"
-harness = false
-path = "benches/tier1_hotpath_notice.rs"
-
-[[bench]]
-name = "tier1_hotpath_rpc"
-harness = false
-path = "benches/tier1_hotpath_rpc.rs"
-
-[[bench]]
-name = "tier2_subsystem_rpc"
-harness = false
-path = "benches/tier2_subsystem_rpc.rs"
-
-[[bench]]
-name = "tier3_system_rpc"
-harness = false
-path = "benches/tier3_system_rpc.rs"
-
-[[bench]]
-name = "tier4_integration_rpc"
-harness = false
-path = "benches/tier4_integration_rpc.rs"
-
-[[bench]]
-name = "tier1_hotpath_stream"
-harness = false
-path = "benches/tier1_hotpath_stream.rs"
-
-[[bench]]
-name = "tier2_subsystem_stream"
-harness = false
-path = "benches/tier2_subsystem_stream.rs"
-
-[[bench]]
-name = "tier3_system_stream"
-harness = false
-path = "benches/tier3_system_stream.rs"
-
-[[bench]]
-name = "tier4_integration_stream"
-harness = false
-path = "benches/tier4_integration_stream.rs"
-
-[[bench]]
-name = "tier1_hotpath_queue"
-harness = false
-path = "benches/tier1_hotpath_queue.rs"
-
-[[bench]]
-name = "tier2_subsystem_queue"
-harness = false
-path = "benches/tier2_subsystem_queue.rs"
-
-[[bench]]
-name = "tier3_system_queue"
-harness = false
-path = "benches/tier3_system_queue.rs"
-
-[[bench]]
-name = "tier4_integration_queue"
-harness = false
-path = "benches/tier4_integration_queue.rs"
-
-[[bench]]
-name = "tier3_system_notice"
-harness = false
-path = "benches/tier3_system_notice.rs"
-
-[[bench]]
-name = "tier4_integration_notice"
-harness = false
-path = "benches/tier4_integration_notice.rs"
-
-[[bench]]
-name = "tier1_hotpath_kv"
-harness = false
-path = "benches/tier1_hotpath_kv.rs"
-
-[[bench]]
-name = "tier2_subsystem_kv"
-harness = false
-path = "benches/tier2_subsystem_kv.rs"
-
+# Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
 [[bench]]
 name = "tier3_system_kv"
 harness = false
 path = "benches/tier3_system_kv.rs"
-
-[[bench]]
-name = "tier4_integration_kv"
-harness = false
-path = "benches/tier4_integration_kv.rs"
-
-[[bench]]
-name = "tier1_hotpath_lease"
-harness = false
-path = "benches/tier1_hotpath_lease.rs"
-
-[[bench]]
-name = "tier2_subsystem_lease"
-harness = false
-path = "benches/tier2_subsystem_lease.rs"
 
 [[bench]]
 name = "tier3_system_lease"
@@ -236,6 +141,62 @@ harness = false
 path = "benches/tier3_system_lease.rs"
 
 [[bench]]
+name = "tier3_system_notice"
+harness = false
+path = "benches/tier3_system_notice.rs"
+
+[[bench]]
+name = "tier3_system_queue"
+harness = false
+path = "benches/tier3_system_queue.rs"
+
+[[bench]]
+name = "tier3_system_rpc"
+harness = false
+path = "benches/tier3_system_rpc.rs"
+
+[[bench]]
+name = "tier3_system_schedule"
+harness = false
+path = "benches/tier3_system_schedule.rs"
+
+[[bench]]
+name = "tier3_system_stream"
+harness = false
+path = "benches/tier3_system_stream.rs"
+
+# Tier 4: Integration (Full TCP/WS to domain, full stack - one per domain)
+[[bench]]
+name = "tier4_integration_kv"
+harness = false
+path = "benches/tier4_integration_kv.rs"
+
+[[bench]]
 name = "tier4_integration_lease"
 harness = false
 path = "benches/tier4_integration_lease.rs"
+
+[[bench]]
+name = "tier4_integration_notice"
+harness = false
+path = "benches/tier4_integration_notice.rs"
+
+[[bench]]
+name = "tier4_integration_queue"
+harness = false
+path = "benches/tier4_integration_queue.rs"
+
+[[bench]]
+name = "tier4_integration_rpc"
+harness = false
+path = "benches/tier4_integration_rpc.rs"
+
+[[bench]]
+name = "tier4_integration_schedule"
+harness = false
+path = "benches/tier4_integration_schedule.rs"
+
+[[bench]]
+name = "tier4_integration_stream"
+harness = false
+path = "benches/tier4_integration_stream.rs"

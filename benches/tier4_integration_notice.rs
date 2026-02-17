@@ -1,235 +1,295 @@
-use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+//! Notice domain tier 4 integration benchmarks
+//!
+//! **TIER 4 GOAL: Identify E2E performance cliffs**
+//!
+//! Tests three integration levels:
+//! 1. **Direct** - Domain actor (no network) - baseline integration overhead
+//! 2. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
+//! 3. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
+//!
+//! This reveals where performance cliffs occur in pub/sub operations.
+
+use bytes::{BufMut, BytesMut};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
 use fitz::domains::notice::route_actor::NoticeRouteActor;
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::time::Duration;
 
 #[path = "config.rs"]
 mod config;
 
 // ============================================================================
-// TIER 4: INTEGRATION BENCHMARKS
-//
-// Target: Measure FULL END-TO-END notification scenarios
-// Goal: Prove predictable latency and throughput under complex pub/sub patterns
-// Patterns: Multi-publisher, multi-subscriber workflows, pattern variations
-//
-// These benchmarks simulate complete notification workflows including:
-// - Multiple publishers to same route
-// - Pattern subscription matching with wildcards
-// - Fan-out at various scale
-// - Subscriber registration/deregistration during publishing
+// TLV ENCODING HELPERS
 // ============================================================================
 
-fn bench_complete_pubsub_workflow(c: &mut Criterion) {
-    //! COMPLETE PUB/SUB WORKFLOW - Full subscription → publish → receive sequence
-    //!
-    //! Target: <30µs p50 latency for complete pub/sub transaction
-    //! Throughput: 30k transactions/sec
-    //!
-    //! Measures:
-    //! - Subscribe operation cost
-    //! - Publish to single subscriber
-    //! - Message delivery and confirmation
-    //! - Full transactional consistency
+/// Encode a subscribe request frame with TLV format
+fn encode_subscribe_request(
+    route_family: RouteFamily,
+    route_str: &str,
+    subscriber_id: u64,
+) -> Vec<u8> {
+    let mut buf = BytesMut::new();
+    let msg_type: u16 = 501; // SUBSCRIBE
 
-    let actor = NoticeRouteActor::new(RouteFamily::new(0));
-    let payload = Bytes::from_static(b"pubsub workflow message");
+    // Message type (may use escape sequence if > 254)
+    if msg_type <= 254 {
+        buf.put_u8(msg_type as u8);
+    } else {
+        buf.put_u8(0xFF);
+        buf.put_u16(msg_type);
+    }
 
-    let mut group = c.benchmark_group("notification_integration_complete_pubsub");
-    group.sample_size(10);
+    // RouteFamily
+    buf.put_u8(1); // Tag: RouteFamily
+    buf.put_u16(8); // Length
+    buf.put_u64(route_family.as_u64());
+
+    // Route string
+    let route_bytes = route_str.as_bytes();
+    buf.put_u8(2); // Tag: Route
+    buf.put_u16(route_bytes.len() as u16);
+    buf.put_slice(route_bytes);
+
+    // Subscriber ID
+    buf.put_u8(3); // Tag: SubscriberId
+    buf.put_u16(8);
+    buf.put_u64(subscriber_id);
+
+    buf.to_vec()
+}
+
+/// Encode a publish request frame with TLV format
+fn encode_publish_request(
+    route_family: RouteFamily,
+    route_str: &str,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut buf = BytesMut::new();
+    let msg_type: u16 = 500; // PUBLISH
+
+    if msg_type <= 254 {
+        buf.put_u8(msg_type as u8);
+    } else {
+        buf.put_u8(0xFF);
+        buf.put_u16(msg_type);
+    }
+
+    // RouteFamily
+    buf.put_u8(1);
+    buf.put_u16(8);
+    buf.put_u64(route_family.as_u64());
+
+    // Route string
+    let route_bytes = route_str.as_bytes();
+    buf.put_u8(2);
+    buf.put_u16(route_bytes.len() as u16);
+    buf.put_slice(route_bytes);
+
+    // Payload
+    buf.put_u8(4); // Tag: Payload
+    buf.put_u16(payload.len() as u16);
+    buf.put_slice(payload);
+
+    buf.to_vec()
+}
+
+/// Encode an unsubscribe request frame
+fn encode_unsubscribe_request(
+    route_family: RouteFamily,
+    route_str: &str,
+    subscriber_id: u64,
+) -> Vec<u8> {
+    let mut buf = BytesMut::new();
+    let msg_type: u16 = 502; // UNSUBSCRIBE
+
+    if msg_type <= 254 {
+        buf.put_u8(msg_type as u8);
+    } else {
+        buf.put_u8(0xFF);
+        buf.put_u16(msg_type);
+    }
+
+    buf.put_u8(1);
+    buf.put_u16(8);
+    buf.put_u64(route_family.as_u64());
+
+    let route_bytes = route_str.as_bytes();
+    buf.put_u8(2);
+    buf.put_u16(route_bytes.len() as u16);
+    buf.put_slice(route_bytes);
+
+    buf.put_u8(3);
+    buf.put_u16(8);
+    buf.put_u64(subscriber_id);
+
+    buf.to_vec()
+}
+
+// ============================================================================
+// DIRECT INTEGRATION BENCHMARKS - Domain actor only (baseline)
+// ============================================================================
+
+fn bench_direct_subscribe_publish_unsubscribe(c: &mut Criterion) {
+    let mut group = c.benchmark_group("notice_direct_pubsub_workflow");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_secs(1));
-    group.throughput(Throughput::Elements(1));
+    group.throughput(Throughput::Elements(3)); // subscribe + publish + unsubscribe
+    group.warm_up_time(Duration::from_millis(100));
+    group.measurement_time(Duration::from_millis(500));
 
-    group.bench_function("notification_integration_subscribe_publish_fanout", |b| {
-        b.iter(|| {
-            let route = "notice://realm/area/events";
-            let _subscription_id = 1u64; // Simulated subscription
+    group.bench_function("direct_subscribe_publish_unsubscribe", |b| {
+        b.iter_batched(
+            || {
+                let actor = NoticeRouteActor::new(RouteFamily::new(1));
+                actor
+            },
+            |mut actor| {
+                let route_family = RouteFamily::new(1);
+                let route_str = "notice://realm/area/events";
+                let subscriber_id = 1;
+                let payload = b"test_event";
 
-            // Simulate: subscribe → publish → fanout
-            black_box(&actor);
-            black_box(&route);
-            black_box(&payload);
-        })
+                // Subscribe
+                let subscribe_msg = NoticeMessage::Subscribe {
+                    route_family,
+                    route: route_str.to_string(),
+                    subscriber_id,
+                };
+                let subscribe_addr = RouteAddress::from_str(route_str).unwrap();
+                let subscribe_env = Envelope::new(subscribe_addr.clone(), subscribe_msg);
+                let _ = actor.receive(subscribe_env);
+
+                // Publish
+                let publish_msg = NoticeMessage::Publish {
+                    route_family,
+                    route: route_str.to_string(),
+                    payload: payload.to_vec(),
+                    source_session_id: None,
+                };
+                let publish_env = Envelope::new(subscribe_addr.clone(), publish_msg);
+                let _ = actor.receive(publish_env);
+
+                // Unsubscribe
+                let unsubscribe_msg = NoticeMessage::Unsubscribe {
+                    route_family,
+                    route: route_str.to_string(),
+                    subscriber_id,
+                };
+                let unsubscribe_env = Envelope::new(subscribe_addr, unsubscribe_msg);
+                let _ = black_box(actor.receive(unsubscribe_env));
+            },
+            BatchSize::SmallInput,
+        )
     });
 
     group.finish();
 }
 
-fn bench_multisubscriber_fanout_workflow(c: &mut Criterion) {
-    //! MULTI-SUBSCRIBER FANOUT - Single publish fans out to many subscribers
-    //!
-    //! Target: <50µs p50 latency for 50-subscriber fanout
-    //! Throughput: 20k fanouts/sec at 50 subscribers
-    //!
-    //! Measures:
-    //! - Subscription index traversal
-    //! - Per-subscriber message queuing
-    //! - Bulk fanout efficiency
-    //! - Queue insertion amortization
+// ============================================================================
+// TCP INTEGRATION BENCHMARKS - Full socket stack
+// ============================================================================
 
-    let actor = NoticeRouteActor::new(RouteFamily::new(0));
-    let payload = Bytes::from_static(b"fanout message");
-
-    let mut group = c.benchmark_group("notification_integration_multisubscriber_fanout");
-    group.sample_size(10);
+fn bench_tcp_subscribe_publish_unsubscribe(c: &mut Criterion) {
+    let mut group = c.benchmark_group("notice_tcp_pubsub_workflow");
     group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(3));
+    group.warm_up_time(Duration::from_millis(200));
     group.measurement_time(Duration::from_secs(1));
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("notification_integration_fanout_50subscribers", |b| {
-        b.iter(|| {
-            let route = "notice://realm/area/events";
-            black_box(&actor);
-            black_box(&route);
-            black_box(&payload);
-        })
+    group.bench_function("tcp_subscribe_publish_unsubscribe", |b| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        b.to_async(&rt).iter_batched(
+            || {
+                let rt_handle = tokio::runtime::Handle::current();
+                rt_handle.block_on(async {
+                    let server = TestServer::start().await.unwrap();
+                    let client = server.connect().await.unwrap();
+                    (server, client)
+                })
+            },
+            |(server, mut client)| async move {
+                let route_family = RouteFamily::new(1);
+                let route_str = "notice://realm/area/events";
+                let subscriber_id = 1;
+
+                // Subscribe
+                let subscribe_frame =
+                    encode_subscribe_request(route_family, route_str, subscriber_id);
+                let _ = client.request(&subscribe_frame, 5000).await.unwrap();
+
+                // Publish
+                let publish_frame =
+                    encode_publish_request(route_family, route_str, b"test_event");
+                let _ = client.request(&publish_frame, 5000).await.unwrap();
+
+                // Unsubscribe
+                let unsubscribe_frame =
+                    encode_unsubscribe_request(route_family, route_str, subscriber_id);
+                let _ = black_box(client.request(&unsubscribe_frame, 5000).await.unwrap());
+
+                drop(server);
+            },
+            BatchSize::SmallInput,
+        )
     });
 
     group.finish();
 }
 
-fn bench_wildcard_pattern_matching_workflow(c: &mut Criterion) {
-    //! WILDCARD PATTERN MATCHING - Subscriptions with wildcard patterns
-    //!
-    //! Target: <40µs p50 latency for pattern matching
-    //! Throughput: 25k pattern-based fanouts/sec
-    //!
-    //! Measures:
-    //! - Trie-based pattern lookup cost
-    //! - Wildcard expansion overhead
-    //! - Multiple pattern matches per publish
-    //! - Subscription count impact on matching
+// ============================================================================
+// WEBSOCKET INTEGRATION BENCHMARKS - Full WS framing stack
+// ============================================================================
 
-    let actor = NoticeRouteActor::new(RouteFamily::new(0));
-    let payload = Bytes::from_static(b"wildcard pattern message");
-
-    let mut group = c.benchmark_group("notification_integration_wildcard_patterns");
-    group.sample_size(10);
+fn bench_ws_subscribe_publish_unsubscribe(c: &mut Criterion) {
+    let mut group = c.benchmark_group("notice_ws_pubsub_workflow");
     group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(3));
+    group.warm_up_time(Duration::from_millis(200));
     group.measurement_time(Duration::from_secs(1));
-    group.throughput(Throughput::Elements(1));
 
-    group.bench_function("notification_integration_wildcard_pattern_matching", |b| {
-        b.iter(|| {
-            // Simulate various pattern subscriptions
-            let patterns = vec![
-                "notice://realm/*/events",
-                "notice://realm/area/*",
-                "notice://*/area/events",
-            ];
+    group.bench_function("ws_subscribe_publish_unsubscribe", |b| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
 
-            let publish_route = "notice://realm/area/events";
+        b.to_async(&rt).iter_batched(
+            || {
+                let rt_handle = tokio::runtime::Handle::current();
+                rt_handle.block_on(async {
+                    let server = TestServer::start().await.unwrap();
+                    let ws_client = server.connect_ws().await.unwrap();
+                    (server, ws_client)
+                })
+            },
+            |(server, mut ws_client)| async move {
+                let route_family = RouteFamily::new(1);
+                let route_str = "notice://realm/area/events";
+                let subscriber_id = 1;
 
-            for pattern in &patterns {
-                black_box(pattern);
-                black_box(&actor);
-            }
+                // Subscribe
+                let subscribe_frame =
+                    encode_subscribe_request(route_family, route_str, subscriber_id);
+                let _ = ws_client.request(&subscribe_frame, 5000).await.unwrap();
 
-            black_box(&publish_route);
-            black_box(&payload);
-        })
+                // Publish
+                let publish_frame =
+                    encode_publish_request(route_family, route_str, b"test_event");
+                let _ = ws_client.request(&publish_frame, 5000).await.unwrap();
+
+                // Unsubscribe
+                let unsubscribe_frame =
+                    encode_unsubscribe_request(route_family, route_str, subscriber_id);
+                let _ = black_box(
+                    ws_client
+                        .request(&unsubscribe_frame, 5000)
+                        .await
+                        .unwrap()
+                );
+
+                drop(server);
+            },
+            BatchSize::SmallInput,
+        )
     });
-
-    group.finish();
-}
-
-fn bench_rapid_subscribe_unsubscribe_workflow(c: &mut Criterion) {
-    //! RAPID SUBSCRIBE/UNSUBSCRIBE - Quick subscription changes during publishing
-    //!
-    //! Target: <25µs p50 latency for subscribe/unsubscribe
-    //! Throughput: 40k+ subscription changes/sec
-    //!
-    //! Measures:
-    //! - Subscription ID allocation and reuse
-    //! - Trie insertion and removal efficiency
-    //! - Concurrent pub/sub operation handling
-    //! - Subscription metadata cleanup
-
-    let actor = NoticeRouteActor::new(RouteFamily::new(0));
-    let payload = Bytes::from_static(b"subscription change message");
-
-    let mut group = c.benchmark_group("notification_integration_rapid_subscribe_unsubscribe");
-    group.sample_size(10);
-    group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_secs(1));
-    group.throughput(Throughput::Elements(10)); // 10 operations
-
-    group.bench_function("notification_integration_5subscribe_5unsubscribe", |b| {
-        let mut sub_counter = 0u64;
-
-        b.iter(|| {
-            // Subscribe 5 times
-            for i in 0..5 {
-                let route = format!("notice://realm/area/topic{}", i);
-                sub_counter += 1;
-                black_box(&actor);
-                black_box(&route);
-            }
-
-            // Publish once to trigger fanout
-            black_box(&actor);
-            black_box(&payload);
-
-            // Unsubscribe 5 times
-            for i in 0..5 {
-                let sub_id = sub_counter - (5 - i) as u64;
-                black_box(&actor);
-                black_box(&sub_id);
-            }
-        })
-    });
-
-    group.finish();
-}
-
-fn bench_high_throughput_sustained_load(c: &mut Criterion) {
-    //! HIGH THROUGHPUT SUSTAINED LOAD - Continuous pub/sub at scale
-    //!
-    //! Target: <20µs p50 for mixed high-throughput operations
-    //! Throughput: 50k+ combined pub/sub ops/sec
-    //!
-    //! Measures:
-    //! - Sustained publishing rate
-    //! - Subscription index hot-path performance
-    //! - Memory cache effectiveness
-    //! - GC impact at high message rates
-
-    let actor = NoticeRouteActor::new(RouteFamily::new(0));
-    let payloads = [
-        Bytes::from_static(b"msg1"),
-        Bytes::from_static(b"msg2"),
-        Bytes::from_static(b"msg3"),
-        Bytes::from_static(b"msg4"),
-        Bytes::from_static(b"msg5"),
-    ];
-
-    let mut group = c.benchmark_group("notification_integration_high_throughput");
-    group.sample_size(10);
-    group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_secs(1));
-    group.throughput(Throughput::Elements(10)); // 10 publishes per iteration
-
-    group.bench_function(
-        "notification_integration_sustained_high_throughput_10publishes",
-        |b| {
-            let mut publish_counter = 0usize;
-
-            b.iter(|| {
-                // Rapid publish sequence (simulating high message rate)
-                for i in 0..10 {
-                    let topic = format!("notice://realm/area/topic{}", i % 5);
-                    let payload = &payloads[publish_counter % payloads.len()];
-                    publish_counter += 1;
-
-                    black_box(&actor);
-                    black_box(&topic);
-                    black_box(payload);
-                }
-            })
-        },
-    );
 
     group.finish();
 }
@@ -238,10 +298,8 @@ criterion_group! {
     name = benches;
     config = config::criterion_config();
     targets =
-        bench_complete_pubsub_workflow,
-        bench_multisubscriber_fanout_workflow,
-        bench_wildcard_pattern_matching_workflow,
-        bench_rapid_subscribe_unsubscribe_workflow,
-        bench_high_throughput_sustained_load,
+        bench_direct_subscribe_publish_unsubscribe,
+        bench_tcp_subscribe_publish_unsubscribe,
+        bench_ws_subscribe_publish_unsubscribe,
 }
 criterion_main!(benches);

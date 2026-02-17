@@ -1,15 +1,25 @@
 //! KV domain tier 4 integration benchmarks
 //!
-//! Full system pipeline with local disk storage (realistic)
-//! Measures operation latency through engine routing + domain handling with durable storage
-//! Includes domain context creation overhead, TLV serialization, routing
+//! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Uses local disk-backed Midge engine to reflect production conditions
+//! Tests three integration levels:
+//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 2. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
+//! 3. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
+//!
+//! This reveals where performance cliffs occur:
+//! - tier1 hotpath: ~100ns (pure sync operations)
+//! - tier2 subsystem: ~1µs (component integration)
+//! - tier3 system: ~10µs (domain + plumbing)
+//! - tier4 direct: ~100µs (+ disk I/O, no network)
+//! - tier4 tcp: ~Xms (+ socket overhead)
+//! - tier4 ws: ~Yms (+ WebSocket framing overhead)
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::create_local_bench_store;
 use fitz::domains::kv::{KvActor, KvMessage, TxMode};
+use fitz::protocol::kv_codec::msg_type;
 use fitz::runtime::routing::RouteFamily;
 use std::time::Duration;
 
@@ -294,6 +304,223 @@ fn bench_cross_family_transaction_sequence(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// TCP INTEGRATION BENCHMARKS - Full network stack
+// ============================================================================
+
+fn bench_tcp_begin_put_rollback(c: &mut Criterion) {
+    // Setup: Start server and connect TCP client
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    
+    let server = runtime.block_on(async {
+        fitz::testkit::TestServer::start().await.unwrap()
+    });
+
+    let mut client = runtime.block_on(async {
+        server.connect().await.unwrap()
+    });
+
+    // Precompute request frames
+    let begin_frame = encode_begin_request(
+        RouteFamily::new(1),
+        "tcp-bench",
+        "kv",
+        "transactions",
+        TxMode::ReadWrite,
+    );
+
+    let mut group = c.benchmark_group("kv_integration_tcp");
+    group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_secs(2));
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("tcp_begin_put_rollback_roundtrip", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                // Send BEGIN request
+                let response = client.request(&begin_frame, 5000).await.unwrap();
+                let tx_id = parse_begin_response(&response).unwrap();
+
+                // Send PUT request
+                let put_frame = encode_put_request(
+                    tx_id,
+                    RouteFamily::new(1),
+                    "transactions",
+                    b"tcp_key",
+                    b"tcp_value_with_some_length",
+                );
+                client.request(&put_frame, 5000).await.unwrap();
+
+                // Send ROLLBACK request
+                let rollback_frame = encode_rollback_request(tx_id);
+                client.request(&rollback_frame, 5000).await.unwrap();
+            })
+        })
+    });
+
+    group.finish();
+    drop(client);
+    drop(server);
+}
+
+// ============================================================================
+// WEBSOCKET INTEGRATION BENCHMARKS - Full WebSocket stack
+// ============================================================================
+
+fn bench_ws_begin_put_rollback(c: &mut Criterion) {
+    // Setup: Start server and connect WebSocket client
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    
+    let server = runtime.block_on(async {
+        fitz::testkit::TestServer::start().await.unwrap()
+    });
+
+    let mut ws_client = runtime.block_on(async {
+        server.connect_ws().await.unwrap()
+    });
+
+    // Precompute request frames (same as TCP, different framing)
+    let begin_frame = encode_begin_request(
+        RouteFamily::new(1),
+        "ws-bench",
+        "kv",
+        "transactions",
+        TxMode::ReadWrite,
+    );
+
+    let mut group = c.benchmark_group("kv_integration_ws");
+    group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_secs(2));
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("ws_begin_put_rollback_roundtrip", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                // Send BEGIN request
+                let response = ws_client.request(&begin_frame, 5000).await.unwrap();
+                let tx_id = parse_begin_response(&response).unwrap();
+
+                // Send PUT request
+                let put_frame = encode_put_request(
+                    tx_id,
+                    RouteFamily::new(1),
+                    "transactions",
+                    b"ws_key",
+                    b"ws_value_with_some_length",
+                );
+                ws_client.request(&put_frame, 5000).await.unwrap();
+
+                // Send ROLLBACK request
+                let rollback_frame = encode_rollback_request(tx_id);
+                ws_client.request(&rollback_frame, 5000).await.unwrap();
+            })
+        })
+    });
+
+    group.finish();
+    drop(ws_client);
+    drop(server);
+}
+
+// ============================================================================
+// TLV ENCODING HELPERS (match server protocol exactly)
+// ============================================================================
+
+fn encode_begin_request(
+    route_family: RouteFamily,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    mode: TxMode,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    
+    // Message type
+    buf.put_u16(msg_type::BEGIN);
+    
+    // Payload: [u8 mode][u32 route_len][route]
+    buf.put_u8(match mode {
+        TxMode::ReadOnly => 0,
+        TxMode::ReadWrite => 1,
+    });
+    
+    let route = format!("kv://{}/{}/{}", realm, area, resource);
+    buf.put_u32(route.len() as u32);
+    buf.extend_from_slice(route.as_bytes());
+    
+    buf
+}
+
+fn encode_put_request(
+    tx_id: u64,
+    route_family: RouteFamily,
+    resource: &str,
+    key: &[u8],
+    value: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    
+    // Message type
+    buf.put_u16(msg_type::PUT);
+    
+    // Payload: [u64 tx_id][u32 route_len][route][u32 key_len][key][u32 value_len][value]
+    buf.put_u64(tx_id);
+    
+    let route = format!("kv://{}", resource);
+    buf.put_u32(route.len() as u32);
+    buf.extend_from_slice(route.as_bytes());
+    
+    buf.put_u32(key.len() as u32);
+    buf.extend_from_slice(key);
+    
+    buf.put_u32(value.len() as u32);
+    buf.extend_from_slice(value);
+    
+    buf
+}
+
+fn encode_rollback_request(tx_id: u64) -> Vec<u8> {
+    let mut buf = Vec::new();
+    
+    // Message type
+    buf.put_u16(msg_type::ROLLBACK);
+    
+    // Payload: [u64 tx_id]
+    buf.put_u64(tx_id);
+    
+    buf
+}
+
+fn parse_begin_response(response: &[u8]) -> Result<u64, String> {
+    if response.is_empty() {
+        return Err("Empty response".to_string());
+    }
+    
+    let status = response[0];
+    if status != 0 {
+        return Err("BEGIN failed".to_string());
+    }
+    
+    if response.len() < 9 {
+        return Err("Response too short".to_string());
+    }
+    
+    let tx_id = u64::from_be_bytes([
+        response[1],
+        response[2],
+        response[3],
+        response[4],
+        response[5],
+        response[6],
+        response[7],
+        response[8],
+    ]);
+    
+    Ok(tx_id)
+}
+
 criterion_group! {
     name = benches;
     config = config::criterion_config();
@@ -301,6 +528,8 @@ criterion_group! {
         bench_full_pipeline_put,
         bench_full_pipeline_transaction_sequence,
         bench_multi_resource_transaction,
-        bench_cross_family_transaction_sequence
+        bench_cross_family_transaction_sequence,
+        bench_tcp_begin_put_rollback,
+        bench_ws_begin_put_rollback
 }
 criterion_main!(benches);
