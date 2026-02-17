@@ -54,7 +54,7 @@ parking_lot = "0.12"
 smallvec = "1.13"
 bincode = "1.3"
 tempfile = "3"
-cntryl-midge = { git = "https://github.com/cntryl/midge", branch = "main" }
+cntryl-midge = { git = "https://github.com/cntryl/midge", branch = "main", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main" }
 
 [dev-dependencies]

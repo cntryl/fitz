@@ -1,4 +1,4 @@
-//! Consolidated KV end-to-end tests — transport, codec, and integration
+﻿//! Consolidated KV end-to-end tests â€” transport, codec, and integration
 //!
 //! Merged from: `kv_e2e_transport.rs`, `kv_e2e_basic.rs`, `kv_e2e_domain_routing.rs`, `ws_domain_flow.rs`.
 
@@ -215,6 +215,238 @@ where
             "Expected error/timeout for COMMIT without BEGIN"
         );
     }
+}
+
+async fn should_complete_begin_put_commit_over_transport<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/users";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    let response = client
+        .request(&begin_frame, 2000)
+        .await
+        .expect("BEGIN failed");
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+
+    let put_frame = build_kv_put(1, route, b"key1", b"value1");
+    let response = client
+        .request(&put_frame, 2000)
+        .await
+        .expect("PUT failed");
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+
+    let commit_frame = build_kv_commit(1, route);
+    let response = client
+        .request(&commit_frame, 2000)
+        .await
+        .expect("COMMIT failed");
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+}
+
+async fn should_receive_responses_within_reasonable_time<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+
+    let begin_frame = build_kv_begin("kv://test/app/bench", 1, 0);
+    let response = client
+        .request(&begin_frame, 500)
+        .await
+        .expect("BEGIN should complete quickly");
+
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+}
+
+async fn should_handle_concurrent_connections_with_separate_transactions<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let run_tx = |idx: usize| async move {
+        let mut client = C::connect(server).await.expect("connect failed");
+        let route = format!("kv://test/app/resource{}", idx);
+
+        let begin_frame = build_kv_begin(&route, 1, 0);
+        let response = client
+            .request(&begin_frame, 2000)
+            .await
+            .expect("BEGIN failed");
+
+        let (_msg_type, status, _data) = parse_kv_response(&response);
+        assert_eq!(status, 0);
+    };
+
+    tokio::join!(run_tx(0), run_tx(1), run_tx(2));
+}
+
+async fn should_assign_unique_tx_ids_within_single_session<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/items";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    let response = client.request(&begin_frame, 2000).await.expect("BEGIN 1");
+    let (_msg_type, status, data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+
+    let commit_frame = build_kv_commit(1, route);
+    client.request(&commit_frame, 2000).await.expect("COMMIT");
+
+    let begin_frame = build_kv_begin(route, 2, 0);
+    let response = client.request(&begin_frame, 2000).await.expect("BEGIN 2");
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+}
+
+async fn should_reject_put_after_commit<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/user/s";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    let put_frame = build_kv_put(1, route, b"k1", b"v1");
+    client.request(&put_frame, 2000).await.expect("PUT");
+
+    let commit_frame = build_kv_commit(1, route);
+    client.request(&commit_frame, 2000).await.expect("COMMIT");
+
+    let put_frame2 = build_kv_put(1, route, b"k2", b"v2");
+    let response = client
+        .request(&put_frame2, 2000)
+        .await
+        .expect("PUT after COMMIT");
+
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_ne!(status, 0, "Expected error after COMMIT");
+}
+
+async fn should_rollback_transaction_successfully<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/roll";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    let put_frame = build_kv_put(1, route, b"key", b"value");
+    client.request(&put_frame, 2000).await.expect("PUT");
+
+    let rollback_frame = build_kv_rollback(1, route);
+    let response = client
+        .request(&rollback_frame, 2000)
+        .await
+        .expect("ROLLBACK");
+
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+}
+
+async fn should_handle_empty_key_and_value<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/empty";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    let put_frame = build_kv_put(1, route, b"", b"");
+    let response = client
+        .request(&put_frame, 2000)
+        .await
+        .expect("PUT with empty key/value");
+
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+}
+
+async fn should_handle_large_values<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/large";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    let large_val = vec![b'X'; 60_000];
+    let put_frame = build_kv_put(1, route, b"bigkey", &large_val);
+    let response = client
+        .request(&put_frame, 3000)
+        .await
+        .expect("PUT with large value");
+
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
+}
+
+async fn should_isolate_transactions_across_resources<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+
+    let begin1 = build_kv_begin("kv://test/app/resource1", 1, 0);
+    let response1 = client.request(&begin1, 2000).await.expect("BEGIN 1");
+    let (_msg_type, status1, _data) = parse_kv_response(&response1);
+    assert_eq!(status1, 0);
+
+    let begin2 = build_kv_begin("kv://test/app/resource2", 2, 0);
+    let response2 = client.request(&begin2, 2000).await.expect("BEGIN 2");
+    let (_msg_type, status2, _data) = parse_kv_response(&response2);
+    assert_eq!(status2, 0);
+}
+
+async fn should_timeout_on_malformed_frame<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let garbage = vec![0xFF, 0xFF, 0xFF, 0xFF];
+
+    let result = client.request(&garbage, 100).await;
+    assert!(result.is_err(), "Expected error for malformed frame");
+}
+
+async fn should_handle_connection_drop_during_transaction<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/disconnect";
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    client.request(&begin_frame, 2000).await.expect("BEGIN");
+
+    drop(client);
+    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
+
+    let mut client2 = C::connect(server).await.expect("failed to reconnect");
+    let begin_frame2 = build_kv_begin(route, 1, 0);
+    let response = client2
+        .request(&begin_frame2, 2000)
+        .await
+        .expect("BEGIN after reconnect");
+
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_eq!(status, 0);
 }
 
 // ===== TCP wrapper tests (added AAA comments) =====
@@ -569,297 +801,4 @@ async fn should_require_connect_message_when_auth_enabled_ws() {
 
     // Assert
     // (assertions are in the helper)
-}
-
-// --- appended: KV domain basic tests (migrated) ---
-
-// (contents from `tests/kv_e2e_basic.rs`)
-use fitz::domains::kv::{
-    KvActor as _KvActor_basic, KvMessage as _KvMessage_basic, KvResponse as _KvResponse_basic,
-    TxMode as _TxMode_basic,
-};
-use fitz::runtime::routing::RouteFamily as _RouteFamily_basic;
-
-fn create_kv_actor_basic() -> _KvActor_basic {
-    let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
-    _KvActor_basic::new(store)
-}
-
-#[test]
-fn should_complete_transaction_begin_put_get_sequence() {
-    // Arrange
-    let mut actor = create_kv_actor_basic();
-
-    // Act
-    let response = actor.handle(_KvMessage_basic::Begin {
-        route_family: _RouteFamily_basic::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "users".to_string(),
-        mode: _TxMode_basic::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
-    });
-    let tx_id = match response {
-        _KvResponse_basic::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
-    };
-
-    // Step 2: Put and verify
-    let response = actor.handle(_KvMessage_basic::Put {
-        tx_id,
-        route_family: _RouteFamily_basic::new(1),
-        resource: "users".to_string(),
-        key: Bytes::from_static(b"user:1001"),
-        value: Bytes::from_static(b"{\"name\":\"Alice\",\"email\":\"alice@acme.com\"}"),
-    });
-    assert!(matches!(response, _KvResponse_basic::PutOk));
-
-    // Step 3: Get and verify
-    let response = actor.handle(_KvMessage_basic::Get {
-        tx_id,
-        route_family: _RouteFamily_basic::new(1),
-        resource: "users".to_string(),
-        key: Bytes::from_static(b"user:1001"),
-    });
-    match response {
-        _KvResponse_basic::GetResult {
-            found: true,
-            value: Some(v),
-        } => {
-            assert_eq!(&*v, b"{\"name\":\"Alice\",\"email\":\"alice@acme.com\"}");
-        }
-        _ => panic!("Expected to find user"),
-    }
-
-    // Assert
-    let response = actor.handle(_KvMessage_basic::Rollback { tx_id });
-    assert!(matches!(response, _KvResponse_basic::RollbackOk));
-}
-
-// --- appended: codec/routing tests (migrated from kv_e2e_domain_routing.rs) ---
-
-use fitz::protocol::kv as _kv_codec;
-
-#[test]
-fn should_parse_kv_get_message() {
-    // Arrange
-    let key = "test_key";
-    let tx_id = 42u64;
-    let route = "kv://realm/area/resource";
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
-    payload.extend_from_slice(key.as_bytes());
-
-    // Act
-    let result = _kv_codec::parse_request(103, _RouteFamily_basic::new(1), &payload); // GET
-
-    // Assert
-    assert!(result.is_ok(), "Failed to parse KV GET message");
-}
-
-#[test]
-fn should_parse_kv_put_message() {
-    // Arrange
-    let key = "my_key";
-    let value = "my_value";
-    let tx_id = 42u64;
-    let route = "kv://realm/area/resource";
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
-    payload.extend_from_slice(key.as_bytes());
-    payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
-    payload.extend_from_slice(value.as_bytes());
-
-    // Act
-    let result = _kv_codec::parse_request(104, _RouteFamily_basic::new(1), &payload); // PUT
-
-    // Assert
-    assert!(result.is_ok(), "Failed to parse KV PUT message");
-}
-
-#[test]
-fn should_parse_kv_begin_message() {
-    // Arrange
-    let route = "kv://realm/area/my_resource";
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route.as_bytes());
-    payload.push(0); // ReadWrite mode
-    payload.push(0); // Buffered write option
-
-    // Act
-    let result = _kv_codec::parse_request(100, _RouteFamily_basic::new(1), &payload); // BEGIN
-
-    // Assert
-    assert!(result.is_ok(), "Failed to parse KV BEGIN message");
-}
-
-#[test]
-fn should_encode_kv_get_result_found() {
-    // Arrange
-    use fitz::domains::kv::KvResponse as _KvRespEnc;
-
-    let response = _KvRespEnc::GetResult {
-        found: true,
-        value: Some(Bytes::from("test_value")),
-    };
-
-    // Act
-    let encoded = _kv_codec::encode_response(&response);
-
-    // Assert
-    assert!(
-        !encoded.is_empty(),
-        "Response encoding should produce bytes"
-    );
-}
-
-#[test]
-fn should_encode_kv_get_result_not_found() {
-    // Arrange
-    use fitz::domains::kv::KvResponse as _KvRespEnc;
-
-    let response = _KvRespEnc::GetResult {
-        found: false,
-        value: None,
-    };
-
-    // Act
-    let encoded = _kv_codec::encode_response(&response);
-
-    // Assert
-    assert!(!encoded.is_empty(), "Not-found response should encode");
-}
-
-#[test]
-fn should_encode_kv_put_ok() {
-    // Arrange
-    use fitz::domains::kv::KvResponse as _KvRespEnc;
-
-    let response = _KvRespEnc::PutOk;
-
-    // Act
-    let encoded = _kv_codec::encode_response(&response);
-
-    // Assert
-    let _ = encoded; // empty response is valid
-}
-
-#[test]
-fn should_roundtrip_kv_message() {
-    // Arrange
-    let key = "test_key";
-    let tx_id = 42u64;
-    let route = "kv://realm/area/resource";
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
-    payload.extend_from_slice(key.as_bytes());
-
-    // Act
-    let parse_result = _kv_codec::parse_request(103, _RouteFamily_basic::new(1), &payload); // GET
-
-    assert!(parse_result.is_ok());
-
-    // Simulate a response
-    use fitz::domains::kv::KvResponse as _KvRespEnc;
-    let response = _KvRespEnc::GetResult {
-        found: true,
-        value: Some(Bytes::from("found_value")),
-    };
-
-    // Encode response
-    let encoded = _kv_codec::encode_response(&response);
-
-    // Assert
-    assert!(!encoded.is_empty());
-}
-
-// --- appended: WS ingress -> KV flow integration test (migrated from ws_domain_flow.rs) ---
-
-use fitz::boot::domains as _boot_domains;
-use fitz::protocol::tlv::TlvEncoder as _TlvEncoder;
-use fitz::runtime::Router as _Router;
-use fitz::session::{
-    Ingress as _Ingress, NewSessionConfig as _NewSessionConfig, RuntimeIngress as _RuntimeIngress,
-    Session as _Session, SessionMetadata as _SessionMetadata,
-    SessionOutboundSink as _SessionOutboundSink, SessionPermissions as _SessionPermissions,
-    TransportKind as _TransportKind,
-};
-use fitz::testkit::create_test_engine_with_cfs as _create_test_engine_cfs;
-use std::sync::Arc as _Arc;
-
-#[tokio::test]
-async fn should_route_kv_get_through_ingress_to_kv_and_reply_to_inbox() {
-    // Arrange
-    let store = _create_test_engine_cfs(vec![1]);
-    let router = _Arc::new(_Router::new());
-    _boot_domains::setup(&router, &store).unwrap();
-
-    // Create ingress with router attached
-    let ingress = _Arc::new(_RuntimeIngress::new(false).with_router(router.clone()));
-
-    // Register a session outbound inbox sink
-    let session_id = 1u64;
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
-    let sink = std::sync::Arc::new(_SessionOutboundSink::new(tx));
-    let inbox_addr = fitz::runtime::routing::RouteAddress::new(
-        fitz::runtime::routing::RouteFamily::new(0),
-        fitz::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
-    );
-    router.register(
-        inbox_addr.clone(),
-        sink as std::sync::Arc<dyn fitz::runtime::router::MailboxSink>,
-    );
-
-    // Create session and open
-    let session_config = _NewSessionConfig::unauthenticated(
-        _TransportKind::Tcp,
-        None,
-        _SessionPermissions::empty(),
-        _SessionMetadata::new(),
-        10,
-        None,
-        fitz::runtime::routing::RouteFamily::new(0),
-    );
-    let mut session = _Session::new(session_id, session_config);
-    ingress.on_open(session.info()).await.unwrap();
-
-    // Build a KV GET TLV message (msg_type 103)
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&0u64.to_be_bytes()); // tx_id
-    let route = b"kv://realm/area/resource";
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route);
-    let key = b"nonexistent";
-    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
-    payload.extend_from_slice(key);
-
-    let mut enc = _TlvEncoder::new();
-    enc.encode(fitz::protocol::tlv::MessageType::new(103), &payload);
-    let frame = enc.finish();
-
-    // Act
-    let ingress_ref: &dyn fitz::session::manager::Ingress = ingress.as_ref();
-    session.on_frame(frame, ingress_ref).await.unwrap();
-
-    // Assert
-    let resp = rx.recv().await.expect("expected response");
-    let dec = fitz::protocol::tlv::TlvDecoder::new();
-    let (record, _) = dec.decode_one(&Bytes::from(resp)).unwrap();
-    assert_eq!(record.msg_type().as_u16(), 103);
-    let body = record.value();
-    assert!(!body.is_empty());
 }

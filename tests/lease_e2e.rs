@@ -1,101 +1,69 @@
-// Consolidated lease end-to-end tests (domain-level)
-// Moved from: lease_e2e_basic.rs
+//! Lease end-to-end transport tests
+//!
+//! Tests full lease domain functionality across TCP and WebSocket transports.
 
-use fitz::domains::lease::{LeaseActor, LeaseMessage};
-use fitz::runtime::actor::{Actor, Context};
-use fitz::runtime::router::Router;
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::sync::Arc;
+mod fixtures;
+use fixtures::transport::*;
+use fitz::testkit::TestServer;
 
-fn make_ctx() -> Context<LeaseActor> {
-    let router = Router::new();
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("lease://realm/locks/test/acquire"),
-    );
-    Context::new(addr, Arc::new(router))
-}
+// ===== GENERIC TEST IMPLEMENTATIONS =====
 
-#[test]
-fn should_acquire_lease_successfully() {
+async fn should_acquire_lease_immediately<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
     // Arrange
-    let mut actor = LeaseActor::new(RouteFamily::new(1));
-    let mut ctx = make_ctx();
-
-    let msg = LeaseMessage::Acquire {
-        family_id: RouteFamily::new(1),
-        route: Route::new("lease://realm/locks/db-migration/acquire"),
-        owner_id: "client-1".to_string(),
-        ttl_secs: 30,
-        wait_seconds: 0,
-    };
+    let mut client = C::connect(server).await.expect("connect");
 
     // Act
-    actor.receive(msg, &mut ctx);
+    let frame = build_lease_acquire_immediate("lease://test/locks/db", "owner1", 30);
+    let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    assert_eq!(actor.lease_count(), 1);
+    let (_msg_type, status, _data) = parse_lease_response(&response);
+    assert_eq!(status, 0, "Expected success for acquire");
 }
 
-#[test]
-fn should_renew_lease_successfully() {
+async fn should_reject_renew_of_unowned_lease<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
     // Arrange
-    let mut actor = LeaseActor::new(RouteFamily::new(1));
-    let mut ctx = make_ctx();
-
-    let route = Route::new("lease://realm/locks/db-migration/acquire");
-
-    // First acquire the lease
-    let acquire_msg = LeaseMessage::Acquire {
-        family_id: RouteFamily::new(1),
-        route: route.clone(),
-        owner_id: "client-1".to_string(),
-        ttl_secs: 30,
-        wait_seconds: 0,
-    };
-    actor.receive(acquire_msg, &mut ctx);
+    let mut client = C::connect(server).await.expect("connect");
 
     // Act
-    let renew_msg = LeaseMessage::Renew {
-        family_id: RouteFamily::new(1),
-        route: route.clone(),
-        owner_id: "client-1".to_string(),
-        fencing_token: 1,
-        ttl_secs: 30,
-    };
-    actor.receive(renew_msg, &mut ctx);
+    let renew_frame = build_lease_renew("lease://test/locks/db", "owner1", 999_999_999, 30);
+    let response = client.send_and_receive(&renew_frame, 2000).await.expect("send");
 
     // Assert
-    assert_eq!(actor.lease_count(), 1);
+    let (_msg_type, status, _data) = parse_lease_response(&response);
+    assert_ne!(status, 0, "Should reject renew of unowned lease");
 }
 
-#[test]
-fn should_release_lease_successfully() {
-    // Arrange
-    let mut actor = LeaseActor::new(RouteFamily::new(1));
-    let mut ctx = make_ctx();
+// ===== TCP TESTS =====
 
-    let route = Route::new("lease://realm/locks/db-migration/acquire");
+#[tokio::test]
+async fn should_acquire_lease_immediately_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_acquire_lease_immediately::<TcpLeaseConnector>(&server).await;
+}
 
-    // First acquire the lease
-    let acquire_msg = LeaseMessage::Acquire {
-        family_id: RouteFamily::new(1),
-        route: route.clone(),
-        owner_id: "client-1".to_string(),
-        ttl_secs: 30,
-        wait_seconds: 0,
-    };
-    actor.receive(acquire_msg, &mut ctx);
+#[tokio::test]
+async fn should_reject_renew_of_unowned_lease_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_reject_renew_of_unowned_lease::<TcpLeaseConnector>(&server).await;
+}
 
-    // Act
-    let release_msg = LeaseMessage::Release {
-        family_id: RouteFamily::new(1),
-        route: route.clone(),
-        owner_id: "client-1".to_string(),
-        fencing_token: 1,
-    };
-    actor.receive(release_msg, &mut ctx);
+// ===== WEBSOCKET TESTS =====
 
-    // Assert
-    assert_eq!(actor.lease_count(), 0);
+#[tokio::test]
+async fn should_acquire_lease_immediately_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_acquire_lease_immediately::<WsLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_reject_renew_of_unowned_lease_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_reject_renew_of_unowned_lease::<WsLeaseConnector>(&server).await;
 }

@@ -3,6 +3,7 @@
 use crate::boot::runtime::{BootConfig, BootResult, StorageMode};
 use std::sync::Arc;
 use tracing::info;
+use cntryl_midge::testkit::MidgeOptions;
 
 /// Initialize Midge storage engine based on configured storage mode
 ///
@@ -63,7 +64,7 @@ fn ensure_column_families(engine: &cntryl_midge::Engine) -> BootResult<()> {
 async fn init_memory(_config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
-    let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+    let store = cntryl_midge::Engine::open_with_options(MidgeOptions::default())
         .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
 
     ensure_column_families(&store)?;
@@ -86,7 +87,7 @@ async fn init_local_disk(
         .await
         .map_err(|e| format!("Failed to create storage directory {}: {}", db_path, e))?;
 
-    let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+    let store = cntryl_midge::Engine::open_with_options(MidgeOptions::default())
         .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
 
     ensure_column_families(&store)?;
@@ -142,7 +143,7 @@ async fn init_cloud(
 
     // For now, cloud storage requires actual Midge cloud support
     // This would be implemented when Midge adds cloud backend support
-    let store = cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+    let store = cntryl_midge::Engine::open_with_options(MidgeOptions::default())
         .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
 
     ensure_column_families(&store)?;
