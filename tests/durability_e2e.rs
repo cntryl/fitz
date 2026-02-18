@@ -128,8 +128,9 @@ where
         // Assert
         let (_msg_type, status, data) = parse_kv_response(&get_response);
         assert_eq!(status, 0, "GET after reconnect should succeed");
+        let value = fixtures::transport::extract_kv_value(&data).expect("extract value");
         assert_eq!(
-            data, b"persistent-value",
+            value, b"persistent-value",
             "Data should persist across reconnect"
         );
     }
@@ -363,7 +364,7 @@ where
     {
         let mut client1 = C1::connect(server).await.expect("connect 1");
 
-        let acquire_frame = build_lease_acquire_immediate("lease://test/cleanup", "owner1", 60);
+        let acquire_frame = build_lease_acquire_immediate("lease://test/locks/cleanup", "owner1", 60);
         let response = client1
             .send_and_receive(&acquire_frame, 2000)
             .await
@@ -380,7 +381,7 @@ where
     {
         let mut client2 = C2::connect(server).await.expect("connect 2");
 
-        let acquire_frame = build_lease_acquire_immediate("lease://test/cleanup", "owner2", 60);
+        let acquire_frame = build_lease_acquire_immediate("lease://test/locks/cleanup", "owner2", 60);
         let response = client2
             .send_and_receive(&acquire_frame, 2000)
             .await
@@ -418,7 +419,7 @@ where
     {
         let mut owner = C1::connect(server).await.expect("owner connect");
 
-        let acquire_frame = build_lease_acquire_immediate("lease://test/queue", "owner", 60);
+        let acquire_frame = build_lease_acquire_immediate("lease://test/locks/queue", "owner", 60);
         let response = owner
             .send_and_receive(&acquire_frame, 2000)
             .await
@@ -436,7 +437,7 @@ where
     {
         let mut waiter1 = C2::connect(server).await.expect("waiter1 connect");
 
-        let acquire_frame = build_lease_acquire_immediate("lease://test/queue", "waiter1", 60);
+        let acquire_frame = build_lease_acquire_immediate("lease://test/locks/queue", "waiter1", 60);
         let response = waiter1
             .send_and_receive(&acquire_frame, 2000)
             .await

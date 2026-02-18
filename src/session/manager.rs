@@ -726,12 +726,20 @@ impl Ingress for RuntimeIngress {
                 route_family,
                 crate::runtime::routing::Route::new("schedule://cleanup"),
             );
-            let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup);
+            let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
             let _ = router.route(schedule_envelope);
+
+            // Send cleanup to Lease domain
+            let lease_addr = crate::runtime::routing::RouteAddress::new(
+                route_family,
+                crate::runtime::routing::Route::new("lease://cleanup"),
+            );
+            let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup);
+            let _ = router.route(lease_envelope);
 
             tracing::debug!(
                 session_id = session_id,
-                "Ingress: dispatched cleanup to KV, Notice, Stream, and Schedule domains"
+                "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, and Lease domains"
             );
         }
 
