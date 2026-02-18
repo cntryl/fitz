@@ -1462,6 +1462,7 @@ mod tests {
             value: Bytes::from("v2"),
         });
 
+        // Assert
         // Commit first tx (expected OK)
         let c1 = actor.handle(KvMessage::Commit { tx_id: tx1 });
         assert!(matches!(c1, KvResponse::CommitOk));

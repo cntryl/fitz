@@ -348,8 +348,13 @@ pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        // Return msg_type (as u8), status, and data portion (skipping status byte)
+        let data = if payload.len() > 1 {
+            payload[1..].to_vec()
+        } else {
+            Vec::new()
+        };
+        return ((msg_type & 0xFF) as u8, status, data);
     }
 
     // Fallback if no data
@@ -534,6 +539,20 @@ impl RpcConnector for WsRpcConnector {
     }
 }
 
+/// Build RPC SUBSCRIBE frame (msg_type 300)
+pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    // Wire format: [string worker_addr]
+    let mut buf = Vec::new();
+    buf.put_u32(worker_addr.len() as u32);
+    buf.put_slice(worker_addr.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(300, &buf);
+    builder.build()
+}
+
 /// Build RPC REQUEST frame (msg_type 302)
 pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> {
     use bytes::BufMut;
@@ -565,6 +584,26 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
     builder.build()
 }
 
+/// Build RPC RESPONSE frame for workers (msg_type 303)
+pub fn build_rpc_response_delivery(
+    correlation_id: uuid::Uuid,
+    seq: u64,
+    stream_end: bool,
+    body: &[u8],
+) -> Vec<u8> {
+    use fitz::protocol::tlv_codec::TlvEncoder;
+
+    let mut enc = TlvEncoder::new();
+    enc.put_bytes(correlation_id.as_bytes());
+    enc.put_u64(seq);
+    enc.put_bytes(body);
+    enc.put_u8(stream_end as u8);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(303, &enc.finish());
+    builder.build()
+}
+
 /// Parse RPC response
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());
@@ -579,6 +618,96 @@ pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     // Fallback if no data
     (0, 1, Vec::new())
+}
+
+pub struct RpcRequestDelivery {
+    pub msg_type: u16,
+    pub correlation_id: uuid::Uuid,
+    pub route: String,
+    pub reply_route: String,
+    pub body: Vec<u8>,
+}
+
+pub struct RpcResponseDelivery {
+    pub msg_type: u16,
+    pub correlation_id: uuid::Uuid,
+    pub seq: u64,
+    pub body: Vec<u8>,
+    pub stream_end: bool,
+}
+
+/// Parse RPC REQUEST delivery (msg_type 302) sent to workers
+pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, String> {
+    use fitz::protocol::tlv_codec::TlvDecoder;
+
+    let mut parser = TlvFrameParser::new(frame.to_vec());
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing RPC request delivery frame".to_string())?;
+    if msg_type != 302 {
+        return Err(format!("Unexpected RPC request msg_type: {}", msg_type));
+    }
+
+    let mut dec = TlvDecoder::new(&payload);
+    let correlation_id_bytes = dec.get_bytes()?;
+    if correlation_id_bytes.len() != 16 {
+        return Err("Correlation ID must be 16 bytes".to_string());
+    }
+    let mut uuid_bytes = [0u8; 16];
+    uuid_bytes.copy_from_slice(&correlation_id_bytes);
+    let correlation_id = uuid::Uuid::from_bytes(uuid_bytes);
+
+    let route = dec.get_string()?;
+    let reply_route = dec.get_string()?;
+    let body = dec.get_bytes()?.to_vec();
+    if !dec.is_complete() {
+        return Err("Trailing data in RPC request delivery".to_string());
+    }
+
+    Ok(RpcRequestDelivery {
+        msg_type,
+        correlation_id,
+        route,
+        reply_route,
+        body,
+    })
+}
+
+/// Parse RPC RESPONSE delivery (msg_type 303) received by callers
+pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, String> {
+    use fitz::protocol::tlv_codec::TlvDecoder;
+
+    let mut parser = TlvFrameParser::new(frame.to_vec());
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing RPC response delivery frame".to_string())?;
+    if msg_type != 303 {
+        return Err(format!("Unexpected RPC response msg_type: {}", msg_type));
+    }
+
+    let mut dec = TlvDecoder::new(&payload);
+    let correlation_id_bytes = dec.get_bytes()?;
+    if correlation_id_bytes.len() != 16 {
+        return Err("Correlation ID must be 16 bytes".to_string());
+    }
+    let mut uuid_bytes = [0u8; 16];
+    uuid_bytes.copy_from_slice(&correlation_id_bytes);
+    let correlation_id = uuid::Uuid::from_bytes(uuid_bytes);
+
+    let seq = dec.get_u64()?;
+    let body = dec.get_bytes()?.to_vec();
+    let stream_end = dec.get_u8()? != 0;
+    if !dec.is_complete() {
+        return Err("Trailing data in RPC response delivery".to_string());
+    }
+
+    Ok(RpcResponseDelivery {
+        msg_type,
+        correlation_id,
+        seq,
+        body,
+        stream_end,
+    })
 }
 
 // ============================================================================
@@ -1017,8 +1146,13 @@ pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        // Return msg_type (as u8), status, and data portion (skipping status byte)
+        let data = if payload.len() > 1 {
+            payload[1..].to_vec()
+        } else {
+            Vec::new()
+        };
+        return ((msg_type & 0xFF) as u8, status, data);
     }
 
     // Fallback if no data
@@ -1036,7 +1170,13 @@ pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
     Ok(u64::from_be_bytes(bytes))
 }
 
-/// Parse KV value from response
-pub fn parse_kv_value(data: &[u8]) -> Vec<u8> {
-    data.to_vec()
+/// Parse KV value from GET response
+/// Data format (after status removed): [found:u8][len:u32][value:bytes...]
+pub fn parse_kv_get_value(data: &[u8]) -> Vec<u8> {
+    // Skip: found (1) + len (4) = 5 bytes
+    if data.len() > 5 {
+        data[5..].to_vec()
+    } else {
+        Vec::new()
+    }
 }

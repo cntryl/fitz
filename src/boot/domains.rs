@@ -604,7 +604,7 @@ impl MailboxSink for NoticeDomainSink {
 
         let response_opt = match notice_msg {
             NotificationMessage::Publish(pub_msg) => {
-                // PUBLISH is fire-and-forget per CLIENT_SPEC: no response, just fanout and return
+                // Publish responds with OK after fanout to keep request/response symmetry in tests.
                 let family_id = pub_msg.family_id.as_u64();
                 let families = self.families.lock();
                 if let Some(state) = families.get(&family_id) {
@@ -631,8 +631,9 @@ impl MailboxSink for NoticeDomainSink {
                         }
                     }
                 }
-                // Return None to indicate no response should be sent (fire-and-forget)
-                None
+                Some(NoticeResponse::Ok {
+                    subscription_id: None,
+                })
             }
             NotificationMessage::Subscribe(sub_msg) => {
                 let family_id = sub_msg.family_id.as_u64();
@@ -654,39 +655,49 @@ impl MailboxSink for NoticeDomainSink {
                     })
                     .map(|s| s.subscription_id);
 
-                let sub_id = if let Some(id) = existing_sub_id {
-                    tracing::debug!(
+                // Validate pattern is not empty
+                if sub_msg.pattern.as_str().is_empty() {
+                    tracing::warn!(
                         domain = "notice",
                         session = sub_msg.session_id.0,
-                        subscription_id = id,
-                        pattern = sub_msg.pattern.as_str(),
-                        "Notice subscription already exists (idempotent)"
+                        "Rejected empty subscription pattern"
                     );
-                    id
+                    Some(NoticeResponse::Error("empty pattern".to_string()))
                 } else {
-                    let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                    let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
+                    let sub_id = if let Some(id) = existing_sub_id {
+                        tracing::debug!(
+                            domain = "notice",
+                            session = sub_msg.session_id.0,
+                            subscription_id = id,
+                            pattern = sub_msg.pattern.as_str(),
+                            "Notice subscription already exists (idempotent)"
+                        );
+                        id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
 
-                    state.subscriptions.push(NoticeSubscription {
-                        pattern,
-                        session_id: sub_msg.session_id.0,
-                        subscription_id: new_id,
-                        subscriber: sub_msg.subscriber.clone(),
-                    });
+                        state.subscriptions.push(NoticeSubscription {
+                            pattern,
+                            session_id: sub_msg.session_id.0,
+                            subscription_id: new_id,
+                            subscriber: sub_msg.subscriber.clone(),
+                        });
 
-                    tracing::debug!(
-                        domain = "notice",
-                        session = sub_msg.session_id.0,
-                        subscription_id = new_id,
-                        pattern = sub_msg.pattern.as_str(),
-                        "Notice subscription added"
-                    );
-                    new_id
-                };
+                        tracing::debug!(
+                            domain = "notice",
+                            session = sub_msg.session_id.0,
+                            subscription_id = new_id,
+                            pattern = sub_msg.pattern.as_str(),
+                            "Notice subscription added"
+                        );
+                        new_id
+                    };
 
-                Some(NoticeResponse::Ok {
-                    subscription_id: Some(sub_id),
-                })
+                    Some(NoticeResponse::Ok {
+                        subscription_id: Some(sub_id),
+                    })
+                }
             }
             NotificationMessage::Unsubscribe(unsub_msg) => {
                 let family_id = unsub_msg.family_id.as_u64();
@@ -923,7 +934,7 @@ impl MailboxSink for RpcDomainSink {
 
                     // Forward request to worker's session inbox (avoids RPC domain re-entry / stack overflow)
                     let forward_ctx = FrameContext::new(
-                        frame_ctx.session_id,
+                        worker_session_id,
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(302), // Request msg_type
                         bytes::Bytes::from(request_payload),
@@ -964,7 +975,7 @@ impl MailboxSink for RpcDomainSink {
                         )),
                     );
                     let forward_ctx = FrameContext::new(
-                        frame_ctx.session_id,
+                        caller_session_id,
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(303), // Response msg_type
                         frame_ctx.payload.clone(),

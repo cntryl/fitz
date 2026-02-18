@@ -248,14 +248,13 @@ fn should_upsert_schedule_by_route() {
     let mut actor = make_schedule_actor();
     let route = "schedule://acme/jobs/backup".to_string();
 
-    // Act - Create initial schedule
+    // Act - Create initial schedule and replace with new cron
     let response1 = actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: "0 2 * * *".to_string(),
         payload: Bytes::from("config-v1"),
     });
 
-    // Act - Update same route with different cron
     let response2 = actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: "0 3 * * *".to_string(), // Changed from 2 AM to 3 AM

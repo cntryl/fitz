@@ -510,6 +510,7 @@ fn should_preserve_fifo_order_through_single_waiter_lifecycle() {
     };
     let status = actor.handle_message(query, &mut ctx).unwrap();
 
+    // Assert
     match status {
         LeaseResponse::Status {
             pending_waiters, ..
@@ -621,11 +622,14 @@ fn should_isolate_timers_across_separate_leases() {
     };
     let _ = actor.handle_message(acquire_b_waiter, &mut ctx).unwrap();
 
+    // Act
     let query_a = LeaseMessage::Query {
         family_id: fam,
         route: route_a.clone(),
     };
     let status_a = actor.handle_message(query_a, &mut ctx).unwrap();
+
+    // Assert
 
     match status_a {
         LeaseResponse::Status {

@@ -469,7 +469,7 @@ where
     // Assert
     let (_msg_type, status, data) = parse_kv_response(&get_response);
     assert_eq!(status, 0, "GET should succeed");
-    assert_eq!(data, b"value1", "GET should return correct value");
+    assert_eq!(parse_kv_get_value(&data), b"value1", "GET should return correct value");
 }
 
 async fn should_execute_multiple_puts_in_transaction<C>(server: &TestServer)
@@ -552,7 +552,7 @@ where
 
     let (_msg_type, status, data1) = parse_kv_response(&get1_response);
     assert_eq!(status, 0);
-    assert_eq!(data1, b"1");
+    assert_eq!(parse_kv_get_value(&data1), b"1");
 
     // Act - PUT new value (overwrite)
     let put2_frame = build_kv_put(1, route, b"counter", b"2");
@@ -574,7 +574,7 @@ where
     // Assert
     let (_msg_type, status, data2) = parse_kv_response(&get2_response);
     assert_eq!(status, 0);
-    assert_eq!(data2, b"2", "GET should return updated value");
+    assert_eq!(parse_kv_get_value(&data2), b"2", "GET should return updated value");
 }
 
 async fn should_verify_get_succeeds_after_put_commit<C>(server: &TestServer)
@@ -600,15 +600,21 @@ where
 
     // Act - Second transaction: BEGIN, GET to verify persistence
     let begin2_frame = build_kv_begin(route, 1, 0);
-    client.request(&begin2_frame, 2000).await.expect("BEGIN 2");
+    let begin2_response = client.request(&begin2_frame, 2000).await.expect("BEGIN 2");
 
-    let get_frame = build_kv_get(1, route, b"persistent");
+    let (_msg_type, status, data) = parse_kv_response(&begin2_response);
+    assert_eq!(status, 0, "Second BEGIN should succeed");
+    let tx_id2 = u64::from_be_bytes([
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+    ]);
+
+    let get_frame = build_kv_get(tx_id2, route, b"persistent");
     let get_response = client.request(&get_frame, 2000).await.expect("GET failed");
 
     // Assert
     let (_msg_type, status, data) = parse_kv_response(&get_response);
     assert_eq!(status, 0, "GET should succeed");
-    assert_eq!(data, b"data", "GET should retrieve committed data");
+    assert_eq!(parse_kv_get_value(&data), b"data", "GET should retrieve committed data");
 }
 
 async fn should_handle_large_batch_writes_in_transaction<C>(server: &TestServer)

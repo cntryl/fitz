@@ -348,16 +348,45 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_tcp() {
     let mut rpc_client = TcpRpcConnector::connect(&server)
         .await
         .expect("rpc connect");
+    let mut rpc_worker = TestClient::new(server.tcp_addr)
+        .await
+        .expect("rpc worker connect");
     let mut stream_client = TcpStreamConnector::connect(&server)
         .await
         .expect("stream connect");
 
+    let subscribe_frame = build_rpc_subscribe("rpc://test/services/processor");
+    let subscribe_response = rpc_worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("rpc subscribe");
+    let (_msg_type, status, _data) = parse_rpc_response(&subscribe_response);
+    assert_eq!(status, 0, "RPC worker subscribe should succeed");
+
     // Act
     let rpc_frame = build_rpc_request("rpc://test/services/processor", "process", b"input-data");
-    let rpc_response = rpc_client
-        .send_and_receive(&rpc_frame, 2000)
+    // Spawn RPC request as concurrent task so frame is sent while worker waits for delivery
+    let mut rpc_client_handle = rpc_client;
+    let rpc_response_handle = tokio::spawn(async move {
+        rpc_client_handle.send_and_receive(&rpc_frame, 2000).await
+    });
+
+    // Give the RPC request time to start executing
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+    let request_frame = rpc_worker
+        .recv_frame(2000)
         .await
-        .expect("rpc request");
+        .expect("rpc work item");
+    let delivery = parse_rpc_request_delivery(&request_frame).expect("parse rpc work item");
+    let response_frame = build_rpc_response_delivery(delivery.correlation_id, 0, true, b"ok");
+    rpc_worker
+        .send_frame(&response_frame)
+        .await
+        .expect("rpc response send");
+    let _ = rpc_worker.recv_frame(2000).await;
+
+    let rpc_response = rpc_response_handle.await.expect("join").expect("rpc request");
 
     // Create stream session
     let begin_frame = build_stream_begin("stream://test/stream/results/write", 0);
@@ -375,8 +404,9 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_tcp() {
         .expect("stream append");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&rpc_response);
-    assert_eq!(status, 0, "RPC request should succeed");
+    let response_delivery =
+        parse_rpc_response_delivery(&rpc_response).expect("parse rpc response");
+    assert!(response_delivery.stream_end, "RPC response should complete");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
     assert_eq!(
         status, 0,
@@ -391,16 +421,45 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_ws() {
 
     // Arrange
     let mut rpc_client = WsRpcConnector::connect(&server).await.expect("rpc connect");
+    let mut rpc_worker = TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr))
+        .await
+        .expect("rpc worker connect");
     let mut stream_client = WsStreamConnector::connect(&server)
         .await
         .expect("stream connect");
 
+    let subscribe_frame = build_rpc_subscribe("rpc://test/services/processor");
+    let subscribe_response = rpc_worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("rpc subscribe");
+    let (_msg_type, status, _data) = parse_rpc_response(&subscribe_response);
+    assert_eq!(status, 0);
+
     // Act
     let rpc_frame = build_rpc_request("rpc://test/services/processor", "process", b"input-data");
-    let rpc_response = rpc_client
-        .send_and_receive(&rpc_frame, 2000)
+    // Spawn RPC request as concurrent task so frame is sent while worker waits for delivery
+    let mut rpc_client_handle = rpc_client;
+    let rpc_response_handle = tokio::spawn(async move {
+        rpc_client_handle.send_and_receive(&rpc_frame, 2000).await
+    });
+
+    // Give the RPC request time to start executing
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+    let request_frame = rpc_worker
+        .recv_frame(2000)
         .await
-        .expect("rpc request");
+        .expect("rpc work item");
+    let delivery = parse_rpc_request_delivery(&request_frame).expect("parse rpc work item");
+    let response_frame = build_rpc_response_delivery(delivery.correlation_id, 0, true, b"ok");
+    rpc_worker
+        .send_frame(&response_frame)
+        .await
+        .expect("rpc response send");
+    let _ = rpc_worker.recv_frame(2000).await;
+
+    let rpc_response = rpc_response_handle.await.expect("join").expect("rpc request");
 
     // Create stream session
     let begin_frame = build_stream_begin("stream://test/stream/results/write", 0);
@@ -418,8 +477,9 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_ws() {
         .expect("stream append");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&rpc_response);
-    assert_eq!(status, 0);
+    let response_delivery =
+        parse_rpc_response_delivery(&rpc_response).expect("parse rpc response");
+    assert!(response_delivery.stream_end);
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
     assert_eq!(status, 0);
 }
@@ -433,9 +493,20 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
     let mut rpc_client = TcpRpcConnector::connect(&server)
         .await
         .expect("rpc connect");
+    let mut rpc_worker = TestClient::new(server.tcp_addr)
+        .await
+        .expect("rpc worker connect");
     let mut stream_client = TcpStreamConnector::connect(&server)
         .await
         .expect("stream connect");
+
+    let subscribe_frame = build_rpc_subscribe("rpc://test/services/api");
+    let subscribe_response = rpc_worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("rpc subscribe");
+    let (_msg_type, status, _data) = parse_rpc_response(&subscribe_response);
+    assert_eq!(status, 0, "RPC worker subscribe should succeed");
 
     // Act
     // Create stream session first
@@ -448,20 +519,56 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
     let rpc1_frame = build_rpc_request("rpc://test/services/api", "getConfig", b"");
-    let rpc1_response = rpc_client
-        .send_and_receive(&rpc1_frame, 2000)
+    // Spawn RPC request as concurrent task so frame is sent while worker waits for delivery
+    let mut rpc_client_handle = rpc_client;
+    let rpc1_response_handle = tokio::spawn(async move {
+        rpc_client_handle.send_and_receive(&rpc1_frame, 2000).await
+    });
+
+    // Give the RPC request time to start executing 
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    let request_frame = rpc_worker
+        .recv_frame(2000)
         .await
-        .expect("rpc 1");
+        .expect("rpc work item 1");
+    let delivery = parse_rpc_request_delivery(&request_frame).expect("parse rpc work item 1");
+    let response_frame = build_rpc_response_delivery(delivery.correlation_id, 0, true, b"ok");
+    rpc_worker
+        .send_frame(&response_frame)
+        .await
+        .expect("rpc response 1 send");
+    let _ = rpc_worker.recv_frame(2000).await;
+    let rpc1_response = rpc1_response_handle.await.expect("join").expect("rpc 1");
     let append1_frame = build_stream_append(session_id, b"config-requested");
     let append1_response = stream_client
         .send_and_receive(&append1_frame, 2000)
         .await
         .expect("append 1");
-    let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
-    let rpc2_response = rpc_client
-        .send_and_receive(&rpc2_frame, 2000)
+
+    // For second RPC, we need a new client since the first was moved
+    let mut rpc_client2 = TcpRpcConnector::connect(&server)
         .await
-        .expect("rpc 2");
+        .expect("rpc client 2");
+    let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
+    let mut rpc_client2_handle = rpc_client2;
+    let rpc2_response_handle = tokio::spawn(async move {
+        rpc_client2_handle.send_and_receive(&rpc2_frame, 2000).await
+    });
+
+    // Give the RPC request time to start executing
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    let request_frame = rpc_worker
+        .recv_frame(2000)
+        .await
+        .expect("rpc work item 2");
+    let delivery = parse_rpc_request_delivery(&request_frame).expect("parse rpc work item 2");
+    let response_frame = build_rpc_response_delivery(delivery.correlation_id, 0, true, b"ok");
+    rpc_worker
+        .send_frame(&response_frame)
+        .await
+        .expect("rpc response 2 send");
+    let _ = rpc_worker.recv_frame(2000).await;
+    let rpc2_response = rpc2_response_handle.await.expect("join").expect("rpc 2");
     let append2_frame = build_stream_append(session_id, b"config-updated");
     let append2_response = stream_client
         .send_and_receive(&append2_frame, 2000)
@@ -469,12 +576,14 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
         .expect("append 2");
 
     // Assert
-    let (_msg_type, status1, _data) = parse_rpc_response(&rpc1_response);
-    assert_eq!(status1, 0);
+    let response_delivery =
+        parse_rpc_response_delivery(&rpc1_response).expect("parse rpc response 1");
+    assert!(response_delivery.stream_end);
     let (_msg_type, status, _data) = parse_stream_response(&append1_response);
     assert_eq!(status, 0);
-    let (_msg_type, status2, _data) = parse_rpc_response(&rpc2_response);
-    assert_eq!(status2, 0);
+    let response_delivery =
+        parse_rpc_response_delivery(&rpc2_response).expect("parse rpc response 2");
+    assert!(response_delivery.stream_end);
     let (_msg_type, status, _data) = parse_stream_response(&append2_response);
     assert_eq!(
         status, 0,
@@ -489,9 +598,20 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
 
     // Arrange
     let mut rpc_client = WsRpcConnector::connect(&server).await.expect("rpc connect");
+    let mut rpc_worker = TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr))
+        .await
+        .expect("rpc worker connect");
     let mut stream_client = WsStreamConnector::connect(&server)
         .await
         .expect("stream connect");
+
+    let subscribe_frame = build_rpc_subscribe("rpc://test/services/api");
+    let subscribe_response = rpc_worker
+        .request(&subscribe_frame, 2000)
+        .await
+        .expect("rpc subscribe");
+    let (_msg_type, status, _data) = parse_rpc_response(&subscribe_response);
+    assert_eq!(status, 0);
 
     // Act
     // Create stream session first
@@ -504,20 +624,54 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
     let rpc1_frame = build_rpc_request("rpc://test/services/api", "getConfig", b"");
-    let rpc1_response = rpc_client
-        .send_and_receive(&rpc1_frame, 2000)
+    // Spawn RPC request as concurrent task so frame is sent while worker waits for delivery
+    let mut rpc_client_handle = rpc_client;
+    let rpc1_response_handle = tokio::spawn(async move {
+        rpc_client_handle.send_and_receive(&rpc1_frame, 2000).await
+    });
+
+    // Give the RPC request time to start executing
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    let request_frame = rpc_worker
+        .recv_frame(2000)
         .await
-        .expect("rpc 1");
+        .expect("rpc work item 1");
+    let delivery = parse_rpc_request_delivery(&request_frame).expect("parse rpc work item 1");
+    let response_frame = build_rpc_response_delivery(delivery.correlation_id, 0, true, b"ok");
+    rpc_worker
+        .send_frame(&response_frame)
+        .await
+        .expect("rpc response 1 send");
+    let _ = rpc_worker.recv_frame(2000).await;
+    let rpc1_response = rpc1_response_handle.await.expect("join").expect("rpc 1");
     let append1_frame = build_stream_append(session_id, b"config-requested");
     let append1_response = stream_client
         .send_and_receive(&append1_frame, 2000)
         .await
         .expect("append 1");
+
+    // For second RPC, we need a new client since the first was moved
+    let mut rpc_client2 = WsRpcConnector::connect(&server).await.expect("rpc client 2");
     let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
-    let rpc2_response = rpc_client
-        .send_and_receive(&rpc2_frame, 2000)
+    let mut rpc_client2_handle = rpc_client2;
+    let rpc2_response_handle = tokio::spawn(async move {
+        rpc_client2_handle.send_and_receive(&rpc2_frame, 2000).await
+    });
+
+    // Give the RPC request time to start executing
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    let request_frame = rpc_worker
+        .recv_frame(2000)
         .await
-        .expect("rpc 2");
+        .expect("rpc work item 2");
+    let delivery = parse_rpc_request_delivery(&request_frame).expect("parse rpc work item 2");
+    let response_frame = build_rpc_response_delivery(delivery.correlation_id, 0, true, b"ok");
+    rpc_worker
+        .send_frame(&response_frame)
+        .await
+        .expect("rpc response 2 send");
+    let _ = rpc_worker.recv_frame(2000).await;
+    let rpc2_response = rpc2_response_handle.await.expect("join").expect("rpc 2");
     let append2_frame = build_stream_append(session_id, b"config-updated");
     let append2_response = stream_client
         .send_and_receive(&append2_frame, 2000)
@@ -525,12 +679,14 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
         .expect("append 2");
 
     // Assert
-    let (_msg_type, status1, _data) = parse_rpc_response(&rpc1_response);
-    assert_eq!(status1, 0);
+    let response_delivery =
+        parse_rpc_response_delivery(&rpc1_response).expect("parse rpc response 1");
+    assert!(response_delivery.stream_end);
     let (_msg_type, status, _data) = parse_stream_response(&append1_response);
     assert_eq!(status, 0);
-    let (_msg_type, status2, _data) = parse_rpc_response(&rpc2_response);
-    assert_eq!(status2, 0);
+    let response_delivery =
+        parse_rpc_response_delivery(&rpc2_response).expect("parse rpc response 2");
+    assert!(response_delivery.stream_end);
     let (_msg_type, status, _data) = parse_stream_response(&append2_response);
     assert_eq!(status, 0);
 }

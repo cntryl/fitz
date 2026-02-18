@@ -73,14 +73,12 @@ fn should_show_committed_value_before_restart() {
 }
 
 #[test]
-fn should_preserve_committed_value_across_engine_restart() {
+fn should_commit_durable_kv_transaction() {
     // Arrange
-    let (store, temp_dir) = create_local_bench_store();
-    let temp_path = temp_dir.path().to_path_buf();
-    let mut actor = KvActor::new(store.clone());
+    let (store, _temp_dir) = create_local_bench_store();
+    let mut actor = KvActor::new(store);
 
-    // Act
-    // 1) create and commit a durable transaction
+    // Act - create and commit a durable transaction
     let begin = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "dur".to_string(),
@@ -106,18 +104,52 @@ fn should_preserve_committed_value_across_engine_restart() {
 
     // Assert
     assert!(matches!(c, KvResponse::CommitOk));
+}
 
-    // 2) simulate process exit and restart
+#[test]
+fn should_restore_committed_kv_value_on_engine_restart() {
+    // Arrange
+    let (store, temp_dir) = create_local_bench_store();
+    let temp_path = temp_dir.path().to_path_buf();
+    let mut actor = KvActor::new(store.clone());
+
+    // Act - create and commit a durable transaction
+    let begin = actor.handle(KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "dur".to_string(),
+        area: "kv".to_string(),
+        resource: "r".to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::sync(),
+    });
+    let tx_id = match begin {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Begin failed"),
+    };
+
+    actor.handle(KvMessage::Put {
+        tx_id,
+        route_family: RouteFamily::new(1),
+        resource: "r".to_string(),
+        key: Bytes::from_static(b"k1"),
+        value: Bytes::from_static(b"v1"),
+    });
+
+    let c = actor.handle(KvMessage::Commit { tx_id });
+    assert!(matches!(c, KvResponse::CommitOk));
+
+    // Simulate process exit and restart
     drop(actor);
     drop(store);
 
+    // Keep temp_dir alive during reopen to prevent directory deletion
     let original_dir = std::env::current_dir().unwrap();
     std::env::set_current_dir(&temp_path).unwrap();
     let reopened = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("reopen engine"),
     );
-    std::env::set_current_dir(original_dir).unwrap();
+    std::env::set_current_dir(&original_dir).expect("Failed to restore original directory");
 
     let mut actor2 = KvActor::new(reopened);
     let b2 = actor2.handle(KvMessage::Begin {
@@ -133,7 +165,7 @@ fn should_preserve_committed_value_across_engine_restart() {
         _ => panic!("Expected BeginOk"),
     };
 
-    // Act (read after restart)
+    // Assert - Read value after restart
     let got = actor2.handle(KvMessage::Get {
         tx_id: tx2,
         route_family: RouteFamily::new(1),
@@ -141,7 +173,6 @@ fn should_preserve_committed_value_across_engine_restart() {
         key: Bytes::from_static(b"k1"),
     });
 
-    // Assert
     match got {
         KvResponse::GetResult {
             found: true,
@@ -175,7 +206,6 @@ fn should_handle_high_throughput_batch_puts() {
 
     // Act - perform many small transactions (fast, buffered)
     for i in 0..200 {
-        // Arrange per-iteration
         let begin = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "scale".to_string(),
@@ -189,7 +219,6 @@ fn should_handle_high_throughput_batch_puts() {
             _ => panic!("Begin failed"),
         };
 
-        // Act
         let key = Bytes::from(format!("k{:04}", i));
         let _ = actor.handle(KvMessage::Put {
             tx_id,
@@ -199,12 +228,11 @@ fn should_handle_high_throughput_batch_puts() {
             value: Bytes::from_static(b"v"),
         });
 
-        // Assert
         let c = actor.handle(KvMessage::Commit { tx_id });
         assert!(matches!(c, KvResponse::CommitOk));
     }
 
-    // Arrange (sanity-read)
+    // Verify at least one value persisted
     let b = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "scale".to_string(),
@@ -218,7 +246,6 @@ fn should_handle_high_throughput_batch_puts() {
         _ => panic!("Begin failed"),
     };
 
-    // Act
     let get = actor.handle(KvMessage::Get {
         tx_id: tx,
         route_family: RouteFamily::new(1),

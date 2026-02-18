@@ -515,7 +515,7 @@ impl LeaseActor {
         let now = self.clock.now();
 
         match self.leases.get(&key) {
-            None => LeaseResponse::NotHeld,
+            None => LeaseResponse::NotFound,
             Some(state) => {
                 if state.is_expired(now) {
                     // Already expired - no need to release
@@ -1076,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn should_enqueue_waiter_and_grant_on_release() {
+    fn should_enqueue_waiter_when_lease_held() {
         // Arrange
         let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = crate::testkit::lease::create_test_lease_context(None);
@@ -1085,6 +1085,28 @@ mod tests {
         // Act
         let r1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
         let queued = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 5, None, &mut ctx);
+
+        // Assert
+        assert!(matches!(r1, LeaseResponse::Acquired { .. }));
+        assert!(matches!(queued, LeaseResponse::Queued { .. }));
+    }
+
+    #[test]
+    fn should_grant_lease_to_queued_waiter_on_release() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("acme", "locks", "queue-test");
+
+        let r1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+        let queued = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 5, None, &mut ctx);
+
+        let queued_token = match queued {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("Expected Queued response"),
+        };
+
+        // Act
         let release_msg = LeaseMessage::Release {
             family_id: RouteFamily::new(1),
             route: crate::runtime::routing::Route::new("lease://acme/locks/queue-test/release"),
@@ -1095,12 +1117,6 @@ mod tests {
 
         // Assert
         assert!(matches!(r1, LeaseResponse::Acquired { .. }));
-
-        let queued_token = match queued {
-            LeaseResponse::Queued { fencing_token } => fencing_token,
-            _ => panic!("Expected Queued response"),
-        };
-
         assert_eq!(released, Some(LeaseResponse::Released));
 
         let status = actor.handle_query(key.clone());
@@ -1118,7 +1134,7 @@ mod tests {
     }
 
     #[test]
-    fn should_isolate_leases_by_realm_and_area() {
+    fn should_isolate_leases_across_realm_boundaries() {
         // Arrange
         let mut actor = LeaseActor::new(RouteFamily::new(1));
 
@@ -1157,17 +1173,14 @@ mod tests {
     }
 
     #[test]
-    fn should_handle_concurrent_acquire_race() {
+    fn should_queue_multiple_waiters_in_fifo_order() {
         // Arrange
         let mut actor = LeaseActor::new(RouteFamily::new(1));
         let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         let key = test_key("race", "locks", "res");
 
         // Act - owner1 acquires immediately; owner2 and owner3 queue
-        // Arrange
         let a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
-
-        // Act - two concurrent waiters
         let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
         let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
 
@@ -1182,6 +1195,23 @@ mod tests {
             _ => panic!("expected queued"),
         };
         assert!(t3 > t2, "queued tokens should be monotonic");
+    }
+
+    #[test]
+    fn should_promote_first_waiter_when_holder_releases() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("race", "locks", "res");
+
+        let a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+        let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
+        let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
+
+        let t2 = match q2 {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued"),
+        };
 
         // Act - release owner1 via the public message path so the waiter is promoted
         let release_msg = LeaseMessage::Release {
@@ -1191,9 +1221,10 @@ mod tests {
             fencing_token: 1,
         };
         let released = actor.handle_message(release_msg, &mut ctx);
+
+        // Assert
         assert_eq!(released, Some(LeaseResponse::Released));
 
-        // Query to verify owner2 now holds the lease (promotion happened via handle_message)
         let status = actor.handle_query(key.clone());
         match status {
             LeaseResponse::Status {
@@ -1208,6 +1239,36 @@ mod tests {
             }
             _ => panic!("expected status after promotion"),
         }
+    }
+
+    #[test]
+    fn should_promote_next_waiter_when_current_holder_releases() {
+        // Arrange
+        let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("race", "locks", "res");
+
+        let a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+        let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
+        let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
+
+        let t2 = match q2 {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued"),
+        };
+        let t3 = match q3 {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued"),
+        };
+
+        // First release: owner1 -> owner2 is promoted
+        let release_msg = LeaseMessage::Release {
+            family_id: RouteFamily::new(1),
+            route: crate::runtime::routing::Route::new("lease://race/locks/res/release"),
+            owner_id: "owner1".to_string(),
+            fencing_token: 1,
+        };
+        let _released = actor.handle_message(release_msg, &mut ctx);
 
         // Act - release owner2 via public message path so waiter promotion runs
         let release_msg2 = LeaseMessage::Release {
@@ -1217,6 +1278,8 @@ mod tests {
             fencing_token: t2,
         };
         let released2 = actor.handle_message(release_msg2, &mut ctx);
+
+        // Assert
         assert_eq!(released2, Some(LeaseResponse::Released));
 
         let status2 = actor.handle_query(key.clone());
