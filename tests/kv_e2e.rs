@@ -67,7 +67,7 @@ where
 
     let (_msg_type, status, data) = parse_kv_response(&response);
     assert_eq!(status, 0, "Expected BEGIN success after authentication");
-    assert_eq!(data.len(), 8, "Expected tx_id");
+    assert_eq!(data.len(), 9, "Expected status + tx_id (1 + 8 bytes)");
 }
 
 async fn should_reject_expired_jwt<C>(server: &TestServer)
@@ -171,21 +171,22 @@ where
         status2
     );
     assert!(
-        data1.len() >= 8,
-        "First response should have tx_id (8 bytes), got {} bytes",
+        data1.len() >= 9,
+        "First response should have status + tx_id (1 + 8 bytes), got {} bytes",
         data1.len()
     );
     assert!(
-        data2.len() >= 8,
-        "Second response should have tx_id (8 bytes), got {} bytes",
+        data2.len() >= 9,
+        "Second response should have status + tx_id (1 + 8 bytes), got {} bytes",
         data2.len()
     );
 
+    // BeginOk format: [u8 status][u64 tx_id] - skip status byte
     let tx_id1 = u64::from_be_bytes([
-        data1[0], data1[1], data1[2], data1[3], data1[4], data1[5], data1[6], data1[7],
+        data1[1], data1[2], data1[3], data1[4], data1[5], data1[6], data1[7], data1[8],
     ]);
     let tx_id2 = u64::from_be_bytes([
-        data2[0], data2[1], data2[2], data2[3], data2[4], data2[5], data2[6], data2[7],
+        data2[1], data2[2], data2[3], data2[4], data2[5], data2[6], data2[7], data2[8],
     ]);
 
     assert_eq!(tx_id1, 1, "First connection should get tx_id=1");
@@ -469,7 +470,8 @@ where
     // Assert
     let (_msg_type, status, data) = parse_kv_response(&get_response);
     assert_eq!(status, 0, "GET should succeed");
-    assert_eq!(parse_kv_get_value(&data), b"value1", "GET should return correct value");
+    let value = fixtures::transport::extract_kv_value(&data).expect("extract value");
+    assert_eq!(value, b"value1", "GET should return correct value");
 }
 
 async fn should_execute_multiple_puts_in_transaction<C>(server: &TestServer)
@@ -552,7 +554,8 @@ where
 
     let (_msg_type, status, data1) = parse_kv_response(&get1_response);
     assert_eq!(status, 0);
-    assert_eq!(parse_kv_get_value(&data1), b"1");
+    let value1 = fixtures::transport::extract_kv_value(&data1).expect("extract value1");
+    assert_eq!(value1, b"1");
 
     // Act - PUT new value (overwrite)
     let put2_frame = build_kv_put(1, route, b"counter", b"2");
@@ -574,7 +577,8 @@ where
     // Assert
     let (_msg_type, status, data2) = parse_kv_response(&get2_response);
     assert_eq!(status, 0);
-    assert_eq!(parse_kv_get_value(&data2), b"2", "GET should return updated value");
+    let value2 = fixtures::transport::extract_kv_value(&data2).expect("extract value2");
+    assert_eq!(value2, b"2", "GET should return updated value");
 }
 
 async fn should_verify_get_succeeds_after_put_commit<C>(server: &TestServer)
@@ -587,12 +591,15 @@ where
 
     // First transaction: BEGIN, PUT, COMMIT
     let begin_frame = build_kv_begin(route, 1, 0);
-    client.request(&begin_frame, 2000).await.expect("BEGIN 1");
+    let begin1_response = client.request(&begin_frame, 2000).await.expect("BEGIN 1");
+    let (_msg_type, status, data) = parse_kv_response(&begin1_response);
+    assert_eq!(status, 0);
+    let tx_id1 = parse_kv_tx_id(&data).expect("parse tx_id1");
 
-    let put_frame = build_kv_put(1, route, b"persistent", b"data");
+    let put_frame = build_kv_put(tx_id1, route, b"persistent", b"data");
     client.request(&put_frame, 2000).await.expect("PUT");
 
-    let commit_frame = build_kv_commit(1, route);
+    let commit_frame = build_kv_commit(tx_id1, route);
     let commit_response = client.request(&commit_frame, 2000).await.expect("COMMIT");
 
     let (_msg_type, status, _data) = parse_kv_response(&commit_response);
@@ -601,12 +608,9 @@ where
     // Act - Second transaction: BEGIN, GET to verify persistence
     let begin2_frame = build_kv_begin(route, 1, 0);
     let begin2_response = client.request(&begin2_frame, 2000).await.expect("BEGIN 2");
-
     let (_msg_type, status, data) = parse_kv_response(&begin2_response);
-    assert_eq!(status, 0, "Second BEGIN should succeed");
-    let tx_id2 = u64::from_be_bytes([
-        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-    ]);
+    assert_eq!(status, 0);
+    let tx_id2 = parse_kv_tx_id(&data).expect("parse tx_id2");
 
     let get_frame = build_kv_get(tx_id2, route, b"persistent");
     let get_response = client.request(&get_frame, 2000).await.expect("GET failed");
@@ -614,7 +618,8 @@ where
     // Assert
     let (_msg_type, status, data) = parse_kv_response(&get_response);
     assert_eq!(status, 0, "GET should succeed");
-    assert_eq!(parse_kv_get_value(&data), b"data", "GET should retrieve committed data");
+    let value = fixtures::transport::extract_kv_value(&data).expect("extract value");
+    assert_eq!(value, b"data", "GET should retrieve committed data");
 }
 
 async fn should_handle_large_batch_writes_in_transaction<C>(server: &TestServer)

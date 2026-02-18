@@ -1725,6 +1725,24 @@ impl LeaseDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    /// Release all leases held by owner matching the given prefix (called on disconnect cleanup).
+    pub fn cleanup_session(&self, session_id: u64) {
+        let owner_prefix = format!("session:{}", session_id);
+        let mut leases = self.leases.lock();
+
+        // Remove all leases where owner starts with the prefix
+        let count_before = leases.len();
+        leases.retain(|_key, state| !state.owner_id.starts_with(&owner_prefix));
+        let count_removed = count_before - leases.len();
+
+        tracing::debug!(
+            domain = "lease",
+            session = session_id,
+            count_removed = count_removed,
+            "Lease: released all leases for disconnected session"
+        );
+    }
+
     fn next_fencing_token(&self) -> u64 {
         self.next_token.fetch_add(1, Ordering::Relaxed)
     }
@@ -1887,6 +1905,12 @@ impl MailboxSink for LeaseDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
+        // Handle SessionCleanup event (disconnect cleanup)
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return Ok(());
+        }
+
         tracing::debug!(
             domain = "lease",
             destination = %envelope.destination(),
@@ -1924,12 +1948,13 @@ impl MailboxSink for LeaseDomainSink {
 
         use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 
-        // When owner_id is empty, use session_id so different sessions are distinct (enforces exclusivity)
+        // Always prefix owner_id with session scope to ensure cleanup works on disconnect
+        // Format: "session:{session_id}:{custom_owner}" or "session:{session_id}" if empty
         let effective_owner = |owner_id: String| {
             if owner_id.is_empty() {
                 format!("session:{}", frame_ctx.session_id)
             } else {
-                owner_id
+                format!("session:{}:{}", frame_ctx.session_id, owner_id)
             }
         };
 

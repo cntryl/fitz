@@ -539,7 +539,7 @@ impl RpcConnector for WsRpcConnector {
     }
 }
 
-/// Build RPC SUBSCRIBE frame (msg_type 300)
+/// Build RPC SUBSCRIBE frame (msg_type 300) to register a worker
 pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -1161,22 +1161,47 @@ pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
 /// Parse KV transaction ID from response (big-endian u64)
 pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
-    if data.len() < 8 {
-        return Err("TX ID too short".to_string());
+    // BeginOk format: [u8 status][u64 tx_id]
+    // Skip status byte at data[0], read tx_id from data[1..9]
+    if data.len() < 9 {
+        return Err(format!("TX ID data too short: {} bytes, need 9", data.len()));
     }
     let bytes = [
-        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
     ];
     Ok(u64::from_be_bytes(bytes))
 }
 
-/// Parse KV value from GET response
-/// Data format (after status removed): [found:u8][len:u32][value:bytes...]
-pub fn parse_kv_get_value(data: &[u8]) -> Vec<u8> {
-    // Skip: found (1) + len (4) = 5 bytes
-    if data.len() > 5 {
-        data[5..].to_vec()
-    } else {
-        Vec::new()
+/// Extract value from KV GET response
+/// 
+/// GetResult format: [u8 status][u8 found][u32 length_be][...value_bytes]
+/// Returns the actual value bytes if found, empty vec if not found
+pub fn extract_kv_value(data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.len() < 6 {
+        return Err("GetResult data too short".to_string());
     }
+    
+    let found = data[1];
+    if found == 0 {
+        return Ok(Vec::new()); // Not found
+    }
+    
+    // Read length from bytes 2-5 (big-endian u32)
+    let length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
+    
+    // Extract value from bytes 6 onwards
+    if data.len() < 6 + length {
+        return Err(format!(
+            "GetResult value incomplete: expected {} bytes, got {}",
+            length,
+            data.len() - 6
+        ));
+    }
+    
+    Ok(data[6..6 + length].to_vec())
+}
+
+/// Parse KV value from response
+pub fn parse_kv_value(data: &[u8]) -> Vec<u8> {
+    data.to_vec()
 }
