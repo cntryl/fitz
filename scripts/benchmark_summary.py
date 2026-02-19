@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
 """
-Produce a CSV and Markdown summary of Criterion `estimates.json` files under target/criterion.
-- Fields extracted: mean, mean_ci_lower, mean_ci_upper, std_dev (point_estimate), relative_stddev
+Produce comprehensive CSV and Markdown summaries of Criterion benchmarks and stress tests.
+- Criterion: extracts mean, CI, std_dev, relative_stddev from target/criterion
+- Stress tests: extracts duration, throughput (elements/ns), scenario tags from target/stress
 - Flags high variance when relative_stddev > 0.10 (10%)
-- Also writes human-friendly mean_us and mean_ms columns assuming the raw values are nanoseconds (common default). If your harness uses different units, ignore conversions.
+- Also writes human-friendly mean_us and mean_ms columns assuming nanoseconds.
 """
 from pathlib import Path
 import json
 import csv
 
-ROOT = Path(__file__).resolve().parents[1] / 'target' / 'criterion'
-OUT_CSV = ROOT / 'benchmark_summary.csv'
-OUT_MD = ROOT / 'benchmark_summary.md'
+CRITERION_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'criterion'
+STRESS_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'stress'
+OUT_CSV = CRITERION_ROOT / 'benchmark_summary.csv'
+OUT_MD = CRITERION_ROOT / 'benchmark_summary.md'
+STRESS_CSV = STRESS_ROOT / 'stress_summary.csv'
 
+# ============================================================================
+# CRITERION BENCHMARKS
+# ============================================================================
 entries = []
-for p in ROOT.rglob('new/estimates.json'):
+for p in CRITERION_ROOT.rglob('new/estimates.json'):
     try:
         data = json.loads(p.read_text())
     except Exception as e:
         print(f"skipping {p} (read error): {e}")
         continue
     # Determine benchmark id as path relative to ROOT, omit trailing '/new/estimates.json'
-    benchmark = str(p.relative_to(ROOT).parent.parent)
+    benchmark = str(p.relative_to(CRITERION_ROOT).parent.parent)
     mean = data.get('mean', {}).get('point_estimate')
     ci = data.get('mean', {}).get('confidence_interval', {})
     ci_lower = ci.get('lower_bound')
@@ -52,7 +58,7 @@ for p in ROOT.rglob('new/estimates.json'):
         'file': str(p)
     })
 
-# Write CSV
+# Write Criterion CSV
 with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
     writer = csv.writer(f)
     writer.writerow(['benchmark','mean','mean_ci_lower','mean_ci_upper','std_dev','rel_stddev','high_variance','mean_us(assume_ns)','mean_ms(assume_ns)','file'])
@@ -76,9 +82,104 @@ fastest = sorted_by_mean[:10]
 slowest = sorted_by_mean[-10:][::-1]
 high_var = [e for e in entries if e['high_variance']]
 
+# ============================================================================
+# STRESS TESTS
+# ============================================================================
+stress_entries = []
+for suite_dir in sorted(STRESS_ROOT.glob('*/')):
+    if not suite_dir.is_dir():
+        continue
+    latest_json = suite_dir / 'latest.json'
+    if not latest_json.exists():
+        continue
+    try:
+        data = json.loads(latest_json.read_text())
+    except Exception as e:
+        print(f"skipping {latest_json} (read error): {e}")
+        continue
+    
+    suite = data.get('suite', suite_dir.name)
+    results = data.get('results', [])
+    
+    for result in results:
+        name = result.get('name', '')
+        duration = result.get('duration')
+        elements = result.get('elements')
+        all_runs = result.get('all_runs', [duration] if duration else [])
+        tags = result.get('tags', {})
+        scenario = tags.get('scenario', 'unknown')
+        
+        if duration is None or elements is None or elements == 0:
+            continue
+        
+        # Compute statistics
+        throughput_ops_per_ns = elements / duration if duration > 0 else 0
+        throughput_ops_per_us = throughput_ops_per_ns * 1e3
+        throughput_ops_per_ms = throughput_ops_per_ns * 1e6
+        throughput_ops_per_s = throughput_ops_per_ns * 1e9
+        
+        duration_us = duration / 1e3
+        duration_ms = duration / 1e6
+        per_op_ns = duration / elements if elements > 0 else 0
+        per_op_us = per_op_ns / 1e3
+        
+        # Variance across runs
+        if len(all_runs) > 1:
+            avg_run = sum(all_runs) / len(all_runs)
+            variance = sum((x - avg_run) ** 2 for x in all_runs) / len(all_runs)
+            stddev = variance ** 0.5
+            rel_stddev_runs = stddev / avg_run if avg_run > 0 else 0
+        else:
+            stddev = 0
+            rel_stddev_runs = 0
+        
+        stress_entries.append({
+            'suite': suite,
+            'name': name,
+            'scenario': scenario,
+            'duration_ns': duration,
+            'duration_us': duration_us,
+            'duration_ms': duration_ms,
+            'elements': elements,
+            'per_op_ns': per_op_ns,
+            'per_op_us': per_op_us,
+            'throughput_ops_per_ns': throughput_ops_per_ns,
+            'throughput_ops_per_us': throughput_ops_per_us,
+            'throughput_ops_per_ms': throughput_ops_per_ms,
+            'throughput_ops_per_s': throughput_ops_per_s,
+            'num_runs': len(all_runs),
+            'stddev_runs': stddev,
+            'rel_stddev_runs': rel_stddev_runs,
+            'file': str(latest_json)
+        })
+
+# Write Stress CSV
+with STRESS_CSV.open('w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    writer.writerow(['suite', 'name', 'scenario', 'duration_ms', 'elements', 'per_op_us', 'throughput_ops_per_s', 'runs', 'stddev_runs_ns', 'rel_stddev_runs', 'file'])
+    for e in sorted(stress_entries, key=lambda x: x['throughput_ops_per_s'], reverse=True):
+        writer.writerow([
+            e['suite'],
+            e['name'],
+            e['scenario'],
+            f"{e['duration_ms']:.2f}",
+            e['elements'],
+            f"{e['per_op_us']:.6f}",
+            f"{e['throughput_ops_per_s']:.2f}",
+            e['num_runs'],
+            f"{e['stddev_runs']:.2f}",
+            f"{e['rel_stddev_runs']:.6f}" if e['rel_stddev_runs'] else "NA",
+            e['file']
+        ])
+
+# Write unified Markdown summary with both Criterion and Stress tests
 with OUT_MD.open('w', encoding='utf-8') as f:
-    f.write('# Criterion benchmark summary\n\n')
-    f.write('Note: mean_us / mean_ms assume raw numbers are in nanoseconds. If that is not the case, ignore those columns.\n\n')
+    f.write('# Benchmark & Stress Test Summary\n\n')
+    f.write('Generated from Criterion benchmarks and stress tests.\n\n')
+    
+    # ========== CRITERION SECTION ==========
+    f.write('# Criterion Benchmarks\n\n')
+    f.write('Note: mean_us / mean_ms assume raw numbers are in nanoseconds.\n\n')
     f.write('## Top 10 fastest (by mean)\n\n')
     f.write('| rank | benchmark | mean | mean_ms | mean_us | std_dev | rel_stddev |\n')
     f.write('|---:|---|---:|---:|---:|---:|---:|\n')
@@ -98,9 +199,41 @@ with OUT_MD.open('w', encoding='utf-8') as f:
     if not high_var:
         f.write('None detected.\n')
     else:
-        f.write('| benchmark | mean | std_dev | rel_stddev | file |\n')
-        f.write('|---|---:|---:|---:|---|\n')
+        f.write('| benchmark | mean | std_dev | rel_stddev |\n')
+        f.write('|---|---:|---:|---:|\n')
         for e in sorted(high_var, key=lambda x: x['rel_stddev'], reverse=True):
-            f.write(f"| {e['benchmark']} | {e['mean']:.6f} | {e['std_dev'] or 'NA'} | {e['rel_stddev']:.6f} | {e['file']} |\n")
+            f.write(f"| {e['benchmark']} | {e['mean']:.6f} | {e['std_dev'] or 'NA'} | {e['rel_stddev']:.6f} |\n")
+    
+    # ========== STRESS TEST SECTION ==========
+    f.write('\n# Stress Tests\n\n')
+    if stress_entries:
+        f.write('Ordered by throughput (highest first).\n\n')
+        f.write('## Per-Suite Results\n\n')
+        
+        # Group by suite
+        suites = {}
+        for e in stress_entries:
+            suite_name = e['suite']
+            if suite_name not in suites:
+                suites[suite_name] = []
+            suites[suite_name].append(e)
+        
+        for suite_name in sorted(suites.keys()):
+            suite_tests = suites[suite_name]
+            total_duration = sum(e['duration_ns'] for e in suite_tests)
+            total_elements = sum(e['elements'] for e in suite_tests)
+            total_throughput = total_elements / total_duration if total_duration > 0 else 0
+            
+            f.write(f'### {suite_name}\n\n')
+            f.write(f'**Total**: {total_elements} ops in {total_duration/1e6:.2f}ms = {total_throughput*1e9:.0f} ops/sec\n\n')
+            f.write('| scenario | ops | duration_ms | per_op_us | ops/sec |\n')
+            f.write('|---|---:|---:|---:|---:|\n')
+            for e in sorted(suite_tests, key=lambda x: x['throughput_ops_per_s'], reverse=True):
+                f.write(f"| {e['scenario']} | {e['elements']} | {e['duration_ms']:.2f} | {e['per_op_us']:.3f} | {e['throughput_ops_per_s']:.0f} |\n")
+            f.write('\n')
+    else:
+        f.write('No stress test results found.\n')
 
-print(f"Wrote {OUT_CSV} and {OUT_MD} with {len(entries)} entries.")
+print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
+print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
+print(f"Wrote {OUT_MD} (unified summary).")
