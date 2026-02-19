@@ -32,9 +32,11 @@ Current benchmarks may not yet match every target’s conditions (e.g. 64 produc
 
 ## Stream — Beat Kafka
 
+**Single append vs batch:** Use two modes explicitly. **Single append** = one commit/sync per message: durable, higher latency (~5–6 µs/op typical); use when latency-of-one is required. **Batch append** = batched fsync: high throughput mode; use for Kafka-class throughput (target 2M+ msgs/sec). The `sustained_append` scenario measures the single-append path; for throughput use `batch_write`.
+
 | Label | Threshold | Conditions | Verification |
 |-------|-----------|------------|--------------|
-| Target | Durable append ≥ 2M msgs/sec | 256B payload, single partition–equivalent, fsync batched | Existing: [tier3_system_stream](../../benches/tier3_system_stream.rs) `sustained_append` — align payload to 256B and batching to batched fsync. |
+| Target | Durable append ≥ 2M msgs/sec | 256B payload, single partition–equivalent, fsync batched | Existing: [tier3_system_stream](../../benches/tier3_system_stream.rs) `sustained_append` (single-append path; for throughput use `batch_write` with batched fsync). |
 | Target | Multi-area writes ≥ 1.5M msgs/sec across 8 logical streams | 256B payload | Existing: [tier3_system_stream](../../benches/tier3_system_stream.rs) `multiarea_writes`. |
 | Target | Read scan ≥ 5M msgs/sec sequential, p50 &lt; 100µs for small range | Sequential scan | Existing: [tier3_system_stream](../../benches/tier3_system_stream.rs) `read_scan`. |
 | Target | End-to-end append latency p50 &lt; 300µs, p99 &lt; 2ms | Same as sustained append | **New:** Same as `sustained_append` plus latency reporting. |
@@ -111,6 +113,19 @@ To reach these targets, the implementation will need:
 - **No per-message heap allocation** on the hot path where avoidable.
 
 Without these, throughput will likely plateau in the 200k–500k range and targets will not be met.
+
+---
+
+## Tier4 transport optimization (RPC + Notice)
+
+To move TCP roundtrip from ~1–1.5 ms toward ~300–500 µs (and compete with NATS), focus on:
+
+- **Allocations:** Minimize decode/encode allocations; reuse buffers where possible.
+- **Hop count:** Request → server → route → domain actor → response → client; reduce to minimum (one decode, one route, one mailbox, one encode).
+- **Task spawns / wakeups:** Avoid per-request task spawns; batch or share wakeups.
+- **Syscalls / flush:** Batch writes; avoid flush-per-message where possible.
+
+Profile the tier4 RPC and Notice TCP path first; then apply the above. Same work benefits both domains.
 
 ---
 

@@ -416,6 +416,10 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
 }
 
 /// Drain route and all worker mailboxes until quiet (multi-worker).
+///
+/// Cost is O(workers) per call: we iterate over every worker mailbox each round.
+/// The route actor itself uses O(1) worker selection (ready_queue); the scaling_256
+/// vs scaling_64 gap is from this drain loop, not from dispatch.
 fn drain_rpc_loop_multi(
     route_mb: &Mailbox,
     worker_mailboxes: &mut [(Mailbox, BenchRpcWorker, Context<BenchRpcWorker>)],
