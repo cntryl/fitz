@@ -1,243 +1,190 @@
-//! Stream domain tier 4 integration benchmarks
+//! Stream domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Tests two integration levels:
-//! 1. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
-//! 2. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
-//!
-//! This reveals where performance cliffs occur in append-only stream workflows.
-//! (Direct actor testing skipped - requires complex storage setup, see tier3 for actor-level benchmarks)
+//! Tests four integration levels:
+//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
+//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
 
-use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::TestServer;
-use std::time::Duration;
+use bytes::Bytes;
+use cntryl_stress::{stress_main, stress_test, StressContext};
+use fitz::benchkit::{
+    build_stream_append, build_stream_begin, create_local_bench_stream_actor,
+    parse_stream_response, parse_stream_session_id,
+};
+use fitz::domains::stream::protocol::StreamMessage;
+use fitz::prelude::Actor;
+use fitz::runtime::routing::{Route, RouteFamily};
+use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 
-#[path = "config.rs"]
-mod config;
+#[stress_test]
+fn should_complete_direct_append(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "append");
 
-// ============================================================================
-// TLV ENCODING HELPERS
-// ============================================================================
+    let (mut actor, mut actor_ctx, _temp_dir) =
+        create_local_bench_stream_actor("tier4", "stream", "direct");
+    let family = RouteFamily::new(1);
+    let route = Route::new("stream://tier4/stream/direct/append".to_string());
+    actor.receive(
+        StreamMessage::Begin {
+            family_id: family,
+            route,
+            expected_offset: 0,
+            ingest_metadata: None,
+        },
+        &mut actor_ctx,
+    );
 
-/// Encode a stream begin request
-fn encode_begin_request(route_family: RouteFamily, route_str: &str, mode: u8) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 600; // BEGIN
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Mode (0=create, 1=append)
-    buf.put_u8(3);
-    buf.put_u16(1);
-    buf.put_u8(mode);
-
-    buf.to_vec()
-}
-
-/// Encode a stream append request
-fn encode_append_request(session_id: u64, data: &[u8]) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 601; // APPEND
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // Session ID
-    buf.put_u8(4);
-    buf.put_u16(8);
-    buf.put_u64(session_id);
-
-    // Data
-    buf.put_u8(5);
-    buf.put_u16(data.len() as u16);
-    buf.put_slice(data);
-
-    buf.to_vec()
-}
-
-/// Encode a stream commit request
-fn encode_commit_request(session_id: u64) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 602; // COMMIT
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // Session ID
-    buf.put_u8(4);
-    buf.put_u16(8);
-    buf.put_u64(session_id);
-
-    buf.to_vec()
-}
-
-/// Encode a stream read request
-#[allow(dead_code)]
-fn encode_read_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    offset: u64,
-    limit: u32,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 604; // READ
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Offset
-    buf.put_u8(6);
-    buf.put_u16(8);
-    buf.put_u64(offset);
-
-    // Limit
-    buf.put_u8(7);
-    buf.put_u16(4);
-    buf.put_u32(limit);
-
-    buf.to_vec()
-}
-
-// ============================================================================
-// TCP INTEGRATION BENCHMARKS - Full socket stack
-// ============================================================================
-
-fn bench_tcp_begin_append_commit(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let client = server.connect().await.unwrap();
-        (server, client)
+    ctx.measure(|| {
+        actor.receive(
+            StreamMessage::Append {
+                session_id: 1,
+                body: Bytes::from_static(b"event"),
+                metadata: None,
+            },
+            &mut actor_ctx,
+        );
     });
+}
 
-    let mut group = c.benchmark_group("stream_tcp_ingest_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
+#[stress_test]
+fn should_complete_encoded_append(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "encoded");
+    ctx.tag("scenario", "append");
 
-    group.bench_function("tcp_begin_append_commit", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "stream://realm/area/events";
+    let (mut actor, mut actor_ctx, _temp_dir) =
+        create_local_bench_stream_actor("tier4", "stream", "encoded");
+    let family = RouteFamily::new(1);
+    let route = Route::new("stream://tier4/stream/encoded/append".to_string());
+    actor.receive(
+        StreamMessage::Begin {
+            family_id: family,
+            route,
+            expected_offset: 0,
+            ingest_metadata: None,
+        },
+        &mut actor_ctx,
+    );
 
-                // Begin (mode=0 for Create)
-                let begin_frame = encode_begin_request(route_family, route_str, 0);
-                let _ = client.request(&begin_frame, 5000).await.unwrap();
+    let begin_frame = build_stream_begin("stream://tier4/stream/encoded/append", 0);
+    let append_frame = build_stream_append(1, b"event");
 
-                // For simplicity, assume session_id = 1
-                let session_id = 1;
+    ctx.measure(|| {
+        actor.receive(
+            StreamMessage::Append {
+                session_id: 1,
+                body: Bytes::from_static(b"event"),
+                metadata: None,
+            },
+            &mut actor_ctx,
+        );
+        let _ = (&begin_frame, &append_frame);
+    });
+}
 
-                // Append
-                let append_frame = encode_append_request(session_id, b"test_chunk");
-                let _ = client.request(&append_frame, 5000).await.unwrap();
+#[stress_test]
+fn should_complete_tcp_append(ctx: &mut StressContext) {
+    ctx.set_elements(2);
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "network_roundtrip");
 
-                // Commit
-                let commit_frame = encode_commit_request(session_id);
-                let _ = black_box(client.request(&commit_frame, 5000).await.unwrap());
-            })
+    let route = "stream://tier4/stream/tcp/append";
+    let begin_frame = build_stream_begin(route, 0);
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&begin_frame, 2000))
+            .expect("begin response");
+        let (_msg_type, _status, data) = parse_stream_response(&response);
+        let session_id = parse_stream_session_id(&data).expect("session_id");
+
+        let append_frame = build_stream_append(session_id, b"event");
+        let _ = runtime
+            .block_on(client.request(&append_frame, 2000))
+            .expect("append response");
+    });
+}
+
+#[stress_test]
+fn should_complete_ws_append(ctx: &mut StressContext) {
+    ctx.set_elements(2);
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "network_roundtrip");
+
+    let route = "stream://tier4/stream/ws/append";
+    let begin_frame = build_stream_begin(route, 0);
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&begin_frame, 2000))
+            .expect("begin response");
+        let (_msg_type, _status, data) = parse_stream_response(&response);
+        let session_id = parse_stream_session_id(&data).expect("session_id");
+
+        let append_frame = build_stream_append(session_id, b"event");
+        let _ = runtime
+            .block_on(client.request(&append_frame, 2000))
+            .expect("append response");
+    });
+}
+
+#[stress_test]
+fn should_complete_multiclient_appends(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("layer", "multiclient");
+    ctx.tag("scenario", "concurrent_appends");
+
+    let route = "stream://tier4/stream/multi/append";
+    let begin_frame = build_stream_begin(route, 0);
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut clients: Vec<TestWebSocketClient> = (0..10)
+        .map(|_| {
+            runtime
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
+                .expect("connect ws")
         })
-    });
+        .collect();
 
-    group.finish();
-    drop(client);
-    drop(server);
+    ctx.measure(|| {
+        for client in clients.iter_mut() {
+            let response = runtime
+                .block_on(client.request(&begin_frame, 2000))
+                .expect("begin response");
+            let (_msg_type, _status, data) = parse_stream_response(&response);
+            let session_id = parse_stream_session_id(&data).expect("session_id");
+
+            let append_frame = build_stream_append(session_id, b"event");
+            let _ = runtime
+                .block_on(client.request(&append_frame, 2000))
+                .expect("append response");
+        }
+    });
 }
 
-// ============================================================================
-// WEBSOCKET INTEGRATION BENCHMARKS - Full WS framing stack
-// ============================================================================
-
-fn bench_ws_begin_append_commit(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut ws_client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let ws_client = server.connect_ws().await.unwrap();
-        (server, ws_client)
-    });
-
-    let mut group = c.benchmark_group("stream_ws_ingest_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
-
-    group.bench_function("ws_begin_append_commit", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "stream://realm/area/events";
-
-                // Begin
-                let begin_frame = encode_begin_request(route_family, route_str, 0);
-                let _ = ws_client.request(&begin_frame, 5000).await.unwrap();
-
-                let session_id = 1;
-
-                // Append
-                let append_frame = encode_append_request(session_id, b"test_chunk");
-                let _ = ws_client.request(&append_frame, 5000).await.unwrap();
-
-                // Commit
-                let commit_frame = encode_commit_request(session_id);
-                let _ = black_box(ws_client.request(&commit_frame, 5000).await.unwrap());
-            })
-        })
-    });
-
-    group.finish();
-    drop(ws_client);
-    drop(server);
-}
-
-criterion_group! {
-    name = benches;
-    config = config::criterion_config();
-    targets =
-        bench_tcp_begin_append_commit,
-        bench_ws_begin_append_commit,
-}
-criterion_main!(benches);
+stress_main!();

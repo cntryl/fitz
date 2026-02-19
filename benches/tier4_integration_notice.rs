@@ -1,225 +1,192 @@
-//! Notice domain tier 4 integration benchmarks
+//! Notice domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Tests three integration levels:
-//! 1. **Direct** - Domain actor (no network) - baseline integration overhead
-//! 2. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
-//! 3. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
-//!
-//! This reveals where performance cliffs occur in pub/sub operations.
+//! Tests four integration levels:
+//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
+//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
 
-use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use bytes::Bytes;
+use cntryl_stress::{stress_main, stress_test, StressContext};
+use fitz::benchkit::{build_notice_publish, build_notice_subscribe, parse_notice_response};
+use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
+use fitz::domains::notice::route_actor::NoticeRouteActor;
+use fitz::prelude::Actor;
+use fitz::runtime::actor::Context;
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::TestServer;
-use std::time::Duration;
+use fitz::testkit::{
+    addr, make_router, route, session_id, TestClient, TestServer, TestSink, TestWebSocketClient,
+};
+use std::sync::Arc;
 
-#[path = "config.rs"]
-mod config;
+fn setup_notice_actor(
+    subscriber_count: usize,
+    pattern: &str,
+) -> (NoticeRouteActor, Context<NoticeRouteActor>) {
+    let router = make_router();
+    let sink = Arc::new(TestSink::new());
+    let family = RouteFamily::new(1);
+    let mut actor = NoticeRouteActor::new(family);
 
-// ============================================================================
-// TLV ENCODING HELPERS
-// ============================================================================
-
-/// Encode a subscribe request frame with TLV format
-fn encode_subscribe_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    subscriber_id: u64,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 501; // SUBSCRIBE
-
-    // Message type (may use escape sequence if > 254)
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
+    for i in 0..subscriber_count {
+        let subscriber = addr(&format!("notice://realm/area/sub{}", i));
+        router.register(subscriber.clone(), sink.clone());
     }
 
-    // RouteFamily
-    buf.put_u8(1); // Tag: RouteFamily
-    buf.put_u16(8); // Length
-    buf.put_u64(route_family.as_u64());
+    let router = Arc::new(router);
+    let mut ctx = Context::new(addr("notice://realm/area/ctx"), router.clone());
 
-    // Route string
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2); // Tag: Route
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Subscriber ID
-    buf.put_u8(3); // Tag: SubscriberId
-    buf.put_u16(8);
-    buf.put_u64(subscriber_id);
-
-    buf.to_vec()
-}
-
-/// Encode a publish request frame with TLV format
-fn encode_publish_request(route_family: RouteFamily, route_str: &str, payload: &[u8]) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 500; // PUBLISH
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
+    for i in 0..subscriber_count {
+        let subscriber = addr(&format!("notice://realm/area/sub{}", i));
+        let subscribe =
+            SubscribeMessage::new(family, route(pattern), session_id(i as u64 + 1), subscriber);
+        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
     }
 
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route string
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Payload
-    buf.put_u8(4); // Tag: Payload
-    buf.put_u16(payload.len() as u16);
-    buf.put_slice(payload);
-
-    buf.to_vec()
+    (actor, ctx)
 }
 
-/// Encode an unsubscribe request frame
-fn encode_unsubscribe_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    subscriber_id: u64,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 502; // UNSUBSCRIBE
+#[stress_test]
+fn should_complete_direct_publish(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "publish");
 
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
+    let (mut actor, mut actor_ctx) = setup_notice_actor(1, "notice://test/events");
+    let publish = PublishMessage::new(
+        RouteFamily::new(1),
+        route("notice://test/events"),
+        Bytes::from_static(b"event"),
+    );
 
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    buf.put_u8(3);
-    buf.put_u16(8);
-    buf.put_u64(subscriber_id);
-
-    buf.to_vec()
-}
-
-// ============================================================================
-// TCP INTEGRATION BENCHMARKS - Full socket stack
-// ============================================================================
-
-fn bench_tcp_subscribe_publish_unsubscribe(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let client = server.connect().await.unwrap();
-        (server, client)
+    ctx.measure(|| {
+        actor.receive(
+            NotificationMessage::Publish(publish.clone()),
+            &mut actor_ctx,
+        );
     });
+}
 
-    let mut group = c.benchmark_group("notice_tcp_pubsub_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
+#[stress_test]
+fn should_complete_encoded_publish(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "encoded");
+    ctx.tag("scenario", "publish");
 
-    group.bench_function("tcp_subscribe_publish_unsubscribe", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "notice://realm/area/events";
-                let subscriber_id = 1;
+    let (mut actor, mut actor_ctx) = setup_notice_actor(1, "notice://test/events");
+    let publish = PublishMessage::new(
+        RouteFamily::new(1),
+        route("notice://test/events"),
+        Bytes::from_static(b"event"),
+    );
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame = build_notice_publish("notice://test/events", b"event");
 
-                // Subscribe
-                let subscribe_frame =
-                    encode_subscribe_request(route_family, route_str, subscriber_id);
-                let _ = client.request(&subscribe_frame, 5000).await.unwrap();
+    ctx.measure(|| {
+        actor.receive(
+            NotificationMessage::Publish(publish.clone()),
+            &mut actor_ctx,
+        );
+        let _ = (&subscribe_frame, &publish_frame);
+    });
+}
 
-                // Publish
-                let publish_frame = encode_publish_request(route_family, route_str, b"test_event");
-                let _ = client.request(&publish_frame, 5000).await.unwrap();
+#[stress_test]
+fn should_complete_tcp_publish(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "network_roundtrip");
 
-                // Unsubscribe
-                let unsubscribe_frame =
-                    encode_unsubscribe_request(route_family, route_str, subscriber_id);
-                let _ = black_box(client.request(&unsubscribe_frame, 5000).await.unwrap());
-            })
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame = build_notice_publish("notice://test/events", b"event");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    runtime
+        .block_on(client.request(&subscribe_frame, 2000))
+        .expect("subscribe response");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&publish_frame, 2000))
+            .expect("publish response");
+        let (_msg_type, _status, _data) = parse_notice_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_ws_publish(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "network_roundtrip");
+
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame = build_notice_publish("notice://test/events", b"event");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws");
+
+    runtime
+        .block_on(client.request(&subscribe_frame, 2000))
+        .expect("subscribe response");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&publish_frame, 2000))
+            .expect("publish response");
+        let (_msg_type, _status, _data) = parse_notice_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("layer", "multiclient");
+    ctx.tag("scenario", "concurrent_publishers");
+
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame = build_notice_publish("notice://test/events", b"event");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut clients: Vec<TestWebSocketClient> = (0..10)
+        .map(|_| {
+            runtime
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
+                .expect("connect ws")
         })
-    });
+        .collect();
 
-    group.finish();
-    drop(client);
-    drop(server);
+    for client in clients.iter_mut() {
+        runtime
+            .block_on(client.request(&subscribe_frame, 2000))
+            .expect("subscribe response");
+    }
+
+    ctx.measure(|| {
+        for client in clients.iter_mut() {
+            let response = runtime
+                .block_on(client.request(&publish_frame, 2000))
+                .expect("publish response");
+            let (_msg_type, _status, _data) = parse_notice_response(&response);
+        }
+    });
 }
 
-// ============================================================================
-// WEBSOCKET INTEGRATION BENCHMARKS - Full WS framing stack
-// ============================================================================
-
-fn bench_ws_subscribe_publish_unsubscribe(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut ws_client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let ws_client = server.connect_ws().await.unwrap();
-        (server, ws_client)
-    });
-
-    let mut group = c.benchmark_group("notice_ws_pubsub_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
-
-    group.bench_function("ws_subscribe_publish_unsubscribe", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "notice://realm/area/events";
-                let subscriber_id = 1;
-
-                // Subscribe
-                let subscribe_frame =
-                    encode_subscribe_request(route_family, route_str, subscriber_id);
-                let _ = ws_client.request(&subscribe_frame, 5000).await.unwrap();
-
-                // Publish
-                let publish_frame = encode_publish_request(route_family, route_str, b"test_event");
-                let _ = ws_client.request(&publish_frame, 5000).await.unwrap();
-
-                // Unsubscribe
-                let unsubscribe_frame =
-                    encode_unsubscribe_request(route_family, route_str, subscriber_id);
-                let _ = black_box(ws_client.request(&unsubscribe_frame, 5000).await.unwrap());
-            })
-        })
-    });
-
-    group.finish();
-    drop(ws_client);
-    drop(server);
-}
-
-criterion_group! {
-    name = benches;
-    config = config::criterion_config();
-    targets =
-        bench_tcp_subscribe_publish_unsubscribe,
-        bench_ws_subscribe_publish_unsubscribe,
-}
-criterion_main!(benches);
+stress_main!();

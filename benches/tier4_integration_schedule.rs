@@ -1,200 +1,162 @@
-//! Schedule domain tier 4 integration benchmarks
+//! Schedule domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Tests two integration levels:
-//! 1. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
-//! 2. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
-//!
-//! This reveals where performance cliffs occur in scheduled task workflows.
-//! (Direct actor testing skipped - requires complex storage setup, see tier3 for actor-level benchmarks)
+//! Tests four integration levels:
+//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
+//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
 
-use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::TestServer;
-use std::time::Duration;
+use bytes::Bytes;
+use cntryl_stress::{stress_main, stress_test, StressContext};
+use fitz::benchkit::{build_schedule_create, create_local_bench_store, parse_schedule_response};
+use fitz::domains::schedule::actor::ScheduleActor;
+use fitz::domains::schedule::protocol::ScheduleMessage;
+use fitz::prelude::Actor;
+use fitz::runtime::actor::Context;
+use fitz::runtime::router::Router;
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
+use std::sync::Arc;
 
-#[path = "config.rs"]
-mod config;
-
-// ============================================================================
-// TLV ENCODING HELPERS
-// ============================================================================
-
-/// Encode a schedule create request
-fn encode_create_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    delay_seconds: u64,
-    recurring: bool,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 700; // CREATE
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Delay
-    buf.put_u8(3);
-    buf.put_u16(8);
-    buf.put_u64(delay_seconds);
-
-    // Recurring flag
-    buf.put_u8(4);
-    buf.put_u16(1);
-    buf.put_u8(if recurring { 1 } else { 0 });
-
-    buf.to_vec()
+fn make_schedule_ctx() -> Context<ScheduleActor> {
+    let router = Router::new();
+    let addr = RouteAddress::new(RouteFamily::new(1), Route::new("schedule://tier4/job1"));
+    Context::new(addr, Arc::new(router))
 }
 
-/// Encode a schedule cancel request
-fn encode_cancel_request(route_family: RouteFamily, route_str: &str) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 701; // CANCEL
+#[stress_test]
+fn should_complete_direct_create(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "create");
 
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
+    let (db, _temp_dir) = create_local_bench_store();
+    let mut actor = ScheduleActor::new(
+        RouteFamily::new(1),
+        db,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let mut actor_ctx = make_schedule_ctx();
 
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    buf.to_vec()
-}
-
-/// Encode a schedule list request
-#[allow(dead_code)]
-fn encode_list_request(route_family: RouteFamily) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 702; // LIST
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    buf.to_vec()
-}
-
-// ============================================================================
-// TCP INTEGRATION BENCHMARKS - Full socket stack
-// ============================================================================
-
-fn bench_tcp_create_cancel(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let client = server.connect().await.unwrap();
-        (server, client)
+    ctx.measure(|| {
+        actor.receive(
+            ScheduleMessage::Create {
+                route: "schedule://tier4/job1".to_string(),
+                cron: "0 * * * *".to_string(),
+                payload: Bytes::from_static(b"payload"),
+            },
+            &mut actor_ctx,
+        );
     });
+}
 
-    let mut group = c.benchmark_group("schedule_tcp_task_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(2));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
+#[stress_test]
+fn should_complete_encoded_create(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "encoded");
+    ctx.tag("scenario", "create");
 
-    group.bench_function("tcp_create_cancel", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "schedule://realm/area/task1";
+    let (db, _temp_dir) = create_local_bench_store();
+    let mut actor = ScheduleActor::new(
+        RouteFamily::new(1),
+        db,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let mut actor_ctx = make_schedule_ctx();
+    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
 
-                // Create
-                let create_frame = encode_create_request(route_family, route_str, 60, false);
-                let _ = client.request(&create_frame, 5000).await.unwrap();
+    ctx.measure(|| {
+        actor.receive(
+            ScheduleMessage::Create {
+                route: "schedule://tier4/job1".to_string(),
+                cron: "0 * * * *".to_string(),
+                payload: Bytes::from_static(b"payload"),
+            },
+            &mut actor_ctx,
+        );
+        let _ = &create_frame;
+    });
+}
 
-                // Cancel
-                let cancel_frame = encode_cancel_request(route_family, route_str);
-                let _ = black_box(client.request(&cancel_frame, 5000).await.unwrap());
-            })
+#[stress_test]
+fn should_complete_tcp_create(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "network_roundtrip");
+
+    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&create_frame, 2000))
+            .expect("create response");
+        let (_msg_type, _status, _data) = parse_schedule_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_ws_create(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "network_roundtrip");
+
+    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&create_frame, 2000))
+            .expect("create response");
+        let (_msg_type, _status, _data) = parse_schedule_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_multiclient_creates(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("layer", "multiclient");
+    ctx.tag("scenario", "concurrent_creates");
+
+    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut clients: Vec<TestWebSocketClient> = (0..10)
+        .map(|_| {
+            runtime
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
+                .expect("connect ws")
         })
-    });
+        .collect();
 
-    group.finish();
-    drop(client);
-    drop(server);
+    ctx.measure(|| {
+        for client in clients.iter_mut() {
+            let response = runtime
+                .block_on(client.request(&create_frame, 2000))
+                .expect("create response");
+            let (_msg_type, _status, _data) = parse_schedule_response(&response);
+        }
+    });
 }
 
-// ============================================================================
-// WEBSOCKET INTEGRATION BENCHMARKS - Full WS framing stack
-// ============================================================================
-
-fn bench_ws_create_cancel(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut ws_client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let ws_client = server.connect_ws().await.unwrap();
-        (server, ws_client)
-    });
-
-    let mut group = c.benchmark_group("schedule_ws_task_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(2));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
-
-    group.bench_function("ws_create_cancel", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "schedule://realm/area/task1";
-
-                // Create
-                let create_frame = encode_create_request(route_family, route_str, 60, false);
-                let _ = ws_client.request(&create_frame, 5000).await.unwrap();
-
-                // Cancel
-                let cancel_frame = encode_cancel_request(route_family, route_str);
-                let _ = black_box(ws_client.request(&cancel_frame, 5000).await.unwrap());
-            })
-        })
-    });
-
-    group.finish();
-    drop(ws_client);
-    drop(server);
-}
-
-criterion_group! {
-    name = benches;
-    config = config::criterion_config();
-    targets =
-        bench_tcp_create_cancel,
-        bench_ws_create_cancel,
-}
-criterion_main!(benches);
+stress_main!();

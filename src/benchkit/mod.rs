@@ -8,8 +8,10 @@ pub mod queue;
 pub mod rpc;
 pub mod storage;
 pub mod stream;
+pub mod transport;
 
 pub use queue::*;
 pub use rpc::*;
 pub use storage::*;
 pub use stream::*;
+pub use transport::*;

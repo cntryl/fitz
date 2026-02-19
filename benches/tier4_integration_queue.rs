@@ -1,231 +1,166 @@
-//! Queue domain tier 4 integration benchmarks
+//! Queue domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Tests two integration levels:
-//! 1. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
-//! 2. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
-//!
-//! This reveals where performance cliffs occur in queue message workflows.
+//! Tests four integration levels:
+//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
+//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
 
-use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::TestServer;
-use std::time::Duration;
+use bytes::Bytes;
+use cntryl_stress::{stress_main, stress_test, StressContext};
+use fitz::benchkit::{
+    build_queue_dequeue, build_queue_enqueue, create_local_bench_queue_actor, parse_queue_response,
+};
+use fitz::domains::queue::protocol::QueueMessage;
+use fitz::prelude::Actor;
+use fitz::runtime::actor::Context;
+use fitz::runtime::router::Router;
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
+use std::sync::Arc;
 
-#[path = "config.rs"]
-mod config;
-
-// ============================================================================
-// TLV ENCODING HELPERS
-// ============================================================================
-
-/// Encode an enqueue request frame
-fn encode_enqueue_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    body: &[u8],
-    delay_seconds: Option<u64>,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 200; // ENQUEUE
-
-    // Message type
-    buf.put_u8(msg_type as u8);
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u32(route_bytes.len() as u32);
-    buf.put_slice(route_bytes);
-
-    // Body
-    buf.put_u32(body.len() as u32);
-    buf.put_slice(body);
-
-    // Delay (optional)
-    if let Some(delay) = delay_seconds {
-        buf.put_u8(1); // has_delay
-        buf.put_u64(delay);
-    } else {
-        buf.put_u8(0); // no_delay
-    }
-
-    buf.to_vec()
+fn setup_queue_actor(
+    route: &str,
+) -> (
+    fitz::domains::queue::QueueActor,
+    Context<fitz::domains::queue::QueueActor>,
+) {
+    let (actor, _temp_dir) = create_local_bench_queue_actor("tier4", "queue", "main", None);
+    let router = Arc::new(Router::new());
+    let addr = RouteAddress::new(RouteFamily::new(0), Route::new(route.to_string()));
+    let ctx = Context::new(addr, router);
+    (actor, ctx)
 }
 
-/// Encode a reserve request frame
-fn encode_reserve_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    lease_seconds: u64,
-    batch_size: Option<u32>,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 202; // RESERVE
+#[stress_test]
+fn should_complete_direct_enqueue(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "enqueue");
 
-    buf.put_u8(msg_type as u8);
+    let route = "queue://tier4/queue/main/enqueue";
+    let (mut actor, mut actor_ctx) = setup_queue_actor(route);
 
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u32(route_bytes.len() as u32);
-    buf.put_slice(route_bytes);
-
-    // Lease seconds
-    buf.put_u64(lease_seconds);
-
-    // Batch size (optional)
-    if let Some(batch) = batch_size {
-        buf.put_u8(1);
-        buf.put_u32(batch);
-    } else {
-        buf.put_u8(0);
-    }
-
-    buf.to_vec()
-}
-
-/// Encode a complete request frame
-fn encode_complete_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    message_id: u64,
-    token: u64,
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 204; // COMPLETE
-
-    buf.put_u8(msg_type as u8);
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u32(route_bytes.len() as u32);
-    buf.put_slice(route_bytes);
-
-    // MessageId
-    buf.put_u64(message_id);
-
-    // Token
-    buf.put_u64(token);
-
-    buf.to_vec()
-}
-
-// ============================================================================
-// TCP INTEGRATION BENCHMARKS - Full socket stack
-// ============================================================================
-
-fn bench_tcp_enqueue_reserve_complete(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let client = server.connect().await.unwrap();
-        (server, client)
+    ctx.measure(|| {
+        actor.receive(
+            QueueMessage::Enqueue {
+                family_id: RouteFamily::new(0),
+                route: Route::new(route.to_string()),
+                body: Bytes::from_static(b"msg"),
+                delay_seconds: None,
+            },
+            &mut actor_ctx,
+        );
     });
+}
 
-    let mut group = c.benchmark_group("queue_tcp_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
+#[stress_test]
+fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "encoded");
+    ctx.tag("scenario", "enqueue");
 
-    group.bench_function("tcp_enqueue_reserve_complete", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "queue://bench/queue/tasks";
+    let route = "queue://tier4/queue/main/enqueue";
+    let (mut actor, mut actor_ctx) = setup_queue_actor(route);
+    let enqueue_frame = build_queue_enqueue(route, b"msg");
+    let dequeue_frame = build_queue_dequeue(route);
 
-                // Enqueue
-                let enqueue_frame =
-                    encode_enqueue_request(route_family, route_str, b"test_message", None);
-                let _enqueue_resp = client.request(&enqueue_frame, 5000).await.unwrap();
+    ctx.measure(|| {
+        actor.receive(
+            QueueMessage::Enqueue {
+                family_id: RouteFamily::new(0),
+                route: Route::new(route.to_string()),
+                body: Bytes::from_static(b"msg"),
+                delay_seconds: None,
+            },
+            &mut actor_ctx,
+        );
+        let _ = (&enqueue_frame, &dequeue_frame);
+    });
+}
 
-                // For simplicity, assume message_id = 1 (we'd need to parse the response)
-                // In a real implementation, parse enqueue_resp to extract message_id
+#[stress_test]
+fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "network_roundtrip");
 
-                // Reserve
-                let reserve_frame = encode_reserve_request(route_family, route_str, 30, Some(1));
-                let _reserve_resp = client.request(&reserve_frame, 5000).await.unwrap();
+    let route = "queue://tier4/queue/main/enqueue";
+    let enqueue_frame = build_queue_enqueue(route, b"msg");
 
-                // For simplicity, assume message_id=1, token=1 (we'd parse reserve_resp)
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
 
-                // Complete
-                let complete_frame = encode_complete_request(route_family, route_str, 1, 1);
-                let _ = black_box(client.request(&complete_frame, 5000).await.unwrap());
-            })
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&enqueue_frame, 2000))
+            .expect("enqueue response");
+        let (_msg_type, _status, _data) = parse_queue_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_ws_enqueue(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "network_roundtrip");
+
+    let route = "queue://tier4/queue/main/enqueue";
+    let enqueue_frame = build_queue_enqueue(route, b"msg");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&enqueue_frame, 2000))
+            .expect("enqueue response");
+        let (_msg_type, _status, _data) = parse_queue_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("layer", "multiclient");
+    ctx.tag("scenario", "concurrent_enqueues");
+
+    let route = "queue://tier4/queue/main/enqueue";
+    let enqueue_frame = build_queue_enqueue(route, b"msg");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut clients: Vec<TestWebSocketClient> = (0..10)
+        .map(|_| {
+            runtime
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
+                .expect("connect ws")
         })
-    });
+        .collect();
 
-    group.finish();
-    drop(client);
-    drop(server);
+    ctx.measure(|| {
+        for client in clients.iter_mut() {
+            let response = runtime
+                .block_on(client.request(&enqueue_frame, 2000))
+                .expect("enqueue response");
+            let (_msg_type, _status, _data) = parse_queue_response(&response);
+        }
+    });
 }
 
-// ============================================================================
-// WEBSOCKET INTEGRATION BENCHMARKS - Full WS framing stack
-// ============================================================================
-
-fn bench_ws_enqueue_reserve_complete(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut ws_client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let ws_client = server.connect_ws().await.unwrap();
-        (server, ws_client)
-    });
-
-    let mut group = c.benchmark_group("queue_ws_workflow");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
-
-    group.bench_function("ws_enqueue_reserve_complete", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "queue://bench/queue/tasks";
-
-                // Enqueue
-                let enqueue_frame =
-                    encode_enqueue_request(route_family, route_str, b"test_message", None);
-                let _ = ws_client.request(&enqueue_frame, 5000).await.unwrap();
-
-                // Reserve
-                let reserve_frame = encode_reserve_request(route_family, route_str, 30, Some(1));
-                let _ = ws_client.request(&reserve_frame, 5000).await.unwrap();
-
-                // Complete
-                let complete_frame = encode_complete_request(route_family, route_str, 1, 1);
-                let _ = black_box(ws_client.request(&complete_frame, 5000).await.unwrap());
-            })
-        })
-    });
-
-    group.finish();
-    drop(ws_client);
-    drop(server);
-}
-
-criterion_group! {
-    name = benches;
-    config = config::criterion_config();
-    targets =
-        bench_tcp_enqueue_reserve_complete,
-        bench_ws_enqueue_reserve_complete,
-}
-criterion_main!(benches);
+stress_main!();

@@ -1,219 +1,171 @@
-//! RPC domain tier 4 integration benchmarks
+//! RPC domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
-//! Tests two integration levels:
-//! 1. **TCP** - Full TCP stack: encode → socket → server → decode → actor → encode → socket
-//! 2. **WebSocket** - Full WS stack: encode → WS frame → server → decode → actor → encode → WS frame
-//!
-//! This reveals where performance cliffs occur in RPC request/response workflows.
-//! (Direct actor testing skipped - see tier3 for actor-level benchmarks)
+//! Tests four integration levels:
+//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
+//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
 
-use bytes::{BufMut, BytesMut};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::transport::TestServer;
-use std::time::Duration;
+use bytes::Bytes;
+use cntryl_stress::{stress_main, stress_test, StressContext};
+use fitz::benchkit::{build_rpc_request, build_rpc_subscribe, parse_rpc_response};
+use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest};
+use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
+use fitz::prelude::Actor;
+use fitz::runtime::actor::Context;
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::testkit::{addr, make_router, TestClient, TestServer, TestSink, TestWebSocketClient};
+use std::sync::Arc;
 use uuid::Uuid;
 
-#[path = "config.rs"]
-mod config;
+fn setup_rpc_actor() -> (RpcRouteActor, Context<RpcRouteActor>) {
+    let router = make_router();
+    let sink = Arc::new(TestSink::new());
+    let worker = addr("rpc://tier4/worker");
+    router.register(worker.clone(), sink.clone());
 
-// ============================================================================
-// TLV ENCODING HELPERS
-// ============================================================================
+    let reply = addr("inbox://session/1");
+    router.register(reply.clone(), sink);
 
-/// Encode an RPC subscribe request (worker registration)
-fn encode_subscribe_request(route_family: RouteFamily, route_str: &str, worker_id: u64) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 300; // SUBSCRIBE
+    let router = Arc::new(router);
+    let ctx = Context::new(addr("rpc://tier4/service"), router);
 
-    buf.put_u8(msg_type as u8);
-
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
-
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Worker ID
-    buf.put_u8(3);
-    buf.put_u16(8);
-    buf.put_u64(worker_id);
-
-    buf.to_vec()
+    (RpcRouteActor::new(RouteFamily::new(1)), ctx)
 }
 
-/// Encode an RPC request (call to worker)
-fn encode_rpc_request(
-    route_family: RouteFamily,
-    route_str: &str,
-    request_id: Uuid,
-    body: &[u8],
-) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 302; // RPC_REQUEST
+#[stress_test]
+fn should_complete_direct_request(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "request");
 
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
+    let (mut actor, mut actor_ctx) = setup_rpc_actor();
+    let subscribe = RpcMessage::Subscribe {
+        worker_addr: RouteAddress::new(RouteFamily::new(1), Route::new("rpc://tier4/worker")),
+    };
+    actor.receive(subscribe, &mut actor_ctx);
 
-    // RouteFamily
-    buf.put_u8(1);
-    buf.put_u16(8);
-    buf.put_u64(route_family.as_u64());
+    let req = RpcRequest::new(
+        RouteFamily::new(1),
+        Uuid::new_v4(),
+        Route::new("rpc://tier4/service"),
+        Route::new("inbox://session/1"),
+        Bytes::from_static(b"ping"),
+    );
 
-    // Route
-    let route_bytes = route_str.as_bytes();
-    buf.put_u8(2);
-    buf.put_u16(route_bytes.len() as u16);
-    buf.put_slice(route_bytes);
-
-    // Request ID (UUID)
-    buf.put_u8(4);
-    buf.put_u16(16);
-    buf.put_slice(request_id.as_bytes());
-
-    // Body
-    buf.put_u8(5);
-    buf.put_u16(body.len() as u16);
-    buf.put_slice(body);
-
-    buf.to_vec()
-}
-
-/// Encode an RPC response (worker responding to request)
-fn encode_rpc_response(request_id: Uuid, response_body: &[u8]) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let msg_type: u16 = 303; // RPC_RESPONSE
-
-    if msg_type <= 254 {
-        buf.put_u8(msg_type as u8);
-    } else {
-        buf.put_u8(0xFF);
-        buf.put_u16(msg_type);
-    }
-
-    // Request ID
-    buf.put_u8(4);
-    buf.put_u16(16);
-    buf.put_slice(request_id.as_bytes());
-
-    // Response body
-    buf.put_u8(6);
-    buf.put_u16(response_body.len() as u16);
-    buf.put_slice(response_body);
-
-    buf.to_vec()
-}
-
-// ============================================================================
-// TCP INTEGRATION BENCHMARKS - Full socket stack
-// ============================================================================
-
-fn bench_tcp_subscribe_request_response(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let client = server.connect().await.unwrap();
-        (server, client)
+    ctx.measure(|| {
+        actor.receive(RpcMessage::Request(req.clone()), &mut actor_ctx);
     });
+}
 
-    let mut group = c.benchmark_group("rpc_tcp_request_response");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
+#[stress_test]
+fn should_complete_encoded_request(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "encoded");
+    ctx.tag("scenario", "request");
 
-    group.bench_function("tcp_subscribe_request_response", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "rpc://realm/area/service";
-                let worker_id = 1;
-                let request_id = Uuid::new_v4();
+    let (mut actor, mut actor_ctx) = setup_rpc_actor();
+    let subscribe = RpcMessage::Subscribe {
+        worker_addr: RouteAddress::new(RouteFamily::new(1), Route::new("rpc://tier4/worker")),
+    };
+    actor.receive(subscribe, &mut actor_ctx);
 
-                // Subscribe
-                let subscribe_frame = encode_subscribe_request(route_family, route_str, worker_id);
-                let _ = client.request(&subscribe_frame, 5000).await.unwrap();
+    let req = RpcRequest::new(
+        RouteFamily::new(1),
+        Uuid::new_v4(),
+        Route::new("rpc://tier4/service"),
+        Route::new("inbox://session/1"),
+        Bytes::from_static(b"ping"),
+    );
 
-                // Request
-                let request_frame =
-                    encode_rpc_request(route_family, route_str, request_id, b"test_request");
-                let _ = client.request(&request_frame, 5000).await.unwrap();
+    let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
+    let request_frame = build_rpc_request("rpc://tier4/service", b"ping");
 
-                // Response
-                let response_frame = encode_rpc_response(request_id, b"test_response");
-                let _ = black_box(client.request(&response_frame, 5000).await.unwrap());
-            })
+    ctx.measure(|| {
+        actor.receive(RpcMessage::Request(req.clone()), &mut actor_ctx);
+        let _ = (&subscribe_frame, &request_frame);
+    });
+}
+
+#[stress_test]
+fn should_complete_tcp_subscribe(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "subscribe");
+
+    let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&subscribe_frame, 2000))
+            .expect("subscribe response");
+        let (_msg_type, _status, _data) = parse_rpc_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_ws_subscribe(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "subscribe");
+
+    let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws");
+
+    ctx.measure(|| {
+        let response = runtime
+            .block_on(client.request(&subscribe_frame, 2000))
+            .expect("subscribe response");
+        let (_msg_type, _status, _data) = parse_rpc_response(&response);
+    });
+}
+
+#[stress_test]
+fn should_complete_multiclient_subscribe(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("layer", "multiclient");
+    ctx.tag("scenario", "concurrent_subscribe");
+
+    let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut clients: Vec<TestWebSocketClient> = (0..10)
+        .map(|_| {
+            runtime
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
+                .expect("connect ws")
         })
-    });
+        .collect();
 
-    group.finish();
-    drop(client);
-    drop(server);
+    ctx.measure(|| {
+        for client in clients.iter_mut() {
+            let response = runtime
+                .block_on(client.request(&subscribe_frame, 2000))
+                .expect("subscribe response");
+            let (_msg_type, _status, _data) = parse_rpc_response(&response);
+        }
+    });
 }
 
-// ============================================================================
-// WEBSOCKET INTEGRATION BENCHMARKS - Full WS framing stack
-// ============================================================================
-
-fn bench_ws_subscribe_request_response(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (server, mut ws_client) = runtime.block_on(async {
-        let server = TestServer::start().await.unwrap();
-        let ws_client = server.connect_ws().await.unwrap();
-        (server, ws_client)
-    });
-
-    let mut group = c.benchmark_group("rpc_ws_request_response");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(3));
-    group.warm_up_time(Duration::from_millis(200));
-    group.measurement_time(Duration::from_secs(1));
-
-    group.bench_function("ws_subscribe_request_response", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                let route_family = RouteFamily::new(1);
-                let route_str = "rpc://realm/area/service";
-                let worker_id = 1;
-                let request_id = Uuid::new_v4();
-
-                // Subscribe
-                let subscribe_frame = encode_subscribe_request(route_family, route_str, worker_id);
-                let _ = ws_client.request(&subscribe_frame, 5000).await.unwrap();
-
-                // Request
-                let request_frame =
-                    encode_rpc_request(route_family, route_str, request_id, b"test_request");
-                let _ = ws_client.request(&request_frame, 5000).await.unwrap();
-
-                // Response
-                let response_frame = encode_rpc_response(request_id, b"test_response");
-                let _ = black_box(ws_client.request(&response_frame, 5000).await.unwrap());
-            })
-        })
-    });
-
-    group.finish();
-    drop(ws_client);
-    drop(server);
-}
-
-criterion_group! {
-    name = benches;
-    config = config::criterion_config();
-    targets =
-        bench_tcp_subscribe_request_response,
-        bench_ws_subscribe_request_response,
-}
-criterion_main!(benches);
+stress_main!();

@@ -1,26 +1,17 @@
-//! Tier 3 (System) benchmarks for Schedule domain
-//!
-//! Measures full system pipeline performance:
-//! - Frame parsing
-//! - Session routing
-//! - Actor execution
-//! - Response encoding
-//! - Full round-trip latency
-//!
-//! This is closest to production performance measurement.
+// Schedule domain tier 3 system benchmarks using stress
+//
+// Schedule creation, cancellation, listing, and fire-scanning.
+// Tests sustained schedule operations with mixed workloads.
+//
+// Each test measures a single operation with all setup/teardown outside the measurement loop.
+// Target: ops/sec via set_elements(count)
 
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
-};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 
-#[path = "../benches/config.rs"]
-mod config;
-
-/// Create a test schedule actor
 fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
     ScheduleActor::new(
@@ -30,7 +21,6 @@ fn create_test_actor() -> ScheduleActor {
     )
 }
 
-/// Precompute test data
 fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
     let routes = (0..count)
         .map(|i| format!("schedule://acme/jobs/task{:06}", i))
@@ -50,36 +40,35 @@ fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
     (routes, crons, payloads)
 }
 
-/// Benchmark: System-level CREATE operation
-fn bench_system_create(c: &mut Criterion) {
+#[stress_test]
+fn should_complete_system_create(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("scenario", "create_operation");
+
+    // Setup: Actor + precomputed data
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(1000);
 
-    let mut group = c.benchmark_group("schedule_system_create");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("create", |b| {
-        let mut idx = 0;
-        b.iter(|| {
-            let _response = actor.handle(black_box(ScheduleMessage::Create {
-                route: routes[idx % routes.len()].clone(),
-                cron: crons[idx % crons.len()].clone(),
-                payload: payloads[idx % payloads.len()].clone(),
-            }));
-            idx += 1;
+    let mut idx = 0;
+    ctx.measure(|| {
+        let _response = actor.handle(ScheduleMessage::Create {
+            route: routes[idx % routes.len()].clone(),
+            cron: crons[idx % crons.len()].clone(),
+            payload: payloads[idx % payloads.len()].clone(),
         });
+        idx += 1;
     });
-
-    group.finish();
 }
 
-/// Benchmark: System-level CANCEL operation
-fn bench_system_cancel(c: &mut Criterion) {
-    let (routes, crons, payloads) = precompute_data(1000);
+#[stress_test]
+fn should_complete_system_cancel(ctx: &mut StressContext) {
+    ctx.set_elements(1);
+    ctx.tag("scenario", "cancel_operation");
 
-    // Setup: Create schedules
+    // Setup: Create actor with pre-populated schedules
+    let (routes, crons, payloads) = precompute_data(1000);
     let mut actor = create_test_actor();
+
     for i in 0..routes.len() {
         actor.handle(ScheduleMessage::Create {
             route: routes[i].clone(),
@@ -88,58 +77,46 @@ fn bench_system_cancel(c: &mut Criterion) {
         });
     }
 
-    let mut group = c.benchmark_group("schedule_system_cancel");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("cancel", |b| {
-        let mut idx = 0;
-        b.iter(|| {
-            let _response = actor.handle(black_box(ScheduleMessage::Cancel {
-                route: routes[idx % routes.len()].clone(),
-            }));
-            idx += 1;
+    let mut idx = 0;
+    ctx.measure(|| {
+        let _response = actor.handle(ScheduleMessage::Cancel {
+            route: routes[idx % routes.len()].clone(),
         });
+        idx += 1;
     });
-
-    group.finish();
 }
 
-/// Benchmark: System-level LIST operation with varying schedule counts
-fn bench_system_list(c: &mut Criterion) {
-    let mut group = c.benchmark_group("schedule_system_list");
-    group.sampling_mode(SamplingMode::Flat);
+#[stress_test]
+fn should_complete_system_list_10_schedules(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("scenario", "list_10");
 
-    for count in [10, 100, 1000] {
-        // Setup: Create schedules
-        let mut actor = create_test_actor();
-        let (routes, crons, payloads) = precompute_data(count);
+    // Setup: Create actor with 10 schedules
+    let mut actor = create_test_actor();
+    let (routes, crons, payloads) = precompute_data(10);
 
-        for i in 0..count {
-            actor.handle(ScheduleMessage::Create {
-                route: routes[i].clone(),
-                cron: crons[i].clone(),
-                payload: payloads[i].clone(),
-            });
-        }
-
-        group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.iter(|| {
-                let _response = actor.handle(black_box(ScheduleMessage::List));
-            });
+    for i in 0..10 {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
         });
     }
 
-    group.finish();
+    ctx.measure(|| {
+        let _response = actor.handle(ScheduleMessage::List);
+    });
 }
 
-/// Benchmark: Mixed workload (CREATE/CANCEL/LIST)
-fn bench_system_mixed_workload(c: &mut Criterion) {
-    let (routes, crons, payloads) = precompute_data(1000);
-    let mut actor = create_test_actor();
+#[stress_test]
+fn should_complete_system_list_100_schedules(ctx: &mut StressContext) {
+    ctx.set_elements(100);
+    ctx.tag("scenario", "list_100");
 
-    // Pre-populate with some schedules
+    // Setup: Create actor with 100 schedules
+    let mut actor = create_test_actor();
+    let (routes, crons, payloads) = precompute_data(100);
+
     for i in 0..100 {
         actor.handle(ScheduleMessage::Create {
             route: routes[i].clone(),
@@ -148,79 +125,142 @@ fn bench_system_mixed_workload(c: &mut Criterion) {
         });
     }
 
-    let mut group = c.benchmark_group("schedule_system_mixed");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(4));
-
-    group.bench_function("mixed", |b| {
-        let mut idx = 100;
-        b.iter(|| {
-            // CREATE
-            let _r1 = actor.handle(black_box(ScheduleMessage::Create {
-                route: routes[idx % routes.len()].clone(),
-                cron: crons[idx % crons.len()].clone(),
-                payload: payloads[idx % payloads.len()].clone(),
-            }));
-
-            // LIST
-            let _r2 = actor.handle(black_box(ScheduleMessage::List));
-
-            // CREATE (another)
-            let _r3 = actor.handle(black_box(ScheduleMessage::Create {
-                route: routes[(idx + 1) % routes.len()].clone(),
-                cron: crons[(idx + 1) % crons.len()].clone(),
-                payload: payloads[(idx + 1) % payloads.len()].clone(),
-            }));
-
-            // CANCEL
-            let _r4 = actor.handle(black_box(ScheduleMessage::Cancel {
-                route: routes[(idx - 50) % routes.len()].clone(),
-            }));
-
-            idx += 2;
-        });
+    ctx.measure(|| {
+        let _response = actor.handle(ScheduleMessage::List);
     });
-
-    group.finish();
 }
 
-/// Benchmark: Scan and fire overhead with many schedules
-fn bench_system_scan_and_fire(c: &mut Criterion) {
-    let mut group = c.benchmark_group("schedule_system_scan_and_fire");
-    group.sampling_mode(SamplingMode::Flat);
+#[stress_test]
+fn should_complete_system_list_1000_schedules(ctx: &mut StressContext) {
+    ctx.set_elements(1000);
+    ctx.tag("scenario", "list_1000");
 
-    for count in [100, 1000, 10000] {
-        // Setup: Create many schedules
-        let mut actor = create_test_actor();
-        let (routes, crons, payloads) = precompute_data(count);
+    // Setup: Create actor with 1000 schedules
+    let mut actor = create_test_actor();
+    let (routes, crons, payloads) = precompute_data(1000);
 
-        for i in 0..count {
-            actor.handle(ScheduleMessage::Create {
-                route: routes[i].clone(),
-                cron: crons[i].clone(),
-                payload: payloads[i].clone(),
-            });
-        }
-
-        group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.iter(|| {
-                let _fired = actor.scan_and_fire();
-            });
+    for i in 0..1000 {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
         });
     }
 
-    group.finish();
+    ctx.measure(|| {
+        let _response = actor.handle(ScheduleMessage::List);
+    });
 }
 
-criterion_group! {
-    name = benches;
-    config = config::criterion_config();
-    targets =
-        bench_system_create,
-        bench_system_cancel,
-        bench_system_list,
-        bench_system_mixed_workload,
-        bench_system_scan_and_fire,
+#[stress_test]
+fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
+    ctx.set_elements(4); // CREATE + LIST + CREATE + CANCEL
+    ctx.tag("scenario", "mixed_workload");
+
+    // Setup: Create actor with 100 pre-populated schedules
+    let (routes, crons, payloads) = precompute_data(1000);
+    let mut actor = create_test_actor();
+
+    for i in 0..100 {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
+        });
+    }
+
+    let mut idx = 100;
+    ctx.measure(|| {
+        // CREATE
+        let _r1 = actor.handle(ScheduleMessage::Create {
+            route: routes[idx % routes.len()].clone(),
+            cron: crons[idx % crons.len()].clone(),
+            payload: payloads[idx % payloads.len()].clone(),
+        });
+
+        // LIST
+        let _r2 = actor.handle(ScheduleMessage::List);
+
+        // CREATE (another)
+        let _r3 = actor.handle(ScheduleMessage::Create {
+            route: routes[(idx + 1) % routes.len()].clone(),
+            cron: crons[(idx + 1) % crons.len()].clone(),
+            payload: payloads[(idx + 1) % payloads.len()].clone(),
+        });
+
+        // CANCEL
+        let _r4 = actor.handle(ScheduleMessage::Cancel {
+            route: routes[(idx + 50) % routes.len()].clone(),
+        });
+
+        idx += 2;
+    });
 }
-criterion_main!(benches);
+
+#[stress_test]
+fn should_complete_system_scan_and_fire_100_schedules(ctx: &mut StressContext) {
+    ctx.set_elements(100);
+    ctx.tag("scenario", "scan_fire_100");
+
+    // Setup: Create actor with 100 schedules
+    let mut actor = create_test_actor();
+    let (routes, crons, payloads) = precompute_data(100);
+
+    for i in 0..100 {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
+        });
+    }
+
+    ctx.measure(|| {
+        let _fired = actor.scan_and_fire();
+    });
+}
+
+#[stress_test]
+fn should_complete_system_scan_and_fire_1000_schedules(ctx: &mut StressContext) {
+    ctx.set_elements(1000);
+    ctx.tag("scenario", "scan_fire_1000");
+
+    // Setup: Create actor with 1000 schedules
+    let mut actor = create_test_actor();
+    let (routes, crons, payloads) = precompute_data(1000);
+
+    for i in 0..1000 {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
+        });
+    }
+
+    ctx.measure(|| {
+        let _fired = actor.scan_and_fire();
+    });
+}
+
+#[stress_test]
+fn should_complete_system_scan_and_fire_10000_schedules(ctx: &mut StressContext) {
+    ctx.set_elements(10000);
+    ctx.tag("scenario", "scan_fire_10000");
+
+    // Setup: Create actor with 10000 schedules
+    let mut actor = create_test_actor();
+    let (routes, crons, payloads) = precompute_data(10000);
+
+    for i in 0..10000 {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
+        });
+    }
+
+    ctx.measure(|| {
+        let _fired = actor.scan_and_fire();
+    });
+}
+
+stress_main!();
