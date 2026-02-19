@@ -5,7 +5,6 @@
 ///
 /// Default: 5 runs with 1 warmup (CI-friendly, ~10-30s per suite)
 /// Override: BENCH_RUNS and BENCH_WARMUP environment variables
-
 pub struct BenchConfig {
     pub runs: usize,
     pub warmup: usize,

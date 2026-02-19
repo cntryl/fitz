@@ -25,7 +25,7 @@
 //! - During matching, we try suffix patterns against all possible remaining segments
 
 use crate::runtime::matcher::{
-    extract_route_segments, extract_route_segments_borrowed, match_pattern_segments,
+    extract_route_segments_borrowed, match_pattern_segments,
     match_pattern_segments_borrowed, parse_pattern_segments, PatternSegment,
 };
 use crate::runtime::routing::{Route, RouteFamily};
