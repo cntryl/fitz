@@ -10,17 +10,78 @@ const GRACE_PERIOD_SECS: u64 = 3600; // 1 hour
 
 pub struct ScheduleStore {
     db: Arc<cntryl_midge::Engine>,
+    /// Cached reference time (UNIX_EPOCH) for monotonic timestamp generation
+    epoch: Instant,
 }
 
 impl ScheduleStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
-        Self { db }
+        Self {
+            db,
+            epoch: Instant::now(),
+        }
     }
 
-    /// Encode storage key: `{next_fire_time_ms:020}:{route}`
-    /// Sorted lexicographically by time, enabling range scans
-    fn encode_key(next_fire_time_ms: u64, route: &str) -> String {
-        format!("{:020}:{}", next_fire_time_ms, route)
+    /// Encode storage key: `sched:m{minute_epoch}/{ms_offset}:{route}`
+    /// Prefix format allows rapid scanning of next-fire schedules by minute bucket.
+    /// minute_epoch = ms since UNIX_EPOCH / 60_000
+    /// ms_offset = ms since last minute boundary (0-59_999)
+    fn encode_key(next_fire_time_ms: u64, route: &str) -> Vec<u8> {
+        let minute_epoch = next_fire_time_ms / 60_000;
+        let ms_offset = next_fire_time_ms % 60_000;
+        
+        let mut key = Vec::with_capacity(30 + route.len());
+        key.extend_from_slice(b"sched:m");
+        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
+        key.push(b'/');
+        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
+        key.push(b':');
+        key.extend_from_slice(route.as_bytes());
+        
+        key
+    }
+
+    /// Decode storage key to extract route and timestamp
+    fn decode_key(key: &[u8]) -> Result<(u64, String), String> {
+        // Format: sched:m{8-byte-minute}/{6-byte-offset}:{route}
+        if !key.starts_with(b"sched:m") {
+            return Err("Invalid key prefix".to_string());
+        }
+
+        let remaining = &key[7..]; // skip "sched:m"
+        if remaining.len() < 15 {
+            return Err("Key too short".to_string());
+        }
+
+        // Read minute_epoch (8 bytes)
+        let minute_bytes = &remaining[0..8];
+        let minute_epoch = u64::from_be_bytes([
+            minute_bytes[0], minute_bytes[1], minute_bytes[2], minute_bytes[3],
+            minute_bytes[4], minute_bytes[5], minute_bytes[6], minute_bytes[7],
+        ]);
+
+        // Expect '/' separator at position 8
+        if remaining[8] != b'/' {
+            return Err("Missing minute/offset separator".to_string());
+        }
+
+        // Read ms_offset (6 bytes)
+        let offset_bytes = &remaining[9..15];
+        let ms_offset = u64::from_be_bytes([
+            0, 0, offset_bytes[0], offset_bytes[1], offset_bytes[2], offset_bytes[3],
+            offset_bytes[4], offset_bytes[5],
+        ]);
+
+        // Expect ':' separator at position 15
+        if remaining[15] != b':' {
+            return Err("Missing offset/route separator".to_string());
+        }
+
+        let timestamp_ms = (minute_epoch * 60_000) + ms_offset;
+        let route = String::from_utf8(remaining[16..].to_vec())
+            .map_err(|e| format!("Invalid route encoding: {}", e))?;
+
+        Ok((timestamp_ms, route))
     }
 
     /// Encode value: `{cron_expr}|{payload_bytes}`
@@ -46,20 +107,22 @@ impl ScheduleStore {
         Ok((cron, payload))
     }
 
-    /// Convert Instant to milliseconds since UNIX_EPOCH
-    fn instant_to_ms(instant: Instant) -> Result<u64, String> {
-        let now = SystemTime::now();
-        let elapsed = now
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("System time error: {}", e))?;
-        let elapsed_secs = elapsed.as_secs();
-
-        // Rough approximation: assume Instant started around now
-        // In practice, Instant is monotonic but not wall-clock time
-        // For schedules, we'll convert using now() as reference
-        let duration_since_start = instant.elapsed().as_secs();
-        let approx_ms = (elapsed_secs.saturating_sub(duration_since_start)) * 1000;
-        Ok(approx_ms)
+    /// Convert Instant to milliseconds since UNIX_EPOCH.
+    /// Uses the cached epoch for consistent, monotonic time tracking.
+    fn instant_to_ms(&self, instant: Instant) -> u64 {
+        let elapsed = instant.duration_since(self.epoch);
+        
+        // Get UNIX_EPOCH as reference
+        let now_sys = SystemTime::now();
+        if let Ok(sys_elapsed) = now_sys.duration_since(UNIX_EPOCH) {
+            let sys_ms = sys_elapsed.as_secs() * 1000 + sys_elapsed.subsec_millis() as u64;
+            let monotonic_delta = elapsed.as_millis() as u64;
+            
+            // Assume epoch started near now; calculate offset
+            sys_ms.saturating_sub(monotonic_delta)
+        } else {
+            0
+        }
     }
 
     /// Insert or update a schedule with TTL
@@ -73,7 +136,7 @@ impl ScheduleStore {
         next_fire_time: Instant,
         write_options: WriteOptions,
     ) -> Result<(), String> {
-        let next_fire_ms = Self::instant_to_ms(next_fire_time)?;
+        let next_fire_ms = self.instant_to_ms(next_fire_time);
         let key = Self::encode_key(next_fire_ms, route);
         let value = Self::encode_value(cron, payload);
 
@@ -91,7 +154,7 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        txn.put(key.into_bytes(), value, Some(ttl.as_millis() as u64))
+        txn.put(key, value, Some(ttl.as_millis() as u64))
             .map_err(|e| format!("put failed: {:?}", e))?;
 
         self.db

@@ -13,7 +13,7 @@ import csv
 CRITERION_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'criterion'
 STRESS_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'stress'
 OUT_CSV = CRITERION_ROOT / 'benchmark_summary.csv'
-OUT_MD = CRITERION_ROOT / 'benchmark_summary.md'
+OUT_MD =  'bench_summary.md'
 STRESS_CSV = STRESS_ROOT / 'stress_summary.csv'
 
 # ============================================================================
