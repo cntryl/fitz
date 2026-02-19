@@ -37,10 +37,9 @@ fn bench_send_to_other(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("send_to_other_actor", |b| {
-        let ref_clone = actor_ref.clone();
         b.iter(|| {
             // ONLY hot path - send a message
-            ref_clone.send(black_box(42)).ok();
+            actor_ref.send(black_box(42)).ok();
         })
     });
 
@@ -63,10 +62,9 @@ fn bench_send_to_self(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("send_to_self", |b| {
-        let ref_clone = actor_ref.clone();
         b.iter(|| {
             // ONLY hot path - send a message to self
-            ref_clone.send(black_box(1)).ok();
+            actor_ref.send(black_box(1)).ok();
         })
     });
 

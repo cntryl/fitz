@@ -66,9 +66,9 @@ fn bench_route_parsing(c: &mut Criterion) {
     group.bench_function("route_new_2_segments", |b| {
         let mut idx = 0;
         b.iter(|| {
-            // ONLY hot path - route creation with string allocation
+            // ONLY hot path - route creation from &str
             let route_str = &routes_2_segments[idx % routes_2_segments.len()];
-            let _route = Route::new(black_box(route_str.clone()));
+            let _route = Route::new(black_box(route_str));
             idx += 1;
         })
     });
@@ -77,7 +77,7 @@ fn bench_route_parsing(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let route_str = &routes_4_segments[idx % routes_4_segments.len()];
-            let _route = Route::new(black_box(route_str.clone()));
+            let _route = Route::new(black_box(route_str));
             idx += 1;
         })
     });
@@ -86,7 +86,7 @@ fn bench_route_parsing(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             let route_str = &routes_6_segments[idx % routes_6_segments.len()];
-            let _route = Route::new(black_box(route_str.clone()));
+            let _route = Route::new(black_box(route_str));
             idx += 1;
         })
     });

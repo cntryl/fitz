@@ -28,10 +28,8 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("spawn_single_actor", |b| {
-        let sched = scheduler.clone();
-        let addr = address.clone();
         b.iter(|| {
-            sched.spawn(SpawnActor, black_box(addr.clone()), 100);
+            scheduler.spawn(SpawnActor, black_box(address.clone()), 100);
         })
     });
 
@@ -39,7 +37,7 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
 }
 
 fn bench_scheduler_spawn_cross_family(c: &mut Criterion) {
-    let scheduler = Arc::new(Scheduler::new(1));
+    let scheduler: Arc<Scheduler> = Arc::new(Scheduler::new(1));
 
     // Pre-compute addresses to avoid string allocations in hot path
     let addresses: Vec<_> = (0..5)
@@ -51,11 +49,9 @@ fn bench_scheduler_spawn_cross_family(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("spawn_different_family", |b| {
-        let sched = scheduler.clone();
-        let addrs = addresses.clone();
         let mut idx = 0usize;
         b.iter(|| {
-            sched.spawn(SpawnActor, black_box(addrs[idx % addrs.len()].clone()), 100);
+            scheduler.spawn(SpawnActor, black_box(addresses[idx % addresses.len()].clone()), 100);
             idx = idx.wrapping_add(1);
         })
     });

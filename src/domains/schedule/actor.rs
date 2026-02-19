@@ -62,6 +62,7 @@ impl ScheduleActor {
                         let def = ScheduleDef {
                             route: route.clone(),
                             cron: cron_str,
+                            parsed_cron: cron,
                             payload,
                             next_fire_time: next_fire,
                         };
@@ -97,10 +98,11 @@ impl ScheduleActor {
         // Calculate next fire time
         let next_fire = cron_obj.next_fire_time(Instant::now());
 
-        // Create in-memory definition
+        // Create in-memory definition with cached parsed cron
         let def = ScheduleDef {
             route: route.clone(),
             cron,
+            parsed_cron: cron_obj,
             payload: payload.clone(),
             next_fire_time: next_fire,
         };
@@ -182,23 +184,22 @@ impl ScheduleActor {
         // Process fired schedules
         for (_fire_ms, route) in heap_popped {
             if let Some(def) = self.schedules.get_mut(&route) {
-                if let Ok(cron) = CronSchedule::parse(&def.cron) {
-                    let next_fire = cron.next_fire_time(now);
-                    def.next_fire_time = next_fire;
-                    let next_fire_ms = Self::instant_to_ms(next_fire);
+                // Use cached parsed cron instead of reparsing
+                let next_fire = def.parsed_cron.next_fire_time(now);
+                def.next_fire_time = next_fire;
+                let next_fire_ms = Self::instant_to_ms(next_fire);
 
-                    // Collect for batch persistence
-                    to_reschedule.push((
-                        route.clone(),
-                        def.cron.clone(),
-                        def.payload.clone(),
-                        next_fire,
-                        next_fire_ms,
-                    ));
+                // Collect for batch persistence
+                to_reschedule.push((
+                    route.clone(),
+                    def.cron.clone(),
+                    def.payload.clone(),
+                    next_fire,
+                    next_fire_ms,
+                ));
 
-                    fired.push((route.clone(), def.payload.clone()));
-                    info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
-                }
+                fired.push((route.clone(), def.payload.clone()));
+                info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
             }
         }
 

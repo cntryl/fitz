@@ -62,6 +62,8 @@ pub struct ScheduleDef {
     pub route: String,
     /// Cron expression (when to fire)
     pub cron: String,
+    /// Parsed cron schedule (cached to avoid reparsing)
+    pub parsed_cron: CronSchedule,
     /// Payload bytes to fanout to subscribers (what to send)
     pub payload: Bytes,
     /// Next fire time calculated from cron + current time
@@ -360,9 +362,11 @@ mod tests {
         let payload = Bytes::from("backup data");
 
         // Act
+        let parsed_cron = CronSchedule::parse(&cron).expect("Valid cron");
         let def = ScheduleDef {
             route,
             cron,
+            parsed_cron,
             payload,
             next_fire_time: Instant::now(),
         };

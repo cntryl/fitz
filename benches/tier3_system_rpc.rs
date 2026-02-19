@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
+use criterion::black_box;
 use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 
@@ -30,10 +31,12 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
 
     let mut worker_idx = 0;
     ctx.measure(|| {
-        // Dispatch request to next worker
+        // Dispatch request to next worker (measure worker lookup)
         let _worker = &workers[worker_idx % workers.len()];
         worker_idx += 1;
-        let _ = (&actor, &_worker, &payload);
+        // Measure getting metrics to avoid no-op
+        black_box(actor.pending_count());
+        black_box(&payload);
     });
 }
 
@@ -49,7 +52,9 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
     ctx.measure(|| {
         // Simulate streaming response chunk
         seq += 1;
-        let _ = (&actor, &seq);
+        // Measure getting metrics to avoid no-op
+        black_box(actor.pending_count());
+        black_box(seq);
     });
 }
 
@@ -71,8 +76,11 @@ fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
 
     let mut idx = 0;
     ctx.measure(|| {
-        let _ = (&workers_64[idx % workers_64.len()], &actor);
+        let _worker = &workers_64[idx % workers_64.len()];
         idx += 1;
+        // Measure worker count and pending to avoid no-op
+        black_box(actor.worker_count());
+        black_box(_worker);
     });
 }
 
@@ -94,8 +102,11 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
 
     let mut idx = 0;
     ctx.measure(|| {
-        let _ = (&workers_256[idx % workers_256.len()], &actor);
+        let _worker = &workers_256[idx % workers_256.len()];
         idx += 1;
+        // Measure worker count to avoid no-op
+        black_box(actor.worker_count());
+        black_box(_worker);
     });
 }
 
@@ -111,7 +122,9 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     ctx.measure(|| {
         // Simulate tracking in-flight request
         request_id += 1;
-        let _ = (&actor, &request_id);
+        // Measure getting metrics to avoid no-op  
+        black_box(actor.pending_count());
+        black_box(request_id);
     });
 }
 
@@ -139,14 +152,16 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
         // 6 requests
         for _ in 0..6 {
             req_id += 1;
-            let _ = (&actor, &workers[worker_idx % workers.len()]);
+            let _worker = &workers[worker_idx % workers.len()];
             worker_idx += 1;
+            black_box(_worker);
         }
 
         // 4 responses
         for _ in 0..4 {
             res_id += 1;
-            let _ = (&actor, &res_id);
+            black_box(actor.pending_count());
+            black_box(res_id);
         }
     });
 }
