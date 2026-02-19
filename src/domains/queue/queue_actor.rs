@@ -515,6 +515,11 @@ impl QueueActor {
             });
         }
 
+        // If no messages were reserved, return NotFound error
+        if messages.is_empty() {
+            return QueueResponse::NotFound;
+        }
+
         QueueResponse::Reserved { messages }
     }
 
@@ -1130,10 +1135,10 @@ pub mod tests {
 
         // Assert
         match response {
-            QueueResponse::Reserved { messages } => {
-                assert_eq!(messages.len(), 0);
+            QueueResponse::NotFound => {
+                // Expected - empty queue returns NotFound
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected NotFound response for empty queue"),
         }
     }
 
@@ -1390,16 +1395,17 @@ pub mod tests {
         loop {
             match actor.handle_reserve(30, Some(2)) {
                 QueueResponse::Reserved { messages } => {
-                    if messages.is_empty() {
-                        break;
-                    }
                     for m in messages {
                         reserved_all.push(m.body);
                         // Simulate immediate completion to prevent redelivery
                         let _ = actor.handle_complete(m.id, m.token);
                     }
                 }
-                _ => panic!("Expected Reserved response"),
+                QueueResponse::NotFound => {
+                    // Queue is empty, we're done
+                    break;
+                }
+                _ => panic!("Expected Reserved or NotFound response"),
             }
         }
 
@@ -1554,10 +1560,10 @@ pub mod tests {
         // Act - Try to reserve immediately (should be empty)
         let reserve_response = actor.handle_reserve(30, Some(1));
         match reserve_response {
-            QueueResponse::Reserved { messages } => {
-                assert_eq!(messages.len(), 0);
+            QueueResponse::NotFound => {
+                // Expected - delayed messages not yet available
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected NotFound response for delayed messages"),
         }
 
         // Act - Advance time past delay

@@ -188,7 +188,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let large_data = vec![b'D'; 80_000];
+    let large_data = vec![b'D'; 60_000]; // Within u16 TLV length limit (65535)
     let frame = build_stream_append_simple("stream://test/large", &large_data);
 
     // Act

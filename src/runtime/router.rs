@@ -253,15 +253,6 @@ impl Router {
     /// Domain patterns are used as a fallback when exact RouteAddress lookup fails.
     /// This allows domains to handle all routes matching a prefix across ALL route families.
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// router.register_domain_pattern("kv", kv_domain_sink);
-    ///
-    /// // Any envelope with route starting with "kv://" will be delivered to kv_domain_sink
-    /// // if there's no exact RouteAddress match, regardless of route family
-    /// ```
-    ///
     /// # Multi-Tenant Support
     ///
     /// Domain patterns enable multi-tenant routing:

@@ -17,29 +17,6 @@
 //! - **Hybrid**: Route by `(org, env)` tuple
 //! - **Provider-specific**: Different routing for Auth0 vs Okta vs custom
 //!
-//! # Example Control Plane Logic
-//!
-//! ```ignore
-//! // Control plane receives JWT: "eyJhbGc..."
-//! let claims = parse_jwt(jwt)?;
-//!
-//! match claims.iss.as_str() {
-//!     "https://auth0.com" => {
-//!         // Auth0: use org_id claim
-//!         route_family_for_org(claims.org_id)
-//!     }
-//!     "https://okta.com" => {
-//!         // Okta: use tenant_id claim
-//!         route_family_for_tenant(claims.tenant_id)
-//!     }
-//!     "https://custom.com" => {
-//!         // Custom: route by (org, env) tuple
-//!         route_family_for_org_env(claims.org_id, claims.env)
-//!     }
-//!     _ => Err("Unknown issuer")
-//! }
-//! ```
-//!
 //! # Stub Implementation
 //!
 //! For now, we stub the control plane and return RouteFamily(1) for all JWTs.
@@ -96,33 +73,6 @@ impl ControlPlaneStub {
     ///
     /// Currently returns `RouteFamily(1)` for all JWTs.
     /// This allows single-tenant development mode until control plane is integrated.
-    ///
-    /// # Future Implementation
-    ///
-    /// ```ignore
-    /// async fn lookup_route_family(&self, jwt: &str) -> Result<RouteFamily, Error> {
-    ///     // 1. Parse JWT to extract cache key (could be iss+sub, or org_id, etc.)
-    ///     let claims = parse_jwt_claims(jwt)?;
-    ///     let cache_key = (claims.iss.clone(), claims.sub.clone());
-    ///     
-    ///     // 2. Check cache
-    ///     if let Some(family) = self.cache.get(&cache_key) {
-    ///         return Ok(family);
-    ///     }
-    ///     
-    ///     // 3. Query control plane API with full JWT
-    ///     let response = self.client
-    ///         .post("/api/v1/route-family/lookup")
-    ///         .header("Authorization", format!("Bearer {}", jwt))
-    ///         .await?;
-    ///     
-    ///     // 4. Parse and cache result
-    ///     let family = RouteFamily::new(response.route_family_id);
-    ///     self.cache.insert(cache_key, family);
-    ///     
-    ///     Ok(family)
-    /// }
-    /// ```
     pub fn lookup_route_family(&self, _jwt: &str) -> RouteFamily {
         // Stub: Always return family 1 until control plane is integrated
         // Family 0 is reserved (maps to default column family).

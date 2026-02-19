@@ -675,7 +675,8 @@ impl MailboxSink for NoticeDomainSink {
                         id
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
+                        let pattern =
+                            crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
 
                         state.subscriptions.push(NoticeSubscription {
                             pattern,
@@ -966,6 +967,13 @@ impl MailboxSink for RpcDomainSink {
                     }
                     drop(state);
 
+                    // Transform worker response into RpcResponseMsg format for clients
+                    let response_msg = crate::protocol::rpc_codec::RpcResponseMsg::Ok {
+                        data: resp.body.to_vec(),
+                    };
+                    let encoded_response =
+                        crate::protocol::rpc_codec::encode_response(&response_msg);
+
                     // Forward response to caller's session inbox (avoids RPC domain re-entry)
                     let caller_inbox_addr = crate::runtime::routing::RouteAddress::new(
                         caller_family_id,
@@ -978,7 +986,7 @@ impl MailboxSink for RpcDomainSink {
                         caller_session_id,
                         frame_ctx.channel_id,
                         crate::protocol::tlv::MessageType::new(303), // Response msg_type
-                        frame_ctx.payload.clone(),
+                        bytes::Bytes::from(encoded_response),
                         caller_family_id,
                     );
                     let forward_envelope = Envelope::new(caller_inbox_addr, forward_ctx);

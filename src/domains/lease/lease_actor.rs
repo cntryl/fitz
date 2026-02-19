@@ -515,11 +515,15 @@ impl LeaseActor {
         let now = self.clock.now();
 
         match self.leases.get(&key) {
-            None => LeaseResponse::NotFound,
+            None => {
+                // Idempotent delete: if lease doesn't exist, it's already released
+                LeaseResponse::Released
+            }
             Some(state) => {
                 if state.is_expired(now) {
-                    // Already expired - no need to release
-                    LeaseResponse::Expired
+                    // Already expired - remove it and return success (idempotent)
+                    self.leases.remove(&key);
+                    LeaseResponse::Released
                 } else if !state.is_held_by(&owner_id) {
                     LeaseResponse::NotHeld
                 } else if state.fencing_token != fencing_token {
@@ -1204,9 +1208,9 @@ mod tests {
         let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         let key = test_key("race", "locks", "res");
 
-        let a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+        let _a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
         let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
-        let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
+        let _q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
 
         let t2 = match q2 {
             LeaseResponse::Queued { fencing_token } => fencing_token,
@@ -1248,7 +1252,7 @@ mod tests {
         let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         let key = test_key("race", "locks", "res");
 
-        let a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
+        let _a1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
         let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
         let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
 

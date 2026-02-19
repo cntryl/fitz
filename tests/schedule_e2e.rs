@@ -101,7 +101,7 @@ async fn should_reject_invalid_cron_ws() {
 }
 
 // Generic test helper for cancel nonexistent schedule
-async fn should_reject_cancel_nonexistent<C>(server: &TestServer)
+async fn should_allow_cancel_nonexistent_idempotent<C>(server: &TestServer)
 where
     C: ScheduleConnector,
 {
@@ -114,22 +114,22 @@ where
 
     // Assert
     let (_msg_type, status, _data) = parse_schedule_response(&response);
-    assert_ne!(
+    assert_eq!(
         status, 0,
-        "Expected failure for cancel nonexistent schedule"
+        "Cancel should be idempotent (succeed even if schedule doesn't exist)"
     );
 }
 
 #[tokio::test]
 async fn should_reject_cancel_nonexistent_tcp() {
     let server = TestServer::start().await.expect("start");
-    should_reject_cancel_nonexistent::<TcpScheduleConnector>(&server).await;
+    should_allow_cancel_nonexistent_idempotent::<TcpScheduleConnector>(&server).await;
 }
 
 #[tokio::test]
 async fn should_reject_cancel_nonexistent_ws() {
     let server = TestServer::start().await.expect("start");
-    should_reject_cancel_nonexistent::<WsScheduleConnector>(&server).await;
+    should_allow_cancel_nonexistent_idempotent::<WsScheduleConnector>(&server).await;
 }
 
 // Generic test helper for schedule payload preservation

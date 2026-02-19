@@ -42,14 +42,14 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
     let data = b"task-data";
-    let enqueue_frame = build_queue_enqueue("queue://test/jobs", data);
+    let enqueue_frame = build_queue_enqueue("queue://test/app/jobs", data);
     let _ = client
         .send_and_receive(&enqueue_frame, 2000)
         .await
         .expect("enqueue");
 
     // Act
-    let dequeue_frame = build_queue_dequeue("queue://test/jobs");
+    let dequeue_frame = build_queue_dequeue("queue://test/app/jobs");
     let response = client
         .send_and_receive(&dequeue_frame, 2000)
         .await
@@ -79,7 +79,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_queue_dequeue("queue://test/empty");
+    let frame = build_queue_dequeue("queue://test/app/empty");
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
@@ -109,14 +109,14 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
     let queue1_data = b"q1-task";
-    let enqueue_q1 = build_queue_enqueue("queue://test/q1", queue1_data);
+    let enqueue_q1 = build_queue_enqueue("queue://test/app/q1", queue1_data);
     let _ = client
         .send_and_receive(&enqueue_q1, 2000)
         .await
         .expect("enqueue q1");
 
     // Act - dequeue from different queue
-    let dequeue_q2 = build_queue_dequeue("queue://test/q2");
+    let dequeue_q2 = build_queue_dequeue("queue://test/app/q2");
     let response = client
         .send_and_receive(&dequeue_q2, 2000)
         .await
@@ -150,14 +150,14 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
     let payload = b"important-data-123";
-    let enqueue_frame = build_queue_enqueue("queue://test/data", payload);
+    let enqueue_frame = build_queue_enqueue("queue://test/app/data", payload);
     let _ = client
         .send_and_receive(&enqueue_frame, 2000)
         .await
         .expect("enqueue");
 
     // Act
-    let dequeue_frame = build_queue_dequeue("queue://test/data");
+    let dequeue_frame = build_queue_dequeue("queue://test/app/data");
     let response = client
         .send_and_receive(&dequeue_frame, 2000)
         .await
@@ -166,7 +166,9 @@ where
     // Assert
     let (_msg_type, status, data) = parse_queue_response(&response);
     assert_eq!(status, 0, "Dequeue should succeed");
-    assert_eq!(data, payload, "Payload should be preserved");
+    let messages = fixtures::transport::extract_queue_messages(&data).expect("extract messages");
+    assert_eq!(messages.len(), 1, "Should receive one message");
+    assert_eq!(&messages[0], payload, "Payload should be preserved");
 }
 
 #[tokio::test]
@@ -192,7 +194,7 @@ where
     // Act - Enqueue multiple messages
     for i in 0..10 {
         let data = format!("task-{}", i).into_bytes();
-        let frame = build_queue_enqueue("queue://test/batch", &data);
+        let frame = build_queue_enqueue("queue://test/app/batch", &data);
         let response = client
             .send_and_receive(&frame, 2000)
             .await
@@ -203,7 +205,7 @@ where
     }
 
     // Assert - Dequeue to verify all were stored
-    let dequeue_frame = build_queue_dequeue("queue://test/batch");
+    let dequeue_frame = build_queue_dequeue("queue://test/app/batch");
     let response = client
         .send_and_receive(&dequeue_frame, 2000)
         .await
@@ -235,13 +237,13 @@ where
     let mut client2 = C::connect(server).await.expect("connect 2");
 
     // Act - Both clients enqueue
-    let frame1 = build_queue_enqueue("queue://test/concurrent", b"client-1-task");
+    let frame1 = build_queue_enqueue("queue://test/app/concurrent", b"client-1-task");
     let response1 = client1
         .send_and_receive(&frame1, 2000)
         .await
         .expect("enqueue 1");
 
-    let frame2 = build_queue_enqueue("queue://test/concurrent", b"client-2-task");
+    let frame2 = build_queue_enqueue("queue://test/app/concurrent", b"client-2-task");
     let response2 = client2
         .send_and_receive(&frame2, 2000)
         .await
@@ -275,7 +277,7 @@ where
     let mut client = C::connect(server).await.expect("connect");
 
     // Act - Enqueue first message
-    let frame1 = build_queue_enqueue("queue://test/mixed", b"msg-1");
+    let frame1 = build_queue_enqueue("queue://test/app/mixed", b"msg-1");
     let response1 = client
         .send_and_receive(&frame1, 2000)
         .await
@@ -284,7 +286,7 @@ where
     assert_eq!(status, 0);
 
     // Act - Dequeue
-    let dequeue_frame = build_queue_dequeue("queue://test/mixed");
+    let dequeue_frame = build_queue_dequeue("queue://test/app/mixed");
     let response = client
         .send_and_receive(&dequeue_frame, 2000)
         .await
@@ -293,7 +295,7 @@ where
     assert_eq!(status, 0);
 
     // Act - Enqueue again
-    let frame2 = build_queue_enqueue("queue://test/mixed", b"msg-2");
+    let frame2 = build_queue_enqueue("queue://test/app/mixed", b"msg-2");
     let response2 = client
         .send_and_receive(&frame2, 2000)
         .await

@@ -668,10 +668,10 @@ fn should_handle_release_on_non_existent_lease() {
     };
     let response = actor.handle_message(release, &mut ctx).unwrap();
 
-    // Assert
+    // Assert - Idempotent delete: releasing non-existent lease succeeds
     match response {
-        LeaseResponse::NotFound => (),
-        _ => panic!("Expected NotFound, got {:?}", response),
+        LeaseResponse::Released => (),
+        _ => panic!("Expected Released (idempotent delete), got {:?}", response),
     }
 }
 

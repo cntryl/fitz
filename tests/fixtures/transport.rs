@@ -473,6 +473,60 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     (0, 1, Vec::new())
 }
 
+/// Extract message bodies from Queue Reserve response
+/// Wire format: [u8 status][u32 count][for each: u64 id, u64 token, u32 body_len, bytes body]
+pub fn extract_queue_messages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    if data.len() < 5 {
+        return Err("Queue response data too short".to_string());
+    }
+
+    // Byte 0: status (already checked by caller)
+    // Bytes 1-4: message count
+    let count = u32::from_be_bytes([data[1], data[2], data[3], data[4]]) as usize;
+
+    let mut messages = Vec::new();
+    let mut offset = 5;
+
+    for _ in 0..count {
+        if offset + 8 > data.len() {
+            return Err("Incomplete message ID".to_string());
+        }
+        // Skip message ID (8 bytes)
+        offset += 8;
+
+        if offset + 8 > data.len() {
+            return Err("Incomplete token".to_string());
+        }
+        // Skip token (8 bytes)
+        offset += 8;
+
+        if offset + 4 > data.len() {
+            return Err("Incomplete body length".to_string());
+        }
+        // Read body length
+        let body_len = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
+        offset += 4;
+
+        if offset + body_len > data.len() {
+            return Err(format!(
+                "Incomplete message body: expected {} bytes, got {}",
+                body_len,
+                data.len() - offset
+            ));
+        }
+
+        messages.push(data[offset..offset + body_len].to_vec());
+        offset += body_len;
+    }
+
+    Ok(messages)
+}
+
 // ============================================================================
 // RPC DOMAIN - CONNECTOR TRAIT
 // ============================================================================
@@ -1146,13 +1200,9 @@ pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        // Return msg_type (as u8), status, and data portion (skipping status byte)
-        let data = if payload.len() > 1 {
-            payload[1..].to_vec()
-        } else {
-            Vec::new()
-        };
-        return ((msg_type & 0xFF) as u8, status, data);
+        // Return msg_type (as u8), status, and full payload (including status byte)
+        // Helper functions expect the full payload and will skip the status byte themselves
+        return ((msg_type & 0xFF) as u8, status, payload);
     }
 
     // Fallback if no data
@@ -1164,7 +1214,10 @@ pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
     // BeginOk format: [u8 status][u64 tx_id]
     // Skip status byte at data[0], read tx_id from data[1..9]
     if data.len() < 9 {
-        return Err(format!("TX ID data too short: {} bytes, need 9", data.len()));
+        return Err(format!(
+            "TX ID data too short: {} bytes, need 9",
+            data.len()
+        ));
     }
     let bytes = [
         data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
@@ -1173,22 +1226,22 @@ pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
 }
 
 /// Extract value from KV GET response
-/// 
+///
 /// GetResult format: [u8 status][u8 found][u32 length_be][...value_bytes]
 /// Returns the actual value bytes if found, empty vec if not found
 pub fn extract_kv_value(data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < 6 {
         return Err("GetResult data too short".to_string());
     }
-    
+
     let found = data[1];
     if found == 0 {
         return Ok(Vec::new()); // Not found
     }
-    
+
     // Read length from bytes 2-5 (big-endian u32)
     let length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
-    
+
     // Extract value from bytes 6 onwards
     if data.len() < 6 + length {
         return Err(format!(
@@ -1197,7 +1250,7 @@ pub fn extract_kv_value(data: &[u8]) -> Result<Vec<u8>, String> {
             data.len() - 6
         ));
     }
-    
+
     Ok(data[6..6 + length].to_vec())
 }
 
