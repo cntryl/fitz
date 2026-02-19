@@ -43,7 +43,7 @@ fn bench_mailbox_capacity(c: &mut Criterion) {
     );
     let actor_ref = scheduler.spawn(MessageActor, address, 1000);
 
-    let mut group = c.benchmark_group("subsystem_mailbox_capacity");
+    let mut group = c.benchmark_group("subsystem_mailbox");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(100));
 

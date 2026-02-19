@@ -10,7 +10,7 @@ fn bench_pipeline_iter_route_fanout(c: &mut Criterion) {
     let records = 256usize;
     let subs = [1usize, 8usize, 64usize];
 
-    let mut group = c.benchmark_group("pipeline_iter_route_fanout");
+    let mut group = c.benchmark_group("subsystem_tlv_pipeline");
     group.sampling_mode(SamplingMode::Flat);
 
     for &size in &sizes {
@@ -53,7 +53,7 @@ fn bench_pipeline_decode_into_route_fanout(c: &mut Criterion) {
     let records = 256usize;
     let subs = [1usize, 8usize, 64usize];
 
-    let mut group = c.benchmark_group("pipeline_decode_into_route_fanout");
+    let mut group = c.benchmark_group("subsystem_tlv_pipeline");
     group.sampling_mode(SamplingMode::Flat);
 
     for &size in &sizes {

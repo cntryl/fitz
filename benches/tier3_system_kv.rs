@@ -161,7 +161,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
-    ctx.set_elements(15); // 5 reads + 5 writes + 5 deletes
+    ctx.set_elements(10); // 5 reads + 5 writes (no deletes in measure)
     ctx.tag("scenario", "mixed_read_write_families");
 
     // Setup: Actor + two column families with pre-populated data

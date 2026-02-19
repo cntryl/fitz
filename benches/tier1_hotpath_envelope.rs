@@ -29,22 +29,32 @@ fn bench_message_id_generation(c: &mut Criterion) {
 }
 
 fn bench_envelope_creation(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/kv/acme/app/users".to_string()),
-    );
-    let msg = TestMessage { value: 42 };
+    // Pre-built pool OUTSIDE benchmark - rotating index avoids cloning same capture in loop
+    let pairs: Vec<(RouteAddress, TestMessage)> = (0..4)
+        .map(|i| {
+            let dest = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/kv/acme/app/users{}", i)),
+            );
+            (
+                dest,
+                TestMessage {
+                    value: 42 + i as u64,
+                },
+            )
+        })
+        .collect();
 
     let mut group = c.benchmark_group("hotpath_envelope");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("envelope_new", |b| {
-        let dest_clone = dest.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            // ONLY hot path - envelope creation with type erasure
-            let _envelope = Envelope::new(black_box(dest_clone.clone()), black_box(msg.clone()));
+            let (d, m) = &pairs[idx % pairs.len()];
+            idx += 1;
+            let _envelope = Envelope::new(black_box(d.clone()), black_box(m.clone()));
         })
     });
 
@@ -52,30 +62,40 @@ fn bench_envelope_creation(c: &mut Criterion) {
 }
 
 fn bench_envelope_from_route(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let source = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/rpc/acme/app/client".to_string()),
-    );
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/rpc/acme/app/server".to_string()),
-    );
-    let msg = TestMessage { value: 100 };
+    // Pre-built pool OUTSIDE benchmark
+    let triples: Vec<(RouteAddress, RouteAddress, TestMessage)> = (0..4)
+        .map(|i| {
+            let src = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/rpc/acme/app/client{}", i)),
+            );
+            let dst = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/rpc/acme/app/server{}", i)),
+            );
+            (
+                src,
+                dst,
+                TestMessage {
+                    value: 100 + i as u64,
+                },
+            )
+        })
+        .collect();
 
     let mut group = c.benchmark_group("hotpath_envelope");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("envelope_from_route", |b| {
-        let src_clone = source.clone();
-        let dst_clone = dest.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            // ONLY hot path - envelope with source route
+            let (src, dst, m) = &triples[idx % triples.len()];
+            idx += 1;
             let _envelope = Envelope::from_route(
-                black_box(src_clone.clone()),
-                black_box(dst_clone.clone()),
-                black_box(msg.clone()),
+                black_box(src.clone()),
+                black_box(dst.clone()),
+                black_box(m.clone()),
             );
         })
     });
@@ -84,23 +104,32 @@ fn bench_envelope_from_route(c: &mut Criterion) {
 }
 
 fn bench_envelope_with_deadline(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/lease/acme/app/resource".to_string()),
-    );
     let deadline = Instant::now() + Duration::from_secs(30);
-    let msg = TestMessage { value: 200 };
+    let pairs: Vec<(RouteAddress, TestMessage)> = (0..4)
+        .map(|i| {
+            let dest = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/lease/acme/app/resource{}", i)),
+            );
+            (
+                dest,
+                TestMessage {
+                    value: 200 + i as u64,
+                },
+            )
+        })
+        .collect();
 
     let mut group = c.benchmark_group("hotpath_envelope");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("envelope_with_deadline", |b| {
-        let dest_clone = dest.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            // ONLY hot path - builder pattern with deadline
-            let _envelope = Envelope::new(black_box(dest_clone.clone()), black_box(msg.clone()))
+            let (d, m) = &pairs[idx % pairs.len()];
+            idx += 1;
+            let _envelope = Envelope::new(black_box(d.clone()), black_box(m.clone()))
                 .with_deadline(black_box(deadline));
         })
     });
@@ -109,23 +138,32 @@ fn bench_envelope_with_deadline(c: &mut Criterion) {
 }
 
 fn bench_envelope_with_causation(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/notice/acme/app/events".to_string()),
-    );
     let parent_id = MessageId::new();
-    let msg = TestMessage { value: 300 };
+    let pairs: Vec<(RouteAddress, TestMessage)> = (0..4)
+        .map(|i| {
+            let dest = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/notice/acme/app/events{}", i)),
+            );
+            (
+                dest,
+                TestMessage {
+                    value: 300 + i as u64,
+                },
+            )
+        })
+        .collect();
 
     let mut group = c.benchmark_group("hotpath_envelope");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("envelope_with_causation", |b| {
-        let dest_clone = dest.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            // ONLY hot path - builder pattern with causation
-            let _envelope = Envelope::new(black_box(dest_clone.clone()), black_box(msg.clone()))
+            let (d, m) = &pairs[idx % pairs.len()];
+            idx += 1;
+            let _envelope = Envelope::new(black_box(d.clone()), black_box(m.clone()))
                 .with_causation(black_box(parent_id));
         })
     });
@@ -206,35 +244,51 @@ fn bench_envelope_metadata_extraction(c: &mut Criterion) {
 }
 
 fn bench_type_erasure_overhead(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/stream/acme/app/logs".to_string()),
-    );
-
-    // Test different message sizes to measure boxing overhead
-    let small_msg = TestMessage { value: 1 };
+    // Pre-built pool: small and large message variants
+    let small_pool: Vec<(RouteAddress, TestMessage)> = (0..4)
+        .map(|i| {
+            let dest = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/stream/acme/app/logs{}", i)),
+            );
+            (
+                dest,
+                TestMessage {
+                    value: 1 + i as u64,
+                },
+            )
+        })
+        .collect();
     let large_msg = (0..100).collect::<Vec<u64>>();
+    let large_pool: Vec<(RouteAddress, Vec<u64>)> = (0..4)
+        .map(|i| {
+            let dest = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("ftz://1/stream/acme/app/logs_large{}", i)),
+            );
+            (dest, large_msg.clone())
+        })
+        .collect();
 
     let mut group = c.benchmark_group("hotpath_envelope");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("type_erasure_small_message", |b| {
-        let dest_clone = dest.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            // ONLY hot path - box + type erasure for small message
-            let _envelope =
-                Envelope::new(black_box(dest_clone.clone()), black_box(small_msg.clone()));
+            let (d, m) = &small_pool[idx % small_pool.len()];
+            idx += 1;
+            let _envelope = Envelope::new(black_box(d.clone()), black_box(m.clone()));
         })
     });
 
     group.bench_function("type_erasure_large_message", |b| {
-        let dest_clone = dest.clone();
+        let mut idx = 0usize;
         b.iter(|| {
-            // ONLY hot path - box + type erasure for larger message
-            let _envelope =
-                Envelope::new(black_box(dest_clone.clone()), black_box(large_msg.clone()));
+            let (d, m) = &large_pool[idx % large_pool.len()];
+            idx += 1;
+            let _envelope = Envelope::new(black_box(d.clone()), black_box(m.clone()));
         })
     });
 

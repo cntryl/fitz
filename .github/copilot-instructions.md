@@ -785,35 +785,42 @@ For each domain service:
 
 ### Benchmark Tiers
 
-**Hotpath** (benches/hotpath/\*):
+**Tier 1 Hotpath** (benches/tier1_hotpath_*.rs):
 
-- Pure service logic
-- No Arc/RwLock overhead
+- Pure sync service logic (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging)
+- No Arc/RwLock overhead in measured path
 - Measures <100ns to <10µs operations
 - Target: <1s total runtime
+- Use Criterion + `config::criterion_config()`
 
-**Subsystem** (benches/subsystem/\*):
+**Tier 2 Subsystem** (benches/tier2_subsystem_*.rs):
 
-- Service + handler coordination
-- TLV parsing included
-- No engine/transport
+- Scheduler, mailbox, subscriptions, TLV pipeline
+- Use Criterion + `config::criterion_config()`
 - Target: <3s total runtime
 
-**System** (benches/system/\*):
+**Tier 3 System** (benches/tier3_system_*.rs):
 
-- Full engine pipeline
-- Frame parsing, routing, authorization
-- Most realistic measurement
+- One bench per domain (kv, lease, notice, queue, rpc, schedule, stream)
+- In-process actor + test engine, no network
+- Use cntryl-stress `#[stress_test]` + `ctx.measure(|| { ... })`
 - Target: <10s total runtime
+
+**Tier 4 Integration** (benches/tier4_integration_*.rs):
+
+- Full stack (direct → TCP → WebSocket → multiclient)
+- Use cntryl-stress; setup (Runtime, TestServer) outside `ctx.measure()`
+- Target: identify E2E performance cliffs
 
 ### Examples from Codebase
 
 See these files for excellent benchmark patterns:
 
-- `benches/hotpath/notice.rs` - Service-level benchmarks
-- `benches/hotpath/lease.rs` - Proper precomputation
-- `benches/subsystem/rpc.rs` - Handler integration
-- `benches/system/notice.rs` - Full pipeline
+- `benches/tier1_hotpath_routing.rs` - Hotpath with precomputed data and Throughput
+- `benches/tier1_hotpath_envelope.rs` - Envelope and MessageId hot path
+- `benches/tier2_subsystem_scheduler.rs` - iter_batched and subsystem setup
+- `benches/tier3_system_kv.rs` - Stress tests with set_elements and tags
+- `benches/tier4_integration_kv.rs` - Integration layers (direct, TCP, WS, multiclient)
 
 ### Why These Rules?
 

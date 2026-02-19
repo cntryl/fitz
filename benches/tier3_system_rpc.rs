@@ -122,7 +122,7 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     ctx.measure(|| {
         // Simulate tracking in-flight request
         request_id += 1;
-        // Measure getting metrics to avoid no-op  
+        // Measure getting metrics to avoid no-op
         black_box(actor.pending_count());
         black_box(request_id);
     });

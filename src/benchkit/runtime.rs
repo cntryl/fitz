@@ -1,0 +1,16 @@
+//! Shared runtime for tier4 integration benchmarks
+//!
+//! Use `shared_bench_runtime()` to avoid creating a new tokio Runtime per stress test
+//! when running the full tier4 suite. Each test's measure block is unchanged; only setup reuses the runtime.
+
+use once_cell::sync::Lazy;
+use tokio::runtime::Runtime;
+
+/// Shared tokio Runtime for integration benchmarks. Reused across tests in the same binary.
+pub static SHARED_BENCH_RUNTIME: Lazy<Runtime> =
+    Lazy::new(|| Runtime::new().expect("create shared bench runtime"));
+
+/// Returns a reference to the shared benchmark runtime. Use for tier4 TCP/WS test setup.
+pub fn shared_bench_runtime() -> &'static Runtime {
+    &SHARED_BENCH_RUNTIME
+}

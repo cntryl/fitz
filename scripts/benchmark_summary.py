@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """
 Produce comprehensive CSV and Markdown summaries of Criterion benchmarks and stress tests.
+
 - Criterion: extracts mean, CI, std_dev, relative_stddev from target/criterion
-- Stress tests: extracts duration, throughput (elements/ns), scenario tags from target/stress
-- Flags high variance when relative_stddev > 0.10 (10%)
-- Also writes human-friendly mean_us and mean_ms columns assuming nanoseconds.
+- Stress: extracts duration, throughput (elements/ns), scenario tags from target/stress
+
+Stress output path: run stress bench binaries first, e.g.:
+  cargo bench --bench tier3_system_kv
+  cargo bench --bench tier4_integration_kv
+  ...
+Then cntryl-stress writes results under target/stress/<bench_name>/ (e.g. latest.json).
+This script expects target/stress/<suite_dir>/latest.json per suite.
+
+Flags high variance when relative_stddev > 0.10 (10%).
+Also writes human-friendly mean_us and mean_ms columns assuming nanoseconds.
 """
 from pathlib import Path
 import json

@@ -3,20 +3,19 @@
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
 //! Tests four integration levels:
-//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
-//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
-//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
-//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
-//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
+//! 1. **Direct** - Domain actor + disk (no network). In-process baseline; no TLV/network.
+//! 2. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 4. **MultiClient** - N concurrent WS clients hitting domain concurrently
 //!
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
-//! Target: ops/sec via set_elements(count), reveals performance cliffs at each layer
+//! Target: ops/sec via set_elements(count), reveals performance cliffs at each layer.
 
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_kv_begin, build_kv_put, build_kv_rollback, create_local_bench_store, parse_kv_response,
-    parse_kv_tx_id,
+    parse_kv_tx_id, shared_bench_runtime,
 };
 use fitz::domains::kv::{KvActor, KvMessage, TxMode};
 use fitz::runtime::routing::RouteFamily;
@@ -58,48 +57,6 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
-    ctx.set_elements(3);
-    ctx.tag("layer", "encoded");
-    ctx.tag("scenario", "codec_roundtrip");
-
-    let (store, _temp_dir) = create_local_bench_store();
-    let mut actor = KvActor::new(store);
-
-    let route = "kv://tier4/kv/encoded";
-    let begin_bytes = build_kv_begin(route, 1, 0);
-    let put_bytes = build_kv_put(1, route, b"key1", b"value1");
-    let rollback_bytes = build_kv_rollback(1, route);
-
-    ctx.measure(|| {
-        let response = actor.handle(KvMessage::Begin {
-            route_family: RouteFamily::new(1),
-            realm: "tier4".to_string(),
-            area: "kv".to_string(),
-            resource: "encoded".to_string(),
-            mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        });
-        let tx_id = match response {
-            fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
-            _ => return,
-        };
-
-        actor.handle(KvMessage::Put {
-            tx_id,
-            route_family: RouteFamily::new(1),
-            resource: "encoded".to_string(),
-            key: Bytes::from_static(b"key1"),
-            value: Bytes::from_static(b"value1"),
-        });
-
-        actor.handle(KvMessage::Rollback { tx_id });
-
-        let _ = (&begin_bytes, &put_bytes, &rollback_bytes);
-    });
-}
-
-#[stress_test]
 fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     ctx.set_elements(3);
     ctx.tag("layer", "tcp");
@@ -110,7 +67,7 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     let key = b"key1";
     let value = b"value1";
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestClient::new(server.tcp_addr))
@@ -146,7 +103,7 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     let key = b"key1";
     let value = b"value1";
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestWebSocketClient::connect(&format!(
@@ -185,7 +142,7 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
     let key = b"key1";
     let value = b"value1";
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut clients: Vec<TestWebSocketClient> = (0..10)
         .map(|_| {

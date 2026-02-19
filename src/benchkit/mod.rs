@@ -6,12 +6,14 @@
 
 pub mod queue;
 pub mod rpc;
+pub mod runtime;
 pub mod storage;
 pub mod stream;
 pub mod transport;
 
 pub use queue::*;
 pub use rpc::*;
+pub use runtime::*;
 pub use storage::*;
 pub use stream::*;
 pub use transport::*;

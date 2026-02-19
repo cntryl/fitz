@@ -33,30 +33,52 @@ Benchmarks in Fitz measure **real-world message broker performance** across rout
    - Use deterministic data, not random values
    - Document environmental factors that affect results
 ## File Organization
-### Directory Structure
+### Tier Layout and Directory Structure
+Benchmarks are organized in four tiers. Use the shared config and naming below.
+
+| Tier | Kind | Tool | Location | Scope |
+|------|------|------|----------|--------|
+| **Tier 1** | Hotpath | Criterion | `benches/tier1_hotpath_*.rs` | Pure sync internals (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging). Target: &lt;1s, &lt;100ns–10µs per op. |
+| **Tier 2** | Subsystem | Criterion | `benches/tier2_subsystem_*.rs` | Scheduler, mailbox, subscriptions, TLV pipeline. Target: &lt;3s. |
+| **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | One bench per domain (kv, lease, notice, queue, rpc, schedule, stream). In-process actor + test engine, no network. Target: &lt;10s. |
+| **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Same domains; full stack (direct → encoded → TCP → WebSocket → multiclient). Target: identify E2E performance cliffs. |
+
 ```
 benches/
-├── router.rs          # Route matching and subscription routing
-├── frame.rs           # Frame encoding/decoding performance
-├── protocol.rs        # Protocol parsing and validation
-├── memstore.rs        # In-memory storage operations
-├── notice.rs          # Notice scheme publish/subscribe
-├── stream.rs          # Stream scheme append/consume
-├── queue.rs           # Queue scheme lease/ack/nack
-├── rpc.rs             # RPC request/response latency
-├── inbox.rs           # Inbox ephemeral messaging
-├── session.rs         # Session handshake and management
-├── mux.rs             # Channel multiplexing
-├── authz.rs           # Authorization check performance
-├── transport_ws.rs    # WebSocket transport throughput
-├── engine.rs          # Full engine workflows (heavy)
-└── end_to_end.rs      # Complete broker workflows (heavy)
+├── config.rs              # Shared Criterion config (use criterion_config())
+├── stress_config.rs       # Stress BENCH_RUNS / BENCH_WARMUP
+├── tier1_hotpath_matcher.rs
+├── tier1_hotpath_tlv.rs
+├── tier1_hotpath_mux.rs
+├── tier1_hotpath_actor_messaging.rs
+├── tier1_hotpath_envelope.rs
+├── tier1_hotpath_routing.rs
+├── tier1_hotpath_permissions.rs
+├── tier1_hotpath_context.rs
+├── tier2_subsystem_mailbox.rs
+├── tier2_subsystem_scheduler.rs
+├── tier2_subsystem_subscriptions.rs
+├── tier2_subsystem_tlv_pipeline.rs
+├── tier3_system_kv.rs
+├── tier3_system_lease.rs
+├── tier3_system_notice.rs
+├── tier3_system_queue.rs
+├── tier3_system_rpc.rs
+├── tier3_system_schedule.rs
+├── tier3_system_stream.rs
+├── tier4_integration_kv.rs
+├── tier4_integration_lease.rs
+├── tier4_integration_notice.rs
+├── tier4_integration_queue.rs
+├── tier4_integration_rpc.rs
+├── tier4_integration_schedule.rs
+└── tier4_integration_stream.rs
 ```
 ### Organization Principles
-- **One file per subsystem** - Each benchmark file focuses on a single module or scheme
-- **Minimal external dependencies** - Keep benchmark files self-contained
-- **Clear naming** - File names match the module or scheme being benchmarked
-- **Logical grouping** - Related benchmarks in the same file
+- **One file per subsystem/domain** - Tier1/2: one module per file; Tier3/4: one domain per file.
+- **Shared config** - Tier1/2 use `benches/config.rs` (`criterion_config()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
+- **Clear naming** - Files follow `tierN_{hotpath|subsystem|system|integration}_{name}.rs`.
+- **Logical grouping** - Related benchmarks in the same file; use a single Criterion group name per file (e.g. `hotpath_routing`) and `Throughput::Elements(N)` for comparability.
 ## Benchmark Structure
 ### Standard Template
 Every benchmark should follow the AAA (Arrange-Act-Assert) pattern:
@@ -143,18 +165,18 @@ authz_tenant_isolation_check     // Tenant isolation verification
 - `_concurrent` - Concurrent access
 - `_wildcard` - Wildcard pattern matching
 ## Configuration Patterns
+### Criterion (Tier 1 and 2)
+All Criterion benchmarks use the shared config from `benches/config.rs` via `config::criterion_config()`. Do not define a local `configure_criterion()`; use the shared one.
+
+**Fast mode (CI / quick iteration):** Set `BENCH_QUICK=1` to reduce sample size and measurement time:
+- `BENCH_QUICK=1`: warmup 200ms, measurement 1s, sample_size 10
+- Default: warmup 500ms, measurement 2s, sample_size 50
+
+Example: `BENCH_QUICK=1 cargo bench -- tier1_hotpath_routing`
 ### Fast Iteration (Default)
-For daily development work:
-```rust
-fn configure_criterion() -> Criterion {
-    Criterion::default()
-        .sample_size(10)                    // 10 samples (default: 100)
-        .warm_up_time(Duration::from_millis(200))  // 0.2s warmup (default: 3s)
-        .measurement_time(Duration::from_secs(1))  // 1s measurement (default: 5s)
-        .noise_threshold(0.05)              // 5% noise tolerance (default: 1%)
-}
-```
-**Target runtime:** 1-3 seconds per benchmark
+For daily development work (when not using BENCH_QUICK), the shared config gives:
+- sample_size 50, warm_up 500ms, measurement 2s
+**Target runtime:** 1-3 seconds per benchmark (per function)
 ### Release Profiling
 For detailed performance analysis:
 ```rust
@@ -179,6 +201,20 @@ fn configure_criterion() -> Criterion {
 }
 ```
 **Target runtime:** 20-60 seconds per benchmark
+
+### Stress configuration (Tier 3 and 4)
+Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configuration is via environment variables (see `benches/stress_config.rs`):
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `BENCH_RUNS` | Number of measurement runs per stress test | 5 |
+| `BENCH_WARMUP` | Number of warmup runs before measurement | 1 |
+
+- **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `scripts/benchmark_summary.py` is elements/time, so N must match what the closure does.
+- **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `scripts/benchmark_summary.py` after `cargo bench` (Criterion) and stress bench binaries to produce `target/bench_summary.md`.
+
+For CI, you can reduce total time by setting `BENCH_RUNS=3` (or lower) when running the full tier3/tier4 suite.
+
 ## Best Practices
 ### DO ✅
 | Practice | Rationale | Example |
@@ -361,34 +397,42 @@ end_to_end_publish_subscribe_1m
 ### Local Development
 #### Quick iteration during development:
 ```bash
-# Fast mode (1-3 seconds per benchmark)
-cargo bench -- --quick
-# Or with explicit fast settings
-cargo bench -- \
-  --warm-up-time 0.2 \
-  --measurement-time 1 \
-  --sample-size 10
+# Fast mode via env (uses benches/config.rs quick settings)
+BENCH_QUICK=1 cargo bench
+
+# Or run a single tier / benchmark
+cargo bench --bench tier1_hotpath_routing
+cargo bench -- tier1_hotpath
 ```
 #### Single benchmark:
 ```bash
 # Run specific benchmark
-cargo bench bloom_insert
-# With filter
-cargo bench -- bloom
+cargo bench --bench tier1_hotpath_matcher
+# With filter (all hotpath routing)
+cargo bench -- hotpath_routing
+```
+#### Stress (Tier 3 / Tier 4):
+```bash
+cargo bench --bench tier3_system_kv
+cargo bench --bench tier4_integration_kv
+# Optional: fewer runs for faster feedback
+BENCH_RUNS=3 cargo bench --bench tier4_integration_kv
 ```
 #### Watch mode for TDD:
 ```bash
-# Re-run on file changes
-cargo watch -x "bench -- --quick"
+cargo watch -x "bench --bench tier1_hotpath_routing"
 ```
 ### CI Pipeline
+The repository CI includes a **benchmarks** job that runs all Criterion and stress benches with `BENCH_QUICK=1` and `BENCH_RUNS=3`, then runs `scripts/benchmark_summary.py` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
+
 #### Pull Request Checks:
 ```bash
-# Fast benchmarks only (no perf feature)
-cargo bench --no-fail-fast -- \
-  --warm-up-time 0.5 \
-  --measurement-time 2 \
-  --sample-size 20
+# Criterion with fast config
+BENCH_QUICK=1 cargo bench --no-fail-fast
+
+# Stress with reduced runs (optional)
+BENCH_RUNS=3 cargo bench --bench tier3_system_kv
+BENCH_RUNS=3 cargo bench --bench tier4_integration_kv
 ```
 #### Nightly Performance Runs:
 ```bash
@@ -424,56 +468,40 @@ xdg-open target/criterion/report/index.html  # Linux
 start target/criterion/report/index.html  # Windows
 ```
 ## Quick Reference
-### Benchmark File Template
+### Criterion file template (Tier 1 / Tier 2)
+Use shared config from `benches/config.rs`; do not define a local `configure_criterion()`.
 ```rust
-use criterion::{black_box, Criterion, criterion_group, criterion_main};
-use fitz::core::engine::start_engine;
-use fitz::storage::mem::MemStore;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-fn bench_notice_publish_1k(c: &mut Criterion) {
-    // Arrange: Setup broker with in-memory storage
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let store = Arc::new(Mutex::new(MemStore::new()));
-    let engine = start_engine(store);
-    
-    let messages: Vec<Vec<u8>> = (0..1000)
-        .map(|i| format!("msg{:08}", i).into_bytes())
-        .collect();
-    
-    c.bench_function("notice_publish_1k", |b| {
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+
+#[path = "config.rs"]
+mod config;
+
+fn bench_my_operation(c: &mut Criterion) {
+    // Arrange: all setup outside b.iter()
+    let data = precompute_test_data();
+
+    let mut group = c.benchmark_group("hotpath_my_domain");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("operation_name", |b| {
+        let mut idx = 0usize;
         b.iter(|| {
-            rt.block_on(async {
-                for msg in &messages {
-                    black_box(
-                        engine.publish(
-                            "notice://test/area/resource".to_string(),
-                            format!("id-{}", msg.len()),
-                            msg.clone(),
-                            None,
-                            None,
-                            false,
-                            None,
-                        ).await.unwrap()
-                    );
-                }
-            })
+            let x = &data[idx % data.len()];
+            black_box(do_operation(x))
         });
     });
+    group.finish();
 }
-fn configure_criterion() -> Criterion {
-    Criterion::default()
-        .sample_size(10)
-        .warm_up_time(std::time::Duration::from_millis(200))
-        .measurement_time(std::time::Duration::from_secs(1))
-}
+
 criterion_group! {
     name = benches;
-    config = configure_criterion();
-    targets = bench_notice_publish_1k
+    config = config::criterion_config();
+    targets = bench_my_operation
 }
 criterion_main!(benches);
 ```
+**Example files:** `benches/tier1_hotpath_routing.rs`, `benches/tier2_subsystem_scheduler.rs`
 ### Reviewer Checklist
 When reviewing benchmark PRs:
 - [ ] **Performance:** Benchmark runs in < 5 seconds locally

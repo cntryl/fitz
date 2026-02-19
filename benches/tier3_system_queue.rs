@@ -21,14 +21,14 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     // Setup: Create actor and precompute payloads outside measurement
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"sustained load message");
-    
+
     // Precompute 50 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
 
     ctx.measure(|| {
         // 50 enqueue operations using precomputed payloads
-        for i in 0..50 {
-            let _ = actor.handle_enqueue(payloads[i].clone(), None);
+        for p in payloads.iter().take(50) {
+            let _ = actor.handle_enqueue(p.clone(), None);
         }
 
         // 50 reserve operations
@@ -46,24 +46,24 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
     // Setup: Create actor and precompute payloads outside measurement
     let mut actor = create_bench_queue_actor("bench", "system", "queue", Some(3));
     let payload = Bytes::from_static(b"mixed workload message");
-    
+
     // Precompute 100 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..100).map(|_| payload.clone()).collect();
 
     ctx.measure(|| {
         // 70 immediate enqueues
-        for i in 0..70 {
-            let _ = actor.handle_enqueue(payloads[i].clone(), None);
+        for p in payloads.iter().take(70) {
+            let _ = actor.handle_enqueue(p.clone(), None);
         }
 
         // 20 delayed enqueues (delay=5)
-        for i in 70..90 {
-            let _ = actor.handle_enqueue(payloads[i].clone(), Some(5));
+        for p in payloads.iter().skip(70).take(20) {
+            let _ = actor.handle_enqueue(p.clone(), Some(5));
         }
 
         // 10 more enqueues
-        for i in 90..100 {
-            let _ = actor.handle_enqueue(payloads[i].clone(), None);
+        for p in payloads.iter().skip(90).take(10) {
+            let _ = actor.handle_enqueue(p.clone(), None);
         }
 
         // 1 reserve

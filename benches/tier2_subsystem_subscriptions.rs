@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 
@@ -87,7 +87,8 @@ fn bench_insert_single_pattern(c: &mut Criterion) {
     let family = RouteFamily::new(1);
     let pattern = Route::new("notify://realm/orders/create".to_string());
 
-    let mut group = c.benchmark_group("subscriptions/insert");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
     group.bench_function("exact_pattern", |b| {
         b.iter_batched(
@@ -105,7 +106,9 @@ fn bench_insert_with_single_star(c: &mut Criterion) {
     let family = RouteFamily::new(1);
     let pattern = Route::new("notify://realm/orders/*".to_string());
 
-    let mut group = c.benchmark_group("subscriptions/insert");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("single_star_pattern", |b| {
         b.iter_batched(
             SubscriptionIndex::new,
@@ -122,7 +125,9 @@ fn bench_insert_with_double_star(c: &mut Criterion) {
     let family = RouteFamily::new(1);
     let pattern = Route::new("notify://realm/**/created".to_string());
 
-    let mut group = c.benchmark_group("subscriptions/insert");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("double_star_pattern", |b| {
         b.iter_batched(
             SubscriptionIndex::new,
@@ -136,7 +141,9 @@ fn bench_insert_with_double_star(c: &mut Criterion) {
 }
 
 fn bench_match_exact_pattern(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("exact", |b| {
         let index = make_subscriptions_with_patterns(100);
         let family = RouteFamily::new(1);
@@ -149,7 +156,9 @@ fn bench_match_exact_pattern(c: &mut Criterion) {
 }
 
 fn bench_match_single_star(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("single_star", |b| {
         let index = make_subscriptions_with_patterns(100);
         let family = RouteFamily::new(1);
@@ -162,7 +171,9 @@ fn bench_match_single_star(c: &mut Criterion) {
 }
 
 fn bench_match_double_star(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("double_star", |b| {
         let index = make_subscriptions_with_patterns(100);
         let family = RouteFamily::new(1);
@@ -175,7 +186,9 @@ fn bench_match_double_star(c: &mut Criterion) {
 }
 
 fn bench_match_fanout_sparse_100(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match/fanout");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("10k_subs_1_match", |b| {
         let (index, route, family) = make_index_fanout_sparse(10000);
         b.iter(|| {
@@ -186,7 +199,9 @@ fn bench_match_fanout_sparse_100(c: &mut Criterion) {
 }
 
 fn bench_match_fanout_dense_100(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match/fanout");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("10k_subs_10k_matches", |b| {
         let (index, route, family) = make_index_fanout_dense(10000);
         b.iter(|| {
@@ -197,7 +212,9 @@ fn bench_match_fanout_dense_100(c: &mut Criterion) {
 }
 
 fn bench_match_depth_3(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match/depth");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("depth_3", |b| {
         let (index, route, family) = make_index_with_depth(3, 1000);
         b.iter(|| {
@@ -208,7 +225,9 @@ fn bench_match_depth_3(c: &mut Criterion) {
 }
 
 fn bench_match_depth_5(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match/depth");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("depth_5", |b| {
         let (index, route, family) = make_index_with_depth(5, 1000);
         b.iter(|| {
@@ -219,7 +238,9 @@ fn bench_match_depth_5(c: &mut Criterion) {
 }
 
 fn bench_match_depth_10(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subscriptions/match/depth");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
     group.bench_function("depth_10", |b| {
         let (index, route, family) = make_index_with_depth(10, 1000);
         b.iter(|| {
@@ -233,7 +254,8 @@ fn bench_remove_subscription(c: &mut Criterion) {
     let family = RouteFamily::new(1);
     let pattern = Route::new("notify://realm/orders/*".to_string());
 
-    let mut group = c.benchmark_group("subscriptions/remove");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
     group.bench_function("remove_from_index", |b| {
         b.iter_batched(
@@ -258,7 +280,8 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
         Route::new("notify://realm/items/remove/action".to_string()),
     ];
 
-    let mut group = c.benchmark_group("subscriptions/mixed");
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(100));
     group.bench_function("insert_100_match_2", |b| {
         b.iter_batched(
