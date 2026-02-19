@@ -313,7 +313,6 @@ impl Router {
             sink
         } else {
             // Fall back to domain pattern matching
-            // Extract domain prefix from route (e.g., "kv://..." → "kv")
             let route_str = dest.route().as_str();
             let domain = route_str.split("://").next().unwrap_or("");
 

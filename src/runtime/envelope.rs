@@ -33,6 +33,7 @@ use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Envelope metadata without the payload (for zero-copy causation tracking)
@@ -98,10 +99,10 @@ pub struct Envelope {
     id: MessageId,
 
     /// Source route (None for external/user-initiated messages)
-    source: Option<RouteAddress>,
+    source: Option<Arc<RouteAddress>>,
 
-    /// Destination route
-    destination: RouteAddress,
+    /// Destination route (Arc to avoid cloning RouteAddress on reply and in router)
+    destination: Arc<RouteAddress>,
 
     /// Parent message ID for causation tracking (request/reply chains)
     causation: Option<MessageId>,
@@ -119,7 +120,7 @@ impl Envelope {
         Self {
             id: MessageId::new(),
             source: None,
-            destination,
+            destination: Arc::new(destination),
             causation: None,
             deadline: None,
             payload: Box::new(payload),
@@ -130,6 +131,22 @@ impl Envelope {
     pub fn from_route<M: Any + Send + Sync>(
         source: RouteAddress,
         destination: RouteAddress,
+        payload: M,
+    ) -> Self {
+        Self {
+            id: MessageId::new(),
+            source: Some(Arc::new(source)),
+            destination: Arc::new(destination),
+            causation: None,
+            deadline: None,
+            payload: Box::new(payload),
+        }
+    }
+
+    /// Create an envelope from Arc addresses (avoids cloning RouteAddress; use when caller has Arc)
+    pub fn from_route_arc<M: Any + Send + Sync>(
+        source: Arc<RouteAddress>,
+        destination: Arc<RouteAddress>,
         payload: M,
     ) -> Self {
         Self {
@@ -176,8 +193,8 @@ impl Envelope {
 
         Envelope {
             id: MessageId::new(),
-            source: Some(self.destination.clone()),
-            destination: source.clone(),
+            source: Some(Arc::clone(&self.destination)),
+            destination: Arc::clone(source),
             causation: Some(self.id),
             deadline: self.deadline,
             payload: Box::new(payload),
@@ -193,8 +210,8 @@ impl Envelope {
 
         Some(Envelope {
             id: MessageId::new(),
-            source: Some(self.destination.clone()),
-            destination: source.clone(),
+            source: Some(Arc::clone(&self.destination)),
+            destination: Arc::clone(source),
             causation: Some(self.id),
             deadline: self.deadline,
             payload: Box::new(payload),
@@ -208,12 +225,12 @@ impl Envelope {
 
     /// Get the source route address (if any)
     pub fn source(&self) -> Option<&RouteAddress> {
-        self.source.as_ref()
+        self.source.as_ref().map(|a| a.as_ref())
     }
 
     /// Get the destination route address
     pub fn destination(&self) -> &RouteAddress {
-        &self.destination
+        self.destination.as_ref()
     }
 
     /// Get the causation ID (parent message)
@@ -235,8 +252,8 @@ impl Envelope {
     pub fn metadata(&self) -> EnvelopeMetadata {
         EnvelopeMetadata {
             id: self.id,
-            source: self.source.clone(),
-            destination: self.destination.clone(),
+            source: self.source.as_ref().map(|a| (**a).clone()),
+            destination: (*self.destination).clone(),
             causation: self.causation,
             deadline: self.deadline,
         }
@@ -246,8 +263,8 @@ impl Envelope {
     pub fn into_parts<M: Any>(self) -> (EnvelopeMetadata, Option<M>) {
         let metadata = EnvelopeMetadata {
             id: self.id,
-            source: self.source,
-            destination: self.destination,
+            source: self.source.map(|a| (*a).clone()),
+            destination: (*self.destination).clone(),
             causation: self.causation,
             deadline: self.deadline,
         };

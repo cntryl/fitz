@@ -53,8 +53,8 @@ fn should_reject_rpc_request_without_call_permission() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://acme/auth/user/create"),
-        reply_route: Route::new("inbox://session/unauthorized"),
+        route: std::sync::Arc::new(Route::new("rpc://acme/auth/user/create")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/unauthorized")),
         body: Bytes::from(b"{ \"username\": \"hacker\" }".to_vec()),
     };
 
@@ -92,8 +92,8 @@ fn should_allow_rpc_request_with_valid_call_permission() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://acme/auth/user/create"),
-        reply_route: Route::new("inbox://session/authorized"),
+        route: std::sync::Arc::new(Route::new("rpc://acme/auth/user/create")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/authorized")),
         body: Bytes::from(b"{ \"username\": \"alice\" }".to_vec()),
     };
 
@@ -133,8 +133,8 @@ fn should_enforce_realm_isolation_in_authorization() {
     let request_cross_realm = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://acme/data/query/execute"),
-        reply_route: Route::new("inbox://session/corp123"),
+        route: std::sync::Arc::new(Route::new("rpc://acme/data/query/execute")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/corp123")),
         body: Bytes::from(b"{ \"query\": \"SELECT *\" }".to_vec()),
     };
 
@@ -222,8 +222,8 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://acme/billing/invoice/create"),
-        reply_route: Route::new("inbox://session/limited"),
+        route: std::sync::Arc::new(Route::new("rpc://acme/billing/invoice/create")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/limited")),
         body: Bytes::from(b"{ \"amount\": 100 }".to_vec()),
     };
 
@@ -261,8 +261,8 @@ fn should_allow_requests_within_granted_scope() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://acme/billing/invoice/query"),
-        reply_route: Route::new("inbox://session/authorized"),
+        route: std::sync::Arc::new(Route::new("rpc://acme/billing/invoice/query")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/authorized")),
         body: Bytes::from(b"{ \"invoice_id\": \"inv-123\" }".to_vec()),
     };
 
@@ -305,8 +305,8 @@ fn should_route_request_to_available_worker() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/service/handler/call"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/service/handler/call")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
 
@@ -328,8 +328,8 @@ fn should_enqueue_request_when_no_workers_available() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
 
@@ -361,8 +361,8 @@ fn should_correlate_response_with_request() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -391,8 +391,8 @@ fn should_reject_request_when_queue_is_full() {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
-            route: Route::new("rpc://realm/auth/user/authenticate"),
-            reply_route: Route::new("inbox://session/123"),
+            route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+            reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
             body: Bytes::from(vec![1, 2, 3]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -401,8 +401,8 @@ fn should_reject_request_when_queue_is_full() {
     let overflow_request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
 
@@ -436,8 +436,8 @@ fn should_distribute_requests_across_multiple_workers() {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
-            route: Route::new("rpc://realm/auth/user/authenticate"),
-            reply_route: Route::new("inbox://session/123"),
+            route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+            reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
             body: Bytes::from(vec![1, 2, 3]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -485,8 +485,8 @@ fn should_maintain_request_order_in_queue() {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
-            route: Route::new("rpc://realm/auth/user/authenticate"),
-            reply_route: Route::new("inbox://session/123"),
+            route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+            reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
             body: Bytes::from(vec![_i as u8]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -526,8 +526,8 @@ fn should_handle_streaming_response_with_multiple_chunks() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/reports/monthly/generate"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/reports/monthly/generate")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -557,16 +557,16 @@ fn should_isolate_requests_across_route_families() {
     let request1 = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1]),
     };
 
     let request2 = RpcRequest {
         family_id: RouteFamily::new(2),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/456"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/auth/user/authenticate")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/456")),
         body: Bytes::from(vec![2]),
     };
 
@@ -600,8 +600,8 @@ fn should_cleanup_state_after_request_completion() {
     let request = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id,
-        route: Route::new("rpc://realm/inventory/item/update"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/inventory/item/update")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -619,8 +619,8 @@ fn should_cleanup_state_after_request_completion() {
     let request2 = RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
-        route: Route::new("rpc://realm/inventory/item/update"),
-        reply_route: Route::new("inbox://session/123"),
+        route: std::sync::Arc::new(Route::new("rpc://realm/inventory/item/update")),
+        reply_route: std::sync::Arc::new(Route::new("inbox://session/123")),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request2), &mut ctx);
@@ -918,7 +918,7 @@ fn should_include_reply_route_in_request() {
     );
 
     // Assert
-    assert_eq!(request.reply_route, reply_route);
+    assert_eq!(request.reply_route.as_ref(), &reply_route);
 }
 
 #[test]
@@ -934,5 +934,5 @@ fn should_include_target_route_in_request() {
     let request = RpcRequest::new(family, correlation_id, route.clone(), reply_route, body);
 
     // Assert
-    assert_eq!(request.route, route);
+    assert_eq!(request.route.as_ref(), &route);
 }

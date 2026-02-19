@@ -867,7 +867,7 @@ impl RuntimeIngress {
                 session_info.route_family,
             ) {
                 Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => {
-                    Ok(Some(r.route.clone()))
+                    Ok(Some((*r.route).clone()))
                 }
                 Ok(crate::domains::rpc::protocol::RpcMessage::Subscribe { worker_addr }) => {
                     Ok(Some(worker_addr.route().clone()))

@@ -21,6 +21,25 @@ impl TlvEncoder {
         Self { buf: Vec::new() }
     }
 
+    /// Create encoder with pre-allocated capacity (reduces reallocations when reusing)
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Clear the buffer for reuse. Use after `finish()` or when discarding content.
+    /// Call sites can hold one encoder and call clear() then encode again to avoid allocating a new encoder.
+    pub fn clear(&mut self) {
+        self.buf.clear();
+    }
+
+    /// Return the current buffer contents and reset the encoder for reuse (no copy).
+    /// Caller gets ownership of the Vec; encoder is left with an empty buffer.
+    pub fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.buf)
+    }
+
     /// Encode a u8 scalar
     pub fn put_u8(&mut self, val: u8) {
         self.buf.put_u8(val);
@@ -80,10 +99,6 @@ impl TlvEncoder {
         }
     }
 
-    /// Finish encoding and return bytes
-    pub fn finish(self) -> Vec<u8> {
-        self.buf
-    }
 }
 
 /// Helper for decoding TLV format with bounds checking
@@ -157,16 +172,22 @@ impl<'a> TlvDecoder<'a> {
         Ok(val)
     }
 
-    /// Decode a string with length prefix
-    pub fn get_string(&mut self) -> Result<String, String> {
+    /// Decode a string with length prefix (borrowed; no allocation).
+    /// Use when the caller can use `&str` or will do a single `.to_string()` for owned.
+    pub fn get_string_ref(&mut self) -> Result<&'a str, String> {
         let len = self.get_u32()? as usize;
         if self.offset + len > self.payload.len() {
             return Err("Incomplete string data".to_string());
         }
-        let s = String::from_utf8(self.payload[self.offset..self.offset + len].to_vec())
-            .map_err(|_| "Invalid UTF-8 in string".to_string())?;
+        let slice = &self.payload[self.offset..self.offset + len];
+        let s = std::str::from_utf8(slice).map_err(|_| "Invalid UTF-8 in string".to_string())?;
         self.offset += len;
         Ok(s)
+    }
+
+    /// Decode a string with length prefix (owned; one allocation).
+    pub fn get_string(&mut self) -> Result<String, String> {
+        self.get_string_ref().map(|s| s.to_string())
     }
 
     /// Decode bytes with length prefix

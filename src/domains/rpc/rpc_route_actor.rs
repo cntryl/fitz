@@ -226,7 +226,7 @@ impl RpcRouteActor {
                     request.family_id, self.family
                 ),
             );
-            self.send_error(error, &request.reply_route);
+            self.send_error(error, request.reply_route.as_ref());
             return;
         }
 
@@ -237,8 +237,7 @@ impl RpcRouteActor {
         if self.pending.len() >= self.capacity {
             // Send backpressure error to client
             let error = RpcError::backpressure(request.correlation_id);
-            let reply_route = request.reply_route.clone();
-            self.send_error(error, &reply_route);
+            self.send_error(error, request.reply_route.as_ref());
             return;
         }
 
@@ -294,12 +293,12 @@ impl RpcRouteActor {
                 self.ready_queue.push_back(idx);
             }
 
-            // Create lease with minimal data (no request clone)
+            // Create lease with minimal data (Arc::clone only, no string alloc)
             let expiration = Instant::now() + self.lease_timeout;
             let lease = Lease {
                 correlation_id: request.correlation_id,
                 worker_index: idx, // Store index, not address
-                reply_route: Arc::new(request.reply_route.clone()), // Shared ownership
+                reply_route: Arc::clone(&request.reply_route),
                 expiration,
             };
             self.leases.insert(request.correlation_id, lease.clone());
@@ -388,7 +387,7 @@ impl RpcRouteActor {
 
                 // Send timeout error to client
                 let error = RpcError::timeout(correlation_id);
-                self.send_error(error, &lease.reply_route);
+                self.send_error(error, lease.reply_route.as_ref());
 
                 // NOTE: We don't re-enqueue for retry since we don't have the original request
                 // (removed request clone for performance). Client should retry if needed.
@@ -519,8 +518,8 @@ mod tests {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
-            route: Route::new("rpc://test/route"),
-            reply_route: Route::new("inbox://session/123"),
+            route: Arc::new(Route::new("rpc://test/route")),
+            reply_route: Arc::new(Route::new("inbox://session/123")),
             body: Bytes::from(vec![1, 2, 3]),
         };
 

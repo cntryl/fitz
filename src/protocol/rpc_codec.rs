@@ -64,8 +64,7 @@ pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
 
 /// Wire format: `[string worker_addr]`
 fn parse_subscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
-    let worker_addr_str = dec.get_string()?;
-    let worker_addr = RouteAddress::new(route_family, Route::new(worker_addr_str));
+    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -79,8 +78,7 @@ fn parse_unsubscribe(
     dec: &mut TlvDecoder,
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
-    let worker_addr_str = dec.get_string()?;
-    let worker_addr = RouteAddress::new(route_family, Route::new(worker_addr_str));
+    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -102,11 +100,8 @@ fn parse_rpc_request(
     uuid_bytes.copy_from_slice(&correlation_id_bytes);
     let correlation_id = Uuid::from_bytes(uuid_bytes);
 
-    let route_str = dec.get_string()?;
-    let route = Route::new(route_str);
-
-    let reply_route_str = dec.get_string()?;
-    let reply_route = Route::new(reply_route_str);
+    let route = Route::new(dec.get_string_ref()?.to_string());
+    let reply_route = Route::new(dec.get_string_ref()?.to_string());
 
     let body = dec.get_bytes()?;
 
