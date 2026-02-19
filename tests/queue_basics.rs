@@ -193,8 +193,8 @@ fn should_use_independent_queue_storage_per_realm() {
     // Assert
     // (Store is passed per actor instance with realm-scoped keys)
     // This prevents any cross-realm message leakage
-    assert_eq!(queue_sandbox.ready.len(), 0);
-    assert_eq!(queue_prod.ready.len(), 0);
+    assert_eq!(queue_sandbox.ready_len(), 0);
+    assert_eq!(queue_prod.ready_len(), 0);
 }
 
 // ============================================================================

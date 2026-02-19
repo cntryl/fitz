@@ -84,7 +84,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Assert
-    assert_eq!(actor.ready.len(), 0);
+    assert_eq!(actor.ready_len(), 0);
     assert!(!actor.inflight.is_empty(), "Should have in-flight messages");
 
     // Verify no message was reserved twice
@@ -140,7 +140,7 @@ fn should_redelivery_messages_after_crash() {
         // At this point:
         // - 5 messages in inflight (in-memory, will be lost)
         // - 5 messages in ready queue (will be persisted)
-        assert_eq!(actor.ready.len(), 5);
+        assert_eq!(actor.ready_len(), 5);
         assert_eq!(actor.inflight.len(), 5);
     }
 
@@ -155,7 +155,7 @@ fn should_redelivery_messages_after_crash() {
 
     // Assert
     assert_eq!(
-        actor.ready.len(),
+        actor.ready_len(),
         10,
         "All 10 messages should be in ready queue after restart"
     );
@@ -210,7 +210,7 @@ fn should_preserve_delayed_visibility_across_restart() {
         actor.handle_enqueue(Bytes::from("delayed_1h"), Some(3600));
 
         // Verify in-memory state
-        assert_eq!(actor.ready.len(), 1, "Should have 1 ready message");
+        assert_eq!(actor.ready_len(), 1, "Should have 1 ready message");
         // delayed field is private, verify through reserve behavior
     }
 
@@ -224,7 +224,7 @@ fn should_preserve_delayed_visibility_across_restart() {
     );
 
     // Assert
-    assert_eq!(actor.ready.len(), 1, "Ready message should be recovered");
+    assert_eq!(actor.ready_len(), 1, "Ready message should be recovered");
     // Note: delayed is private field, so verify behavior through reserve instead
 
     // Verify immediately visible
@@ -339,7 +339,7 @@ fn should_redelivery_message_on_lease_expiration() {
     // Assert
     // Verify message is inflight
     assert_eq!(actor.inflight.len(), 1);
-    assert_eq!(actor.ready.len(), 0);
+    assert_eq!(actor.ready_len(), 0);
 
     // Note: Cannot advance time without MockClock (test limitation).
     // Unit tests verify expiration behavior with MockClock.

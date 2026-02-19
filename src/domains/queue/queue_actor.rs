@@ -13,7 +13,7 @@
 //! 4. **Automatic redelivery**: Expired leases or crashes return messages to ready queue
 //! 5. **Full recovery**: All persisted state restored on restart (V-003 Fix)
 //! 6. **Correct time semantics**: Delays use absolute SystemTime epochs (V-002 Fix)
-//! 7. **Fair distribution**: Competing consumers get messages in ready-queue order
+//! 7. **Fair distribution**: Competing consumers get best-effort ready-queue order
 //!
 //! # Intent vs Events
 //!
@@ -34,7 +34,7 @@
 //!
 //! # Performance Model
 //!
-//! - ready: VecDeque - O(1) push_back, O(1) pop_front
+//! - ready shards: VecDeque - O(1) push_back, O(1) pop_front
 //! - inflight: HashMap - O(1) lookup, O(1) insert, O(1) remove
 //! - timers: BinaryHeap - O(log n) push, O(1) peek, O(log n) pop
 //!
@@ -155,14 +155,14 @@ impl Clock for SystemClock {
 /// - `queue_key`: Queue identity (realm/area/resource)
 /// - `store`: Midge storage handle (for persistence)
 /// - `next_id`: Message ID counter (monotonic)
-/// - `ready`: FIFO queue of ready message IDs
+/// - `ready`: Sharded FIFO queues of ready message IDs
 /// - `inflight`: Map of leased messages (id Ã¢â€ â€™ Inflight)
 /// - `timers`: Min-heap of expiration events (earliest first)
 /// - `clock`: Time source for expiration checks
 ///
 /// # Actor Responsibilities
 ///
-/// - Maintain FIFO ordering via ready queue
+/// - Maintain best-effort ordering via sharded ready queues
 /// - Track inflight leases with expiration
 /// - Re-enqueue expired messages
 /// - Increment attempts on redelivery
@@ -182,8 +182,14 @@ pub struct QueueActor {
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
 
-    /// Ready queue: FIFO list of message IDs available for reservation
-    pub ready: VecDeque<MessageId>,
+    /// Ready queues: sharded FIFO lists of message IDs available for reservation
+    ready_shards: Vec<VecDeque<MessageId>>,
+
+    /// Round-robin cursor for ready shard selection
+    next_ready_shard: usize,
+
+    /// In-memory record cache (durable backing is Midge)
+    records: HashMap<MessageId, QueueRecord>,
 
     /// Inflight map: leased messages (id Ã¢â€ â€™ Inflight)
     pub inflight: HashMap<MessageId, Inflight>,
@@ -213,6 +219,8 @@ pub struct QueueActor {
 }
 
 impl QueueActor {
+    const READY_SHARDS: usize = 8;
+
     /// Create a new queue actor. Persistence mode is locked to buffered-only (throughput-first).
     pub fn new(
         family: RouteFamily,
@@ -250,7 +258,9 @@ impl QueueActor {
             queue_key,
             store,
             next_id,
-            ready: VecDeque::new(),
+            ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
+            next_ready_shard: 0,
+            records: HashMap::new(),
             inflight: HashMap::new(),
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
@@ -335,6 +345,36 @@ impl QueueActor {
         buf.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
         buf.extend_from_slice(&record.body);
         buf
+    }
+
+    fn shard_for_id(id: MessageId) -> usize {
+        id.as_u64() as usize & (Self::READY_SHARDS - 1)
+    }
+
+    fn push_ready(&mut self, id: MessageId) {
+        let shard = Self::shard_for_id(id);
+        self.ready_shards[shard].push_back(id);
+    }
+
+    fn pop_ready(&mut self) -> Option<MessageId> {
+        for _ in 0..Self::READY_SHARDS {
+            let shard = self.next_ready_shard;
+            if let Some(id) = self.ready_shards[shard].pop_front() {
+                self.next_ready_shard = (shard + 1) % Self::READY_SHARDS;
+                return Some(id);
+            }
+            self.next_ready_shard = (shard + 1) % Self::READY_SHARDS;
+        }
+
+        None
+    }
+
+    pub fn ready_len(&self) -> usize {
+        self.ready_shards.iter().map(|shard| shard.len()).sum()
+    }
+
+    pub fn ready_contains(&self, id: MessageId) -> bool {
+        self.ready_shards.iter().any(|shard| shard.contains(&id))
     }
 
     /// Deserialize QueueRecord from bytes
@@ -426,9 +466,12 @@ impl QueueActor {
         // Commit succeeded; advance in-memory next_id
         self.next_id = next_id;
 
+        // Cache record in memory for fast reserve path
+        self.records.insert(id, record);
+
         // Update in-memory queues
         if visible_at <= now_instant {
-            self.ready.push_back(id);
+            self.push_ready(id);
         } else {
             self.delayed
                 .push(Reverse(DelayedMessage { id, visible_at }));
@@ -464,51 +507,54 @@ impl QueueActor {
 
         for _ in 0..batch_size {
             // Pop from ready queue
-            let id = match self.ready.pop_front() {
+            let id = match self.pop_ready() {
                 Some(id) => id,
                 None => break, // No more messages
             };
 
-            // Load from Midge
-            let cf_id = self.queue_key.family.id();
-            let key = Self::message_key(&self.queue_key, id);
+            let record = match self.records.get(&id) {
+                Some(record) => record.clone(),
+                None => {
+                    // Fallback to storage if cache missed
+                    let cf_id = self.queue_key.family.id();
+                    let key = Self::message_key(&self.queue_key, id);
+                    let txn = match self
+                        .store
+                        .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+                    {
+                        Ok(t) => t,
+                        Err(e) => {
+                            eprintln!("WARN: Failed to begin tx: {:?}", e);
+                            continue;
+                        }
+                    };
 
-            // Use a ReadWrite transaction to see buffered writes from enqueue.
-            // In LSM engines with deferred durability (buffered mode), ReadOnly snapshots
-            // may not see recent writes. ReadWrite ensures read-your-writes visibility.
-            let txn = match self
-                .store
-                .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("WARN: Failed to begin tx: {:?}", e);
-                    continue;
-                }
-            };
+                    let record = match txn.get(&key) {
+                        Ok(Some(bytes)) => match Self::decode_record(&bytes) {
+                            Ok(record) => {
+                                drop(txn);
+                                record
+                            }
+                            Err(e) => {
+                                eprintln!("WARN: Failed to decode message {}: {}", id, e);
+                                drop(txn);
+                                continue;
+                            }
+                        },
+                        Ok(None) => {
+                            eprintln!("WARN: Message {} disappeared from storage", id);
+                            drop(txn);
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!("WARN: Failed to read message {}: {:?}", id, e);
+                            drop(txn);
+                            continue;
+                        }
+                    };
 
-            let record = match txn.get(&key) {
-                Ok(Some(bytes)) => match Self::decode_record(&bytes) {
-                    Ok(record) => {
-                        // Drop transaction before processing
-                        drop(txn);
-                        record
-                    }
-                    Err(e) => {
-                        eprintln!("WARN: Failed to decode message {}: {}", id, e);
-                        drop(txn);
-                        continue; // Skip corrupted message
-                    }
-                },
-                Ok(None) => {
-                    eprintln!("WARN: Message {} disappeared from storage", id);
-                    drop(txn);
-                    continue; // Message was deleted
-                }
-                Err(e) => {
-                    eprintln!("WARN: Failed to read message {}: {:?}", id, e);
-                    drop(txn);
-                    continue; // Storage error
+                    self.records.insert(id, record.clone());
+                    record
                 }
             };
 
@@ -663,6 +709,9 @@ impl QueueActor {
         // Remove inflight entry
         self.inflight.remove(&id);
 
+        // Remove cached record (storage is durable source of truth)
+        self.records.remove(&id);
+
         // Delete from Midge with durability options (via transaction API)
         // TODO: Use transaction API for deletes:
         // let cf = self.store.default_column_family();
@@ -740,86 +789,89 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let key = Self::message_key(&self.queue_key, id);
 
-        match self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-        {
-            Ok(mut txn) => {
-                match txn.get(&key) {
-                    Ok(Some(bytes)) => {
-                        match Self::decode_record(&bytes) {
-                            Ok(mut record) => {
-                                record.attempts += 1;
-
-                                // Check if attempts reached or exceeded max_attempts threshold
-                                let is_dlq = if let Some(max) = self.max_attempts {
-                                    record.attempts >= max
-                                } else {
-                                    false
-                                };
-
-                                if is_dlq {
-                                    // DLQ: Delete message from storage (in txn)
-                                    if let Err(e) = txn.delete(key.clone()) {
-                                        eprintln!(
-                                            "WARN: Failed to delete DLQ message {}: {:?}",
-                                            id, e
-                                        );
-                                    } else if let Err(e) = self
-                                        .store
-                                        .commit(txn, cntryl_midge::WriteOptions::buffered())
-                                    {
-                                        eprintln!(
-                                            "WARN: Failed to commit DLQ delete txn {}: {:?}",
-                                            id, e
-                                        );
-                                    }
-
-                                    // Log DLQ event
-                                    eprintln!(
-                                        "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
-                                        self.queue_key, id, record.attempts
-                                    );
-
-                                    // Do NOT re-enqueue
-                                    return;
-                                }
-
-                                // Normal retry: increment attempts and persist
-                                let value = Self::encode_record(&record);
-                                if let Err(e) = txn.put(key.clone(), value, None) {
-                                    eprintln!(
-                                        "WARN: Failed to increment attempts for message {}: {:?}",
-                                        id, e
-                                    );
-                                } else if let Err(e) = self
-                                    .store
-                                    .commit(txn, cntryl_midge::WriteOptions::buffered())
-                                {
-                                    eprintln!(
-                                        "WARN: Failed to commit retry txn for message {}: {:?}",
-                                        id, e
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "WARN: Failed to decode message {} during redelivery: {}",
-                                    id, e
-                                );
-                            }
+        let mut record = match self.records.get(&id) {
+            Some(record) => record.clone(),
+            None => match self
+                .store
+                .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            {
+                Ok(txn) => match txn.get(&key) {
+                    Ok(Some(bytes)) => match Self::decode_record(&bytes) {
+                        Ok(record) => record,
+                        Err(e) => {
+                            eprintln!(
+                                "WARN: Failed to decode message {} during redelivery: {}",
+                                id, e
+                            );
+                            return;
                         }
-                    }
-                    Ok(None) => {
-                        // Message was deleted (completed after lease expired but before timer fired)
-                        return;
-                    }
+                    },
+                    Ok(None) => return,
                     Err(e) => {
                         eprintln!(
                             "WARN: Failed to read message {} during redelivery: {:?}",
                             id, e
                         );
+                        return;
                     }
+                },
+                Err(e) => {
+                    eprintln!(
+                        "WARN: Failed to begin txn for redelivery for message {}: {:?}",
+                        id, e
+                    );
+                    return;
+                }
+            },
+        };
+
+        record.attempts += 1;
+
+        let is_dlq = if let Some(max) = self.max_attempts {
+            record.attempts >= max
+        } else {
+            false
+        };
+
+        match self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(mut txn) => {
+                if is_dlq {
+                    if let Err(e) = txn.delete(key.clone()) {
+                        eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
+                    } else if let Err(e) = self
+                        .store
+                        .commit(txn, cntryl_midge::WriteOptions::buffered())
+                    {
+                        eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
+                    }
+
+                    self.records.remove(&id);
+
+                    eprintln!(
+                        "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
+                        self.queue_key, id, record.attempts
+                    );
+
+                    return;
+                }
+
+                let value = Self::encode_record(&record);
+                if let Err(e) = txn.put(key.clone(), value, None) {
+                    eprintln!(
+                        "WARN: Failed to increment attempts for message {}: {:?}",
+                        id, e
+                    );
+                } else if let Err(e) = self
+                    .store
+                    .commit(txn, cntryl_midge::WriteOptions::buffered())
+                {
+                    eprintln!(
+                        "WARN: Failed to commit retry txn for message {}: {:?}",
+                        id, e
+                    );
                 }
             }
             Err(e) => {
@@ -827,11 +879,14 @@ impl QueueActor {
                     "WARN: Failed to begin txn for redelivery for message {}: {:?}",
                     id, e
                 );
+                return;
             }
         }
 
+        self.records.insert(id, record);
+
         // Re-enqueue to ready queue (back of queue for FIFO)
-        self.ready.push_back(id);
+        self.push_ready(id);
     }
 
     /// Process expired timers (called periodically or on message receive)
@@ -875,7 +930,7 @@ impl QueueActor {
             let delayed = self.delayed.pop().unwrap().0;
 
             // Add to ready queue
-            self.ready.push_back(delayed.id);
+            self.push_ready(delayed.id);
         }
 
         // If no more delayed messages, set deadline to far future
@@ -1035,12 +1090,14 @@ impl QueueActor {
                 Err(_) => continue,
             };
 
+            self.records.insert(id, record.clone());
+
             max_id = Some(max_id.map(|m| m.max(id_u64)).unwrap_or(id_u64));
 
             // Compare absolute epochs (survives restarts correctly)
             if record.visible_at_ms <= now_epoch_ms {
                 // Immediately visible
-                self.ready.push_back(id);
+                self.push_ready(id);
             } else {
                 // Delayed: use absolute epoch difference
                 let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
@@ -1149,7 +1206,7 @@ pub mod tests {
             QueueResponse::Enqueued { id } => id,
             _ => panic!("Expected Enqueued response"),
         };
-        assert_eq!(actor.ready.len(), 1);
+        assert_eq!(actor.ready_len(), 1);
 
         // Act - Reserve
         let reserve_response = actor.handle_reserve(30, Some(1));
@@ -1165,7 +1222,7 @@ pub mod tests {
             }
             _ => panic!("Expected Reserved response"),
         }
-        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
     }
 
@@ -1361,7 +1418,7 @@ pub mod tests {
             _ => panic!("Expected Reserved response"),
         };
 
-        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
 
         // Act - Advance time past lease expiration
@@ -1369,9 +1426,9 @@ pub mod tests {
         actor.process_expired_timers();
 
         // Assert - Message back in ready queue
-        assert_eq!(actor.ready.len(), 1);
+        assert_eq!(actor.ready_len(), 1);
         assert_eq!(actor.inflight.len(), 0);
-        assert_eq!(actor.ready.front().unwrap(), &msg_id);
+        assert!(actor.ready_contains(msg_id));
 
         // Act - Reserve again
         let redelivery_response = actor.handle_reserve(30, Some(1));
@@ -1416,7 +1473,7 @@ pub mod tests {
         match response {
             QueueResponse::Reserved { messages } => {
                 assert_eq!(messages.len(), 3);
-                assert_eq!(actor.ready.len(), 2); // 2 remaining
+                assert_eq!(actor.ready_len(), 2); // 2 remaining
                 assert_eq!(actor.inflight.len(), 3);
             }
             _ => panic!("Expected Reserved response"),
@@ -1424,7 +1481,7 @@ pub mod tests {
     }
 
     #[test]
-    fn should_enqueue_and_dequeue_in_fifo_order() {
+    fn should_enqueue_and_dequeue_all_messages() {
         // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
@@ -1445,7 +1502,7 @@ pub mod tests {
             let _ = actor.handle_enqueue(body, None);
         }
 
-        // Act & Assert - Reserve and ensure IDs and bodies are returned in FIFO order
+        // Act & Assert - Reserve and ensure all messages are returned
         let mut reserved_all = Vec::new();
         loop {
             match actor.handle_reserve(30, Some(2)) {
@@ -1464,7 +1521,9 @@ pub mod tests {
             }
         }
 
-        let expected: Vec<Bytes> = (0..5).map(|i| Bytes::from(format!("msg-{}", i))).collect();
+        let mut expected: Vec<Bytes> = (0..5).map(|i| Bytes::from(format!("msg-{}", i))).collect();
+        reserved_all.sort();
+        expected.sort();
         assert_eq!(reserved_all, expected);
     }
 
@@ -1504,7 +1563,7 @@ pub mod tests {
         actor.process_expired_timers();
 
         // Assert - Message still inflight (stale timer ignored)
-        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
     }
 
@@ -1609,7 +1668,7 @@ pub mod tests {
         };
 
         // Assert - Message not in ready queue
-        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.delayed.len(), 1);
 
         // Act - Try to reserve immediately (should be empty)
@@ -1626,7 +1685,7 @@ pub mod tests {
         actor.process_delayed_messages();
 
         // Assert - Message now in ready queue
-        assert_eq!(actor.ready.len(), 1);
+        assert_eq!(actor.ready_len(), 1);
         assert_eq!(actor.delayed.len(), 0);
 
         // Act - Reserve now succeeds
@@ -1685,14 +1744,14 @@ pub mod tests {
 
             if attempt < 3 {
                 // Should be back in ready queue
-                assert_eq!(actor.ready.len(), 1);
+                assert_eq!(actor.ready_len(), 1);
                 assert_eq!(actor.inflight.len(), 0);
             }
         }
 
         // Assert - After 3rd expiration, attempts = 4, exceeds max_attempts = 3
         // Message should be deleted (DLQ'd), not re-enqueued
-        assert_eq!(actor.ready.len(), 0);
+        assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 0);
 
         // Verify message deleted from storage
@@ -1744,7 +1803,7 @@ pub mod tests {
             actor.process_expired_timers();
 
             // Should always be back in ready queue (unlimited retries)
-            assert_eq!(actor.ready.len(), 1);
+            assert_eq!(actor.ready_len(), 1);
             assert_eq!(actor.inflight.len(), 0);
         }
 
