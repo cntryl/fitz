@@ -202,6 +202,14 @@ pub struct QueueActor {
 
     /// Deduplication store for context-dependent operations (e.g., COMPLETE)
     dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+
+    /// Cached next expiration deadline (deferred timer processing)
+    /// Only process timers if current time >= this deadline
+    next_expiration_deadline: Instant,
+
+    /// Cached next delayed message deadline (deferred delayed processing)
+    /// Only process delayed messages if current time >= this deadline
+    next_delayed_deadline: Instant,
 }
 
 impl QueueActor {
@@ -235,6 +243,8 @@ impl QueueActor {
         // Recover next_id from Midge on startup
         let next_id = Self::recover_next_id(&store, &queue_key);
 
+        let now = Instant::now();
+
         let mut actor = Self {
             family,
             queue_key,
@@ -247,6 +257,9 @@ impl QueueActor {
             clock,
             max_attempts,
             dedup_store,
+            // Initialize deadlines to now (will process on first receive if queues are not empty)
+            next_expiration_deadline: now,
+            next_delayed_deadline: now,
         };
 
         actor.recover_ready_and_delayed_from_store();
@@ -505,6 +518,11 @@ impl QueueActor {
             // Schedule expiration timer
             self.timers.push(Reverse(LeaseExpiry { id, expires_at }));
 
+            // Update deadline cache if this expiration is sooner
+            if expires_at < self.next_expiration_deadline {
+                self.next_expiration_deadline = expires_at;
+            }
+
             // Build response message
             messages.push(ReservedMessage {
                 id,
@@ -559,6 +577,11 @@ impl QueueActor {
             id,
             expires_at: new_expires_at,
         }));
+
+        // Update deadline cache if this expiration is sooner
+        if new_expires_at < self.next_expiration_deadline {
+            self.next_expiration_deadline = new_expires_at;
+        }
 
         QueueResponse::Extended
     }
@@ -808,12 +831,15 @@ impl QueueActor {
     }
 
     /// Process expired timers (called periodically or on message receive)
+    /// Updates the cached deadline for the next expiration check
     pub fn process_expired_timers(&mut self) {
         let now = self.clock.now_instant();
 
         while let Some(Reverse(expiry)) = self.timers.peek() {
             if expiry.expires_at > now {
-                break; // No more expired timers
+                // Found next expiration deadline, cache it
+                self.next_expiration_deadline = expiry.expires_at;
+                break;
             }
 
             // Pop expired timer
@@ -822,15 +848,23 @@ impl QueueActor {
             // Handle expiration
             self.handle_lease_expired(expiry.id);
         }
+
+        // If no more timers, set deadline to far future
+        if self.timers.is_empty() {
+            self.next_expiration_deadline = now + Duration::from_secs(3600); // 1 hour
+        }
     }
 
     /// Process delayed messages that are now visible
+    /// Updates the cached deadline for the next delayed message check
     pub fn process_delayed_messages(&mut self) {
         let now = self.clock.now_instant();
 
         while let Some(Reverse(delayed)) = self.delayed.peek() {
             if delayed.visible_at > now {
-                break; // No more visible messages
+                // Found next delayed message deadline, cache it
+                self.next_delayed_deadline = delayed.visible_at;
+                break;
             }
 
             // Pop now-visible message
@@ -839,6 +873,11 @@ impl QueueActor {
             // Add to ready queue
             self.ready.push_back(delayed.id);
         }
+
+        // If no more delayed messages, set deadline to far future
+        if self.delayed.is_empty() {
+            self.next_delayed_deadline = now + Duration::from_secs(3600); // 1 hour
+        }
     }
 }
 
@@ -846,9 +885,17 @@ impl Actor for QueueActor {
     type Message = QueueMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        // Process expired timers and delayed messages on every message
-        self.process_expired_timers();
-        self.process_delayed_messages();
+        let now = self.clock.now_instant();
+
+        // Deferred timer processing: only process if deadline has passed
+        if now >= self.next_expiration_deadline {
+            self.process_expired_timers();
+        }
+
+        // Deferred delayed message processing: only process if deadline has passed
+        if now >= self.next_delayed_deadline {
+            self.process_delayed_messages();
+        }
 
         let response = match msg {
             QueueMessage::Enqueue {
@@ -993,10 +1040,14 @@ impl QueueActor {
             } else {
                 // Delayed: use absolute epoch difference
                 let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
-                self.delayed.push(Reverse(DelayedMessage {
-                    id,
-                    visible_at: now_instant + Duration::from_millis(delay_ms),
-                }));
+                let visible_at = now_instant + Duration::from_millis(delay_ms);
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
+
+                // Update deadline cache if this visibility is sooner
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
             }
         }
 

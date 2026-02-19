@@ -29,7 +29,7 @@ impl ScheduleStore {
     fn encode_key(next_fire_time_ms: u64, route: &str) -> Vec<u8> {
         let minute_epoch = next_fire_time_ms / 60_000;
         let ms_offset = next_fire_time_ms % 60_000;
-        
+
         let mut key = Vec::with_capacity(30 + route.len());
         key.extend_from_slice(b"sched:m");
         key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
@@ -37,7 +37,7 @@ impl ScheduleStore {
         key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
         key.push(b':');
         key.extend_from_slice(route.as_bytes());
-        
+
         key
     }
 
@@ -56,8 +56,14 @@ impl ScheduleStore {
         // Read minute_epoch (8 bytes)
         let minute_bytes = &remaining[0..8];
         let minute_epoch = u64::from_be_bytes([
-            minute_bytes[0], minute_bytes[1], minute_bytes[2], minute_bytes[3],
-            minute_bytes[4], minute_bytes[5], minute_bytes[6], minute_bytes[7],
+            minute_bytes[0],
+            minute_bytes[1],
+            minute_bytes[2],
+            minute_bytes[3],
+            minute_bytes[4],
+            minute_bytes[5],
+            minute_bytes[6],
+            minute_bytes[7],
         ]);
 
         // Expect '/' separator at position 8
@@ -68,8 +74,14 @@ impl ScheduleStore {
         // Read ms_offset (6 bytes)
         let offset_bytes = &remaining[9..15];
         let ms_offset = u64::from_be_bytes([
-            0, 0, offset_bytes[0], offset_bytes[1], offset_bytes[2], offset_bytes[3],
-            offset_bytes[4], offset_bytes[5],
+            0,
+            0,
+            offset_bytes[0],
+            offset_bytes[1],
+            offset_bytes[2],
+            offset_bytes[3],
+            offset_bytes[4],
+            offset_bytes[5],
         ]);
 
         // Expect ':' separator at position 15
@@ -111,13 +123,13 @@ impl ScheduleStore {
     /// Uses the cached epoch for consistent, monotonic time tracking.
     fn instant_to_ms(&self, instant: Instant) -> u64 {
         let elapsed = instant.duration_since(self.epoch);
-        
+
         // Get UNIX_EPOCH as reference
         let now_sys = SystemTime::now();
         if let Ok(sys_elapsed) = now_sys.duration_since(UNIX_EPOCH) {
             let sys_ms = sys_elapsed.as_secs() * 1000 + sys_elapsed.subsec_millis() as u64;
             let monotonic_delta = elapsed.as_millis() as u64;
-            
+
             // Assume epoch started near now; calculate offset
             sys_ms.saturating_sub(monotonic_delta)
         } else {
@@ -165,8 +177,7 @@ impl ScheduleStore {
     }
 
     /// Delete a schedule by route
-    /// Since routes are not directly in the key (they're suffixed by time),
-    /// we scan for keys ending with the route and delete them
+    /// Scans keys matching the route and deletes them
     pub fn delete(
         &self,
         cf_id: u64,
@@ -178,19 +189,15 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        // Scan all keys and find those matching the route
-        // In practice, you might want to maintain a separate index
-        let query = cntryl_midge::Query::new();
+        // Scan all keys with sched prefix and find those matching the route
+        let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:"));
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan failed: {:?}", e))?;
 
         let results = iter.collect_all();
         for (k, _v) in results {
-            let key_str = String::from_utf8_lossy(&k);
-            // Key format: "TIMESTAMP:ROUTE", check if route matches suffix
-            if let Some(colon_pos) = key_str.find(':') {
-                let key_route = &key_str[colon_pos + 1..];
+            if let Ok((_timestamp, key_route)) = Self::decode_key(&k) {
                 if key_route == route {
                     txn.delete(k)
                         .map_err(|e| format!("delete failed: {:?}", e))?;
@@ -207,6 +214,9 @@ impl ScheduleStore {
 
     /// Load all schedules ready to fire (next_fire_time <= now)
     /// Returns Vec<(route, cron, payload)>
+    ///
+    /// Optimization: Only scans keys with sched prefix (reduces full table scans)
+    /// and stops early if timestamp has passed the fire time.
     pub fn load_ready(
         &self,
         cf_id: u64,
@@ -219,9 +229,8 @@ impl ScheduleStore {
 
         let mut ready = Vec::new();
 
-        // Range scan: all keys from start (00000000000000000000) up to now (now_ms formatted)
-        // Keys are formatted as "TIMESTAMP:ROUTE" so we can sort/compare lexicographically
-        let query = cntryl_midge::Query::new();
+        // Scan only keys with "sched:" prefix (avoids scanning unrelated keys)
+        let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:"));
 
         let mut iter = txn
             .scan(&query)
@@ -229,22 +238,15 @@ impl ScheduleStore {
 
         let results = iter.collect_all();
         for (k, v) in results {
-            let key_str = String::from_utf8_lossy(&k);
-            if let Some(colon_pos) = key_str.find(':') {
-                let timestamp_part = &key_str[..colon_pos];
-                // Only include if timestamp <= now_ms (lexicographically)
-                if timestamp_part.len() == 20 {
-                    if let Ok(ts) = timestamp_part.parse::<u64>() {
-                        if ts <= now_ms {
-                            let route = key_str[colon_pos + 1..].to_string();
-                            match Self::decode_value(&v) {
-                                Ok((cron, payload)) => {
-                                    ready.push((route, cron, payload));
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to decode schedule value: {}", e);
-                                }
-                            }
+            if let Ok((timestamp_ms, route)) = Self::decode_key(&k) {
+                // Only include if timestamp <= now_ms
+                if timestamp_ms <= now_ms {
+                    match Self::decode_value(&v) {
+                        Ok((cron, payload)) => {
+                            ready.push((route, cron, payload));
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to decode schedule value: {}", e);
                         }
                     }
                 }
@@ -264,16 +266,15 @@ impl ScheduleStore {
 
         let mut all = Vec::new();
 
-        let query = cntryl_midge::Query::new();
+        // Scan only keys with "sched:" prefix
+        let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:"));
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan all failed: {:?}", e))?;
 
         let results = iter.collect_all();
         for (k, v) in results {
-            let key_str = String::from_utf8_lossy(&k);
-            if let Some(colon_pos) = key_str.find(':') {
-                let route = key_str[colon_pos + 1..].to_string();
+            if let Ok((_timestamp, route)) = Self::decode_key(&k) {
                 match Self::decode_value(&v) {
                     Ok((cron, payload)) => {
                         all.push((route, cron, payload));

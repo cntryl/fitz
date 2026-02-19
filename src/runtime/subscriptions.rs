@@ -25,7 +25,8 @@
 //! - During matching, we try suffix patterns against all possible remaining segments
 
 use crate::runtime::matcher::{
-    extract_route_segments, match_pattern_segments, parse_pattern_segments, PatternSegment,
+    extract_route_segments, extract_route_segments_borrowed, match_pattern_segments,
+    match_pattern_segments_borrowed, parse_pattern_segments, PatternSegment,
 };
 use crate::runtime::routing::{Route, RouteFamily};
 use parking_lot::RwLock;
@@ -122,7 +123,7 @@ impl SubscriptionIndex {
     /// # Returns
     /// Vector of matching subscription IDs (may contain duplicates if pattern/subscriber pair added multiple times)
     pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> Vec<SubscriptionId> {
-        let route_segments = extract_route_segments(route.as_str());
+        let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
         let root = match roots.get(&family_id) {
             Some(r) => r,
@@ -130,7 +131,7 @@ impl SubscriptionIndex {
         };
 
         let mut results = Vec::new();
-        collect_matches(root, &route_segments, 0, &mut results);
+        collect_matches_borrowed(root, &route_segments, 0, &mut results);
         results
     }
 
@@ -143,7 +144,7 @@ impl SubscriptionIndex {
         route: &Route,
         capacity: usize,
     ) -> Vec<SubscriptionId> {
-        let route_segments = extract_route_segments(route.as_str());
+        let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
         let root = match roots.get(&family_id) {
             Some(r) => r,
@@ -151,7 +152,7 @@ impl SubscriptionIndex {
         };
 
         let mut results = Vec::with_capacity(capacity);
-        collect_matches(root, &route_segments, 0, &mut results);
+        collect_matches_borrowed(root, &route_segments, 0, &mut results);
         results
     }
 
@@ -270,6 +271,7 @@ fn remove_from_trie(
 }
 
 /// Collect all matching subscriptions from trie
+#[allow(dead_code)]
 fn collect_matches(
     node: &TrieNode,
     route_segments: &[String],
@@ -312,6 +314,7 @@ fn collect_matches(
 /// Check if a suffix pattern matches remaining route segments
 /// Tries matching suffix against all possible starting positions in the remaining route
 /// Optimized with early exit for short suffixes
+#[allow(dead_code)]
 fn matches_suffix(suffix: &[PatternSegment], route: &[String], start_idx: usize) -> bool {
     if suffix.is_empty() {
         return true;
@@ -331,6 +334,64 @@ fn matches_suffix(suffix: &[PatternSegment], route: &[String], start_idx: usize)
             if match_pattern_segments(suffix, 0, route, try_idx) {
                 return true;
             }
+        }
+    }
+    false
+}
+
+/// Collect matches using borrowed strings (zero-copy variant)
+#[inline]
+fn collect_matches_borrowed(
+    node: &TrieNode,
+    route_segments: &[&str],
+    seg_idx: usize,
+    results: &mut Vec<SubscriptionId>,
+) {
+    // Collect terminal matches only if we've consumed all route segments
+    if seg_idx >= route_segments.len() {
+        results.extend_from_slice(&node.terminals);
+    }
+
+    // For ** subscriptions, check if suffix matches remaining route
+    for (id, suffix) in &node.double_star {
+        if suffix.is_empty() {
+            // ** with no suffix matches everything after this point
+            results.push(*id);
+        } else if matches_suffix_borrowed(suffix, route_segments, seg_idx) {
+            results.push(*id);
+        }
+    }
+
+    // If all route segments consumed, stop traversal
+    if seg_idx >= route_segments.len() {
+        return;
+    }
+
+    let current_segment = route_segments[seg_idx];
+
+    // Try literal match
+    if let Some(child) = node.literals.get(current_segment) {
+        collect_matches_borrowed(child, route_segments, seg_idx + 1, results);
+    }
+
+    // Try * match
+    if let Some(child) = &node.star {
+        collect_matches_borrowed(child, route_segments, seg_idx + 1, results);
+    }
+}
+
+/// Check if a suffix pattern matches remaining route segments (borrowed string variant)
+/// Tries matching suffix against all possible starting positions in the remaining route
+#[inline]
+fn matches_suffix_borrowed(suffix: &[PatternSegment], route: &[&str], start_idx: usize) -> bool {
+    if suffix.is_empty() {
+        return true;
+    }
+
+    // Try matching suffix at each possible starting position
+    for try_idx in start_idx..=route.len() {
+        if match_pattern_segments_borrowed(suffix, 0, route, try_idx) {
+            return true;
         }
     }
     false

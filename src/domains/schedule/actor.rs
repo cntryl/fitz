@@ -24,6 +24,10 @@ pub struct ScheduleActor {
     schedules: HashMap<String, ScheduleDef>,
     /// Write options for persistence
     write_options: cntryl_midge::WriteOptions,
+    /// Last scan time to deduplicate rapid scans
+    last_scan_time: Instant,
+    /// Minimum interval between scans (deduplication window)
+    scan_dedup_window: std::time::Duration,
 }
 
 impl ScheduleActor {
@@ -39,6 +43,8 @@ impl ScheduleActor {
             store,
             schedules: HashMap::new(),
             write_options,
+            last_scan_time: Instant::now(),
+            scan_dedup_window: std::time::Duration::from_millis(10),
         };
 
         // Load persisted schedules on startup
@@ -130,11 +136,20 @@ impl ScheduleActor {
     /// Scan for schedules ready to fire and trigger them
     ///
     /// Called periodically by the tick handler.
+    /// Includes scan deduplication: avoids redundant scans within scan_dedup_window.
     /// Returns Vec<(route, payload)> for schedules that fired.
     pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
         let now = Instant::now();
+
+        // Deduplication: skip scan if last scan was too recent
+        if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
+            return Vec::new();
+        }
+
+        self.last_scan_time = now;
         let now_ms = Self::instant_to_ms(now);
         let mut fired = Vec::new();
+        let mut to_reschedule = Vec::new();
 
         // Load ready schedules from storage
         match self.store.load_ready(self.family.as_u64(), now_ms) {
@@ -143,23 +158,33 @@ impl ScheduleActor {
                     // Update in-memory cache and calculate next fire time
                     if let Some(def) = self.schedules.get_mut(&route) {
                         if let Ok(cron) = CronSchedule::parse(&def.cron) {
-                            let next_fire = cron.next_fire_time(Instant::now());
+                            let next_fire = cron.next_fire_time(now);
                             def.next_fire_time = next_fire;
 
-                            // Persist the rescheduled entry (old key expires via TTL)
-                            let _ = self.store.insert(
-                                self.family.as_u64(),
-                                &route,
-                                &def.cron,
-                                &def.payload,
+                            // Collect for batch persistence
+                            to_reschedule.push((
+                                route.clone(),
+                                def.cron.clone(),
+                                def.payload.clone(),
                                 next_fire,
-                                self.write_options,
-                            );
+                            ));
 
                             fired.push((route.clone(), payload.clone()));
                             info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
                         }
                     }
+                }
+
+                // Batch reschedule operations
+                for (route, cron, payload, next_fire) in to_reschedule {
+                    let _ = self.store.insert(
+                        self.family.as_u64(),
+                        &route,
+                        &cron,
+                        &payload,
+                        next_fire,
+                        self.write_options,
+                    );
                 }
             }
             Err(e) => {

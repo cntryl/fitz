@@ -105,6 +105,7 @@ pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
 }
 
 /// Extract path segments from a route string as Strings
+/// DEPRECATED: Use extract_route_segments_borrowed for zero-copy matching
 pub fn extract_route_segments(route: &str) -> Vec<String> {
     let path = if let Some(idx) = route.find("://") {
         &route[idx + 3..]
@@ -116,6 +117,19 @@ pub fn extract_route_segments(route: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
+}
+
+/// Extract path segments from a route string as borrowed string slices
+/// Zero-copy variant for hot-path matching
+#[inline]
+pub fn extract_route_segments_borrowed(route: &str) -> Vec<&str> {
+    let path = if let Some(idx) = route.find("://") {
+        &route[idx + 3..]
+    } else {
+        route
+    };
+
+    path.split('/').filter(|s| !s.is_empty()).collect()
 }
 
 /// Match pattern segments against route segments using index-based recursion
@@ -160,6 +174,56 @@ pub fn match_pattern_segments(
             // Literal must match exactly
             if pat == &route[route_idx] {
                 match_pattern_segments(patterns, pat_idx + 1, route, route_idx + 1)
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Match pattern segments against route segments with borrowed strings
+/// Zero-copy variant for hot-path matching
+#[inline]
+pub fn match_pattern_segments_borrowed(
+    patterns: &[PatternSegment],
+    pat_idx: usize,
+    route: &[&str],
+    route_idx: usize,
+) -> bool {
+    // Both exhausted: match
+    if pat_idx >= patterns.len() && route_idx >= route.len() {
+        return true;
+    }
+
+    // Pattern exhausted but route remains: no match
+    if pat_idx >= patterns.len() {
+        return false;
+    }
+
+    // Route exhausted but pattern remains: only ** can match empty
+    if route_idx >= route.len() {
+        return patterns[pat_idx..]
+            .iter()
+            .all(|p| matches!(p, PatternSegment::DoubleStar));
+    }
+
+    match &patterns[pat_idx] {
+        PatternSegment::DoubleStar => {
+            // Option 1: ** matches zero segments
+            if match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx) {
+                return true;
+            }
+            // Option 2: ** matches one or more segments
+            match_pattern_segments_borrowed(patterns, pat_idx, route, route_idx + 1)
+        }
+        PatternSegment::Star => {
+            // * matches exactly one segment
+            match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx + 1)
+        }
+        PatternSegment::Literal(pat) => {
+            // Literal must match exactly
+            if pat.as_str() == route[route_idx] {
+                match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx + 1)
             } else {
                 false
             }
