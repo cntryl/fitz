@@ -3,15 +3,16 @@
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
 //! Tests four integration levels:
-//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
-//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
-//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
-//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
-//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
+//! 1. **Direct** - Domain actor (no network) - baseline
+//! 2. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
-use fitz::benchkit::{build_notice_publish, build_notice_subscribe, parse_notice_response};
+use fitz::benchkit::{
+    build_notice_publish, build_notice_subscribe, parse_notice_response, shared_bench_runtime,
+};
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
 use fitz::domains::notice::route_actor::NoticeRouteActor;
 use fitz::prelude::Actor;
@@ -21,6 +22,7 @@ use fitz::testkit::{
     addr, make_router, route, session_id, TestClient, TestServer, TestSink, TestWebSocketClient,
 };
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 fn setup_notice_actor(
     subscriber_count: usize,
@@ -71,30 +73,6 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_encoded_publish(ctx: &mut StressContext) {
-    ctx.set_elements(1);
-    ctx.tag("layer", "encoded");
-    ctx.tag("scenario", "publish");
-
-    let (mut actor, mut actor_ctx) = setup_notice_actor(1, "notice://test/events");
-    let publish = PublishMessage::new(
-        RouteFamily::new(1),
-        route("notice://test/events"),
-        Bytes::from_static(b"event"),
-    );
-    let subscribe_frame = build_notice_subscribe("notice://test/events");
-    let publish_frame = build_notice_publish("notice://test/events", b"event");
-
-    ctx.measure(|| {
-        actor.receive(
-            NotificationMessage::Publish(publish.clone()),
-            &mut actor_ctx,
-        );
-        let _ = (&subscribe_frame, &publish_frame);
-    });
-}
-
-#[stress_test]
 fn should_complete_tcp_publish(ctx: &mut StressContext) {
     ctx.set_elements(1);
     ctx.tag("layer", "tcp");
@@ -103,7 +81,7 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame = build_notice_publish("notice://test/events", b"event");
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestClient::new(server.tcp_addr))
@@ -130,7 +108,7 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame = build_notice_publish("notice://test/events", b"event");
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestWebSocketClient::connect(&format!(
@@ -160,32 +138,42 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame = build_notice_publish("notice://test/events", b"event");
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let mut clients: Vec<TestWebSocketClient> = (0..10)
+    let clients: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
         .map(|_| {
-            runtime
+            let c = runtime
                 .block_on(TestWebSocketClient::connect(&format!(
                     "ws://{}",
                     server.ws_addr
                 )))
-                .expect("connect ws")
+                .expect("connect ws");
+            Arc::new(Mutex::new(c))
         })
         .collect();
 
-    for client in clients.iter_mut() {
-        runtime
-            .block_on(client.request(&subscribe_frame, 2000))
-            .expect("subscribe response");
-    }
+    let sub = subscribe_frame.clone();
+    runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+        let arc = arc.clone();
+        let f = sub.clone();
+        async move {
+            let mut c = arc.lock().await;
+            c.request(&f, 2000).await.expect("subscribe")
+        }
+    })));
 
     ctx.measure(|| {
-        for client in clients.iter_mut() {
-            let response = runtime
-                .block_on(client.request(&publish_frame, 2000))
-                .expect("publish response");
-            let (_msg_type, _status, _data) = parse_notice_response(&response);
-        }
+        let publish_frame = publish_frame.clone();
+        let _results: Vec<_> =
+            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+                let arc = arc.clone();
+                let frame = publish_frame.clone();
+                async move {
+                    let mut c = arc.lock().await;
+                    let response = c.request(&frame, 2000).await.expect("publish");
+                    let _ = parse_notice_response(&response);
+                }
+            })));
     });
 }
 

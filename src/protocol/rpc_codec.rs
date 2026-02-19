@@ -180,6 +180,18 @@ pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWor
     enc.finish()
 }
 
+/// Encode RPC RESPONSE from worker to route (message type 303)
+///
+/// Wire format: `[bytes correlation_id][u64 seq][bytes body][u8 stream_end]`
+pub fn encode_response_message(response: &RpcResponse) -> Vec<u8> {
+    let mut enc = TlvEncoder::new();
+    enc.put_bytes(response.correlation_id.as_bytes());
+    enc.put_u64(response.seq);
+    enc.put_bytes(&response.body);
+    enc.put_u8(if response.stream_end { 1 } else { 0 });
+    enc.finish()
+}
+
 /// Encode RPC ACK to worker (message type 304)
 ///
 /// Wire format: `[bytes correlation_id]`

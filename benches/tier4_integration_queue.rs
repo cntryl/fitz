@@ -12,15 +12,18 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_queue_dequeue, build_queue_enqueue, create_local_bench_queue_actor, parse_queue_response,
+    build_queue_enqueue, create_local_bench_queue_actor, parse_queue_response, shared_bench_runtime,
 };
 use fitz::domains::queue::protocol::QueueMessage;
 use fitz::prelude::Actor;
+use fitz::protocol::queue_codec::parse_request as queue_parse_request;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::testkit::transport::TlvFrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 fn setup_queue_actor(
     route: &str,
@@ -66,19 +69,13 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let route = "queue://tier4/queue/main/enqueue";
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
     let enqueue_frame = build_queue_enqueue(route, b"msg");
-    let dequeue_frame = build_queue_dequeue(route);
+    let family = RouteFamily::new(0);
 
     ctx.measure(|| {
-        actor.receive(
-            QueueMessage::Enqueue {
-                family_id: RouteFamily::new(0),
-                route: Route::new(route.to_string()),
-                body: Bytes::from_static(b"msg"),
-                delay_seconds: None,
-            },
-            &mut actor_ctx,
-        );
-        let _ = (&enqueue_frame, &dequeue_frame);
+        let mut parser = TlvFrameParser::new(enqueue_frame.clone());
+        let (msg_type, payload) = parser.next_field().expect("enqueue field");
+        let msg = queue_parse_request(msg_type, family, &payload).expect("parse enqueue");
+        actor.receive(msg, &mut actor_ctx);
     });
 }
 
@@ -91,7 +88,7 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestClient::new(server.tcp_addr))
@@ -114,7 +111,7 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestWebSocketClient::connect(&format!(
@@ -140,26 +137,31 @@ fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let mut clients: Vec<TestWebSocketClient> = (0..10)
+    let clients: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
         .map(|_| {
-            runtime
+            let c = runtime
                 .block_on(TestWebSocketClient::connect(&format!(
                     "ws://{}",
                     server.ws_addr
                 )))
-                .expect("connect ws")
+                .expect("connect ws");
+            Arc::new(Mutex::new(c))
         })
         .collect();
 
     ctx.measure(|| {
-        for client in clients.iter_mut() {
-            let response = runtime
-                .block_on(client.request(&enqueue_frame, 2000))
-                .expect("enqueue response");
-            let (_msg_type, _status, _data) = parse_queue_response(&response);
-        }
+        let _results: Vec<_> =
+            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+                let arc = arc.clone();
+                let frame = enqueue_frame.clone();
+                async move {
+                    let mut c = arc.lock().await;
+                    let response = c.request(&frame, 2000).await.expect("enqueue");
+                    let _ = parse_queue_response(&response);
+                }
+            })));
     });
 }
 

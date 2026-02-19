@@ -150,6 +150,7 @@ for suite_dir in sorted(STRESS_ROOT.glob('*/')):
             'suite': suite,
             'name': name,
             'scenario': scenario,
+            'layer': tags.get('layer'),  # tier4: direct/tcp/websocket/multiclient
             'duration_ns': duration,
             'duration_us': duration_us,
             'duration_ms': duration_ms,
@@ -238,11 +239,31 @@ with OUT_MD.open('w', encoding='utf-8') as f:
             total_throughput = total_elements / total_duration if total_duration > 0 else 0
             
             f.write(f'### {suite_name}\n\n')
-            f.write(f'**Total**: {total_elements} ops in {total_duration/1e6:.2f}ms = {total_throughput*1e9:.0f} ops/sec\n\n')
-            f.write('| scenario | ops | duration_ms | per_op_us | ops/sec |\n')
-            f.write('|---|---:|---:|---:|---:|\n')
-            for e in sorted(suite_tests, key=lambda x: x['throughput_ops_per_s'], reverse=True):
-                f.write(f"| {e['scenario']} | {e['elements']} | {e['duration_ms']:.2f} | {e['per_op_us']:.3f} | {e['throughput_ops_per_s']:.0f} |\n")
+            # Duration: never show 0.00ms; use ns or µs when < 1ms
+            def fmt_duration(e):
+                ns = e['duration_ns']
+                if ns >= 1e6:
+                    return f'{ns/1e6:.2f}ms'
+                if ns >= 1e3:
+                    return f'{ns/1e3:.2f}µs'
+                return f'{ns:.0f}ns'
+            total_dur_str = fmt_duration({'duration_ns': total_duration})
+            f.write(f'**Total**: {total_elements} ops in {total_dur_str} = {total_throughput*1e9:.0f} ops/sec\n\n')
+            # Table: include layer (transport) for tier4 when present
+            has_layer = any(e.get('layer') for e in suite_tests)
+            if has_layer:
+                f.write('| scenario | layer | ops | duration | per_op_us | ops/sec |\n')
+                f.write('|---|---|---|---:|---:|---:|\n')
+                for e in sorted(suite_tests, key=lambda x: x['throughput_ops_per_s'], reverse=True):
+                    layer = e.get('layer') or '—'
+                    dur_str = fmt_duration(e)
+                    f.write(f"| {e['scenario']} | {layer} | {e['elements']} | {dur_str} | {e['per_op_us']:.3f} | {e['throughput_ops_per_s']:.0f} |\n")
+            else:
+                f.write('| scenario | ops | duration | per_op_us | ops/sec |\n')
+                f.write('|---|---:|---:|---:|---:|\n')
+                for e in sorted(suite_tests, key=lambda x: x['throughput_ops_per_s'], reverse=True):
+                    dur_str = fmt_duration(e)
+                    f.write(f"| {e['scenario']} | {e['elements']} | {dur_str} | {e['per_op_us']:.3f} | {e['throughput_ops_per_s']:.0f} |\n")
             f.write('\n')
     else:
         f.write('No stress test results found.\n')

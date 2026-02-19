@@ -3,22 +3,23 @@
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
 //! Tests four integration levels:
-//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
-//! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
-//! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
-//! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
-//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
+//! 1. **Direct** - Domain actor (no network) - baseline
+//! 2. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
+//! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
+//! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, create_local_bench_stream_actor,
-    parse_stream_response, parse_stream_session_id,
+    parse_stream_response, parse_stream_session_id, shared_bench_runtime,
 };
 use fitz::domains::stream::protocol::StreamMessage;
 use fitz::prelude::Actor;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[stress_test]
 fn should_complete_direct_append(ctx: &mut StressContext) {
@@ -53,42 +54,6 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_encoded_append(ctx: &mut StressContext) {
-    ctx.set_elements(1);
-    ctx.tag("layer", "encoded");
-    ctx.tag("scenario", "append");
-
-    let (mut actor, mut actor_ctx, _temp_dir) =
-        create_local_bench_stream_actor("tier4", "stream", "encoded");
-    let family = RouteFamily::new(1);
-    let route = Route::new("stream://tier4/stream/encoded/append".to_string());
-    actor.receive(
-        StreamMessage::Begin {
-            family_id: family,
-            route,
-            expected_offset: 0,
-            ingest_metadata: None,
-        },
-        &mut actor_ctx,
-    );
-
-    let begin_frame = build_stream_begin("stream://tier4/stream/encoded/append", 0);
-    let append_frame = build_stream_append(1, b"event");
-
-    ctx.measure(|| {
-        actor.receive(
-            StreamMessage::Append {
-                session_id: 1,
-                body: Bytes::from_static(b"event"),
-                metadata: None,
-            },
-            &mut actor_ctx,
-        );
-        let _ = (&begin_frame, &append_frame);
-    });
-}
-
-#[stress_test]
 fn should_complete_tcp_append(ctx: &mut StressContext) {
     ctx.set_elements(2);
     ctx.tag("layer", "tcp");
@@ -97,7 +62,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     let route = "stream://tier4/stream/tcp/append";
     let begin_frame = build_stream_begin(route, 0);
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestClient::new(server.tcp_addr))
@@ -126,7 +91,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     let route = "stream://tier4/stream/ws/append";
     let begin_frame = build_stream_begin(route, 0);
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut client = runtime
         .block_on(TestWebSocketClient::connect(&format!(
@@ -158,32 +123,34 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     let route = "stream://tier4/stream/multi/append";
     let begin_frame = build_stream_begin(route, 0);
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let mut clients: Vec<TestWebSocketClient> = (0..10)
+    let clients: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
         .map(|_| {
-            runtime
+            let c = runtime
                 .block_on(TestWebSocketClient::connect(&format!(
                     "ws://{}",
                     server.ws_addr
                 )))
-                .expect("connect ws")
+                .expect("connect ws");
+            Arc::new(Mutex::new(c))
         })
         .collect();
 
     ctx.measure(|| {
-        for client in clients.iter_mut() {
-            let response = runtime
-                .block_on(client.request(&begin_frame, 2000))
-                .expect("begin response");
-            let (_msg_type, _status, data) = parse_stream_response(&response);
-            let session_id = parse_stream_session_id(&data).expect("session_id");
-
-            let append_frame = build_stream_append(session_id, b"event");
-            let _ = runtime
-                .block_on(client.request(&append_frame, 2000))
-                .expect("append response");
-        }
+        let _results: Vec<_> =
+            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+                let arc = arc.clone();
+                let begin = begin_frame.clone();
+                async move {
+                    let mut c = arc.lock().await;
+                    let response = c.request(&begin, 2000).await.expect("begin");
+                    let (_msg_type, _status, data) = parse_stream_response(&response);
+                    let session_id = parse_stream_session_id(&data).expect("session_id");
+                    let append_frame = build_stream_append(session_id, b"event");
+                    c.request(&append_frame, 2000).await.expect("append");
+                }
+            })));
     });
 }
 

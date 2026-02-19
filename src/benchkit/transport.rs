@@ -273,6 +273,26 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
     builder.build()
 }
 
+/// Build RPC RESPONSE frame (msg_type 303) from worker to route
+pub fn build_rpc_response_frame(correlation_id: uuid::Uuid, body: &[u8]) -> Vec<u8> {
+    let resp = crate::domains::rpc::protocol::RpcResponse::single(
+        correlation_id,
+        bytes::Bytes::from(body.to_vec()),
+    );
+    let payload = crate::protocol::rpc_codec::encode_response_message(&resp);
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(303, &payload);
+    builder.build()
+}
+
+/// Build RPC ACK frame (msg_type 304) from worker to route
+pub fn build_rpc_ack_frame(correlation_id: uuid::Uuid) -> Vec<u8> {
+    let payload = crate::protocol::rpc_codec::encode_ack(&correlation_id);
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(304, &payload);
+    builder.build()
+}
+
 /// Parse RPC response
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response.to_vec());

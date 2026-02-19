@@ -25,7 +25,11 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     // Precompute 50 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
 
-    let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().take(50).map(|p| (p.clone(), None)).collect();
+    let batch_50: Vec<(Bytes, Option<u64>)> = payloads
+        .iter()
+        .take(50)
+        .map(|p| (p.clone(), None))
+        .collect();
     ctx.measure(|| {
         let _ = actor.handle_enqueue_batch(&batch_50);
         for _ in 0..50 {
@@ -50,7 +54,13 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         .iter()
         .take(70)
         .map(|p| (p.clone(), None))
-        .chain(payloads.iter().skip(70).take(20).map(|p| (p.clone(), Some(5))))
+        .chain(
+            payloads
+                .iter()
+                .skip(70)
+                .take(20)
+                .map(|p| (p.clone(), Some(5))),
+        )
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
     ctx.measure(|| {

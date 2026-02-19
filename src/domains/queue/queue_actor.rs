@@ -482,10 +482,7 @@ impl QueueActor {
 
     /// Enqueue multiple messages in one transaction (batch).
     /// Same semantics as N×handle_enqueue; use for throughput when the caller has many messages.
-    pub fn handle_enqueue_batch(
-        &mut self,
-        items: &[(Bytes, Option<u64>)],
-    ) -> QueueResponse {
+    pub fn handle_enqueue_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
         if items.is_empty() {
             return QueueResponse::EnqueuedBatch { ids: vec![] };
         }
@@ -507,7 +504,8 @@ impl QueueActor {
         };
 
         let mut ids = Vec::with_capacity(items.len());
-        let mut post_commit: Vec<(MessageId, QueueRecord, std::time::Instant)> = Vec::with_capacity(items.len());
+        let mut post_commit: Vec<(MessageId, QueueRecord, std::time::Instant)> =
+            Vec::with_capacity(items.len());
         let mut next_id = self.next_id;
 
         for (body, delay_seconds) in items {

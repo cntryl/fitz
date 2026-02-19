@@ -210,11 +210,9 @@ impl ScheduleActor {
                 (route.clone(), cron.clone(), payload.clone(), *next_fire)
             })
             .collect();
-        let _ = self.store.insert_batch(
-            self.family.as_u64(),
-            &batch,
-            self.write_options,
-        );
+        let _ = self
+            .store
+            .insert_batch(self.family.as_u64(), &batch, self.write_options);
         for (route, _cron, _payload, _next_fire, next_fire_ms) in to_reschedule {
             self.ready_heap.push((Reverse(next_fire_ms), route));
         }

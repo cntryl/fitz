@@ -14,6 +14,7 @@
 - [Best Practices](#best-practices)
 - [Benchmark Categories](#benchmark-categories)
 - [CI and Local Workflows](#ci-and-local-workflows)
+- [Stress benchmark contract (Tier 3/4)](#stress-benchmark-contract-tier-34)
 - [Quick Reference](#quick-reference)
 - [Document History](#document-history)
 
@@ -256,6 +257,10 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 - **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `scripts/benchmark_summary.py` after `cargo bench` (Criterion) and stress bench binaries to produce `target/bench_summary.md`.
 
 For CI, you can reduce total time by setting `BENCH_RUNS=3` (or lower) when running the full tier3/tier4 suite.
+
+### Stress benchmark contract (Tier 3/4)
+
+Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: rules for what goes inside vs outside `ctx.measure`, how to implement direct/encoded/tcp/websocket/multiclient layers, use of `shared_bench_runtime()`, and real actor logic (no fake work). See **[Stress benchmark contract](stress_bench_contract.md)** for the full contract and reference examples.
 
 ## Best Practices
 

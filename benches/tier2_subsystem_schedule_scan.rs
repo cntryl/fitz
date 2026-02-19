@@ -3,7 +3,9 @@
 //! "schedule_system_scan_and_fire" entries can be replaced.
 
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
