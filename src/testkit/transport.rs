@@ -91,7 +91,7 @@ impl TestServer {
             storage_mode: crate::boot::runtime::StorageMode::Memory,
             auth_required,
             max_connections: 1000,
-            max_frame_size: 16_777_216, // 16 MB
+            max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
         };
 

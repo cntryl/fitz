@@ -29,7 +29,7 @@ impl FrameLimits {
 impl Default for FrameLimits {
     fn default() -> Self {
         Self {
-            max_frame_size: 100 * 1024 * 1024,  // 100 MB
+            max_frame_size: 100 * 1024 * 1024, // 100 MB (client-side default; server default is 1 MB)
             max_buffer_size: 500 * 1024 * 1024, // 500 MB
         }
     }

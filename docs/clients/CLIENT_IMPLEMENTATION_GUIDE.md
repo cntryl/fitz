@@ -226,10 +226,10 @@ func (e *KvError) Error() string {
 }
 
 // Usage
-if err := tx.Put("key", value); err != nil {
+if err := tx.Insert("key", value); err != nil {
     var kvErr *KvError
-    if errors.As(err, &kvErr) && kvErr.Code == 1003 {
-        // Handle "key exists" specifically
+    if errors.As(err, &kvErr) && kvErr.Code == 1006 {
+        // Handle "key exists" (ERR_KEY_EXISTS) specifically
     }
 }
 ```
@@ -929,11 +929,11 @@ export class KvError extends Error {
     }
     
     static keyExists(key: string): KvError {
-        return new KvError(1003, `Key already exists: ${key}`, 'insert');
+        return new KvError(1006, `Key already exists: ${key}`, 'insert'); // ERR_KEY_EXISTS
     }
     
     static unauthorized(): KvError {
-        return new KvError(1009, 'Unauthorized', 'operation');
+        return new KvError(1011, 'Unauthorized', 'operation'); // ERR_UNAUTHORIZED
     }
 }
 
@@ -941,8 +941,8 @@ export class KvError extends Error {
 try {
     await tx.insert('key', value);
 } catch (err) {
-    if (err instanceof KvError && err.code === 1003) {
-        // Handle key exists
+    if (err instanceof KvError && err.code === 1006) {
+        // Handle key exists (ERR_KEY_EXISTS)
     }
 }
 ```
@@ -1220,13 +1220,37 @@ KvClient
 **Domain error code mapping:**
 ```
 1000-1999: KV
-  1003: Key exists → Retryable: No
-  1004: TX not found → Retryable: No
-  1009: Unauthorized → Retryable: No
+  1001: Transaction not found → Retryable: No
+  1006: Key exists (Insert) → Retryable: No
+  1011: Unauthorized → Retryable: No
+
+2000-2999: Stream
+  2001: Concurrency conflict → Retryable: No
+  2009: Unauthorized → Retryable: No
+
+3000-3999: Notice
+  3009: Unauthorized → Retryable: No
+
+4000-4999: Queue
+  4001: Invalid token → Retryable: No
+  4005: Queue full (backpressure) → Retryable: Yes (with backoff)
+  4009: Unauthorized → Retryable: No
+
+5000-5999: Lease
+  5001: Lease held → Retryable: Yes (with backoff)
+  5005: Invalid token → Retryable: No
+  5009: Unauthorized → Retryable: No
 
 6000-6999: RPC
-  6004: Timeout → Retryable: Yes
+  6001: Timeout → Retryable: Yes (with backoff)
+  6004: Route not registered → Retryable: Yes (with backoff)
   6009: Unauthorized → Retryable: No
+
+7000-7999: Schedule
+  7002: Invalid cron → Retryable: No
+  7009: Unauthorized → Retryable: No
+
+See CLIENT_ACCEPTANCE_CRITERIA.md Appendix for complete error code reference.
 ```
 
 ---
@@ -1258,9 +1282,9 @@ type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 **C#:**
 ```csharp
 try {
-    await tx.GetAsync("key");
-} catch (KvException ex) when (ex.Code == 1003) {
-    // Handle key exists
+    await tx.InsertAsync("key", "value");
+} catch (KvException ex) when (ex.Code == 1006) {
+    // Handle key exists (ERR_KEY_EXISTS)
 }
 ```
 

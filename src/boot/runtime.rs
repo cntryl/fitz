@@ -145,7 +145,7 @@ impl Default for BootConfig {
             storage_mode: StorageMode::from_env(),
             auth_required,
             max_connections: 10_000,
-            max_frame_size: 1024 * 1024, // 1 MB
+            max_frame_size: 1024 * 1024, // 1 MB (production default; configurable via BootConfig)
             channel_capacity: 1000,
         }
     }
