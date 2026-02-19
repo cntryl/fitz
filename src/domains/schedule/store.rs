@@ -22,6 +22,14 @@ impl ScheduleStore {
         }
     }
 
+    /// Index key for O(1) delete by route: `sched:idx:{route}` -> main key bytes
+    fn encode_index_key(route: &str) -> Vec<u8> {
+        let mut key = Vec::with_capacity(10 + route.len());
+        key.extend_from_slice(b"sched:idx:");
+        key.extend_from_slice(route.as_bytes());
+        key
+    }
+
     /// Encode storage key: `sched:m{minute_epoch}/{ms_offset}:{route}`
     /// Prefix format allows rapid scanning of next-fire schedules by minute bucket.
     /// minute_epoch = ms since UNIX_EPOCH / 60_000
@@ -161,13 +169,16 @@ impl ScheduleStore {
         };
         let ttl = time_until_fire + Duration::from_secs(GRACE_PERIOD_SECS);
 
+        let index_key = Self::encode_index_key(route);
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        txn.put(key, value, Some(ttl.as_millis() as u64))
+        txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
             .map_err(|e| format!("put failed: {:?}", e))?;
+        txn.put(index_key, key, None)
+            .map_err(|e| format!("put index failed: {:?}", e))?;
 
         self.db
             .commit(txn, write_options)
@@ -198,6 +209,7 @@ impl ScheduleStore {
             let next_fire_ms = self.instant_to_ms(*next_fire_time);
             let key = Self::encode_key(next_fire_ms, route);
             let value = Self::encode_value(cron, payload);
+            let index_key = Self::encode_index_key(route);
 
             let time_until_fire = if *next_fire_time > now {
                 *next_fire_time - now
@@ -206,8 +218,10 @@ impl ScheduleStore {
             };
             let ttl = time_until_fire + Duration::from_secs(GRACE_PERIOD_SECS);
 
-            txn.put(key, value, Some(ttl.as_millis() as u64))
+            txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
                 .map_err(|e| format!("put failed: {:?}", e))?;
+            txn.put(index_key, key, None)
+                .map_err(|e| format!("put index failed: {:?}", e))?;
         }
 
         self.db
@@ -217,31 +231,42 @@ impl ScheduleStore {
         Ok(())
     }
 
-    /// Delete a schedule by route
-    /// Scans keys matching the route and deletes them
+    /// Delete a schedule by route (O(1) via route->key index; fallback scan for legacy keys)
     pub fn delete(
         &self,
         cf_id: u64,
         route: &str,
         write_options: WriteOptions,
     ) -> Result<(), String> {
+        let index_key = Self::encode_index_key(route);
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        // Scan all keys with sched prefix and find those matching the route
-        let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:"));
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan failed: {:?}", e))?;
+        let main_key_opt = txn
+            .get(&index_key)
+            .map_err(|e| format!("get index failed: {:?}", e))?;
 
-        let results = iter.collect_all();
-        for (k, _v) in results {
-            if let Ok((_timestamp, key_route)) = Self::decode_key(&k) {
-                if key_route == route {
-                    txn.delete(k)
-                        .map_err(|e| format!("delete failed: {:?}", e))?;
+        if let Some(main_key) = main_key_opt {
+            txn.delete(main_key.to_vec())
+                .map_err(|e| format!("delete failed: {:?}", e))?;
+            txn.delete(index_key)
+                .map_err(|e| format!("delete index failed: {:?}", e))?;
+        } else {
+            // Legacy: no index (e.g. pre-index DB); fallback to one-time scan
+            let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:m"));
+            let mut iter = txn
+                .scan(&query)
+                .map_err(|e| format!("scan failed: {:?}", e))?;
+            let results = iter.collect_all();
+            for (k, _v) in results {
+                if let Ok((_timestamp, key_route)) = Self::decode_key(&k) {
+                    if key_route == route {
+                        txn.delete(k)
+                            .map_err(|e| format!("delete failed: {:?}", e))?;
+                        break;
+                    }
                 }
             }
         }
@@ -270,8 +295,8 @@ impl ScheduleStore {
 
         let mut ready = Vec::new();
 
-        // Scan only keys with "sched:" prefix (avoids scanning unrelated keys)
-        let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:"));
+        // Scan only main keys (sched:m...) to skip index keys (sched:idx:...)
+        let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:m"));
 
         let mut iter = txn
             .scan(&query)

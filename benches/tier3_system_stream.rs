@@ -2,6 +2,8 @@
 //
 // Append, read, batch write, multi-area concurrent, and offset tracking.
 // Tests sustained stream operations at system scale.
+// sustained_append: in-session append only (no commit); for durable throughput use batch_write.
+// Target 2M+ durable msgs/sec requires batched commit (batch_write scenario or store batching).
 //
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)

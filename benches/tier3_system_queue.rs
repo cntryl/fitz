@@ -116,25 +116,19 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
-    ctx.set_elements(2); // enqueue + reserve
+    ctx.set_elements(100); // 50 enqueue + 50 reserve on one hot queue
     ctx.tag("scenario", "high_contention");
 
-    // Setup: Create actor and payload outside measurement
+    // Setup: One actor (one hot queue), same batch pattern as sustained_load for comparable throughput
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"contention message");
+    let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
+    let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
     ctx.measure(|| {
-        // Enqueue
-        let _ = actor.handle_enqueue(payload.clone(), None);
-
-        // Reserve
-        let reserve_resp = actor.handle_reserve(30, Some(1));
-
-        // Complete if message exists
-        if let fitz::domains::queue::QueueResponse::Reserved { messages } = reserve_resp {
-            if !messages.is_empty() {
-                let _ = actor.handle_complete(messages[0].id, messages[0].token);
-            }
+        let _ = actor.handle_enqueue_batch(&batch_50);
+        for _ in 0..50 {
+            let _ = actor.handle_reserve(30, Some(1));
         }
     });
 }

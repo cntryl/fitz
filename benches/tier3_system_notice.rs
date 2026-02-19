@@ -2,6 +2,8 @@
 //
 // Concurrent fanout, pattern matching, and subscriber lifecycle.
 // Tests sustained notification delivery with multiple subscribers.
+// Tier3 measures fanout + delivery to TestSink (includes sink overhead); in-proc
+// Criterion matcher benchmarks are sink-free and report match cost only.
 //
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
