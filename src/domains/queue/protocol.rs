@@ -293,6 +293,9 @@ pub enum QueueResponse {
     /// Message successfully enqueued
     Enqueued { id: MessageId },
 
+    /// Multiple messages successfully enqueued in one batch (same semantics as N×Enqueued)
+    EnqueuedBatch { ids: Vec<MessageId> },
+
     /// Messages successfully reserved
     Reserved { messages: Vec<ReservedMessage> },
 

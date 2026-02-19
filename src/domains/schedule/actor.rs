@@ -203,17 +203,19 @@ impl ScheduleActor {
             }
         }
 
-        // Batch reschedule operations and update heap
-        for (route, cron, payload, next_fire, next_fire_ms) in to_reschedule {
-            let _ = self.store.insert(
-                self.family.as_u64(),
-                &route,
-                &cron,
-                &payload,
-                next_fire,
-                self.write_options,
-            );
-            // Push rescheduled entry back to ready heap
+        // Batch reschedule: one transaction for all inserts
+        let batch: Vec<_> = to_reschedule
+            .iter()
+            .map(|(route, cron, payload, next_fire, _)| {
+                (route.clone(), cron.clone(), payload.clone(), *next_fire)
+            })
+            .collect();
+        let _ = self.store.insert_batch(
+            self.family.as_u64(),
+            &batch,
+            self.write_options,
+        );
+        for (route, _cron, _payload, _next_fire, next_fire_ms) in to_reschedule {
             self.ready_heap.push((Reverse(next_fire_ms), route));
         }
 

@@ -140,8 +140,8 @@ impl NoticeRouteActor {
             return; // Silently drop misrouted messages
         }
 
-        // Find all subscription IDs that match this published route
-        let matching_ids = self.index.match_all(self.family_id, &msg.route);
+        // Find all subscription IDs that match this published route (pre-alloc to reduce realloc in trie walk)
+        let matching_ids = self.index.match_all_with_capacity(self.family_id, &msg.route, 10_000);
 
         // Share route and payload via Arc for zero-allocation fanout
         let route = std::sync::Arc::new(msg.route);

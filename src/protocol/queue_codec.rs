@@ -38,6 +38,13 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
             buf.put_u8(0); // status: success
             buf.put_u64(id.as_u64());
         }
+        QueueResponse::EnqueuedBatch { ids } => {
+            buf.put_u8(0); // status: success
+            buf.put_u32(ids.len() as u32);
+            for id in ids {
+                buf.put_u64(id.as_u64());
+            }
+        }
         QueueResponse::Reserved { messages } => {
             buf.put_u8(0); // status: success
             buf.put_u32(messages.len() as u32);

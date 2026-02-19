@@ -176,6 +176,47 @@ impl ScheduleStore {
         Ok(())
     }
 
+    /// Insert or update multiple schedules in one transaction (batch).
+    /// Uses the same key/value/TTL logic as `insert` but one begin_tx, N puts, one commit.
+    pub fn insert_batch(
+        &self,
+        cf_id: u64,
+        items: &[(String, String, Bytes, Instant)],
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let now = Instant::now();
+        let mut txn = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        for (route, cron, payload, next_fire_time) in items {
+            let next_fire_ms = self.instant_to_ms(*next_fire_time);
+            let key = Self::encode_key(next_fire_ms, route);
+            let value = Self::encode_value(cron, payload);
+
+            let time_until_fire = if *next_fire_time > now {
+                *next_fire_time - now
+            } else {
+                Duration::from_secs(0)
+            };
+            let ttl = time_until_fire + Duration::from_secs(GRACE_PERIOD_SECS);
+
+            txn.put(key, value, Some(ttl.as_millis() as u64))
+                .map_err(|e| format!("put failed: {:?}", e))?;
+        }
+
+        self.db
+            .commit(txn, write_options)
+            .map_err(|e| format!("commit failed: {:?}", e))?;
+
+        Ok(())
+    }
+
     /// Delete a schedule by route
     /// Scans keys matching the route and deletes them
     pub fn delete(

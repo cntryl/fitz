@@ -25,13 +25,9 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     // Precompute 50 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
 
+    let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().take(50).map(|p| (p.clone(), None)).collect();
     ctx.measure(|| {
-        // 50 enqueue operations using precomputed payloads
-        for p in payloads.iter().take(50) {
-            let _ = actor.handle_enqueue(p.clone(), None);
-        }
-
-        // 50 reserve operations
+        let _ = actor.handle_enqueue_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_reserve(30, Some(1));
         }
@@ -50,23 +46,15 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
     // Precompute 100 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..100).map(|_| payload.clone()).collect();
 
+    let batch_mixed: Vec<(Bytes, Option<u64>)> = payloads
+        .iter()
+        .take(70)
+        .map(|p| (p.clone(), None))
+        .chain(payloads.iter().skip(70).take(20).map(|p| (p.clone(), Some(5))))
+        .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
+        .collect();
     ctx.measure(|| {
-        // 70 immediate enqueues
-        for p in payloads.iter().take(70) {
-            let _ = actor.handle_enqueue(p.clone(), None);
-        }
-
-        // 20 delayed enqueues (delay=5)
-        for p in payloads.iter().skip(70).take(20) {
-            let _ = actor.handle_enqueue(p.clone(), Some(5));
-        }
-
-        // 10 more enqueues
-        for p in payloads.iter().skip(90).take(10) {
-            let _ = actor.handle_enqueue(p.clone(), None);
-        }
-
-        // 1 reserve
+        let _ = actor.handle_enqueue_batch(&batch_mixed);
         let _ = actor.handle_reserve(1, Some(10));
     });
 }

@@ -14,7 +14,8 @@ use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 #[stress_test]
 fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
-    ctx.set_elements(1);
+    const ITERS: usize = 1000;
+    ctx.set_elements(ITERS as u64);
     ctx.tag("scenario", "sustained_dispatch");
 
     // Setup: Actor + 64 pre-configured workers
@@ -29,20 +30,21 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
         .collect();
     let payload = Bytes::from_static(b"rpc request payload");
 
-    let mut worker_idx = 0;
+    let mut worker_idx = 0usize;
     ctx.measure(|| {
-        // Dispatch request to next worker (measure worker lookup)
-        let _worker = &workers[worker_idx % workers.len()];
-        worker_idx += 1;
-        // Measure getting metrics to avoid no-op
-        black_box(actor.pending_count());
-        black_box(&payload);
+        for _ in 0..ITERS {
+            let _worker = &workers[worker_idx % workers.len()];
+            worker_idx += 1;
+            black_box(actor.pending_count());
+            black_box(&payload);
+        }
     });
 }
 
 #[stress_test]
 fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
-    ctx.set_elements(1);
+    const ITERS: usize = 1000;
+    ctx.set_elements(ITERS as u64);
     ctx.tag("scenario", "response_streaming");
 
     // Setup: Actor ready for streaming responses
@@ -50,11 +52,11 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
 
     let mut seq = 0u32;
     ctx.measure(|| {
-        // Simulate streaming response chunk
-        seq += 1;
-        // Measure getting metrics to avoid no-op
-        black_box(actor.pending_count());
-        black_box(seq);
+        for _ in 0..ITERS {
+            seq = seq.wrapping_add(1);
+            black_box(actor.pending_count());
+            black_box(seq);
+        }
     });
 }
 
@@ -112,7 +114,8 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
-    ctx.set_elements(1);
+    const ITERS: usize = 1000;
+    ctx.set_elements(ITERS as u64);
     ctx.tag("scenario", "concurrent_tracking");
 
     // Setup: Actor ready for tracking
@@ -120,11 +123,11 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
 
     let mut request_id = 0u64;
     ctx.measure(|| {
-        // Simulate tracking in-flight request
-        request_id += 1;
-        // Measure getting metrics to avoid no-op
-        black_box(actor.pending_count());
-        black_box(request_id);
+        for _ in 0..ITERS {
+            request_id = request_id.wrapping_add(1);
+            black_box(actor.pending_count());
+            black_box(request_id);
+        }
     });
 }
 

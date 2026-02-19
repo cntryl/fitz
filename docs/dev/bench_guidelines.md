@@ -1,8 +1,11 @@
 # Benchmark Guidelines
+
 **Version:** 1.0  
 **Last Updated:** October 20, 2025  
 **Project:** Fitz Message Broker
+
 ## Table of Contents
+
 - [Philosophy](#philosophy)
 - [File Organization](#file-organization)
 - [Benchmark Structure](#benchmark-structure)
@@ -13,9 +16,13 @@
 - [CI and Local Workflows](#ci-and-local-workflows)
 - [Quick Reference](#quick-reference)
 - [Document History](#document-history)
+
 ## Philosophy
+
 Benchmarks in Fitz measure **real-world message broker performance** across routes, schemes, and transports while maintaining **fast feedback loops** for daily development.
+
 ### Core Principles
+
 1. **Benchmarks ≠ Tests**
    - Tests verify correctness, benchmarks measure speed and scaling
    - Benchmarks should not test functionality (that's what tests are for)
@@ -32,16 +39,19 @@ Benchmarks in Fitz measure **real-world message broker performance** across rout
    - Benchmarks must produce consistent results across runs
    - Use deterministic data, not random values
    - Document environmental factors that affect results
+
 ## File Organization
+
 ### Tier Layout and Directory Structure
+
 Benchmarks are organized in four tiers. Use the shared config and naming below.
 
-| Tier | Kind | Tool | Location | Scope |
-|------|------|------|----------|--------|
-| **Tier 1** | Hotpath | Criterion | `benches/tier1_hotpath_*.rs` | Pure sync internals (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging). Target: &lt;1s, &lt;100ns–10µs per op. |
-| **Tier 2** | Subsystem | Criterion | `benches/tier2_subsystem_*.rs` | Scheduler, mailbox, subscriptions, TLV pipeline. Target: &lt;3s. |
-| **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | One bench per domain (kv, lease, notice, queue, rpc, schedule, stream). In-process actor + test engine, no network. Target: &lt;10s. |
-| **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Same domains; full stack (direct → encoded → TCP → WebSocket → multiclient). Target: identify E2E performance cliffs. |
+| Tier       | Kind        | Tool      | Location                         | Scope                                                                                                                                     |
+| ---------- | ----------- | --------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tier 1** | Hotpath     | Criterion | `benches/tier1_hotpath_*.rs`     | Pure sync internals (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging). Target: &lt;1s, &lt;100ns–10µs per op. |
+| **Tier 2** | Subsystem   | Criterion | `benches/tier2_subsystem_*.rs`   | Scheduler, mailbox, subscriptions, TLV pipeline. Target: &lt;3s.                                                                          |
+| **Tier 3** | System      | Stress    | `benches/tier3_system_*.rs`      | One bench per domain (kv, lease, notice, queue, rpc, schedule, stream). In-process actor + test engine, no network. Target: &lt;10s.      |
+| **Tier 4** | Integration | Stress    | `benches/tier4_integration_*.rs` | Same domains; full stack (direct → encoded → TCP → WebSocket → multiclient). Target: identify E2E performance cliffs.                     |
 
 ```
 benches/
@@ -74,14 +84,20 @@ benches/
 ├── tier4_integration_schedule.rs
 └── tier4_integration_stream.rs
 ```
+
 ### Organization Principles
+
 - **One file per subsystem/domain** - Tier1/2: one module per file; Tier3/4: one domain per file.
 - **Shared config** - Tier1/2 use `benches/config.rs` (`criterion_config()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
 - **Clear naming** - Files follow `tierN_{hotpath|subsystem|system|integration}_{name}.rs`.
 - **Logical grouping** - Related benchmarks in the same file; use a single Criterion group name per file (e.g. `hotpath_routing`) and `Throughput::Elements(N)` for comparability.
+
 ## Benchmark Structure
+
 ### Standard Template
+
 Every benchmark should follow the AAA (Arrange-Act-Assert) pattern:
+
 ```rust
 use criterion::{black_box, Criterion, criterion_group, criterion_main};
 fn bench_router_match_1k_routes(c: &mut Criterion) {
@@ -90,7 +106,7 @@ fn bench_router_match_1k_routes(c: &mut Criterion) {
     let test_routes: Vec<String> = (0..1000)
         .map(|i| format!("notice://realm{}/area/resource", i))
         .collect();
-    
+
     c.bench_function("router_match_1k_routes", |b| {
         let mut idx = 0;
         b.iter(|| {
@@ -115,15 +131,21 @@ criterion_group! {
 }
 criterion_main!(benches);
 ```
+
 ### Key Components
+
 1. **Setup (Arrange)** - Create test data outside `b.iter()`
 2. **Measurement (Act)** - The operation being benchmarked inside `b.iter()`
 3. **Prevention** - Use `black_box()` to prevent compiler optimizations
 4. **Configuration** - Custom Criterion config for fast iteration
+
 ## Naming Conventions
+
 ### Format
+
 Use the pattern: `{subsystem}_{operation}_{scale}_{variant?}`
 **Examples:**
+
 ```rust
 // Routing
 router_match_1k_routes           // Match against 1K registered routes
@@ -152,33 +174,47 @@ authz_permission_check_1k        // 1K permission checks
 authz_grant_match_wildcard       // Wildcard grant matching
 authz_tenant_isolation_check     // Tenant isolation verification
 ```
+
 ### Scale Indicators
+
 - `1k`, `10k`, `50k`, `100k` - Number of operations/messages
 - `small`, `medium`, `large` - Relative sizes
 - `sequential`, `random` - Access patterns
 - `fanout_N` - Number of subscribers/consumers
+
 ### Variant Suffixes
+
 - `_latency` - Single operation latency
 - `_throughput` - Operations per second
 - `_fanout` - One-to-many delivery
 - `_batch` - Batched operations
 - `_concurrent` - Concurrent access
 - `_wildcard` - Wildcard pattern matching
+
 ## Configuration Patterns
+
 ### Criterion (Tier 1 and 2)
+
 All Criterion benchmarks use the shared config from `benches/config.rs` via `config::criterion_config()`. Do not define a local `configure_criterion()`; use the shared one.
 
 **Fast mode (CI / quick iteration):** Set `BENCH_QUICK=1` to reduce sample size and measurement time:
+
 - `BENCH_QUICK=1`: warmup 200ms, measurement 1s, sample_size 10
 - Default: warmup 500ms, measurement 2s, sample_size 50
 
 Example: `BENCH_QUICK=1 cargo bench -- tier1_hotpath_routing`
+
 ### Fast Iteration (Default)
+
 For daily development work (when not using BENCH_QUICK), the shared config gives:
+
 - sample_size 50, warm_up 500ms, measurement 2s
-**Target runtime:** 1-3 seconds per benchmark (per function)
+  **Target runtime:** 1-3 seconds per benchmark (per function)
+
 ### Release Profiling
+
 For detailed performance analysis:
+
 ```rust
 fn configure_criterion() -> Criterion {
     Criterion::default()
@@ -188,9 +224,13 @@ fn configure_criterion() -> Criterion {
         .noise_threshold(0.01)
 }
 ```
+
 **Target runtime:** 10-30 seconds per benchmark
+
 ### Heavy Benchmarks
+
 For system-level benchmarks (CI only):
+
 ```rust
 #[cfg(feature = "perf")]
 fn configure_criterion() -> Criterion {
@@ -200,15 +240,17 @@ fn configure_criterion() -> Criterion {
         .measurement_time(Duration::from_secs(20))
 }
 ```
+
 **Target runtime:** 20-60 seconds per benchmark
 
 ### Stress configuration (Tier 3 and 4)
+
 Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configuration is via environment variables (see `benches/stress_config.rs`):
 
-| Variable | Meaning | Default |
-|----------|---------|---------|
-| `BENCH_RUNS` | Number of measurement runs per stress test | 5 |
-| `BENCH_WARMUP` | Number of warmup runs before measurement | 1 |
+| Variable       | Meaning                                    | Default |
+| -------------- | ------------------------------------------ | ------- |
+| `BENCH_RUNS`   | Number of measurement runs per stress test | 5       |
+| `BENCH_WARMUP` | Number of warmup runs before measurement   | 1       |
 
 - **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `scripts/benchmark_summary.py` is elements/time, so N must match what the closure does.
 - **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `scripts/benchmark_summary.py` after `cargo bench` (Criterion) and stress bench binaries to produce `target/bench_summary.md`.
@@ -216,30 +258,37 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 For CI, you can reduce total time by setting `BENCH_RUNS=3` (or lower) when running the full tier3/tier4 suite.
 
 ## Best Practices
+
 ### DO ✅
-| Practice | Rationale | Example |
-|----------|-----------|---------|
-| **Use `black_box()`** | Prevents compiler from optimizing away the work | `black_box(engine.publish(&route, body))` |
-| **Pre-allocate inputs** | Measure only the target operation, not allocation | Setup routes/messages before `b.iter()` |
-| **Use deterministic data** | Ensures reproducible results | `format!("notice://realm{}/area", i)` |
-| **Warm the cache** | Measure steady-state performance | Multiple iterations before measurement |
-| **Document what's measured** | Makes intent clear for reviewers | `// Measures notice fanout throughput` |
-| **Group related benchmarks** | Easier to compare and analyze | All router benchmarks in `router.rs` |
-| **Use realistic scales** | 1K-10K for most benchmarks | Avoid 1M+ unless profiling |
-| **Test scheme semantics** | Benchmark each scheme separately | Notice vs Stream vs Queue vs RPC |
+
+| Practice                     | Rationale                                         | Example                                   |
+| ---------------------------- | ------------------------------------------------- | ----------------------------------------- |
+| **Use `black_box()`**        | Prevents compiler from optimizing away the work   | `black_box(engine.publish(&route, body))` |
+| **Pre-allocate inputs**      | Measure only the target operation, not allocation | Setup routes/messages before `b.iter()`   |
+| **Use deterministic data**   | Ensures reproducible results                      | `format!("notice://realm{}/area", i)`     |
+| **Warm the cache**           | Measure steady-state performance                  | Multiple iterations before measurement    |
+| **Document what's measured** | Makes intent clear for reviewers                  | `// Measures notice fanout throughput`    |
+| **Group related benchmarks** | Easier to compare and analyze                     | All router benchmarks in `router.rs`      |
+| **Use realistic scales**     | 1K-10K for most benchmarks                        | Avoid 1M+ unless profiling                |
+| **Test scheme semantics**    | Benchmark each scheme separately                  | Notice vs Stream vs Queue vs RPC          |
+
 ### DON'T ❌
-| Anti-pattern | Problem | Fix |
-|--------------|---------|-----|
-| **Allocate in `b.iter()`** | Measures allocation, not logic | Move allocation outside |
-| **Use random data** | Results vary across runs | Use deterministic sequences |
-| **Ignore warm-up** | First-run effects skew results | Configure proper warm-up time |
-| **Benchmark too much** | Slow feedback loop | Break into smaller benchmarks |
-| **Test correctness** | That's what tests are for | Only measure performance |
-| **Forget `black_box()`** | Compiler removes "dead" code | Wrap inputs and outputs |
-| **Mix I/O unnecessarily** | Introduces variability | Use in-memory storage when possible |
-| **Include network overhead** | Non-deterministic latency | Use loopback or in-process transport |
+
+| Anti-pattern                 | Problem                        | Fix                                  |
+| ---------------------------- | ------------------------------ | ------------------------------------ |
+| **Allocate in `b.iter()`**   | Measures allocation, not logic | Move allocation outside              |
+| **Use random data**          | Results vary across runs       | Use deterministic sequences          |
+| **Ignore warm-up**           | First-run effects skew results | Configure proper warm-up time        |
+| **Benchmark too much**       | Slow feedback loop             | Break into smaller benchmarks        |
+| **Test correctness**         | That's what tests are for      | Only measure performance             |
+| **Forget `black_box()`**     | Compiler removes "dead" code   | Wrap inputs and outputs              |
+| **Mix I/O unnecessarily**    | Introduces variability         | Use in-memory storage when possible  |
+| **Include network overhead** | Non-deterministic latency      | Use loopback or in-process transport |
+
 ### Common Patterns
+
 #### Pattern 1: Message Throughput
+
 ```rust
 fn bench_notice_publish_throughput(c: &mut Criterion) {
     let engine = setup_test_engine();
@@ -247,7 +296,7 @@ fn bench_notice_publish_throughput(c: &mut Criterion) {
     let messages: Vec<Vec<u8>> = (0..10000)
         .map(|i| format!("msg{:08}", i).into_bytes())
         .collect();
-    
+
     c.bench_function("notice_publish_10k", |b| {
         b.iter(|| {
             for msg in &messages {
@@ -257,7 +306,9 @@ fn bench_notice_publish_throughput(c: &mut Criterion) {
     });
 }
 ```
+
 #### Pattern 2: Routing Latency
+
 ```rust
 fn bench_router_match_latency(c: &mut Criterion) {
     // Setup: Pre-populate router with subscriptions
@@ -266,7 +317,7 @@ fn bench_router_match_latency(c: &mut Criterion) {
         let route = format!("notice://realm{}/area/resource", i);
         router.subscribe(&route, dummy_sender()).await.unwrap();
     }
-    
+
     c.bench_function("router_match_latency", |b| {
         let mut i = 0;
         b.iter(|| {
@@ -277,17 +328,19 @@ fn bench_router_match_latency(c: &mut Criterion) {
     });
 }
 ```
+
 #### Pattern 3: Scheme Comparison
+
 ```rust
 fn bench_scheme_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("scheme_publish_latency");
-    
+
     let schemes = ["notice", "stream", "queue", "rpc"];
-    
+
     for scheme in schemes {
         let engine = setup_test_engine();
         let route = format!("{}://test/area/resource", scheme);
-        
+
         group.bench_with_input(
             BenchmarkId::from_parameter(scheme),
             &route,
@@ -298,15 +351,17 @@ fn bench_scheme_comparison(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 ```
+
 #### Pattern 4: Concurrent Sessions
+
 ```rust
 fn bench_concurrent_sessions(c: &mut Criterion) {
     let mut group = c.benchmark_group("session_concurrent");
-    
+
     for num_sessions in [1, 10, 50, 100] {
         group.bench_with_input(
             BenchmarkId::from_parameter(num_sessions),
@@ -322,19 +377,24 @@ fn bench_concurrent_sessions(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 ```
+
 ## Benchmark Categories
+
 ### 1. Microbenchmarks
+
 **Purpose:** Measure single operations in isolation
 **Characteristics:**
+
 - Focus on one method or function
 - Minimal setup overhead
 - Runs in < 100ms per iteration
 - Used for algorithmic optimization
-**Examples:**
+  **Examples:**
+
 ```rust
 // Single method performance
 frame_encode_single_pub
@@ -343,14 +403,18 @@ router_match_exact_route
 authz_check_single_permission
 route_parse_normalize
 ```
+
 ### 2. Subsystem Benchmarks
+
 **Purpose:** Measure combined component performance
 **Characteristics:**
+
 - Multiple operations in sequence
 - Representative of real usage
 - Runs in 1-5 seconds total
 - Used for feature development
-**Examples:**
+  **Examples:**
+
 ```rust
 // Combined operations
 session_handshake_auth_subscribe
@@ -359,14 +423,18 @@ queue_lease_extend_complete
 rpc_publish_wait_reply
 notice_subscribe_dispatch_fanout
 ```
+
 ### 3. Scheme Benchmarks
+
 **Purpose:** Measure scheme-specific performance
 **Characteristics:**
+
 - Full scheme workflow end-to-end
 - Includes routing and storage
 - Tests scheme semantics
 - 5-10 seconds per benchmark
-**Examples:**
+  **Examples:**
+
 ```rust
 // Scheme workflows
 notice_best_effort_fanout_100
@@ -375,15 +443,19 @@ queue_visibility_timeout_workflow
 rpc_request_response_timeout
 inbox_ephemeral_lifecycle
 ```
+
 ### 4. System Benchmarks
+
 **Purpose:** Measure end-to-end broker performance
 **Characteristics:**
+
 - Full engine workflows
 - Multiple transports and sessions
 - Runs in 10-60 seconds
 - Used for release profiling
 - Gated behind `perf` feature
-**Examples:**
+  **Examples:**
+
 ```rust
 #[cfg(feature = "perf")]
 // Full system workflows
@@ -393,9 +465,13 @@ transport_ws_10k_messages
 broker_session_churn_100
 end_to_end_publish_subscribe_1m
 ```
+
 ## CI and Local Workflows
+
 ### Local Development
+
 #### Quick iteration during development:
+
 ```bash
 # Fast mode via env (uses benches/config.rs quick settings)
 BENCH_QUICK=1 cargo bench
@@ -404,28 +480,37 @@ BENCH_QUICK=1 cargo bench
 cargo bench --bench tier1_hotpath_routing
 cargo bench -- tier1_hotpath
 ```
+
 #### Single benchmark:
+
 ```bash
 # Run specific benchmark
 cargo bench --bench tier1_hotpath_matcher
 # With filter (all hotpath routing)
 cargo bench -- hotpath_routing
 ```
+
 #### Stress (Tier 3 / Tier 4):
+
 ```bash
 cargo bench --bench tier3_system_kv
 cargo bench --bench tier4_integration_kv
 # Optional: fewer runs for faster feedback
 BENCH_RUNS=3 cargo bench --bench tier4_integration_kv
 ```
+
 #### Watch mode for TDD:
+
 ```bash
 cargo watch -x "bench --bench tier1_hotpath_routing"
 ```
+
 ### CI Pipeline
+
 The repository CI includes a **benchmarks** job that runs all Criterion and stress benches with `BENCH_QUICK=1` and `BENCH_RUNS=3`, then runs `scripts/benchmark_summary.py` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
 
 #### Pull Request Checks:
+
 ```bash
 # Criterion with fast config
 BENCH_QUICK=1 cargo bench --no-fail-fast
@@ -434,22 +519,29 @@ BENCH_QUICK=1 cargo bench --no-fail-fast
 BENCH_RUNS=3 cargo bench --bench tier3_system_kv
 BENCH_RUNS=3 cargo bench --bench tier4_integration_kv
 ```
+
 #### Nightly Performance Runs:
+
 ```bash
 # Full profiling with perf feature
 cargo bench --release --features perf -- \
   --sample-size 100 \
   --measurement-time 10
 ```
+
 #### Baseline Comparison:
+
 ```bash
 # Save baseline
 cargo bench --bench bloom -- --save-baseline main
 # Compare against baseline
 cargo bench --bench bloom -- --baseline main
 ```
+
 ### Profiling Integration
+
 #### With flamegraph:
+
 ```bash
 # Generate flamegraph
 cargo flamegraph --bench bloom -- --bench
@@ -457,7 +549,9 @@ cargo flamegraph --bench bloom -- --bench
 perf record --call-graph dwarf cargo bench --bench bloom
 perf report
 ```
+
 #### With criterion:
+
 ```bash
 # HTML reports generated automatically
 # View at: target/criterion/report/index.html
@@ -467,9 +561,13 @@ open target/criterion/report/index.html  # macOS
 xdg-open target/criterion/report/index.html  # Linux
 start target/criterion/report/index.html  # Windows
 ```
+
 ## Quick Reference
+
 ### Criterion file template (Tier 1 / Tier 2)
+
 Use shared config from `benches/config.rs`; do not define a local `configure_criterion()`.
+
 ```rust
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 
@@ -501,9 +599,13 @@ criterion_group! {
 }
 criterion_main!(benches);
 ```
+
 **Example files:** `benches/tier1_hotpath_routing.rs`, `benches/tier2_subsystem_scheduler.rs`
+
 ### Reviewer Checklist
+
 When reviewing benchmark PRs:
+
 - [ ] **Performance:** Benchmark runs in < 5 seconds locally
 - [ ] **Focus:** Measures one clear behavior/operation
 - [ ] **Reproducibility:** Uses deterministic data (no randomness)
@@ -516,7 +618,9 @@ When reviewing benchmark PRs:
 - [ ] **Async Handling:** Proper tokio runtime usage
 - [ ] **Scheme Specific:** Tests appropriate scheme semantics
 - [ ] **CI:** Heavy benchmarks gated behind `perf` feature
+
 ### Common Commands
+
 ```bash
 # Run all benchmarks (fast mode)
 cargo bench -- --quick
@@ -535,63 +639,88 @@ cargo flamegraph --bench router
 # List all benchmarks
 cargo bench -- --list
 ```
+
 ### Performance Targets
+
 | Benchmark Type | Target Runtime | Sample Size | Measurement Time |
-|---------------|----------------|-------------|------------------|
-| Microbenchmark | < 2 seconds | 10 | 1 second |
-| Subsystem | 2-5 seconds | 20 | 2 seconds |
-| Scheme | 5-10 seconds | 20 | 3 seconds |
-| System | 10-60 seconds | 50 | 10 seconds |
+| -------------- | -------------- | ----------- | ---------------- |
+| Microbenchmark | < 2 seconds    | 10          | 1 second         |
+| Subsystem      | 2-5 seconds    | 20          | 2 seconds        |
+| Scheme         | 5-10 seconds   | 20          | 3 seconds        |
+| System         | 10-60 seconds  | 50          | 10 seconds       |
+
 ### Scale Guidelines
-| Scale | Use Case | Message/Route Count |
-|-------|----------|---------------------|
-| **Small** | Quick iteration | 100 - 1,000 |
-| **Medium** | Representative workload | 1,000 - 10,000 |
-| **Large** | Stress testing | 10,000 - 50,000 |
-| **XLarge** | Release profiling only | 50,000+ |
+
+| Scale      | Use Case                | Message/Route Count |
+| ---------- | ----------------------- | ------------------- |
+| **Small**  | Quick iteration         | 100 - 1,000         |
+| **Medium** | Representative workload | 1,000 - 10,000      |
+| **Large**  | Stress testing          | 10,000 - 50,000     |
+| **XLarge** | Release profiling only  | 50,000+             |
+
 ### Message Broker Specific Metrics
-| Metric | What It Measures | Key Benchmarks |
-|--------|------------------|----------------|
-| **Publish Latency** | Time to accept and route a message | `notice_publish_latency`, `stream_append_latency` |
-| **Throughput** | Messages per second | `notice_throughput_10k`, `queue_throughput_5k` |
-| **Fanout** | One-to-many delivery time | `notice_fanout_100`, `router_dispatch_fanout` |
-| **Routing Speed** | Route matching performance | `router_match_1k`, `router_wildcard_10k` |
-| **Session Overhead** | Session management cost | `session_handshake_latency`, `session_concurrent` |
-| **Frame Encoding** | Protocol overhead | `frame_encode_pub`, `frame_decode_dat` |
-| **Authorization** | AuthZ check cost | `authz_permission_check`, `authz_grant_match` |
-| **Storage Latency** | Backend operation time | `memstore_append`, `memstore_reserve_ack` |
+
+| Metric               | What It Measures                   | Key Benchmarks                                    |
+| -------------------- | ---------------------------------- | ------------------------------------------------- |
+| **Publish Latency**  | Time to accept and route a message | `notice_publish_latency`, `stream_append_latency` |
+| **Throughput**       | Messages per second                | `notice_throughput_10k`, `queue_throughput_5k`    |
+| **Fanout**           | One-to-many delivery time          | `notice_fanout_100`, `router_dispatch_fanout`     |
+| **Routing Speed**    | Route matching performance         | `router_match_1k`, `router_wildcard_10k`          |
+| **Session Overhead** | Session management cost            | `session_handshake_latency`, `session_concurrent` |
+| **Frame Encoding**   | Protocol overhead                  | `frame_encode_pub`, `frame_decode_dat`            |
+| **Authorization**    | AuthZ check cost                   | `authz_permission_check`, `authz_grant_match`     |
+| **Storage Latency**  | Backend operation time             | `memstore_append`, `memstore_reserve_ack`         |
+
 ## Document History
-| Date | Version | Changes |
-|------|---------|---------|
-| 2025-10-20 | 1.0 | Initial version tailored for Fitz message broker |
+
+| Date       | Version | Changes                                          |
+| ---------- | ------- | ------------------------------------------------ |
+| 2025-10-20 | 1.0     | Initial version tailored for Fitz message broker |
+
 ### Contributors
+
 - Fitz development team
 - Adapted from Shale benchmark guidelines
+
 ## Appendix: Fitz-Specific Considerations
+
 ### Scheme Semantics to Benchmark
+
 Each scheme has different performance characteristics:
+
 1. **notice://** - Best-effort, drop-on-backpressure
    - Benchmark: fanout speed, subscriber count impact, backpressure handling
-   
 2. **stream://** - Append-only log with ordering
    - Benchmark: append throughput, consume latency, offset seeking
-   
 3. **queue://** - Visibility timeout, at-least-once
    - Benchmark: lease latency, extend/ack cycles, DLQ movement
-   
 4. **rpc://** - Request/response with timeout
    - Benchmark: round-trip latency, timeout handling, concurrent requests
-   
 5. **inbox://** - Ephemeral per-session
    - Benchmark: creation/cleanup overhead, delivery latency
+
 ### Multi-Tenant Benchmarking
+
 When benchmarking tenant isolation:
+
 - Use distinct tenant IDs in test data
 - Measure cross-tenant permission checks
 - Benchmark tenant namespace lookup overhead
 - Test storage isolation performance impact
+
 ### Transport Agnostic
+
 Benchmarks should work with any transport:
+
 - Use in-process/loopback for determinism
 - WebSocket benchmarks measure framing overhead
 - Test frame multiplexing (mux) separately from transport
+
+### Tier 4 expectations
+
+- **Direct** (in-process) is the in-process baseline; use it to compare domains and for regression.
+- **network_roundtrip** and **concurrent\_\*** scenarios are expected to be roughly **2–3 orders of magnitude** lower throughput than direct (network and concurrency overhead). Use them for **regression and relative comparison**, not for absolute ops/sec targets.
+
+### High variance (Criterion)
+
+The benchmark summary flags entries with relative standard deviation &gt; 10%. Some benches (e.g. matcher, send_to_self) can remain above ~15% due to CPU cache and scheduling effects. Treat those as inherently variable; for release profiling you can increase sample size for those groups only, or document them as variable in commit messages.

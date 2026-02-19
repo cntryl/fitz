@@ -480,6 +480,94 @@ impl QueueActor {
         QueueResponse::Enqueued { id }
     }
 
+    /// Enqueue multiple messages in one transaction (batch).
+    /// Same semantics as N×handle_enqueue; use for throughput when the caller has many messages.
+    pub fn handle_enqueue_batch(
+        &mut self,
+        items: &[(Bytes, Option<u64>)],
+    ) -> QueueResponse {
+        if items.is_empty() {
+            return QueueResponse::EnqueuedBatch { ids: vec![] };
+        }
+
+        let now_instant = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let cf_id = self.queue_key.family.id();
+
+        let mut txn = match self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(t) => t,
+            Err(e) => {
+                return QueueResponse::Error {
+                    message: format!("Failed to begin transaction: {:?}", e),
+                }
+            }
+        };
+
+        let mut ids = Vec::with_capacity(items.len());
+        let mut post_commit: Vec<(MessageId, QueueRecord, std::time::Instant)> = Vec::with_capacity(items.len());
+        let mut next_id = self.next_id;
+
+        for (body, delay_seconds) in items {
+            let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
+            let id = MessageId::new(next_id);
+            let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
+            let visible_at = now_instant + Duration::from_millis(delay_ms);
+
+            let record = QueueRecord {
+                body: body.clone(),
+                attempts: 0,
+                visible_at_ms,
+            };
+
+            let key = Self::message_key(&self.queue_key, id);
+            let value = Self::encode_record(&record);
+            if let Err(e) = txn.put(key, value, None) {
+                return QueueResponse::Error {
+                    message: format!("Failed to add message to transaction: {:?}", e),
+                };
+            }
+
+            ids.push(id);
+            post_commit.push((id, record, visible_at));
+            next_id += 1;
+        }
+
+        if let Err(e) = txn.put(
+            Self::meta_key(&self.queue_key),
+            next_id.to_le_bytes().to_vec(),
+            None,
+        ) {
+            return QueueResponse::Error {
+                message: format!("Failed to update queue meta: {:?}", e),
+            };
+        }
+
+        if let Err(e) = self
+            .store
+            .commit(txn, cntryl_midge::WriteOptions::buffered())
+        {
+            return QueueResponse::Error {
+                message: format!("Failed to commit transaction: {:?}", e),
+            };
+        }
+
+        self.next_id = next_id;
+        for (id, record, visible_at) in post_commit {
+            self.records.insert(id, record);
+            if visible_at <= now_instant {
+                self.push_ready(id);
+            } else {
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
+            }
+        }
+
+        QueueResponse::EnqueuedBatch { ids }
+    }
+
     /// Handle reserve operation
     ///
     /// IMPORTANT: This method ALWAYS returns immediately (never blocks).

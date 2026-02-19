@@ -52,6 +52,9 @@ for p in CRITERION_ROOT.rglob('new/estimates.json'):
     high_variance = False
     if rel_stddev is not None:
         high_variance = rel_stddev > 0.10
+    # Skip legacy/stale Criterion entries (e.g. old "schedule_system_scan_and_fire" 222ms row)
+    if 'schedule_system_scan_and_fire' in benchmark:
+        continue
     # assume raw numbers are nanoseconds and provide converted columns
     mean_us = mean / 1e3
     mean_ms = mean / 1e6
