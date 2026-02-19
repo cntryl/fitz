@@ -6,7 +6,8 @@ use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{info, warn};
@@ -28,6 +29,9 @@ pub struct ScheduleActor {
     last_scan_time: Instant,
     /// Minimum interval between scans (deduplication window)
     scan_dedup_window: std::time::Duration,
+    /// Priority queue of schedules ordered by next fire time (min-heap with Reverse)
+    /// Stores (next_fire_ms, route_clone) for efficient ready detection
+    ready_heap: BinaryHeap<(Reverse<u64>, String)>,
 }
 
 impl ScheduleActor {
@@ -45,6 +49,7 @@ impl ScheduleActor {
             write_options,
             last_scan_time: Instant::now(),
             scan_dedup_window: std::time::Duration::from_millis(10),
+            ready_heap: BinaryHeap::new(),
         };
 
         // Load persisted schedules on startup
@@ -53,13 +58,16 @@ impl ScheduleActor {
                 match CronSchedule::parse(&cron_str) {
                     Ok(cron) => {
                         let next_fire = cron.next_fire_time(Instant::now());
+                        let next_fire_ms = Self::instant_to_ms(next_fire);
                         let def = ScheduleDef {
                             route: route.clone(),
                             cron: cron_str,
                             payload,
                             next_fire_time: next_fire,
                         };
-                        actor.schedules.insert(route, def);
+                        actor.schedules.insert(route.clone(), def);
+                        // Add to ready heap for efficient scanning
+                        actor.ready_heap.push((Reverse(next_fire_ms), route));
                     }
                     Err(e) => {
                         warn!(
@@ -109,6 +117,11 @@ impl ScheduleActor {
 
         // Update in-memory cache
         self.schedules.insert(route.clone(), def);
+
+        // Add to ready heap for efficient scanning
+        let next_fire_ms = Self::instant_to_ms(next_fire);
+        self.ready_heap.push((Reverse(next_fire_ms), route.clone()));
+
         info!(
             "Schedule upserted for route: {} (family: {})",
             route,
@@ -137,6 +150,8 @@ impl ScheduleActor {
     ///
     /// Called periodically by the tick handler.
     /// Includes scan deduplication: avoids redundant scans within scan_dedup_window.
+    /// Uses a min-heap (ready_heap) to efficiently find schedules ready to fire O(k log n)
+    /// instead of scanning all schedules O(n).
     /// Returns Vec<(route, payload)> for schedules that fired.
     pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
         let now = Instant::now();
@@ -150,46 +165,55 @@ impl ScheduleActor {
         let now_ms = Self::instant_to_ms(now);
         let mut fired = Vec::new();
         let mut to_reschedule = Vec::new();
+        let mut heap_popped = Vec::new();
 
-        // Load ready schedules from storage
-        match self.store.load_ready(self.family.as_u64(), now_ms) {
-            Ok(ready) => {
-                for (route, _cron_str, payload) in ready {
-                    // Update in-memory cache and calculate next fire time
-                    if let Some(def) = self.schedules.get_mut(&route) {
-                        if let Ok(cron) = CronSchedule::parse(&def.cron) {
-                            let next_fire = cron.next_fire_time(now);
-                            def.next_fire_time = next_fire;
-
-                            // Collect for batch persistence
-                            to_reschedule.push((
-                                route.clone(),
-                                def.cron.clone(),
-                                def.payload.clone(),
-                                next_fire,
-                            ));
-
-                            fired.push((route.clone(), payload.clone()));
-                            info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
-                        }
-                    }
+        // Peek the heap for schedules ready to fire (fire_ms <= now_ms)
+        // Pop all ready items and temporarily store them
+        while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
+            if fire_ms <= now_ms {
+                if let Some((Reverse(fire_ms), route)) = self.ready_heap.pop() {
+                    heap_popped.push((fire_ms, route));
                 }
+            } else {
+                break; // Remaining items in heap are not ready yet
+            }
+        }
 
-                // Batch reschedule operations
-                for (route, cron, payload, next_fire) in to_reschedule {
-                    let _ = self.store.insert(
-                        self.family.as_u64(),
-                        &route,
-                        &cron,
-                        &payload,
+        // Process fired schedules
+        for (_fire_ms, route) in heap_popped {
+            if let Some(def) = self.schedules.get_mut(&route) {
+                if let Ok(cron) = CronSchedule::parse(&def.cron) {
+                    let next_fire = cron.next_fire_time(now);
+                    def.next_fire_time = next_fire;
+                    let next_fire_ms = Self::instant_to_ms(next_fire);
+
+                    // Collect for batch persistence
+                    to_reschedule.push((
+                        route.clone(),
+                        def.cron.clone(),
+                        def.payload.clone(),
                         next_fire,
-                        self.write_options,
-                    );
+                        next_fire_ms,
+                    ));
+
+                    fired.push((route.clone(), def.payload.clone()));
+                    info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
                 }
             }
-            Err(e) => {
-                warn!("Failed to load ready schedules: {}", e);
-            }
+        }
+
+        // Batch reschedule operations and update heap
+        for (route, cron, payload, next_fire, next_fire_ms) in to_reschedule {
+            let _ = self.store.insert(
+                self.family.as_u64(),
+                &route,
+                &cron,
+                &payload,
+                next_fire,
+                self.write_options,
+            );
+            // Push rescheduled entry back to ready heap
+            self.ready_heap.push((Reverse(next_fire_ms), route));
         }
 
         fired

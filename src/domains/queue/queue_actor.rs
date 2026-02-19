@@ -412,8 +412,12 @@ impl QueueActor {
             };
         }
 
-        // Commit with sync() to ensure reserve() sees message immediately
-        if let Err(e) = self.store.commit(txn, cntryl_midge::WriteOptions::sync()) {
+        // Commit with buffered mode for high throughput
+        // The store will sync periodically, maintaining durability without per-operation cost
+        if let Err(e) = self
+            .store
+            .commit(txn, cntryl_midge::WriteOptions::buffered())
+        {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };

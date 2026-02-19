@@ -4,6 +4,7 @@
 //! when the session is created. It's opaque to the transport layer.
 
 use crate::auth::{Access, Permission};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -23,6 +24,9 @@ pub struct SessionPermissions {
     inner: Arc<HashMap<String, String>>,
     /// Compiled Fitz permissions used by authorization checks
     compiled: Arc<Vec<CompiledPermission>>,
+    /// Cache for permission checks: (route_hash, access_bits) -> allowed
+    /// Uses RwLock for thread-safe interior mutability
+    check_cache: Arc<RwLock<HashMap<(u64, u8), bool>>>,
 }
 
 impl SessionPermissions {
@@ -30,6 +34,7 @@ impl SessionPermissions {
         Self {
             inner: Arc::new(map),
             compiled: Arc::new(Vec::new()),
+            check_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -52,6 +57,7 @@ impl SessionPermissions {
         Self {
             inner: Arc::new(HashMap::new()),
             compiled: Arc::new(compiled),
+            check_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -59,6 +65,7 @@ impl SessionPermissions {
         Self {
             inner: Arc::new(HashMap::new()),
             compiled: Arc::new(Vec::new()),
+            check_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -78,6 +85,21 @@ impl SessionPermissions {
 
     /// Check whether the permission set allows the given access to the route
     pub fn allows(&self, route: &crate::runtime::routing::Route, access: Access) -> bool {
+        // Create cache key from route and access
+        let route_hash = route_to_hash(route.as_str());
+        let access_bits = access_to_bits(access);
+        let cache_key = (route_hash, access_bits);
+
+        // Fast path: check cache first (read-lock, released immediately)
+        {
+            let cache = self.check_cache.read();
+            if let Some(&result) = cache.get(&cache_key) {
+                return result;
+            }
+        }
+
+        // Slow path: evaluate permissions
+        let mut allowed = false;
         for p in self.compiled.iter() {
             if !p.pattern.matches(route) {
                 continue;
@@ -85,18 +107,56 @@ impl SessionPermissions {
 
             // Access semantics: All matches everything; Read matches Read/All; Write matches Write/All
             match (&p.access, &access) {
-                (Access::All, _) => return true,
-                (Access::Read, Access::Read) => return true,
-                (Access::Write, Access::Write) => return true,
+                (Access::All, _) => {
+                    allowed = true;
+                    break;
+                }
+                (Access::Read, Access::Read) => {
+                    allowed = true;
+                    break;
+                }
+                (Access::Write, Access::Write) => {
+                    allowed = true;
+                    break;
+                }
                 _ => continue,
             }
         }
-        false
+
+        // Cache the result (write-lock, held briefly)
+        {
+            let mut cache = self.check_cache.write();
+            // Simple LRU: if cache exceeds 256 entries, clear it
+            if cache.len() >= 256 {
+                cache.clear();
+            }
+            cache.insert(cache_key, allowed);
+        }
+
+        allowed
     }
 }
 impl fmt::Display for SessionPermissions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SessionPermissions({} entries)", self.inner.len())
+    }
+}
+
+/// Convert route string to a hash for cache key
+fn route_to_hash(route: &str) -> u64 {
+    let mut hash: u64 = 5381;
+    for byte in route.as_bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(*byte as u64);
+    }
+    hash
+}
+
+/// Convert Access to a compact bit representation for cache key
+fn access_to_bits(access: Access) -> u8 {
+    match access {
+        Access::Read => 1,
+        Access::Write => 2,
+        Access::All => 3,
     }
 }
 
