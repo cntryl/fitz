@@ -1,7 +1,7 @@
 //! Stream benchmarking helpers
 
 use super::storage::{create_bench_store, create_local_bench_store};
-use crate::domains::stream::stream_actor::StreamActor;
+use crate::domains::stream::StreamActor;
 use crate::domains::stream::StreamStore;
 use crate::runtime::actor::Context;
 use crate::runtime::router::Router;

@@ -2,7 +2,7 @@
 //!
 //! # Architecture
 //!
-//! - **StreamActor** ([stream_actor]): Manages single resource stream with sequential offsets
+//! - **StreamActor** ([actor]): Manages single resource stream with sequential offsets
 //! - **AreaActor** ([area_actor]): Coordinates ordering across resources within an area
 //! - **RealmActor** ([realm_actor]): Coordinates ordering across areas within a realm
 //! - **SessionActor**: Enforces authentication/authorization before forwarding to actors
@@ -45,15 +45,16 @@
 //! - **Realm watermark**: min(all area watermarks)
 //! - Reads are blocked beyond watermarks to ensure gap-free ordering
 
+pub mod actor;
 pub mod area_actor;
 pub mod protocol;
 pub mod realm_actor;
 pub mod session;
 pub mod storage;
 pub mod store;
-pub mod stream_actor;
 
 // Re-exports
+pub use actor::StreamActor;
 pub use area_actor::AreaActor;
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamError, StreamMessage, StreamMetadata,
@@ -61,4 +62,3 @@ pub use protocol::{
 };
 pub use realm_actor::RealmActor;
 pub use store::StreamStore;
-pub use stream_actor::StreamActor;

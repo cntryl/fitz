@@ -8,7 +8,7 @@
 //! but tests rely on the SessionActor's semantic enforcement.
 
 use crate::auth::Access;
-use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
+use crate::domains::rpc::RpcRouteActor;
 use crate::domains::rpc::{RpcMessage, RpcRequest};
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::{Route, RouteAddress};
@@ -73,7 +73,7 @@ impl SessionActor {
 mod tests {
     use super::*;
     use crate::auth::Permission;
-    use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
+    use crate::domains::rpc::RpcRouteActor;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

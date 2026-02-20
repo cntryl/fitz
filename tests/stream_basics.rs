@@ -10,7 +10,7 @@ use bytes::Bytes;
 use fitz::domains::stream::protocol::{StreamMessage, StreamWriteMode};
 use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::store::StreamStore;
-use fitz::domains::stream::stream_actor::StreamActor;
+use fitz::domains::stream::StreamActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;

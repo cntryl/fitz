@@ -2,7 +2,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use crate::domains::stream::area_actor::AreaActor;
-use crate::domains::stream::stream_actor::StreamActor;
+use crate::domains::stream::StreamActor;
 use crate::runtime::actor::Context;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{MailboxSink, Router};

@@ -226,7 +226,7 @@ fn should_enforce_realm_boundary_for_lease_operations() {
 
 // --- Lease semantics & invariants (from lease_semantics.rs + lease_realm_isolation.rs) ---
 
-use fitz::domains::lease::lease_actor::LeaseActor as InnerLeaseActor;
+use fitz::domains::lease::LeaseActor as InnerLeaseActor;
 use fitz::domains::lease::protocol::LeaseMessage;
 
 #[allow(dead_code)]

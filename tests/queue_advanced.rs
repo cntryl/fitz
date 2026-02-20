@@ -9,7 +9,7 @@ use bytes::Bytes;
 
 use fitz::domains::queue::{
     protocol::{QueueKey, QueueResponse},
-    queue_actor::QueueActor,
+    QueueActor,
 };
 use fitz::runtime::routing::RouteFamily;
 use uuid::Uuid;
@@ -350,6 +350,6 @@ fn should_redelivery_message_on_lease_expiration() {
 #[test]
 fn should_dlq_message_after_max_attempts() {
     // This test requires MockClock to advance time, which is only available in unit tests.
-    // Unit tests in src/domains/queue/queue_actor.rs verify DLQ behavior with MockClock.
+    // Unit tests in src/domains/queue/actor.rs verify DLQ behavior with MockClock.
     // This integration test verifies the overall queue mechanics.
 }

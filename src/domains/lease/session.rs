@@ -1,5 +1,5 @@
 use crate::auth::Access;
-use crate::domains::lease::lease_actor::LeaseActor;
+use crate::domains::lease::LeaseActor;
 use crate::domains::lease::protocol::LeaseMessage;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
@@ -148,7 +148,7 @@ impl SessionActor {
 mod tests {
     use super::*;
     use crate::auth::Permission;
-    use crate::domains::lease::lease_actor::LeaseActor;
+    use crate::domains::lease::LeaseActor;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

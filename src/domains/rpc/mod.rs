@@ -2,7 +2,7 @@
 //!
 //! # Architecture
 //!
-//! - **RpcRouteActor** ([rpc_route_actor]): Manages worker pool and request queue per route
+//! - **RpcRouteActor** ([actor]): Manages worker pool and request queue per route
 //! - **SessionActor**: Enforces authentication/authorization before forwarding to RpcRouteActor
 //! - Workers register with routes and receive requests via round-robin assignment
 //!
@@ -43,10 +43,10 @@
 //! - `rpc://acme/inventory/item/update`
 //! - `rpc://acme/reports/monthly/generate`
 
+pub mod actor;
 pub mod errors;
 pub mod protocol;
 pub mod reply_inbox;
-pub mod rpc_route_actor;
 
 // Test helper - lightweight SessionActor stub for testing RPC authorization
 // Available in tests (both unit tests and integration tests)
@@ -54,7 +54,7 @@ pub mod rpc_route_actor;
 pub mod session;
 
 // Re-export primary types
+pub use actor::RpcRouteActor;
 pub use errors::{RpcError, RpcErrorCode};
 pub use protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};
-pub use rpc_route_actor::RpcRouteActor;

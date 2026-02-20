@@ -8,7 +8,7 @@
 use bytes::Bytes;
 use fitz::auth::Permission;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
-use fitz::domains::notice::route_actor::NoticeRouteActor;
+use fitz::domains::notice::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::session::permissions::SessionPermissions;

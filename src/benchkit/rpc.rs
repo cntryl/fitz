@@ -1,6 +1,6 @@
 //! RPC benchmarking helpers
 
-use crate::domains::rpc::rpc_route_actor::RpcRouteActor;
+use crate::domains::rpc::RpcRouteActor;
 use crate::runtime::actor::Context;
 use crate::runtime::router::Router;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

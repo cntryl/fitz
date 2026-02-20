@@ -8,7 +8,7 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use criterion::black_box;
 use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
-use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
+use fitz::domains::rpc::RpcRouteActor;
 use fitz::runtime::actor::{Actor, Context};
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::mailbox::Mailbox;

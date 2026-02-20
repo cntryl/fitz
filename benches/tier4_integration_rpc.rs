@@ -12,7 +12,7 @@ use fitz::benchkit::{
     parse_rpc_response, shared_bench_runtime,
 };
 use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest};
-use fitz::domains::rpc::rpc_route_actor::RpcRouteActor;
+use fitz::domains::rpc::RpcRouteActor;
 use fitz::prelude::Actor;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;

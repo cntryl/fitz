@@ -9,7 +9,7 @@
 // ============================================================================
 
 use fitz::domains::queue::protocol::{QueueKey, QueueMessage};
-use fitz::domains::queue::queue_actor::QueueActor;
+use fitz::domains::queue::QueueActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;

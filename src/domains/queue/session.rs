@@ -1,6 +1,6 @@
 use crate::auth::Access;
 use crate::domains::queue::protocol::QueueMessage;
-use crate::domains::queue::queue_actor::QueueActor;
+use crate::domains::queue::QueueActor;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;
