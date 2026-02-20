@@ -3,6 +3,11 @@
 //! Encodes/decodes TLV messages for the lease domain.
 //! Supports Acquire, Renew, Release, Query operations.
 //!
+//! Wire format follows CLIENT_SPEC: ACQUIRE success includes response_type
+//! (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued) + fencing_token;
+//! RENEW success is new_fencing_token; RELEASE success is status only;
+//! QUERY success is has_holder + optional holder details.
+//!
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
@@ -11,13 +16,12 @@ use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteFamily};
 
-/// Response from lease operations
-#[derive(Debug, Clone)]
-pub enum LeaseResponse {
-    /// Operation succeeded with optional token
-    Ok { token: Option<u64> },
-    /// Operation failed with error message
-    Error(String),
+/// ACQUIRE success response_type (CLIENT_SPEC)
+pub mod acquire_response_type {
+    pub const ACQUIRED: u8 = 0;
+    pub const ALREADY_HELD: u8 = 1;
+    pub const QUEUED: u8 = 2;
+    pub const ALREADY_QUEUED: u8 = 3;
 }
 
 /// Parse incoming message from TLV-encoded bytes.
@@ -40,76 +44,92 @@ pub fn parse_request(
     }
 }
 
-/// Encode domain response to TLV-encoded bytes
-pub fn encode_response(response: &LeaseResponse) -> Vec<u8> {
+/// Encode domain LeaseResponse to wire bytes (CLIENT_SPEC).
+///
+/// - ACQUIRE success: status=0, response_type (0–3), fencing_token
+/// - RENEW success: status=0, new_fencing_token
+/// - RELEASE success: status=0
+/// - QUERY success (free): status=0, has_holder=0, pending_waiters=0
+/// - QUERY success (held): status=0, has_holder=1, owner_id, ttl_remaining_secs, pending_waiters
+/// - All errors: status=1, error_len, error_msg
+pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
+    use acquire_response_type::{ACQUIRED, ALREADY_HELD, ALREADY_QUEUED, QUEUED};
+
     let mut enc = PayloadEncoder::new();
 
     match response {
-        LeaseResponse::Ok { token } => {
-            enc.put_u8(0); // success flag
-            enc.put_optional_u64(*token);
+        DomainLeaseResponse::Acquired { fencing_token } => {
+            enc.put_u8(0);
+            enc.put_u8(ACQUIRED);
+            enc.put_u64(*fencing_token);
+            enc.finish()
         }
-        LeaseResponse::Error(e) => {
-            enc.put_u8(1); // error flag
-            enc.put_string(e);
+        DomainLeaseResponse::AlreadyHeld { fencing_token } => {
+            enc.put_u8(0);
+            enc.put_u8(ALREADY_HELD);
+            enc.put_u64(*fencing_token);
+            enc.finish()
         }
+        DomainLeaseResponse::Queued { fencing_token } => {
+            enc.put_u8(0);
+            enc.put_u8(QUEUED);
+            enc.put_u64(*fencing_token);
+            enc.finish()
+        }
+        DomainLeaseResponse::AlreadyQueued { fencing_token } => {
+            enc.put_u8(0);
+            enc.put_u8(ALREADY_QUEUED);
+            enc.put_u64(*fencing_token);
+            enc.finish()
+        }
+        DomainLeaseResponse::Renewed { fencing_token } => {
+            enc.put_u8(0);
+            enc.put_u64(*fencing_token);
+            enc.finish()
+        }
+        DomainLeaseResponse::Released => {
+            enc.put_u8(0);
+            enc.finish()
+        }
+        DomainLeaseResponse::Status {
+            owner_id,
+            fencing_token: _,
+            expires_in_secs,
+            pending_waiters,
+        } => {
+            enc.put_u8(0);
+            enc.put_u8(1); // has_holder=true
+            enc.put_string(owner_id);
+            enc.put_u64(*expires_in_secs);
+            enc.put_u32(*pending_waiters as u32);
+            enc.finish()
+        }
+        DomainLeaseResponse::NotFound => {
+            enc.put_u8(0);
+            enc.put_u8(0); // has_holder=false
+            enc.put_u32(0); // pending_waiters
+            enc.finish()
+        }
+        DomainLeaseResponse::Timeout => encode_error("Timeout"),
+        DomainLeaseResponse::QueueFull { pending_count } => {
+            encode_error(&format!("QueueFull: {} pending", pending_count))
+        }
+        DomainLeaseResponse::HeldByOther { current_owner } => {
+            encode_error(&format!("HeldByOther: {}", current_owner))
+        }
+        DomainLeaseResponse::NotHeld => encode_error("NotHeld"),
+        DomainLeaseResponse::Fenced { current_token } => {
+            encode_error(&format!("Fenced: current_token={}", current_token))
+        }
+        DomainLeaseResponse::Expired => encode_error("Expired"),
     }
-
-    enc.finish()
 }
 
-/// Convert domain LeaseResponse to codec LeaseResponse for encoding
-///
-/// Maps domain-level responses to wire format:
-/// - Acquired/Queued → Ok { Some(token) }
-/// - AlreadyHeld → Ok { Some(token) }
-/// - Timeout → Error("Timeout")
-/// - QueueFull → Error("QueueFull: {pending_count}")
-/// - HeldByOther → Error("HeldByOther: {current_owner}")
-/// - etc.
-pub fn map_domain_response(response: &DomainLeaseResponse) -> LeaseResponse {
-    match response {
-        DomainLeaseResponse::Acquired { fencing_token } => LeaseResponse::Ok {
-            token: Some(*fencing_token),
-        },
-        DomainLeaseResponse::AlreadyHeld { fencing_token } => LeaseResponse::Ok {
-            token: Some(*fencing_token),
-        },
-        DomainLeaseResponse::Queued { fencing_token } => LeaseResponse::Ok {
-            token: Some(*fencing_token),
-        },
-        DomainLeaseResponse::AlreadyQueued { fencing_token } => LeaseResponse::Ok {
-            token: Some(*fencing_token),
-        },
-        DomainLeaseResponse::Timeout => LeaseResponse::Error("Timeout".to_string()),
-        DomainLeaseResponse::QueueFull { pending_count } => {
-            LeaseResponse::Error(format!("QueueFull: {} pending", pending_count))
-        }
-        DomainLeaseResponse::Renewed { fencing_token } => LeaseResponse::Ok {
-            token: Some(*fencing_token),
-        },
-        DomainLeaseResponse::Released => LeaseResponse::Ok { token: None },
-        DomainLeaseResponse::HeldByOther { current_owner } => {
-            LeaseResponse::Error(format!("HeldByOther: {}", current_owner))
-        }
-        DomainLeaseResponse::NotHeld => LeaseResponse::Error("NotHeld".to_string()),
-        DomainLeaseResponse::Fenced { current_token } => {
-            LeaseResponse::Error(format!("Fenced: current_token={}", current_token))
-        }
-        DomainLeaseResponse::Expired => LeaseResponse::Error("Expired".to_string()),
-        DomainLeaseResponse::NotFound => LeaseResponse::Error("NotFound".to_string()),
-        DomainLeaseResponse::Status {
-            owner_id: _,
-            fencing_token,
-            expires_in_secs: _,
-            pending_waiters: _,
-        } => {
-            // Encode status as JSON or similar format
-            LeaseResponse::Ok {
-                token: Some(*fencing_token),
-            }
-        }
-    }
+fn encode_error(msg: &str) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    enc.put_u8(1);
+    enc.put_string(msg);
+    enc.finish()
 }
 
 // ===== Helper Parsers =====

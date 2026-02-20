@@ -589,7 +589,7 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client sends `Call(route, timeout=2s)` and waits  
 **Then:**
 
-- After 2 seconds, client receives error code `6004` (Timeout)
+- After 2 seconds, client receives error code `6004` (ERR_ROUTE_NOT_REGISTERED)
 - Request is abandoned
 - Client can retry or handle error
 
@@ -908,7 +908,7 @@ Clients **MUST** interpret error codes using this mapping.
 **When:** Error code is:
 
 - `1001` (Transaction Not Found) → Fatal, do NOT retry
-- `6004` (RPC Timeout / Route Not Registered) → Retryable with backoff
+- `6004` (ERR_ROUTE_NOT_REGISTERED; no workers for route or timeout before any reply) → Retryable with backoff
 - `1011` (KV Unauthorized) → Fatal, do NOT retry
 - `2009` (Stream Unauthorized) → Fatal, do NOT retry
 - `4009` (Queue Unauthorized) → Fatal, do NOT retry

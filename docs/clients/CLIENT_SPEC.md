@@ -3873,22 +3873,25 @@ LIST returns multiple responses (one schedule per response):
 ```
 Response 1:
   [u8]     0 (status)
-  [u8]     1 (has_schedule_id)
-  [u32 BE] schedule_id_len
-  [bytes]  schedule_id
-  [schedule data...]
+  [u8]     1 (has_entry)
+  [u32 BE] route_len
+  [bytes]  route
+  [u32 BE] cron_len
+  [bytes]  cron
+  [u32 BE] payload_len
+  [bytes]  payload
 Response 2:
   [u8]     0 (status)
-  [u8]     1 (has_schedule_id)
-  [u32 BE] schedule_id_len
-  [bytes]  schedule_id
-  [schedule data...]
+  [u8]     1 (has_entry)
+  [u32 BE] route_len
+  [bytes]  route
+  ...
 Response N (final):
   [u8]     0 (status)
-  [u8]     0 (has_schedule_id = empty, no more)
+  [u8]     0 (has_entry=0, no more schedules)
 ```
 
-Client MUST continue reading until `has_schedule_id=0`.
+Client MUST continue reading until `has_entry=0`.
 
 #### Usage Example
 
@@ -3912,7 +3915,7 @@ schedules = client.schedule_list()
 
 # Cancel schedule
 client.schedule_cancel(
-    route="schedule://prod/app/reminders"app/reminders",
+    route="schedule://prod/app/reminders",
     schedule_id=schedule_id
 )
 ```uses route as identity:
@@ -3978,9 +3981,6 @@ Subscribe to schedule fire notifications for a route pattern.
 [bytes]   route_pattern (supports * wildcard)
 Response (status=0):
   [u8]     0
-  [u8]     has_schedule_id (1)
-  [u32 BE] schedule_id_len
-  [bytes]  schedule_id (subscription_id returned as string in schedule_id field)
 Response (status=1):
   [u8]     1
   [u32 BE] error_len
@@ -3993,8 +3993,8 @@ Response (status=1):
 
 **Semantics:**
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
-- Idempotent: re-subscribing to the same pattern returns the same subscription
-- The `subscription_id` is returned as a string in the `schedule_id` response field, following the Schedule domain's existing response codec
+- Idempotent: re-subscribing to the same pattern returns the same logical subscription
+- When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with subscription_id and payload; the client matches notifications to the pattern they subscribed with
 
 #### Schedule UNSUBSCRIBE (704)
 
@@ -4055,7 +4055,7 @@ Server pushes a schedule fire notification to a subscriber.
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
-| 201 | ENQUEUE_BATCH (reserved) |
+| 201 | ENQUEUE_BATCH (reserved; servers may reject with unknown message type until defined) |
 | 202 | RESERVE |
 | 203 | EXTEND |
 | 204 | COMPLETE |

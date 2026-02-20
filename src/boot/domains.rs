@@ -2014,78 +2014,8 @@ impl MailboxSink for LeaseDomainSink {
             }
         };
 
-        // Convert domain LeaseResponse to codec LeaseResponse for encoding
-        let codec_response = match domain_response {
-            LeaseResponse::Acquired { fencing_token } => {
-                crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token),
-                }
-            }
-            LeaseResponse::AlreadyHeld { fencing_token } => {
-                crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token),
-                }
-            }
-            LeaseResponse::Queued { fencing_token } => {
-                // Wait-capable acquire - return Ok with token (response will be sent later)
-                crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token),
-                }
-            }
-            LeaseResponse::AlreadyQueued { fencing_token } => {
-                crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token),
-                }
-            }
-            LeaseResponse::Timeout => {
-                crate::protocol::lease_codec::LeaseResponse::Error("Acquire timeout".to_string())
-            }
-            LeaseResponse::QueueFull { pending_count } => {
-                crate::protocol::lease_codec::LeaseResponse::Error(format!(
-                    "Queue full: {} pending",
-                    pending_count
-                ))
-            }
-            LeaseResponse::Renewed { fencing_token } => {
-                crate::protocol::lease_codec::LeaseResponse::Ok {
-                    token: Some(fencing_token),
-                }
-            }
-            LeaseResponse::Released => {
-                crate::protocol::lease_codec::LeaseResponse::Ok { token: None }
-            }
-            LeaseResponse::HeldByOther { current_owner } => {
-                crate::protocol::lease_codec::LeaseResponse::Error(format!(
-                    "Held by: {}",
-                    current_owner
-                ))
-            }
-            LeaseResponse::NotHeld => {
-                crate::protocol::lease_codec::LeaseResponse::Error("Not held".to_string())
-            }
-            LeaseResponse::Fenced { current_token } => {
-                crate::protocol::lease_codec::LeaseResponse::Error(format!(
-                    "Fenced: current token {}",
-                    current_token
-                ))
-            }
-            LeaseResponse::Expired => {
-                crate::protocol::lease_codec::LeaseResponse::Error("Expired".to_string())
-            }
-            LeaseResponse::NotFound => {
-                crate::protocol::lease_codec::LeaseResponse::Error("Not found".to_string())
-            }
-            LeaseResponse::Status {
-                owner_id: _,
-                fencing_token,
-                expires_in_secs: _,
-                pending_waiters: _,
-            } => crate::protocol::lease_codec::LeaseResponse::Ok {
-                token: Some(fencing_token),
-            },
-        };
-
-        let response_bytes = crate::protocol::lease_codec::encode_response(&codec_response);
+        let response_bytes =
+            crate::protocol::lease_codec::encode_domain_response(&domain_response);
         let response_ctx = FrameContext::new(
             frame_ctx.session_id,
             frame_ctx.channel_id,
