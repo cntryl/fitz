@@ -1,8 +1,10 @@
 package schedule
 
 import (
+	"encoding/binary"
 	"testing"
 
+	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -140,4 +142,96 @@ func TestShouldDefineScheduleTargets(t *testing.T) {
 	})
 }
 
-// Benchmarks for payload writers (would go here if needed)
+// Benchmarks
+
+func BenchmarkEncodeScheduleCreate(b *testing.B) {
+	route := "schedule://acme/backup"
+	cronExpr := "0 0 * * *"
+	payload := []byte("backup-payload")
+	w := scheduleCreatePayloadWriter(route, cronExpr, payload)
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		w(buf)
+	}
+}
+
+func BenchmarkEncodeScheduleCancel(b *testing.B) {
+	route := "schedule://acme/backup"
+	w := scheduleCancelPayloadWriter(route)
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		w(buf)
+	}
+}
+
+func BenchmarkEncodeScheduleList(b *testing.B) {
+	w := scheduleListPayloadWriter()
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		w(buf)
+	}
+}
+
+func BenchmarkEncodeScheduleSubscribe(b *testing.B) {
+	pattern := "schedule://acme/*"
+	w := scheduleSubscribePayloadWriter(pattern)
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		w(buf)
+	}
+}
+
+func BenchmarkEncodeScheduleUnsubscribe(b *testing.B) {
+	pattern := "schedule://acme/*"
+	w := scheduleUnsubscribePayloadWriter(pattern)
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		w(buf)
+	}
+}
+
+func BenchmarkParseScheduleCreateResponse(b *testing.B) {
+	// [status=0] (success, no optional id)
+	payload := []byte{0}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = connection.ParseStandardResponse(payload)
+	}
+}
+
+func BenchmarkParseScheduleSubscribeResponse(b *testing.B) {
+	// [status=0][has_sub_id=1][u64 sub_id]
+	payload := make([]byte, 1+1+8)
+	payload[0] = 0
+	payload[1] = 1
+	binary.BigEndian.PutUint64(payload[2:10], 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		success, remaining, _ := connection.ParseStandardResponse(payload)
+		if success && len(remaining) >= 9 && remaining[0] == 1 {
+			_, _, _ = connection.ReadU64BE(remaining, 1)
+		}
+	}
+}

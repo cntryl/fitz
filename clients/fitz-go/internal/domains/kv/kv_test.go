@@ -1,6 +1,7 @@
 package kv
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
@@ -524,5 +525,37 @@ func BenchmarkEncodeRollback(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = EncodeRollback(txID, route)
+	}
+}
+
+func BenchmarkParseBeginResponse(b *testing.B) {
+	// [status=0][u64 BE tx_id]
+	payload := make([]byte, 1+8)
+	payload[0] = 0
+	binary.BigEndian.PutUint64(payload[1:9], 12345)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		success, remaining, _ := connection.ParseStandardResponse(payload)
+		if success && len(remaining) >= 8 {
+			_, _, _ = connection.ReadU64BE(remaining, 0)
+		}
+	}
+}
+
+func BenchmarkParseScanResponse(b *testing.B) {
+	// [item_count=1][key_len=3][key][value_len=5][value][has_more=0]
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteU32BE(buf, 1)
+	connection.WriteBytes(buf, []byte("key"))
+	connection.WriteBytes(buf, []byte("value"))
+	buf.WriteByte(0)
+	payload := make([]byte, buf.Len())
+	copy(payload, buf.Bytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = parseScanResponse(payload)
 	}
 }

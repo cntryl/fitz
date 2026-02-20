@@ -591,3 +591,34 @@ func BenchmarkEncodeStreamUnsubscribe(b *testing.B) {
 		_, _ = EncodeStreamUnsubscribe(route)
 	}
 }
+
+func BenchmarkParseStreamReadResponse(b *testing.B) {
+	// data blob: [u32 count=1][u64 offset][u32 body_len][body]
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteU32BE(buf, 1)
+	connection.WriteU64BE(buf, 1)
+	connection.WriteBytes(buf, []byte("record1"))
+	payload := make([]byte, buf.Len())
+	copy(payload, buf.Bytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = parseReadResponse(payload)
+	}
+}
+
+func BenchmarkParseStreamLastResponse(b *testing.B) {
+	// single record: [u64 offset][u32 body_len][body]
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteU64BE(buf, 1)
+	connection.WriteBytes(buf, []byte("last"))
+	payload := make([]byte, buf.Len())
+	copy(payload, buf.Bytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = parseRecord(payload, 0)
+	}
+}

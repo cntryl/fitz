@@ -1,8 +1,10 @@
 package notice
 
 import (
+	"encoding/binary"
 	"testing"
 
+	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -269,4 +271,20 @@ func BenchmarkEncodePublish(b *testing.B) {
 			_ = encodePublish(route, payload)
 		}
 	})
+}
+
+func BenchmarkParseSubscribeResponse(b *testing.B) {
+	// [status=0][has_sub_id=1][u64 sub_id]
+	payload := make([]byte, 1+1+8)
+	payload[0] = 0
+	payload[1] = 1
+	binary.BigEndian.PutUint64(payload[2:10], 999)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		success, remaining, _ := connection.ParseStandardResponse(payload)
+		if success && len(remaining) >= 9 && remaining[0] == 1 {
+			_, _, _ = connection.ReadU64BE(remaining, 1)
+		}
+	}
 }

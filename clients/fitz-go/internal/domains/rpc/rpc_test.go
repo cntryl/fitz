@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -405,4 +406,14 @@ func BenchmarkEncodeRPCResponse(b *testing.B) {
 			_, _ = EncodeRPCResponse(correlationID, 100, body, true)
 		}
 	})
+}
+
+func BenchmarkParseRpcAckResponse(b *testing.B) {
+	// [status=0] (ack only)
+	payload := []byte{0}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = connection.ParseStandardResponse(payload)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -248,5 +249,39 @@ func BenchmarkEncodeLeaseQuery(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = EncodeLeaseQuery(route)
+	}
+}
+
+func BenchmarkParseLeaseAcquireResponse(b *testing.B) {
+	// [status=0][response_type=0][u64 BE fencing_token]
+	payload := make([]byte, 1+1+8)
+	payload[0] = 0
+	payload[1] = 0 // Acquired
+	binary.BigEndian.PutUint64(payload[2:10], 0x123456789ABCDEF0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		success, remaining, _ := connection.ParseStandardResponse(payload)
+		if success && len(remaining) >= 9 {
+			_ = remaining[0]
+			_ = binary.BigEndian.Uint64(remaining[1:9])
+		}
+	}
+}
+
+func BenchmarkParseLeaseQueryResponse(b *testing.B) {
+	// [status=0][has_holder=0][u32 pending_waiters=0]
+	payload := make([]byte, 1+1+4)
+	payload[0] = 0
+	payload[1] = 0
+	binary.BigEndian.PutUint32(payload[2:6], 0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		success, remaining, _ := connection.ParseStandardResponse(payload)
+		if success && len(remaining) >= 5 {
+			_ = remaining[0]
+			_ = binary.BigEndian.Uint32(remaining[1:5])
+		}
 	}
 }

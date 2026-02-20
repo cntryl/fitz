@@ -295,3 +295,45 @@ func BenchmarkDispatchResponse(b *testing.B) {
 		mux.Dispatch(uint16(100+i%100), payload)
 	}
 }
+
+func BenchmarkParseStandardResponseSuccess(b *testing.B) {
+	// [status=0][1K remaining]
+	remaining := make([]byte, 1024)
+	payload := make([]byte, 1+len(remaining))
+	payload[0] = 0
+	copy(payload[1:], remaining)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = connection.ParseStandardResponse(payload)
+	}
+}
+
+func BenchmarkParseStandardResponseError(b *testing.B) {
+	// [status=1][u32 len][error message]
+	buf := connection.GetBuffer()
+	defer connection.PutBuffer(buf)
+	connection.WriteU8(buf, 1)
+	connection.WriteString(buf, "test error message")
+	payload := make([]byte, buf.Len())
+	copy(payload, buf.Bytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = connection.ParseStandardResponse(payload)
+	}
+}
+
+func BenchmarkGetPutBuffer(b *testing.B) {
+	// Warm up the pool
+	for i := 0; i < 10; i++ {
+		buf := connection.GetBuffer()
+		connection.PutBuffer(buf)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf := connection.GetBuffer()
+		connection.PutBuffer(buf)
+	}
+}
