@@ -9,6 +9,8 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Record represents a single stream record.
@@ -76,16 +78,33 @@ func NewClient(conn *connection.Connection) Client {
 // Response: [status][u8 has_session_id][u64 session_id if has=1][bytes data]
 // Expected offset (OCC) is sent only here; the session tracks it internally on the server.
 func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Begin", trace.WithAttributes(
+		attribute.String("fitz.route", route),
+		attribute.Int64("fitz.expected_offset", int64(expectedOffset)),
+	))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("stream.Begin", "route", route, "expected_offset", expectedOffset)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamBegin, streamBeginPayloadWriter(route, expectedOffset, nil))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Begin failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("BEGIN request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Begin failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("BEGIN failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Begin failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("BEGIN failed: unexpected status")
 	}
 
@@ -108,16 +127,30 @@ func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64)
 // Append per server stream_codec.rs. Expected offset is tracked by the session (established at Begin).
 // Request: [u64 session_id][bytes body][optional bytes metadata]
 func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
+	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Append", trace.WithAttributes(
+		attribute.String("fitz.route", s.route),
+		attribute.Int64("fitz.session_id", int64(s.sessionID)),
+	))
+	defer span.End()
 	resp, err := s.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamAppend, streamAppendPayloadWriter(s.sessionID, body, nil))
 	if err != nil {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Append failed", "route", s.route, "session_id", s.sessionID, "error", err)
+		}
 		return 0, fmt.Errorf("APPEND request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Append failed", "route", s.route, "session_id", s.sessionID, "error", err)
+		}
 		return 0, fmt.Errorf("APPEND failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Append failed", "route", s.route, "session_id", s.sessionID, "status", "unexpected")
+		}
 		return 0, fmt.Errorf("APPEND failed: unexpected status")
 	}
 
@@ -142,16 +175,30 @@ func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
 // Commit per server stream_codec.rs:
 // Request: [u64 session_id][u8 mode] where mode: 0=Buffered, 1=Sync
 func (s *session) Commit(ctx context.Context) error {
+	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Commit", trace.WithAttributes(
+		attribute.String("fitz.route", s.route),
+		attribute.Int64("fitz.session_id", int64(s.sessionID)),
+	))
+	defer span.End()
 	resp, err := s.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamCommit, streamCommitPayloadWriter(s.sessionID, 0))
 	if err != nil {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Commit failed", "route", s.route, "session_id", s.sessionID, "error", err)
+		}
 		return fmt.Errorf("COMMIT request failed: %w", err)
 	}
 
 	success, _, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Commit failed", "route", s.route, "session_id", s.sessionID, "error", err)
+		}
 		return fmt.Errorf("COMMIT failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Commit failed", "route", s.route, "session_id", s.sessionID, "status", "unexpected")
+		}
 		return fmt.Errorf("COMMIT failed: unexpected status")
 	}
 	return nil
@@ -160,16 +207,30 @@ func (s *session) Commit(ctx context.Context) error {
 // Rollback per server stream_codec.rs:
 // Request: [u64 session_id]
 func (s *session) Rollback(ctx context.Context) error {
+	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Rollback", trace.WithAttributes(
+		attribute.String("fitz.route", s.route),
+		attribute.Int64("fitz.session_id", int64(s.sessionID)),
+	))
+	defer span.End()
 	resp, err := s.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamRollback, streamRollbackPayloadWriter(s.sessionID))
 	if err != nil {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Rollback failed", "route", s.route, "session_id", s.sessionID, "error", err)
+		}
 		return fmt.Errorf("ROLLBACK request failed: %w", err)
 	}
 
 	success, _, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Rollback failed", "route", s.route, "session_id", s.sessionID, "error", err)
+		}
 		return fmt.Errorf("ROLLBACK failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := s.conn.Logger(); log != nil {
+			log.Error("stream.Rollback failed", "route", s.route, "session_id", s.sessionID, "status", "unexpected")
+		}
 		return fmt.Errorf("ROLLBACK failed: unexpected status")
 	}
 	return nil
@@ -179,16 +240,34 @@ func (s *session) Rollback(ctx context.Context) error {
 // Request: [string route][u64 from_offset][u64 limit][optional u64 max_bytes]
 // Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.ReadResource", trace.WithAttributes(
+		attribute.String("fitz.route", route),
+		attribute.Int64("fitz.from_offset", int64(fromOffset)),
+		attribute.Int64("fitz.limit", int64(limit)),
+	))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("stream.ReadResource", "route", route, "from_offset", fromOffset, "limit", limit)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamRead, streamReadPayloadWriter(route, fromOffset, limit, nil))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.ReadResource failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("READ request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.ReadResource failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("READ failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.ReadResource failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("READ failed: unexpected status")
 	}
 
@@ -208,16 +287,30 @@ func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint
 // Request: [string route]
 // Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) Last(ctx context.Context, route string) (*Record, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Last", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("stream.Last", "route", route)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamLast, streamLastPayloadWriter(route))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Last failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("LAST request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Last failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("LAST failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Last failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("LAST failed: unexpected status")
 	}
 
@@ -241,16 +334,30 @@ func (c *client) Last(ctx context.Context, route string) (*Record, error) {
 // Request: [string route]
 // Response: [status][u8 has_session_id][u64?][bytes data]
 func (c *client) GetMetadata(ctx context.Context, route string) (*Metadata, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.GetMetadata", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("stream.GetMetadata", "route", route)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamGetMetadata, streamGetMetadataPayloadWriter(route))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.GetMetadata failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("GET_METADATA request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.GetMetadata failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("GET_METADATA failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.GetMetadata failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("GET_METADATA failed: unexpected status")
 	}
 

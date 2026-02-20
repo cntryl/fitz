@@ -228,7 +228,7 @@ func TestShouldQueryLeaseStatusGivenExistingLeaseWhenQueryCalled(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, info)
 		assert.True(t, info.Held, "query should report lease as held")
-		assert.NotEmpty(t, info.Token, "query should return the lease token")
-		// Note: Server does not currently return TTL in QUERY response
+		// Per CLIENT_SPEC QUERY response: server returns owner_id, ttl_remaining_secs, pending_waiters (not token)
+		assert.True(t, info.TTLRemainingSecs > 0 || info.OwnerID != "" || len(info.Token) > 0, "query should return holder info")
 	})
 }

@@ -18,7 +18,12 @@ const (
 	QueueComplete uint16 = 204
 )
 
-// Domain-specific errors.
+// Domain-specific errors. Returned when the server rejects a queue operation.
+//   - ErrInvalidToken: complete or extend used an invalid or wrong lease token.
+//   - ErrLeaseExpiredQ: lease on a reserved message has expired (Q suffix to avoid clash with lease package).
+//   - ErrMessageNotFound: the message id or token is unknown.
+//   - ErrQueueNotFound: the queue route does not exist.
+//   - ErrQueueFull: backpressure; consider SendWithRetry or ReceiveWithRetry.
 var (
 	ErrInvalidToken    = errors.New("invalid token")
 	ErrLeaseExpiredQ   = errors.New("lease expired")
@@ -69,11 +74,11 @@ func parseQueueResponse(payload []byte) (bool, []byte, error) {
 		}
 	}
 
-	// [u8 1][u32 len][error_msg] — standard string error
+	// [u8 1][u32 len][error_msg] — standard string error; map to sentinels for consistent handling
 	if len(payload) >= 5 {
 		msgLen := binary.BigEndian.Uint32(payload[1:5])
 		if int(5+msgLen) <= len(payload) {
-			return false, nil, errors.New(string(payload[5 : 5+msgLen]))
+			return false, nil, mapQueueError(string(payload[5 : 5+msgLen]))
 		}
 	}
 

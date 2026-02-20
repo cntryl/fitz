@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cntryl/fitz-go/internal/core/debug"
 )
 
 // TCPTransport implements Transport for TCP connections with length-prefix framing.
@@ -29,16 +28,12 @@ type TCPTransport struct {
 
 // DialTCP creates a TCP transport to the specified address (host:port).
 func DialTCP(ctx context.Context, addr string) (Transport, error) {
-	debug.Transport("DIAL", addr)
-
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		debug.Transport("DIAL-FAIL", addr, err)
 		return nil, fmt.Errorf("dial tcp: %w", err)
 	}
 
-	debug.Transport("CONNECTED", addr)
 	return &TCPTransport{
 		conn:   conn,
 		addr:   addr,
@@ -94,8 +89,6 @@ func (t *TCPTransport) Read(ctx context.Context) ([]byte, error) {
 	t.readMu.Lock()
 	defer t.readMu.Unlock()
 
-	debug.Log("TCP-READ  waiting for length prefix... addr=%s", t.addr)
-
 	// Set read deadline from context
 	if deadline, ok := ctx.Deadline(); ok {
 		t.conn.SetReadDeadline(deadline)
@@ -113,7 +106,6 @@ func (t *TCPTransport) Read(ctx context.Context) ([]byte, error) {
 	}
 
 	frameLen := binary.BigEndian.Uint32(lengthBuf[:])
-	debug.Log("TCP-READ  got length prefix: %d bytes, reading frame body...", frameLen)
 
 	// Validate frame size BEFORE allocating (prevents OOM)
 	if frameLen > uint32(MaxFrameSize) {
@@ -130,7 +122,6 @@ func (t *TCPTransport) Read(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("read tcp frame body: %w", err)
 	}
 
-	debug.Log("TCP-READ  complete: frame_len=%d", frameLen)
 	return frame, nil
 }
 
@@ -140,7 +131,6 @@ func (t *TCPTransport) Close() error {
 		return nil // Already closed
 	}
 
-	debug.Transport("CLOSE", t.addr)
 	return t.conn.Close()
 }
 

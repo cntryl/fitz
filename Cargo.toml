@@ -57,6 +57,10 @@ tempfile = "3"
 cntryl-midge = { git = "https://github.com/cntryl/midge", branch = "main", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main" }
 
+# Patch transitive native-tls so Docker build succeeds (0.2.17 lacks Protocol::Tlsv13 match arm).
+[patch.crates-io]
+native-tls = { git = "https://github.com/sfackler/rust-native-tls", branch = "main" }
+
 [dev-dependencies]
 url = "2"
 futures-util = "0.3"

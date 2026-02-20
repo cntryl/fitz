@@ -14,6 +14,8 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/iter"
 	"github.com/cntryl/fitz-go/internal/core/retry"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // InboundRequest represents a request received by a worker.
@@ -39,6 +41,7 @@ type ResponseFrame struct {
 }
 
 // Subscription represents an active worker registration.
+// Call Unsubscribe to stop receiving requests and release the registration.
 type Subscription struct {
 	route  string
 	client *client
@@ -57,9 +60,11 @@ type Client interface {
 	Subscribe(ctx context.Context, route string, handler RPCHandler) (*Subscription, error)
 
 	// Call sends an RPC request and returns an iterator over response frames.
+	// Callers must call Close on the returned iterator when done to release resources.
 	Call(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error)
 
 	// CallWithRetry sends an RPC request with exponential backoff retry on backpressure (error code 6003).
+	// Callers must call Close on the returned iterator when done to release resources.
 	// Retries up to maxRetries times if the RPC system is overloaded.
 	CallWithRetry(ctx context.Context, route string, body []byte, timeout time.Duration, maxRetries int) (iter.Iterator[ResponseFrame], error)
 }
@@ -248,18 +253,32 @@ func (c *client) handleWorkerRequest(correlationID [16]byte, payload []byte) {
 // Request: [worker_route_len][worker_route]
 // Response: [status]
 func (c *client) Subscribe(ctx context.Context, route string, handler RPCHandler) (*Subscription, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.rpc.Subscribe", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("rpc.Subscribe", "route", route)
+	}
 	c.initRPCHandler()
 
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeRpcSubscribeWorker, rpcSubscribeWorkerPayloadWriter(route))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("rpc.Subscribe failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("SUBSCRIBE_WORKER request failed: %w", err)
 	}
 
 	success, _, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("rpc.Subscribe failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("SUBSCRIBE_WORKER failed: %w", mapRPCError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("rpc.Subscribe failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("SUBSCRIBE_WORKER failed: unexpected status")
 	}
 
@@ -287,6 +306,11 @@ func (c *client) unsubscribeWorker(route string) {
 // Response: [status] (ack that request was dispatched)
 // Actual responses come via RPC RESPONSE (303) messages.
 func (c *client) Call(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.rpc.Call", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("rpc.Call", "route", route)
+	}
 	c.initRPCHandler()
 
 	// Generate correlation ID
@@ -307,6 +331,9 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 		delete(c.pendingRPCs, correlationID)
 		c.mu.Unlock()
 		close(ch)
+		if log := c.conn.Logger(); log != nil {
+			log.Error("rpc.Call failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("REQUEST failed: %w", err)
 	}
 
@@ -316,6 +343,9 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 		delete(c.pendingRPCs, correlationID)
 		c.mu.Unlock()
 		close(ch)
+		if log := c.conn.Logger(); log != nil {
+			log.Error("rpc.Call failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("REQUEST failed: %w", mapRPCError(err.Error()))
 	}
 	if !success {
@@ -323,6 +353,9 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 		delete(c.pendingRPCs, correlationID)
 		c.mu.Unlock()
 		close(ch)
+		if log := c.conn.Logger(); log != nil {
+			log.Error("rpc.Call failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("REQUEST failed: unexpected status")
 	}
 
@@ -360,14 +393,14 @@ type responseWriter struct {
 	mu            sync.Mutex
 }
 
+// Send emits one response frame. RPC RESPONSE (303) is one-way: server forwards to caller and does not ack the worker.
 func (w *responseWriter) Send(body []byte) error {
 	w.mu.Lock()
 	seq := w.seq
 	w.seq++
 	w.mu.Unlock()
 
-	_, err := w.conn.SendRequestWithWriter(context.Background(), protocol.MessageTypeRpcResponse, rpcResponsePayloadWriter(w.correlationID, seq, body, false))
-	return err
+	return w.conn.SendFireAndForgetWithWriter(context.Background(), protocol.MessageTypeRpcResponse, rpcResponsePayloadWriter(w.correlationID, seq, body, false))
 }
 
 func (w *responseWriter) sendEnd() {
@@ -380,7 +413,7 @@ func (w *responseWriter) sendEnd() {
 		return
 	}
 
-	w.conn.SendRequest(context.Background(), protocol.MessageTypeRpcResponse, payload)
+	_ = w.conn.SendFireAndForget(context.Background(), protocol.MessageTypeRpcResponse, payload)
 }
 
 // rpcIterator iterates over response frames from a Call.

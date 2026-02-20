@@ -9,11 +9,16 @@ import (
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// ScheduleEntry represents a schedule returned by List.
+// ScheduleEntry represents a schedule returned by List (per CLIENT_SPEC: route, cron, payload).
 type ScheduleEntry struct {
-	ID string
+	ID      string // Route (spec uses route as identity)
+	Route   string
+	Cron    string
+	Payload []byte
 }
 
 // Notification is the payload delivered when a schedule fires (SCHEDULE_NOTIFY 705).
@@ -22,6 +27,7 @@ type Notification struct {
 }
 
 // ScheduleHandler is called when a schedule fires for a subscribed pattern.
+// It is fire-and-forget; the return value is not used and the server does not ack handler result.
 type ScheduleHandler func(ctx context.Context, n Notification)
 
 // Subscription represents an active subscription to schedule fire notifications.
@@ -42,14 +48,14 @@ func (s *Subscription) Unsubscribe() {
 
 // Client is the Schedule domain client interface.
 type Client interface {
-	// Create creates a cron-based schedule. Returns the schedule ID.
+	// Create creates a cron-based schedule at the given route (upsert per spec). Returns the schedule route (identity).
 	Create(ctx context.Context, route string, cronExpr string, payload []byte) (id string, err error)
 
-	// Cancel cancels a schedule by ID.
-	Cancel(ctx context.Context, scheduleID string) error
+	// Cancel cancels a schedule by route (route-based identity per CLIENT_SPEC).
+	Cancel(ctx context.Context, route string) error
 
-	// List returns all schedules for the given route.
-	List(ctx context.Context, route string) ([]ScheduleEntry, error)
+	// List returns all schedules in the current realm (no parameters per spec).
+	List(ctx context.Context) ([]ScheduleEntry, error)
 
 	// Subscribe subscribes to schedule fire notifications for the given route pattern.
 	// When a schedule fires, the handler is invoked with the schedule's payload.
@@ -60,9 +66,10 @@ type Client interface {
 type client struct {
 	conn *connection.Connection
 
-	mu            sync.RWMutex
-	initialized   bool
-	subscriptions map[uint64]*Subscription
+	mu              sync.RWMutex
+	initialized     bool
+	subscriptions   map[uint64]*Subscription
+	nextClientSubID uint64
 }
 
 func (c *client) initScheduleNotifyHandler() {
@@ -99,143 +106,197 @@ func NewClient(conn *connection.Connection) Client {
 	return &client{conn: conn, subscriptions: make(map[uint64]*Subscription)}
 }
 
-// Create per server schedule_codec.rs:
-// Request: [bytes payload] where payload is a nested TLV blob containing:
-//
-//	[u8 type=1][u16 BE cron_len][cron_bytes]
-//	[u8 type=2][u16 BE target_resource_len][target_resource_bytes]
-//	[u8 type=3][u16 BE target_operation_len][target_operation_bytes]
-//
-// Response: [status][u8 has_schedule_id][string schedule_id if has=1]
+// Create per CLIENT_SPEC.md: Request [route_len][route][cron_len][cron][payload_len][payload].
+// Response: status=0 (success); optional [u8 has_schedule_id][string schedule_id] when present.
+// Returns route as identity (spec uses route-based identity).
 func (c *client) Create(ctx context.Context, route string, cronExpr string, payload []byte) (string, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.schedule.Create", trace.WithAttributes(
+		attribute.String("fitz.route", route),
+		attribute.String("fitz.cron", cronExpr),
+	))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("schedule.Create", "route", route, "cron", cronExpr)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCreate, scheduleCreatePayloadWriter(route, cronExpr, payload))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Create failed", "route", route, "error", err)
+		}
 		return "", fmt.Errorf("CREATE request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Create failed", "route", route, "error", err)
+		}
 		return "", fmt.Errorf("CREATE failed: %w", mapScheduleError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Create failed", "route", route, "status", "unexpected")
+		}
 		return "", fmt.Errorf("CREATE failed: unexpected status")
 	}
 
-	// Parse optional schedule_id: [u8 has_schedule_id][string schedule_id if has=1]
-	if len(remaining) < 1 {
-		return "", fmt.Errorf("CREATE response too short")
+	// Optional schedule_id when server sends it; otherwise route is identity
+	if len(remaining) >= 1 && remaining[0] == 1 {
+		if len(remaining) >= 5 {
+			id, _, err := connection.ReadString(remaining, 1)
+			if err == nil {
+				return id, nil
+			}
+		}
 	}
-	hasScheduleID := remaining[0]
-	if hasScheduleID != 1 {
-		return "", nil // No schedule ID returned
-	}
-
-	scheduleID, _, err := connection.ReadString(remaining, 1)
-	if err != nil {
-		return "", fmt.Errorf("parse schedule_id: %w", err)
-	}
-
-	return scheduleID, nil
+	return route, nil
 }
 
-// Cancel per server schedule_codec.rs:
-// Request: [string schedule_id]
-// Response: [status][optional string schedule_id]
-func (c *client) Cancel(ctx context.Context, scheduleID string) error {
-	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCancel, scheduleCancelPayloadWriter(scheduleID))
+// Cancel per CLIENT_SPEC.md: Request [route_len][route] (route-based identity).
+func (c *client) Cancel(ctx context.Context, route string) error {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.schedule.Cancel", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("schedule.Cancel", "route", route)
+	}
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCancel, scheduleCancelPayloadWriter(route))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Cancel failed", "route", route, "error", err)
+		}
 		return fmt.Errorf("CANCEL request failed: %w", err)
 	}
 
 	success, _, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Cancel failed", "route", route, "error", err)
+		}
 		return fmt.Errorf("CANCEL failed: %w", mapScheduleError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Cancel failed", "route", route, "status", "unexpected")
+		}
 		return fmt.Errorf("CANCEL failed: unexpected status")
 	}
 
 	return nil
 }
 
-// List per server schedule_codec.rs:
-// Request: empty payload (no parameters)
-// Response: [status][optional string schedule_id]
-func (c *client) List(ctx context.Context, route string) ([]ScheduleEntry, error) {
-	// Server expects empty payload for LIST
+// List per CLIENT_SPEC.md: Request empty (no parameters). Response: [status][has_entry]; when has_entry=1: [route_len][route][cron_len][cron][payload_len][payload]. Read until has_entry=0.
+// Note: Spec defines streaming LIST (multiple response frames). This implementation reads a single response frame; if the server sends multiple frames per LIST, connection layer would need a SendStreamingRequest or similar to read until has_entry=0 across frames.
+func (c *client) List(ctx context.Context) ([]ScheduleEntry, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.schedule.List")
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("schedule.List")
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleList, scheduleListPayloadWriter())
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.List failed", "error", err)
+		}
 		return nil, fmt.Errorf("LIST request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.List failed", "error", err)
+		}
 		return nil, fmt.Errorf("LIST failed: %w", mapScheduleError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.List failed", "status", "unexpected")
+		}
 		return nil, fmt.Errorf("LIST failed: unexpected status")
 	}
 
-	// Response uses optional_string format: [u8 has_id][string id if has=1]
 	var entries []ScheduleEntry
 	offset := 0
 	for offset < len(remaining) {
-		if offset >= len(remaining) {
+		if offset+1 > len(remaining) {
 			break
 		}
 		hasEntry := remaining[offset]
 		offset++
 
 		if hasEntry == 0 {
-			break // No more entries (or None sentinel)
+			break
 		}
 
-		// Read schedule_id
-		id, newOffset, err := connection.ReadString(remaining, offset)
+		// Per spec: route_len, route, cron_len, cron, payload_len, payload
+		routeStr, newOffset, err := connection.ReadString(remaining, offset)
 		if err != nil {
 			break
 		}
 		offset = newOffset
-
-		entries = append(entries, ScheduleEntry{ID: id})
+		cronStr, newOffset, err := connection.ReadString(remaining, offset)
+		if err != nil {
+			break
+		}
+		offset = newOffset
+		payloadBytes, newOffset, err := connection.ReadBytes(remaining, offset)
+		if err != nil {
+			break
+		}
+		offset = newOffset
+		payloadCopy := make([]byte, len(payloadBytes))
+		copy(payloadCopy, payloadBytes)
+		entries = append(entries, ScheduleEntry{
+			ID:      routeStr,
+			Route:   routeStr,
+			Cron:    cronStr,
+			Payload: payloadCopy,
+		})
 	}
 
 	return entries, nil
 }
 
-// Subscribe per CLIENT_SPEC.md (703):
-// Request: [string route_pattern]
-// Response (status=0): [u8 has_subscription_id (1)][u64 BE subscription_id]
+// Subscribe per CLIENT_SPEC.md (703): Request [route_pattern]. Response (status=0) only; no subscription_id in response.
+// When server sends optional subscription_id in response, we use it for NOTIFY (705) matching; otherwise use client-generated id.
 func (c *client) Subscribe(ctx context.Context, pattern string, handler ScheduleHandler) (*Subscription, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.schedule.Subscribe", trace.WithAttributes(attribute.String("fitz.pattern", pattern)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("schedule.Subscribe", "pattern", pattern)
+	}
 	c.initScheduleNotifyHandler()
 
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleSubscribe, scheduleSubscribePayloadWriter(pattern))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Subscribe failed", "pattern", pattern, "error", err)
+		}
 		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Subscribe failed", "pattern", pattern, "error", err)
+		}
 		return nil, fmt.Errorf("SUBSCRIBE failed: %w", mapScheduleError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("schedule.Subscribe failed", "pattern", pattern, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
 	}
 
-	if len(remaining) < 1 {
-		return nil, fmt.Errorf("SUBSCRIBE response too short")
+	var subID uint64
+	if len(remaining) >= 9 && remaining[0] == 1 {
+		subID, _, _ = connection.ReadU64BE(remaining, 1)
 	}
-	hasSubscriptionID := remaining[0]
-	if hasSubscriptionID != 1 {
-		return nil, fmt.Errorf("SUBSCRIBE response missing subscription_id")
-	}
-	if len(remaining) < 9 {
-		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
-	}
-
-	subID, _, err := connection.ReadU64BE(remaining, 1)
-	if err != nil {
-		return nil, fmt.Errorf("parse subscription_id: %w", err)
+	if subID == 0 {
+		c.mu.Lock()
+		c.nextClientSubID++
+		subID = c.nextClientSubID
+		c.mu.Unlock()
 	}
 
 	sub := &Subscription{

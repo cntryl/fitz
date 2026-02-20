@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"github.com/cntryl/fitz-go/internal/core/transport"
 	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/domains/kv"
@@ -65,6 +69,10 @@ type Config struct {
 
 	// Transport
 	TransportType TransportType // Auto, WebSocket, or TCP
+
+	// Observability (optional)
+	Logger *slog.Logger   // When nil, no logging.
+	Tracer trace.Tracer   // When nil, otel.Tracer(module) is used for spans.
 }
 
 // defaultConfig returns default client configuration.
@@ -120,6 +128,18 @@ func WithTransport(transportType TransportType) Option {
 	return func(c *Config) { c.TransportType = transportType }
 }
 
+// WithLogger sets the structured logger for connection and domain logging.
+// When nil or not set, no logs are emitted.
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *Config) { c.Logger = logger }
+}
+
+// WithTracer sets the OpenTelemetry tracer for spans.
+// When nil or not set, otel.Tracer(module) is used (no-op if no TracerProvider is set).
+func WithTracer(tracer trace.Tracer) Option {
+	return func(c *Config) { c.Tracer = tracer }
+}
+
 // NewClient creates a new Fitz client targeting the given address.
 // Call Connect() to establish the connection.
 func NewClient(addr string, tokenProvider types.TokenProvider) *Client {
@@ -133,12 +153,33 @@ func NewClient(addr string, tokenProvider types.TokenProvider) *Client {
 // Connect establishes a connection to the broker using the address and
 // TokenProvider configured during client construction.
 func (c *Client) Connect(ctx context.Context) error {
+	tracer := c.config.Tracer
+	if tracer == nil {
+		tracer = otel.Tracer("github.com/cntryl/fitz-go")
+	}
+	transportType := c.config.TransportType
+	if transportType == TransportAuto {
+		transportType = detectTransport(c.addr)
+	}
+	var span trace.Span
+	ctx, span = tracer.Start(ctx, "fitz.Connect", trace.WithAttributes(
+		attribute.String("fitz.addr", c.addr),
+		attribute.String("fitz.transport", transportTypeString(transportType)),
+	))
+	defer span.End()
+
+	if c.config.Logger != nil {
+		c.config.Logger.Info("connect started", "addr", c.addr)
+	}
 	// Get JWT from token provider
 	jwt := ""
 	if c.tokenProvider != nil {
 		var err error
 		jwt, err = c.tokenProvider(ctx)
 		if err != nil {
+			if c.config.Logger != nil {
+				c.config.Logger.Error("get token failed", "error", err)
+			}
 			return fmt.Errorf("get token: %w", err)
 		}
 	}
@@ -147,13 +188,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.config.JWT = jwt
 
 	if err := c.config.validate(); err != nil {
+		if c.config.Logger != nil {
+			c.config.Logger.Error("invalid config", "error", err)
+		}
 		return fmt.Errorf("invalid config: %w", err)
-	}
-
-	// Determine transport type from URL if auto
-	transportType := c.config.TransportType
-	if transportType == TransportAuto {
-		transportType = detectTransport(c.config.URL)
 	}
 
 	// Dial transport
@@ -179,12 +217,17 @@ func (c *Client) Connect(ctx context.Context) error {
 		AuthTimeout:  c.config.AuthTimeout,
 		ReadTimeout:  c.config.ReadTimeout,
 		WriteTimeout: c.config.WriteTimeout,
+		Logger:       c.config.Logger,
+		Tracer:       c.config.Tracer,
 	}
 
 	conn := connection.New(trans, connCfg)
 
 	// Start connection (dispatch loop + CONNECT handshake per CLIENT_SPEC.md)
 	if err := conn.Start(ctx); err != nil {
+		if c.config.Logger != nil {
+			c.config.Logger.Error("start connection failed", "error", err)
+		}
 		trans.Close()
 		return fmt.Errorf("start connection: %w", err)
 	}
@@ -200,6 +243,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.leaseClient = lease.NewClient(conn)
 	c.scheduleClient = schedule.NewClient(conn)
 
+	if c.config.Logger != nil {
+		c.config.Logger.Info("connect success", "addr", c.addr)
+	}
 	return nil
 }
 
@@ -212,8 +258,26 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 	}
 
 	if err := cfg.validate(); err != nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Error("invalid config", "error", err)
+		}
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
+
+	transportType := cfg.TransportType
+	if transportType == TransportAuto {
+		transportType = detectTransport(cfg.URL)
+	}
+	tracer := cfg.Tracer
+	if tracer == nil {
+		tracer = otel.Tracer("github.com/cntryl/fitz-go")
+	}
+	var span trace.Span
+	ctx, span = tracer.Start(ctx, "fitz.Connect", trace.WithAttributes(
+		attribute.String("fitz.addr", cfg.URL),
+		attribute.String("fitz.transport", transportTypeString(transportType)),
+	))
+	defer span.End()
 
 	c := &Client{
 		addr:   cfg.URL,
@@ -221,12 +285,6 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 	}
 
 	c.config = cfg
-
-	// Determine transport type from URL if auto
-	transportType := cfg.TransportType
-	if transportType == TransportAuto {
-		transportType = detectTransport(cfg.URL)
-	}
 
 	// Dial transport
 	var trans transport.Transport
@@ -242,6 +300,9 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 	}
 
 	if err != nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Error("dial transport failed", "error", err)
+		}
 		return nil, fmt.Errorf("dial transport: %w", err)
 	}
 
@@ -251,12 +312,17 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 		AuthTimeout:  cfg.AuthTimeout,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
+		Logger:       cfg.Logger,
+		Tracer:       cfg.Tracer,
 	}
 
 	conn := connection.New(trans, connCfg)
 
 	// Start connection (dispatch loop + CONNECT handshake per CLIENT_SPEC.md)
 	if err := conn.Start(ctx); err != nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Error("start connection failed", "error", err)
+		}
 		trans.Close()
 		return nil, fmt.Errorf("start connection: %w", err)
 	}
@@ -272,6 +338,9 @@ func Dial(ctx context.Context, opts ...Option) (*Client, error) {
 	c.leaseClient = lease.NewClient(conn)
 	c.scheduleClient = schedule.NewClient(conn)
 
+	if cfg.Logger != nil {
+		cfg.Logger.Info("dial success", "url", cfg.URL)
+	}
 	return c, nil
 }
 
@@ -281,6 +350,17 @@ func detectTransport(url string) TransportType {
 		return TransportWebSocket
 	}
 	return TransportTCP
+}
+
+func transportTypeString(t TransportType) string {
+	switch t {
+	case TransportWebSocket:
+		return "websocket"
+	case TransportTCP:
+		return "tcp"
+	default:
+		return "auto"
+	}
 }
 
 // validate checks if the configuration is valid.
@@ -296,6 +376,9 @@ func (c *Config) validate() error {
 func (c *Client) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
+		if c.config.Logger != nil {
+			c.config.Logger.Info("client close")
+		}
 		if c.conn != nil {
 			err = c.conn.Close()
 		}

@@ -3,12 +3,17 @@ package testkit
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"strings"
 	"testing"
 	"time"
+
+	coreerrors "github.com/cntryl/fitz-go/internal/core/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Payload factories and precomputed test data generators
@@ -252,4 +257,15 @@ func generateRandomID(length int) string {
 		b[i] = charset[rand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+// AssertDomainErrorCode asserts that err is a domain error with the given code.
+// If err is nil or not a *coreerrors.DomainError, the test fails.
+// Use this when the client surfaces server error codes so tests are stable against message text changes.
+func AssertDomainErrorCode(t testing.TB, err error, code coreerrors.ErrorCode) {
+	t.Helper()
+	require.Error(t, err, "expected a non-nil error")
+	var domainErr *coreerrors.DomainError
+	require.True(t, errors.As(err, &domainErr), "expected error to be *errors.DomainError, got: %T", err)
+	assert.Equal(t, code, domainErr.Code, "domain error code mismatch: message=%q", domainErr.Message)
 }

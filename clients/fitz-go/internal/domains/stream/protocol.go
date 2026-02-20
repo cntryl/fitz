@@ -22,7 +22,10 @@ const (
 	StreamNotify      uint16 = 609 // Server -> Client only
 )
 
-// Domain-specific errors.
+// Domain-specific errors. Returned when the server rejects a stream operation.
+//   - ErrStreamNotFound: the stream route does not exist.
+//   - ErrStreamConflict: Begin failed due to expected-offset mismatch (OCC).
+//   - ErrStreamReadError: read failed (e.g. offset beyond watermark).
 var (
 	ErrStreamNotFound  = errors.New("stream not found")
 	ErrStreamConflict  = errors.New("stream conflict")

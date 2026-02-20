@@ -9,6 +9,8 @@ import (
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // NoticeMsg represents a received notification.
@@ -21,6 +23,7 @@ type NoticeMsg struct {
 type NoticeHandler func(ctx context.Context, msg NoticeMsg) error
 
 // Subscription represents an active notice subscription.
+// Call Unsubscribe to stop receiving and release the subscription.
 type Subscription struct {
 	subID   uint64
 	route   string
@@ -99,7 +102,15 @@ func (c *client) handleNotify(subID uint64, route string, payload []byte) {
 // Request: [route_len][route][payload_len][payload]
 // Notice PUBLISH is fire-and-forget — the server does not send a response frame.
 func (c *client) Publish(ctx context.Context, route string, body []byte) error {
-	if err := c.conn.SendOneWayWithWriter(ctx, protocol.MessageTypeNoticePublish, publishPayloadWriter(route, body)); err != nil {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.notice.Publish", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("notice.Publish", "route", route)
+	}
+	if err := c.conn.SendFireAndForgetWithWriter(ctx, protocol.MessageTypeNoticePublish, publishPayloadWriter(route, body)); err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("notice.Publish failed", "route", route, "error", err)
+		}
 		return fmt.Errorf("PUBLISH failed: %w", err)
 	}
 
@@ -110,18 +121,32 @@ func (c *client) Publish(ctx context.Context, route string, body []byte) error {
 // Request: [pattern_len][pattern]
 // Response: [status][subscription_id(u64)]
 func (c *client) Subscribe(ctx context.Context, pattern string, handler NoticeHandler) (*Subscription, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.notice.Subscribe", trace.WithAttributes(attribute.String("fitz.pattern", pattern)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("notice.Subscribe", "pattern", pattern)
+	}
 	c.initNotifyHandler()
 
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeNoticeSubscribe, subscribePayloadWriter(pattern))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("notice.Subscribe failed", "pattern", pattern, "error", err)
+		}
 		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
-		return nil, fmt.Errorf("SUBSCRIBE failed: %w", err)
+		if log := c.conn.Logger(); log != nil {
+			log.Error("notice.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: %w", mapNoticeError(err.Error()))
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("notice.Subscribe failed", "pattern", pattern, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
 	}
 

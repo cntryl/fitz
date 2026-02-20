@@ -9,6 +9,8 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/retry"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // QueueItem represents a received (reserved) queue message.
@@ -24,15 +26,29 @@ type QueueItem struct {
 
 // Extend extends the lease on this queue item.
 func (q *QueueItem) Extend(ctx context.Context, leaseSecs uint64) error {
+	ctx, span := q.conn.Tracer().Start(ctx, "fitz.queue.Extend", trace.WithAttributes(
+		attribute.String("fitz.route", q.route),
+		attribute.Int64("fitz.message_id", int64(q.ID)),
+	))
+	defer span.End()
 	resp, err := q.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueExtend, extendPayloadWriter(q.route, q.ID, q.Token, leaseSecs))
 	if err != nil {
+		if log := q.conn.Logger(); log != nil {
+			log.Error("queue.Extend failed", "route", q.route, "id", q.ID, "error", err)
+		}
 		return fmt.Errorf("EXTEND request failed: %w", err)
 	}
 	success, _, err := parseQueueResponse(resp)
 	if err != nil {
+		if log := q.conn.Logger(); log != nil {
+			log.Error("queue.Extend failed", "route", q.route, "id", q.ID, "error", err)
+		}
 		return fmt.Errorf("EXTEND failed: %w", err)
 	}
 	if !success {
+		if log := q.conn.Logger(); log != nil {
+			log.Error("queue.Extend failed", "route", q.route, "id", q.ID, "status", "unexpected")
+		}
 		return fmt.Errorf("EXTEND failed: unexpected status")
 	}
 	return nil
@@ -46,15 +62,29 @@ func (q *QueueItem) Complete(ctx context.Context) error {
 // CompleteWithToken completes the item using an explicit token (e.g. for testing invalid token).
 // Normally use Complete(ctx) which uses the item's token.
 func (q *QueueItem) CompleteWithToken(ctx context.Context, token uint64) error {
+	ctx, span := q.conn.Tracer().Start(ctx, "fitz.queue.Complete", trace.WithAttributes(
+		attribute.String("fitz.route", q.route),
+		attribute.Int64("fitz.message_id", int64(q.ID)),
+	))
+	defer span.End()
 	resp, err := q.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueComplete, completePayloadWriter(q.route, q.ID, token))
 	if err != nil {
+		if log := q.conn.Logger(); log != nil {
+			log.Error("queue.Complete failed", "route", q.route, "id", q.ID, "error", err)
+		}
 		return fmt.Errorf("COMPLETE request failed: %w", err)
 	}
 	success, _, err := parseQueueResponse(resp)
 	if err != nil {
+		if log := q.conn.Logger(); log != nil {
+			log.Error("queue.Complete failed", "route", q.route, "id", q.ID, "error", err)
+		}
 		return fmt.Errorf("COMPLETE failed: %w", err)
 	}
 	if !success {
+		if log := q.conn.Logger(); log != nil {
+			log.Error("queue.Complete failed", "route", q.route, "id", q.ID, "status", "unexpected")
+		}
 		return fmt.Errorf("COMPLETE failed: unexpected status")
 	}
 	return nil
@@ -90,16 +120,30 @@ func NewClient(conn *connection.Connection) Client {
 // Request: [route_len][route][body_len][body][has_delay(u8)][delay_secs?]
 // Response: [status][message_id (u64 BE)]
 func (c *client) Send(ctx context.Context, route string, body []byte) (uint64, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.queue.Send", trace.WithAttributes(attribute.String("fitz.route", route)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("queue.Send", "route", route)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueEnqueue, enqueuePayloadWriter(route, body, 0))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Send failed", "route", route, "error", err)
+		}
 		return 0, fmt.Errorf("ENQUEUE request failed: %w", err)
 	}
 
 	success, remaining, err := parseQueueResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Send failed", "route", route, "error", err)
+		}
 		return 0, fmt.Errorf("ENQUEUE failed: %w", err)
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Send failed", "route", route, "status", "unexpected")
+		}
 		return 0, fmt.Errorf("ENQUEUE failed: unexpected status")
 	}
 
@@ -152,16 +196,33 @@ func (c *client) ReceiveWithRetry(ctx context.Context, route string, leaseSecs u
 // Request: [route_len][route][lease_seconds][has_batch_size][batch_size?][has_wait_seconds][wait_seconds?]
 // Response: [status][lease_count(u32)][{message_id, lease_token, body_len, body}...]
 func (c *client) Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.queue.Receive", trace.WithAttributes(
+		attribute.String("fitz.route", route),
+		attribute.Int("fitz.batch_size", int(batchSize)),
+	))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("queue.Receive", "route", route, "batch_size", batchSize)
+	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueReserve, reservePayloadWriter(route, leaseSecs, batchSize, 0))
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Receive failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("RESERVE request failed: %w", err)
 	}
 
 	success, remaining, err := parseQueueResponse(resp)
 	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Receive failed", "route", route, "error", err)
+		}
 		return nil, fmt.Errorf("RESERVE failed: %w", err)
 	}
 	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Receive failed", "route", route, "status", "unexpected")
+		}
 		return nil, fmt.Errorf("RESERVE failed: unexpected status")
 	}
 

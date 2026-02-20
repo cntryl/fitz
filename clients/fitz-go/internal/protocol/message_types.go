@@ -18,9 +18,9 @@ const (
 	MessageTypeKvDeleteRange uint16 = 107
 	MessageTypeKvScan        uint16 = 108
 
-	// Queue Domain (200-299)
+	// Queue Domain (200-299). 201 = ENQUEUE_BATCH is reserved per CLIENT_SPEC; do not use.
 	MessageTypeQueueEnqueue  uint16 = 200
-	MessageTypeQueueReserve  uint16 = 202
+	MessageTypeQueueReserve   uint16 = 202
 	MessageTypeQueueExtend   uint16 = 203
 	MessageTypeQueueComplete uint16 = 204
 

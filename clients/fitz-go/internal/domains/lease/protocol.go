@@ -17,8 +17,14 @@ const (
 )
 
 // Domain-specific errors (mapped from broker error responses).
+//   - ErrLeaseHeld: acquire failed because the lease is held by another owner.
+//   - ErrLeaseQueued: request queued behind the current holder.
+//   - ErrInvalidFence: renew or release used an invalid or wrong fencing token.
+//   - ErrLeaseExpired: the lease has already expired.
+//   - ErrLeaseNotFound: no lease exists for the route.
 var (
 	ErrLeaseHeld     = errors.New("lease held")
+	ErrLeaseQueued   = errors.New("lease queued")
 	ErrInvalidFence  = errors.New("invalid fencing token")
 	ErrLeaseExpired  = errors.New("lease expired")
 	ErrLeaseNotFound = errors.New("lease not found")

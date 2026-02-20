@@ -5,13 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/cntryl/fitz-go/internal/core/debug"
 	"github.com/cntryl/fitz-go/internal/core/transport"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // State represents the connection lifecycle state.
@@ -73,6 +75,10 @@ type Connection struct {
 
 	// Configuration
 	cfg Config
+
+	// Observability (optional)
+	logger *slog.Logger
+	tracer trace.Tracer
 }
 
 // Config contains connection configuration.
@@ -83,6 +89,10 @@ type Config struct {
 	WriteTimeout     time.Duration // Default 10s
 	ReconnectEnabled bool
 	ReconnectBackoff time.Duration
+
+	// Observability (optional)
+	Logger *slog.Logger   // When nil, no logging.
+	Tracer trace.Tracer   // When nil, otel.Tracer(module) is used.
 }
 
 // DefaultConfig returns default configuration.
@@ -117,6 +127,10 @@ func New(trans transport.Transport, cfg Config) *Connection {
 		cfg.WriteTimeout = 10 * time.Second
 	}
 
+	tracer := cfg.Tracer
+	if tracer == nil {
+		tracer = otel.Tracer("github.com/cntryl/fitz-go")
+	}
 	return &Connection{
 		transport:     trans,
 		jwt:           cfg.JWT,
@@ -126,7 +140,19 @@ func New(trans transport.Transport, cfg Config) *Connection {
 		cancel:        cancel,
 		done:          make(chan struct{}),
 		cfg:           cfg,
+		logger:        cfg.Logger,
+		tracer:        tracer,
 	}
+}
+
+// Logger returns the structured logger, or nil if not set.
+func (c *Connection) Logger() *slog.Logger {
+	return c.logger
+}
+
+// Tracer returns the OpenTelemetry tracer (never nil).
+func (c *Connection) Tracer() trace.Tracer {
+	return c.tracer
 }
 
 // Start begins the connection lifecycle.
@@ -134,12 +160,18 @@ func New(trans transport.Transport, cfg Config) *Connection {
 // Blocks until authentication is confirmed or fails.
 func (c *Connection) Start(ctx context.Context) error {
 	c.setState(StateAuthenticating)
+	if c.logger != nil {
+		c.logger.Info("connection authenticating")
+	}
 
 	// Start dispatch loop
 	go c.dispatchLoop()
 
 	// Send CONNECT
 	if err := c.sendConnect(ctx); err != nil {
+		if c.logger != nil {
+			c.logger.Error("send CONNECT failed", "error", err)
+		}
 		c.Close()
 		return fmt.Errorf("send CONNECT: %w", err)
 	}
@@ -150,10 +182,16 @@ func (c *Connection) Start(ctx context.Context) error {
 	select {
 	case <-c.authConfirmed:
 		// Auth succeeded (first response received or immediate for anonymous)
+		if c.logger != nil {
+			c.logger.Info("connection authenticated")
+		}
 		return nil
 
 	case <-c.done:
 		// Connection closed during auth (likely invalid JWT)
+		if c.logger != nil {
+			c.logger.Error("authentication failed", "error", c.authError)
+		}
 		if c.authError != nil {
 			return c.authError
 		}
@@ -166,6 +204,9 @@ func (c *Connection) Start(ctx context.Context) error {
 
 	case <-time.After(authTimeout):
 		// No response within timeout
+		if c.logger != nil {
+			c.logger.Error("authentication timeout")
+		}
 		c.Close()
 		return ErrAuthenticationTimeout
 	}
@@ -182,8 +223,6 @@ func (c *Connection) sendConnect(ctx context.Context) error {
 	}
 	defer frame.Release()
 
-	debug.FrameSend(protocol.MessageTypeConnect, payload)
-
 	writeCtx := ctx
 	if c.cfg.WriteTimeout > 0 {
 		var cancel context.CancelFunc
@@ -192,14 +231,12 @@ func (c *Connection) sendConnect(ctx context.Context) error {
 	}
 
 	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
-		debug.Log("CONNECT write failed: %v", err)
 		return err
 	}
 
 	// For anonymous mode (empty JWT), confirm immediately
 	// Per CLIENT_SPEC.md: Server stays silent on valid JWT
 	if c.jwt == "" {
-		debug.Log("Anonymous mode — confirming auth immediately")
 		c.confirmAuthentication()
 	}
 
@@ -240,28 +277,25 @@ func (c *Connection) dispatchLoop() {
 			frame, err := c.transport.Read(readCtx)
 			cancel()
 			if err != nil {
-				if debug.Enabled {
-					debug.Log("Transport read error: %v", err)
-				}
 				c.handleReadError(err)
 				return
 			}
 
-			debug.FrameRecvRaw(frame)
-
 			// Decode frame (MessageType + payload)
 			msgType, payload, err := protocol.DecodeFrame(frame)
 			if err != nil {
-				debug.DecodeError(frame, err)
+				if c.logger != nil {
+					c.logger.Error("decode frame failed", "error", err)
+				}
 				c.setConnError(fmt.Errorf("decode frame: %w", err))
 				return
 			}
-
-			debug.FrameRecv(msgType, payload)
+			if c.logger != nil {
+				c.logger.Debug("frame received", "msg_type", msgType)
+			}
 
 			// First valid response confirms authentication
 			if firstResponse {
-				debug.Log("First response received — auth confirmed")
 				c.confirmAuthentication()
 				firstResponse = false
 			}
@@ -273,28 +307,25 @@ func (c *Connection) dispatchLoop() {
 
 		frame, err := c.transport.Read(readCtx)
 		if err != nil {
-			if debug.Enabled {
-				debug.Log("Transport read error: %v", err)
-			}
 			c.handleReadError(err)
 			return
 		}
 
-		debug.FrameRecvRaw(frame)
-
 		// Decode frame (MessageType + payload)
 		msgType, payload, err := protocol.DecodeFrame(frame)
 		if err != nil {
-			debug.DecodeError(frame, err)
+			if c.logger != nil {
+				c.logger.Error("decode frame failed", "error", err)
+			}
 			c.setConnError(fmt.Errorf("decode frame: %w", err))
 			return
 		}
-
-		debug.FrameRecv(msgType, payload)
+		if c.logger != nil {
+			c.logger.Debug("frame received", "msg_type", msgType)
+		}
 
 		// First valid response confirms authentication
 		if firstResponse {
-			debug.Log("First response received — auth confirmed")
 			c.confirmAuthentication()
 			firstResponse = false
 		}
@@ -310,6 +341,9 @@ func (c *Connection) handleReadError(err error) {
 		// Clean shutdown
 		c.setConnError(nil)
 		return
+	}
+	if c.logger != nil {
+		c.logger.Warn("read error", "error", err)
 	}
 
 	// Connection closed by server (might be auth failure)
@@ -344,7 +378,9 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	}
 	defer frame.Release()
 
-	debug.FrameSend(msgType, payload)
+	if c.logger != nil {
+		c.logger.Debug("request sent", "msg_type", msgType)
+	}
 
 	// Send request
 	writeCtx := ctx
@@ -355,7 +391,6 @@ func (c *Connection) SendRequest(ctx context.Context, msgType uint16, payload []
 	}
 
 	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
-		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
@@ -407,6 +442,10 @@ func (c *Connection) SendRequestWithWriter(ctx context.Context, msgType uint16, 
 	}
 	defer frame.Release()
 
+	if c.logger != nil {
+		c.logger.Debug("request sent", "msg_type", msgType)
+	}
+
 	// Send request
 	writeCtx := ctx
 	if c.cfg.WriteTimeout > 0 {
@@ -416,7 +455,6 @@ func (c *Connection) SendRequestWithWriter(ctx context.Context, msgType uint16, 
 	}
 
 	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
-		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
@@ -445,9 +483,9 @@ func (c *Connection) SendRequestWithWriter(ctx context.Context, msgType uint16, 
 	}
 }
 
-// SendOneWay sends a fire-and-forget frame (no response expected).
-// Used for operations like Notice PUBLISH where the server does not reply.
-func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []byte) error {
+// SendFireAndForget sends a frame without expecting a response.
+// Used for operations like Notice PUBLISH or RPC response where the server does not reply.
+func (c *Connection) SendFireAndForget(ctx context.Context, msgType uint16, payload []byte) error {
 	if !c.isAuthenticated() {
 		return ErrNotAuthenticated
 	}
@@ -458,8 +496,6 @@ func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []b
 	}
 	defer frame.Release()
 
-	debug.FrameSend(msgType, payload)
-
 	writeCtx := ctx
 	if c.cfg.WriteTimeout > 0 {
 		var cancel context.CancelFunc
@@ -468,15 +504,14 @@ func (c *Connection) SendOneWay(ctx context.Context, msgType uint16, payload []b
 	}
 
 	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
-		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return fmt.Errorf("write fire-and-forget: %w", err)
 	}
 
 	return nil
 }
 
-// SendOneWayWithWriter sends a fire-and-forget frame using a payload writer.
-func (c *Connection) SendOneWayWithWriter(ctx context.Context, msgType uint16, writePayload func(*bytes.Buffer)) error {
+// SendFireAndForgetWithWriter sends a fire-and-forget frame using a payload writer.
+func (c *Connection) SendFireAndForgetWithWriter(ctx context.Context, msgType uint16, writePayload func(*bytes.Buffer)) error {
 	if !c.isAuthenticated() {
 		return ErrNotAuthenticated
 	}
@@ -495,7 +530,6 @@ func (c *Connection) SendOneWayWithWriter(ctx context.Context, msgType uint16, w
 	}
 
 	if err := c.transport.Write(writeCtx, frame.Bytes()); err != nil {
-		debug.Log("Write error for msg_type=%d: %v", msgType, err)
 		return fmt.Errorf("write fire-and-forget: %w", err)
 	}
 
@@ -516,6 +550,9 @@ func (c *Connection) Close() error {
 	<-c.done
 
 	c.setState(StateClosed)
+	if c.logger != nil {
+		c.logger.Info("connection closed")
+	}
 
 	return err
 }

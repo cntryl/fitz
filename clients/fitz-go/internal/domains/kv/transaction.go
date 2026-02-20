@@ -8,6 +8,8 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
 	"github.com/cntryl/fitz-go/internal/protocol"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // KVPair is a key/value pair returned by Scan operations.
@@ -70,6 +72,11 @@ func (r *readOnlyTransaction) Scan(ctx context.Context, query ScanQuery) (iter.I
 // Returns (nil, false, nil) if key does not exist (not an error per CLIENT_SPEC.md).
 // Returns (nil, false, err) on actual errors.
 func (t *transaction) Get(ctx context.Context, key []byte) ([]byte, bool, error) {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Get", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return nil, false, err
@@ -134,6 +141,11 @@ func (t *transaction) Get(ctx context.Context, key []byte) ([]byte, bool, error)
 
 // Put upserts a key/value pair (create or overwrite).
 func (t *transaction) Put(ctx context.Context, key, value []byte) error {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Put", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return err
@@ -173,6 +185,11 @@ func (t *transaction) Put(ctx context.Context, key, value []byte) error {
 
 // Insert creates a new key/value pair. Fails if key already exists.
 func (t *transaction) Insert(ctx context.Context, key, value []byte) error {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Insert", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return err
@@ -212,6 +229,11 @@ func (t *transaction) Insert(ctx context.Context, key, value []byte) error {
 
 // Delete removes a key. Idempotent (deleting non-existent key succeeds).
 func (t *transaction) Delete(ctx context.Context, key []byte) error {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Delete", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return err
@@ -248,6 +270,11 @@ func (t *transaction) Delete(ctx context.Context, key []byte) error {
 
 // DeleteRange removes all keys in range [startKey, endKey) (exclusive end).
 func (t *transaction) DeleteRange(ctx context.Context, startKey, endKey []byte) error {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.DeleteRange", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return err
@@ -291,6 +318,11 @@ func (t *transaction) DeleteRange(ctx context.Context, startKey, endKey []byte) 
 // Per CLIENT_SPEC.md: SCAN returns batch results in one response (not streaming).
 // Use SliceIterator for simple in-memory iteration.
 func (t *transaction) Scan(ctx context.Context, query ScanQuery) (iter.Iterator[KVPair], bool, error) {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Scan", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return nil, false, err
@@ -390,6 +422,11 @@ func parseScanResponse(remaining []byte) ([]KVPair, bool, error) {
 
 // Commit finalizes the transaction durably.
 func (t *transaction) Commit(ctx context.Context) error {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Commit", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state
 	if err := t.checkState(); err != nil {
 		return err
@@ -419,6 +456,11 @@ func (t *transaction) Commit(ctx context.Context) error {
 
 // Rollback aborts the transaction, discarding all changes.
 func (t *transaction) Rollback(ctx context.Context) error {
+	ctx, span := t.conn.Tracer().Start(ctx, "fitz.kv.Rollback", trace.WithAttributes(
+		attribute.String("fitz.route", t.route),
+		attribute.Int64("fitz.tx_id", int64(t.txID)),
+	))
+	defer span.End()
 	// Validate state (allow rollback even if committed)
 	if t.rolledback.Load() {
 		return fmt.Errorf("transaction already rolled back")

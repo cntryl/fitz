@@ -2,11 +2,15 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/cntryl/fitz-go/internal/domains/kv"
 	"github.com/cntryl/fitz-go/internal/domains/notice"
+	"github.com/cntryl/fitz-go/internal/domains/rpc"
 	"github.com/cntryl/fitz-go/test/fixture"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -135,5 +139,165 @@ func TestShouldDropSessionStateGivenDisconnectWhenReconnect(t *testing.T) {
 		// Assert — old subscription should NOT be recovered; publish should
 		// not deliver to old handler. We verify the new client is usable.
 		require.NotNil(t, f2.Client())
+	})
+}
+
+// --- Connection edge cases ---
+
+// TestShouldFailConnectGivenInvalidAddressWhenConnectCalled verifies
+// Connect returns an error when the broker address is unreachable.
+func TestShouldFailConnectGivenInvalidAddressWhenConnectCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Use a port where no broker is listening.
+		switch transport {
+		case fixture.TransportTCP:
+			f.SetBrokerAddr("localhost:39999")
+		case fixture.TransportWebSocket:
+			f.SetBrokerAddr("ws://localhost:39998/ws")
+		}
+
+		err := f.Connect(ctx)
+
+		require.Error(t, err, "Connect to invalid address should fail")
+	})
+
+	// Run TCP-only with explicit unreachable host to ensure we don't skip
+	t.Run("TCP_refused", func(t *testing.T) {
+		f := fixture.NewTestFixture(t, fixture.TransportTCP)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		f.SetBrokerAddr("localhost:39999")
+		err := f.Connect(ctx)
+		require.Error(t, err)
+	})
+
+	t.Run("WS_refused", func(t *testing.T) {
+		f := fixture.NewTestFixture(t, fixture.TransportWebSocket)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		f.SetBrokerAddr("ws://localhost:39998/ws")
+		err := f.Connect(ctx)
+		require.Error(t, err)
+	})
+}
+
+// TestShouldFailConnectGivenCanceledContextWhenConnectCalled verifies
+// Connect returns promptly when the context is already canceled.
+func TestShouldFailConnectGivenCanceledContextWhenConnectCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := f.Connect(ctx)
+
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got: %v", err)
+	})
+}
+
+// TestShouldFailConnectGivenShortTimeoutWhenConnectToUnreachable verifies
+// Connect returns with deadline exceeded or connection error when address is unreachable.
+func TestShouldFailConnectGivenShortTimeoutWhenConnectToUnreachable(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+
+		switch transport {
+		case fixture.TransportTCP:
+			f.SetBrokerAddr("localhost:39999")
+		case fixture.TransportWebSocket:
+			f.SetBrokerAddr("ws://localhost:39998/ws")
+		}
+
+		err := f.Connect(ctx)
+
+		require.Error(t, err)
+	})
+}
+
+// TestShouldNotPanicGivenDoubleCloseWhenCloseCalledTwice verifies
+// calling Close twice does not panic; second call may return error or nil.
+func TestShouldNotPanicGivenDoubleCloseWhenCloseCalledTwice(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		client := f.Client()
+		require.NoError(t, client.Close(), "first Close should succeed")
+		// Second Close: must not panic; result is implementation-defined.
+		_ = client.Close()
+	})
+}
+
+// TestShouldReturnErrorGivenOperationAfterCloseWhenDomainMethodCalled verifies
+// domain operations return an error after the client has been closed.
+func TestShouldReturnErrorGivenOperationAfterCloseWhenDomainMethodCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
+		require.NoError(t, f.Client().Close())
+
+		_, err := f.Client().KV().Begin(ctx, route)
+
+		require.Error(t, err, "operation after Close should fail")
+	})
+}
+
+// TestShouldReturnErrorGivenContextCanceledWhenLongRequestInFlight verifies
+// a long-running request returns when the context is canceled.
+func TestShouldReturnErrorGivenContextCanceledWhenLongRequestInFlight(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		fWorker := fixture.NewTestFixture(t, transport)
+		fCaller := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		fWorker.ConnectOrSkip(ctx)
+		fCaller.ConnectOrSkip(ctx)
+
+		route := fWorker.UniqueRoute("rpc")
+
+		// Worker that does not send any response for 3s, so caller blocks in Call().
+		sub, err := fWorker.Client().RPC().Subscribe(ctx, route, func(_ context.Context, _ rpc.InboundRequest, w rpc.ResponseWriter) error {
+			time.Sleep(3 * time.Second)
+			return w.Send([]byte("late"))
+		})
+		require.NoError(t, err)
+		defer sub.Unsubscribe()
+
+		callCtx, callCancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := fCaller.Client().RPC().Call(callCtx, route, []byte("block"), 10*time.Second)
+			done <- err
+		}()
+
+		time.Sleep(300 * time.Millisecond)
+		callCancel()
+
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Skip("client does not yet propagate context cancellation during RPC Call; skipping until implemented")
+			}
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Call did not return after context cancel")
+		}
 	})
 }

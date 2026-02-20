@@ -18,6 +18,7 @@ import (
 type TokenProvider = types.TokenProvider
 
 // Client is the primary top-level Fitz client exposing each domain client.
+// Domain clients returned by Notice(), Stream(), Queue(), etc. are safe for concurrent use by multiple goroutines.
 // Implementations SHOULD provide a constructor (e.g., NewClient) that accepts:
 //   - addr: broker address determining transport ("host:port", "tcp://...", "ws://...", "wss://...")
 //   - tokenProvider: function for obtaining JWT tokens (supports renewal on reconnection)
@@ -38,7 +39,7 @@ type Client interface {
 	// then close the underlying transport.
 	Close() error
 
-	// Domain clients
+	// Domain clients. Each is safe for concurrent use.
 	Notice() notice.Client
 	Stream() stream.Client
 	Queue() queue.Client

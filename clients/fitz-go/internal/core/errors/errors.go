@@ -1,4 +1,10 @@
-// Package errors provides domain-agnostic error handling for Fitz client.
+// Package errors provides domain-agnostic error handling for the Fitz client.
+//
+// Domain packages (kv, lease, notice, queue, rpc, schedule, stream) expose
+// sentinel errors (e.g. ErrLeaseHeld, ErrQueueFull) and map server messages
+// to them so callers can use errors.Is for handling. ErrorCode and DomainError
+// in this package are for optional code-based handling when the server sends
+// numeric error codes on the wire; testkit.AssertDomainErrorCode uses them.
 package errors
 
 import (
@@ -47,7 +53,7 @@ const (
 	LeaseExpired      = 5003
 	LeaseNotFound     = 5004
 
-	// RPC Domain (6000-6099)
+	// RPC Domain (6000-6099). 6004 = no workers for route or timeout before any reply (per CLIENT_ACCEPTANCE_CRITERIA).
 	RpcTimeout             = 6001
 	RpcWorkerNotFound      = 6002
 	RpcBackpressure        = 6003 // Backpressure signal

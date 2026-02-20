@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cntryl/fitz-go/internal/domains/schedule"
 	"github.com/cntryl/fitz-go/test/fixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,7 +103,7 @@ func TestShouldListSchedulesGivenMultipleSchedulesWhenListCalled(t *testing.T) {
 		require.NoError(t, err)
 
 		// Act
-		entries, err := f.Client().Schedule().List(ctx, route)
+		entries, err := f.Client().Schedule().List(ctx)
 
 		// Assert
 		require.NoError(t, err)
@@ -115,7 +116,7 @@ func TestShouldListSchedulesGivenMultipleSchedulesWhenListCalled(t *testing.T) {
 }
 
 // TestShouldCancelNonExistentScheduleGivenBogusIDWhenCancelCalled verifies
-// CANCEL with unknown ID returns an appropriate error.
+// CANCEL with unknown schedule route returns ErrScheduleNotFound or idempotent success.
 func TestShouldCancelNonExistentScheduleGivenBogusIDWhenCancelCalled(t *testing.T) {
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
 		// Arrange
@@ -125,11 +126,33 @@ func TestShouldCancelNonExistentScheduleGivenBogusIDWhenCancelCalled(t *testing.
 
 		f.ConnectOrSkip(ctx)
 
-		// Act
-		err := f.Client().Schedule().Cancel(ctx, "999999999")
+		// Use a route that does not exist (schedule identity is route-based).
+		bogusRoute := f.UniqueRoute("schedule") + "-nonexistent"
 
-		// Assert — server may return success for non-existent schedule (idempotent cancel).
-		// Either error or success is acceptable.
-		_ = err
+		// Act
+		err := f.Client().Schedule().Cancel(ctx, bogusRoute)
+
+		// Assert — server returns ErrScheduleNotFound or success (idempotent cancel).
+		if err != nil {
+			assert.ErrorIs(t, err, schedule.ErrScheduleNotFound, "Cancel non-existent schedule should return ErrScheduleNotFound")
+		}
+	})
+}
+
+// TestShouldReturnListWithoutErrorGivenSchedulesWhenListCalled verifies
+// LIST returns without error and returns a slice (empty or non-empty per realm).
+func TestShouldReturnListWithoutErrorGivenSchedulesWhenListCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		entries, err := f.Client().Schedule().List(ctx)
+
+		require.NoError(t, err)
+		require.NotNil(t, entries)
+		// In a shared broker, other tests may have created schedules; we only assert no error.
 	})
 }

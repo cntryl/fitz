@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cntryl/fitz-go/internal/core/encoding"
 )
@@ -17,12 +18,30 @@ const (
 	NoticeNotify         uint16 = 504
 )
 
-// Domain-specific errors.
+// Domain-specific errors. Returned when the server rejects a request or the operation fails.
+//   - ErrNoticeRouteInvalid: publish or subscribe route/pattern is invalid.
+//   - ErrNoticeTimeout: the operation timed out.
+//   - ErrNoticeSendFailed: publish or subscribe request failed.
 var (
 	ErrNoticeRouteInvalid = errors.New("invalid notice route")
 	ErrNoticeTimeout      = errors.New("notice operation timed out")
 	ErrNoticeSendFailed   = errors.New("notice send failed")
 )
+
+// mapNoticeError maps a broker error message to a domain-specific Go error.
+func mapNoticeError(msg string) error {
+	l := strings.ToLower(msg)
+	switch {
+	case strings.Contains(l, "route") && (strings.Contains(l, "invalid") || strings.Contains(l, "bad")):
+		return ErrNoticeRouteInvalid
+	case strings.Contains(l, "timeout") || strings.Contains(l, "timed out"):
+		return ErrNoticeTimeout
+	case strings.Contains(l, "send") || strings.Contains(l, "failed"):
+		return ErrNoticeSendFailed
+	default:
+		return errors.New(msg)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Wire encoding / decoding helpers (custom binary format, not TLV)

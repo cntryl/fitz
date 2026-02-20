@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cntryl/fitz-go/internal/core/debug"
 )
 
 // WebSocket opcodes (RFC 6455)
@@ -53,8 +52,6 @@ type WebSocketTransport struct {
 // URL should use ws:// or wss:// scheme.
 // Performs HTTP upgrade handshake per RFC 6455.
 func DialWebSocket(ctx context.Context, urlStr string) (Transport, error) {
-	debug.Transport("DIAL-WS", urlStr)
-
 	u, err := url.Parse(urlStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
@@ -79,12 +76,10 @@ func DialWebSocket(ctx context.Context, urlStr string) (Transport, error) {
 
 	// Perform WebSocket handshake
 	if err := performHandshake(conn, u); err != nil {
-		debug.Transport("WS-HANDSHAKE-FAIL", urlStr, err)
 		conn.Close()
 		return nil, fmt.Errorf("websocket handshake: %w", err)
 	}
 
-	debug.Transport("CONNECTED", urlStr)
 	return &WebSocketTransport{
 		conn:   conn,
 		reader: bufio.NewReader(conn),
@@ -379,8 +374,6 @@ func (w *WebSocketTransport) Close() error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
 	}
-
-	debug.Transport("CLOSE", w.addr)
 
 	// Send close frame
 	w.mu.Lock()

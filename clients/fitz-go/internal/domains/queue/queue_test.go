@@ -226,7 +226,7 @@ func TestShouldParseQueueResponse(t *testing.T) {
 	})
 
 	t.Run("error with message", func(t *testing.T) {
-		// Arrange
+		// Arrange — string error path is mapped to sentinels
 		errMsg := "queue is full"
 		msgBytes := []byte(errMsg)
 		payload := make([]byte, 5+len(msgBytes))
@@ -240,7 +240,7 @@ func TestShouldParseQueueResponse(t *testing.T) {
 		// Assert
 		assert.False(t, success)
 		require.Error(t, err)
-		assert.Equal(t, errMsg, err.Error())
+		assert.ErrorIs(t, err, ErrQueueFull)
 	})
 
 	t.Run("error response too short", func(t *testing.T) {

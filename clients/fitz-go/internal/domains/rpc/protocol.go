@@ -17,7 +17,10 @@ const (
 	RPCAck               uint16 = 304
 )
 
-// Domain-specific errors.
+// Domain-specific errors. Returned when Call fails or the server rejects a request.
+//   - ErrNoWorkers: no worker is registered for the route (or route not registered).
+//   - ErrRPCTimeout: the request timed out before receiving a response.
+//   - ErrRPCBackpressure: server backpressure; consider CallWithRetry.
 var (
 	ErrNoWorkers       = errors.New("no workers available")
 	ErrRPCTimeout      = errors.New("rpc timeout")

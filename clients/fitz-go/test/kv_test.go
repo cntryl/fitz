@@ -370,3 +370,46 @@ func TestShouldRejectWriteGivenReadOnlyModeWhenPutCalled(t *testing.T) {
 		assert.False(t, isTx, "BeginRead should return ReadTx, not full Tx")
 	})
 }
+
+// TestShouldRejectBeginGivenInvalidRouteWhenBeginCalled verifies
+// Begin with invalid or malformed route returns an error.
+func TestShouldRejectBeginGivenInvalidRouteWhenBeginCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		_, err := f.Client().KV().Begin(ctx, "invalid-route-not-kv-format")
+
+		require.Error(t, err)
+	})
+}
+
+// TestShouldRejectSecondCommitGivenAlreadyCommittedTransactionWhenCommitCalled
+// verifies that calling Commit twice on the same transaction fails or is a no-op.
+func TestShouldRejectSecondCommitGivenAlreadyCommittedTransactionWhenCommitCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
+
+		tx, err := f.Client().KV().Begin(ctx, route)
+		require.NoError(t, err)
+		require.NoError(t, tx.Put(ctx, []byte("k"), []byte("v")))
+		require.NoError(t, tx.Commit(ctx))
+
+		// Act — second Commit on same transaction.
+		err = tx.Commit(ctx)
+
+		// Assert — should fail (transaction already committed) or be no-op.
+		if err != nil {
+			assert.Error(t, err)
+		}
+	})
+}

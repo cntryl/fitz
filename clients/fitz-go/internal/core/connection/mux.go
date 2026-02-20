@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cntryl/fitz-go/internal/core/debug"
 )
 
 // pendingRequest represents one in-flight request awaiting response.
@@ -109,12 +108,10 @@ func (m *Multiplexer) UnregisterRequest(msgType uint16, responseChan chan []byte
 func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	// Handle async deliveries (per CLIENT_SPEC.md MessageType ranges)
 	if msgType == 504 { // Notice NOTIFY
-		debug.MuxAsync("NOTICE_NOTIFY", msgType, len(payload))
 		m.handleNotify(payload)
 		return
 	}
 	if msgType == 705 { // Schedule NOTIFY
-		debug.MuxAsync("SCHEDULE_NOTIFY", msgType, len(payload))
 		m.handleScheduleNotify(payload)
 		return
 	}
@@ -128,7 +125,6 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 		if hasPending {
 			// Sync response to caller's SendRequest(302) — fall through to sync path below
 		} else if m.rpcReqHandler != nil {
-			debug.MuxAsync("RPC_REQUEST", msgType, len(payload))
 			m.handleRpcRequest(payload)
 			return
 		}
@@ -144,7 +140,6 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 		if hasPending303 {
 			// Sync response to worker's SendRequest(303) — fall through to sync path below
 		} else {
-			debug.MuxAsync("RPC_RESPONSE", msgType, len(payload))
 			m.handleRpcResponse(payload)
 			return
 		}
@@ -157,7 +152,6 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 		m.mu.Unlock()
 		// Unexpected response (no pending request)
 		// This can happen if context was cancelled but response arrived
-		debug.MuxDispatch(msgType, len(payload), false)
 		m.responsesDropped.Add(1)
 		return
 	}
@@ -170,15 +164,12 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	m.requestsInFlight.Add(-1)
 	m.responsesTotal.Add(1)
 
-	debug.MuxDispatch(msgType, len(payload), true)
-
 	// Non-blocking send (prevents dispatch loop from stalling)
 	select {
 	case req.responseChan <- payload:
 		// Success - response delivered
 	case <-time.After(100 * time.Millisecond):
 		// Slow consumer - drop response and close channel
-		debug.Log("MUX   msg_type=%-4d SLOW CONSUMER — dropping response", msgType)
 		m.responsesDropped.Add(1)
 		close(req.responseChan)
 	}
@@ -188,7 +179,6 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 // Per CLIENT_SPEC.md: [u64 BE subscription_id][u32 route_len][route][u32 payload_len][payload]
 func (m *Multiplexer) handleNotify(payload []byte) {
 	if len(payload) < 8 {
-		debug.Log("NOTIFY malformed: payload_len=%d (need >= 8)", len(payload))
 		return // Malformed
 	}
 
@@ -266,14 +256,12 @@ func (m *Multiplexer) handleRpcRequest(payload []byte) {
 func (m *Multiplexer) handleRpcResponse(payload []byte) {
 	// Need at least [u32 len=16][16 bytes uuid] = 20 bytes for correlation_id
 	if len(payload) < 20 {
-		debug.Log("RPC_RESPONSE malformed: payload_len=%d (need >= 20)", len(payload))
 		return
 	}
 
 	// Parse correlation_id as TLV bytes: [u32 BE len][16 bytes UUID]
 	corrLen := binary.BigEndian.Uint32(payload[0:4])
 	if corrLen != 16 || len(payload) < 4+int(corrLen) {
-		debug.Log("RPC_RESPONSE bad correlation_id length: %d", corrLen)
 		return
 	}
 

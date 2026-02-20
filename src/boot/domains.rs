@@ -950,7 +950,8 @@ impl MailboxSink for RpcDomainSink {
                         route = route_key,
                         "Request forwarded to worker"
                     );
-                    None
+                    // Ack dispatch so caller's SendRequest(302) unblocks; actual response comes via 303.
+                    Some(RpcResponseMsg::Ok { data: vec![] })
                 } else {
                     Some(RpcResponseMsg::Error(
                         "No workers registered for route".to_string(),
@@ -967,12 +968,9 @@ impl MailboxSink for RpcDomainSink {
                     }
                     drop(state);
 
-                    // Transform worker response into RpcResponseMsg format for clients
-                    let response_msg = crate::protocol::rpc_codec::RpcResponseMsg::Ok {
-                        data: resp.body.to_vec(),
-                    };
+                    // Forward raw RPC RESPONSE payload so clients receive [correlation_id][seq][body][stream_end] per CLIENT_SPEC.
                     let encoded_response =
-                        crate::protocol::rpc_codec::encode_response(&response_msg);
+                        crate::protocol::rpc_codec::encode_response_message(&resp);
 
                     // Forward response to caller's session inbox (avoids RPC domain re-entry)
                     let caller_inbox_addr = crate::runtime::routing::RouteAddress::new(

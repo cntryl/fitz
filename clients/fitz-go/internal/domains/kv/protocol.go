@@ -357,6 +357,13 @@ func ValidateValueSize(value []byte) error {
 }
 
 // Domain-specific errors.
+// Domain-specific errors (mapped from broker error responses).
+//   - ErrNotFound: key not found (e.g. Get, Delete).
+//   - ErrKeyExists: Insert failed because the key already exists.
+//   - ErrConcurrencyConflict: isolation conflict; another transaction holds the resource.
+//   - ErrInvalidRange: scan range or key format invalid.
+//   - ErrKeyTooLarge / ErrValueTooLarge: key or value exceeds size limit.
+//   - ErrTransactionAborted: transaction was aborted by the server.
 var (
 	ErrNotFound            = errors.New("key not found")
 	ErrKeyExists           = errors.New("key already exists")

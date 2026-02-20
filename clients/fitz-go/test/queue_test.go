@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -202,5 +203,58 @@ func TestShouldDistributeMessagesGivenMultipleConsumersWhenConcurrentReserve(t *
 		require.NoError(t, err2)
 		total := len(items1) + len(items2)
 		assert.Equal(t, 2, total, "both consumers should each get one message")
+	})
+}
+
+// TestShouldHandleReceiveGivenLimitZeroWhenReceiveCalled verifies
+// Receive with batchSize 0 either returns empty slice and no error, or an error (server-defined).
+func TestShouldHandleReceiveGivenLimitZeroWhenReceiveCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		route := f.UniqueRoute("queue")
+
+		items, err := f.Client().Queue().Receive(ctx, route, 30, 0)
+
+		if err != nil {
+			assert.Error(t, err)
+			return
+		}
+		require.NotNil(t, items)
+		assert.Empty(t, items, "Receive with batchSize 0 should return empty slice when no error")
+	})
+}
+
+// TestShouldRejectCompleteGivenExpiredLeaseWhenCompleteCalled verifies
+// COMPLETE after lease expiry returns an error (ErrLeaseExpiredQ or ErrMessageNotFound per server).
+func TestShouldRejectCompleteGivenExpiredLeaseWhenCompleteCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		route := f.UniqueRoute("queue")
+
+		_, err := f.Client().Queue().Send(ctx, route, []byte("expire-then-complete"))
+		require.NoError(t, err)
+
+		items, err := f.Client().Queue().Receive(ctx, route, 2, 1)
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+
+		// Wait for lease to expire.
+		time.Sleep(4 * time.Second)
+
+		// Act — complete after lease expired (using the item's token).
+		err = items[0].Complete(ctx)
+
+		// Assert — server may return ErrLeaseExpiredQ or ErrMessageNotFound (message re-queued).
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, queue.ErrLeaseExpiredQ) || errors.Is(err, queue.ErrMessageNotFound),
+			"expected lease expired or message not found, got: %v", err)
 	})
 }
