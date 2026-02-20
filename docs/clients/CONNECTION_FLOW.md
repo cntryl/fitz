@@ -322,7 +322,7 @@ pub fn parse_request(
 }
 
 fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    let mut decoder = TlvDecoder::new(payload);
+    let mut decoder = PayloadDecoder::new(payload);
     
     // Parse fields in order (wire format per CLIENT_SPEC)
     let route_len = decoder.get_u32()?;          // 21

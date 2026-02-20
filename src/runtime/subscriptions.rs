@@ -100,6 +100,22 @@ impl SubscriptionIndex {
         insert_into_trie(root, &segments, 0, subscription_id);
     }
 
+    /// Insert multiple subscriptions with a single write lock (reduces contention in batch setups).
+    pub fn insert_batch(&self, family_id: RouteFamily, items: &[(Route, SubscriptionId)]) {
+        if items.is_empty() {
+            return;
+        }
+        let mut roots = self.roots.write();
+        let root = roots
+            .entry(family_id)
+            .or_insert_with(|| Box::new(TrieNode::new()));
+
+        for (pattern, subscription_id) in items {
+            let segments = parse_pattern_segments(pattern.as_str());
+            insert_into_trie(root, &segments, 0, *subscription_id);
+        }
+    }
+
     /// Remove a subscription
     ///
     /// # Arguments

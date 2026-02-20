@@ -5,7 +5,7 @@
 
 use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 
@@ -20,7 +20,7 @@ pub fn parse_request(
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<ScheduleMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
         700 => parse_create(&mut dec),
@@ -34,7 +34,7 @@ pub fn parse_request(
 
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
 
     match response {
         ScheduleResponse::Ok => {
@@ -63,7 +63,7 @@ pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
 
 /// Parse CREATE message
 /// Wire format: [string route][string cron][bytes payload]
-fn parse_create(dec: &mut TlvDecoder) -> Result<ScheduleMessage, String> {
+fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     let route = dec.get_string()?;
     let cron = dec.get_string()?;
     let payload = dec.get_bytes()?;
@@ -81,7 +81,7 @@ fn parse_create(dec: &mut TlvDecoder) -> Result<ScheduleMessage, String> {
 
 /// Parse CANCEL message
 /// Wire format: [string route]
-fn parse_cancel(dec: &mut TlvDecoder) -> Result<ScheduleMessage, String> {
+fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     let route = dec.get_string()?;
 
     if !dec.is_complete() {
@@ -92,14 +92,14 @@ fn parse_cancel(dec: &mut TlvDecoder) -> Result<ScheduleMessage, String> {
 }
 
 /// Parse LIST message (no parameters)
-fn parse_list(_dec: &mut TlvDecoder) -> Result<ScheduleMessage, String> {
+fn parse_list(_dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     Ok(ScheduleMessage::List)
 }
 
 /// Parse SUBSCRIBE message
 /// Wire format: [string pattern]
 fn parse_subscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
@@ -122,7 +122,7 @@ fn parse_subscribe(
 /// Parse UNSUBSCRIBE message
 /// Wire format: [string pattern]
 fn parse_unsubscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
@@ -147,7 +147,7 @@ fn parse_unsubscribe(
 /// Wire format: [bytes payload]
 /// Payload is what was stored with the schedule (fanout data)
 pub fn encode_notify(payload: &[u8]) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_bytes(payload);
     enc.finish()
 }

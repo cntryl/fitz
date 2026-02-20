@@ -12,7 +12,7 @@ use crate::domains::notice::protocol::{
     UnsubscribeMessage,
 };
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 
@@ -36,7 +36,7 @@ pub fn parse_request(
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<NotificationMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
         500 => parse_publish(&mut dec, route_family).map(NotificationMessage::Publish),
@@ -54,7 +54,7 @@ pub fn parse_request(
 
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
 
     match response {
         NoticeResponse::Ok { subscription_id } => {
@@ -74,7 +74,7 @@ pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
 
 /// Wire format: `[string route][bytes payload]`
 fn parse_publish(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<PublishMessage, String> {
     let route_str = dec.get_string()?;
@@ -94,7 +94,7 @@ fn parse_publish(
 
 /// Wire format: `[string pattern]`
 fn parse_subscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
@@ -116,7 +116,7 @@ fn parse_subscribe(
 
 /// Wire format: `[string pattern]`
 fn parse_unsubscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
@@ -154,14 +154,14 @@ fn parse_unsubscribe_all(
 /// The subscription_id allows client-side demultiplexing to the correct handler.
 /// The route and payload carry the actual notification content.
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_u64(subscription_id);
     enc.put_string(route.as_str());
     enc.put_bytes(payload);
     enc.finish()
 }
 
-fn parse_notify(dec: &mut TlvDecoder) -> Result<NotifyMessage, String> {
+fn parse_notify(dec: &mut PayloadDecoder) -> Result<NotifyMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let payload = dec.get_bytes()?;

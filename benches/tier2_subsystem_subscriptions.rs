@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     let index = SubscriptionIndex::new();
@@ -205,7 +205,7 @@ fn bench_match_fanout_dense_100(c: &mut Criterion) {
     group.bench_function("10k_subs_10k_matches", |b| {
         let (index, route, family) = make_index_fanout_dense(10000);
         b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
+            black_box(index.match_all_with_capacity(family, black_box(&route), 10_000));
         })
     });
     group.finish();
@@ -285,20 +285,23 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
     group.throughput(Throughput::Elements(100));
     group.bench_function("insert_100_match_2", |b| {
         b.iter_batched(
-            SubscriptionIndex::new,
-            |index| {
-                // Insert various patterns
-                for i in 0..100 {
-                    let pattern = match i % 4 {
-                        0 => Route::new("notify://realm/orders/create".to_string()),
-                        1 => Route::new("notify://realm/orders/*".to_string()),
-                        2 => Route::new("notify://realm/**/created".to_string()),
-                        _ => Route::new("notify://realm/items/*/action".to_string()),
-                    };
-                    index.insert(family, &pattern, SubscriptionId(i as u64));
-                }
-
-                // Match against pre-built routes
+            || {
+                let index = SubscriptionIndex::new();
+                let batch: Vec<(Route, SubscriptionId)> = (0..100)
+                    .map(|i| {
+                        let pattern = match i % 4 {
+                            0 => Route::new("notify://realm/orders/create".to_string()),
+                            1 => Route::new("notify://realm/orders/*".to_string()),
+                            2 => Route::new("notify://realm/**/created".to_string()),
+                            _ => Route::new("notify://realm/items/*/action".to_string()),
+                        };
+                        (pattern, SubscriptionId(i as u64))
+                    })
+                    .collect();
+                (index, batch)
+            },
+            |(index, batch)| {
+                index.insert_batch(family, &batch);
                 for route in &routes {
                     black_box(index.match_all(family, black_box(route)));
                 }
@@ -311,7 +314,7 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier2();
     targets =
         bench_insert_single_pattern,
         bench_insert_with_single_star,

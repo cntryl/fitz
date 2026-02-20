@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn bench_route_family_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("hotpath_routing");
@@ -262,7 +262,7 @@ fn bench_route_equality(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets =
         bench_route_family_creation,
         bench_route_parsing,

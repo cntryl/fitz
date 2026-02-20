@@ -2,8 +2,8 @@ use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder, TlvRecord};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 /// Encode benches: reuse vs finish and payload-size sweep
 fn bench_tlv_encode_sizes(c: &mut Criterion) {
@@ -122,7 +122,7 @@ fn bench_tlv_decode_single_record(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets = bench_tlv_encode_sizes, bench_tlv_decode_sizes, bench_tlv_decode_single_record
 }
 criterion_main!(benches);

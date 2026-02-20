@@ -8,7 +8,7 @@
 
 use crate::domains::lease::protocol::{LeaseMessage, LeaseResponse as DomainLeaseResponse};
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteFamily};
 
 /// Response from lease operations
@@ -29,7 +29,7 @@ pub fn parse_request(
     payload: &[u8],
     route_family: RouteFamily,
 ) -> Result<LeaseMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
         400 => parse_acquire(&mut dec, route_family),
@@ -42,7 +42,7 @@ pub fn parse_request(
 
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &LeaseResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
 
     match response {
         LeaseResponse::Ok { token } => {
@@ -115,7 +115,10 @@ pub fn map_domain_response(response: &DomainLeaseResponse) -> LeaseResponse {
 // ===== Helper Parsers =====
 
 /// Wire format: `[string route][string owner_id][u64 ttl_secs][u32 wait_seconds (optional)]`
-fn parse_acquire(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
+fn parse_acquire(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let owner_id = dec.get_string()?;
@@ -141,7 +144,10 @@ fn parse_acquire(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<Leas
 }
 
 /// Wire format: `[string route][string owner_id][u64 fencing_token][u64 ttl_secs]`
-fn parse_renew(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
+fn parse_renew(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let owner_id = dec.get_string()?;
@@ -162,7 +168,10 @@ fn parse_renew(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseM
 }
 
 /// Wire format: `[string route][string owner_id][u64 fencing_token]`
-fn parse_release(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
+fn parse_release(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let owner_id = dec.get_string()?;
@@ -181,7 +190,10 @@ fn parse_release(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<Leas
 }
 
 /// Wire format: `[string route]`
-fn parse_query(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<LeaseMessage, String> {
+fn parse_query(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
 

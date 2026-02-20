@@ -10,8 +10,8 @@ use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
@@ -65,12 +65,32 @@ fn bench_scan_and_fire_100(c: &mut Criterion) {
         )
     });
 
+    group.bench_function("scan_and_fire_100_cpu_only", |b| {
+        b.iter_batched(
+            || {
+                let mut actor = create_test_actor();
+                for i in 0..100 {
+                    actor.handle(ScheduleMessage::Create {
+                        route: routes[i].clone(),
+                        cron: crons[i].clone(),
+                        payload: payloads[i].clone(),
+                    });
+                }
+                actor
+            },
+            |mut actor| {
+                black_box(actor.scan_and_fire_cpu_only());
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
     group.finish();
 }
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier2();
     targets = bench_scan_and_fire_100
 }
 criterion_main!(benches);

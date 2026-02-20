@@ -30,64 +30,71 @@ STRESS_CSV = STRESS_ROOT / 'stress_summary.csv'
 # CRITERION BENCHMARKS
 # ============================================================================
 entries = []
-for p in CRITERION_ROOT.rglob('new/estimates.json'):
-    try:
-        data = json.loads(p.read_text())
-    except Exception as e:
-        print(f"skipping {p} (read error): {e}")
-        continue
-    # Determine benchmark id as path relative to ROOT, omit trailing '/new/estimates.json'
-    benchmark = str(p.relative_to(CRITERION_ROOT).parent.parent)
-    mean = data.get('mean', {}).get('point_estimate')
-    ci = data.get('mean', {}).get('confidence_interval', {})
-    ci_lower = ci.get('lower_bound')
-    ci_upper = ci.get('upper_bound')
-    stddev = data.get('std_dev', {}).get('point_estimate')
-    # fallback: some Criterion variants place std_dev under 'std_dev' or in same level
-    if mean is None:
-        continue
-    rel_stddev = None
-    if stddev is not None and mean != 0:
-        rel_stddev = stddev / mean
-    high_variance = False
-    if rel_stddev is not None:
-        high_variance = rel_stddev > 0.10
-    # Skip legacy/stale Criterion entries (e.g. old "schedule_system_scan_and_fire" 222ms row)
-    if 'schedule_system_scan_and_fire' in benchmark:
-        continue
-    # assume raw numbers are nanoseconds and provide converted columns
-    mean_us = mean / 1e3
-    mean_ms = mean / 1e6
-    entries.append({
-        'benchmark': benchmark,
-        'mean': mean,
-        'mean_ci_lower': ci_lower,
-        'mean_ci_upper': ci_upper,
-        'std_dev': stddev,
-        'rel_stddev': rel_stddev,
-        'high_variance': high_variance,
-        'mean_us': mean_us,
-        'mean_ms': mean_ms,
-        'file': str(p)
-    })
+if not CRITERION_ROOT.exists():
+    pass  # skip criterion section
+else:
+    for p in CRITERION_ROOT.rglob('new/estimates.json'):
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text())
+        except Exception as e:
+            print(f"skipping {p} (read error): {e}")
+            continue
+        # Determine benchmark id as path relative to ROOT, omit trailing '/new/estimates.json'
+        benchmark = str(p.relative_to(CRITERION_ROOT).parent.parent)
+        mean = data.get('mean', {}).get('point_estimate')
+        ci = data.get('mean', {}).get('confidence_interval', {})
+        ci_lower = ci.get('lower_bound')
+        ci_upper = ci.get('upper_bound')
+        stddev = data.get('std_dev', {}).get('point_estimate')
+        # fallback: some Criterion variants place std_dev under 'std_dev' or in same level
+        if mean is None:
+            continue
+        rel_stddev = None
+        if stddev is not None and mean != 0:
+            rel_stddev = stddev / mean
+        high_variance = False
+        if rel_stddev is not None:
+            high_variance = rel_stddev > 0.10
+        # Skip legacy/stale Criterion entries (e.g. old "schedule_system_scan_and_fire" 222ms row)
+        if 'schedule_system_scan_and_fire' in benchmark:
+            continue
+        # assume raw numbers are nanoseconds and provide converted columns
+        mean_us = mean / 1e3
+        mean_ms = mean / 1e6
+        entries.append({
+            'benchmark': benchmark,
+            'mean': mean,
+            'mean_ci_lower': ci_lower,
+            'mean_ci_upper': ci_upper,
+            'std_dev': stddev,
+            'rel_stddev': rel_stddev,
+            'high_variance': high_variance,
+            'mean_us': mean_us,
+            'mean_ms': mean_ms,
+            'file': str(p)
+        })
 
-# Write Criterion CSV
-with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
-    writer = csv.writer(f)
-    writer.writerow(['benchmark','mean','mean_ci_lower','mean_ci_upper','std_dev','rel_stddev','high_variance','mean_us(assume_ns)','mean_ms(assume_ns)','file'])
-    for e in sorted(entries, key=lambda x: x['mean']):
-        writer.writerow([
-            e['benchmark'],
-            f"{e['mean']:.6f}" if isinstance(e['mean'], float) else e['mean'],
-            f"{e['mean_ci_lower']:.6f}" if isinstance(e['mean_ci_lower'], float) else e['mean_ci_lower'],
-            f"{e['mean_ci_upper']:.6f}" if isinstance(e['mean_ci_upper'], float) else e['mean_ci_upper'],
-            f"{e['std_dev']:.6f}" if isinstance(e['std_dev'], float) else e['std_dev'],
-            f"{e['rel_stddev']:.6f}" if isinstance(e['rel_stddev'], float) else e['rel_stddev'],
-            str(e['high_variance']),
-            f"{e['mean_us']:.6f}",
-            f"{e['mean_ms']:.6f}",
-            e['file']
-        ])
+# Write Criterion CSV (skip if criterion dir missing; create parent so write never errors)
+if CRITERION_ROOT.exists():
+    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['benchmark','mean','mean_ci_lower','mean_ci_upper','std_dev','rel_stddev','high_variance','mean_us(assume_ns)','mean_ms(assume_ns)','file'])
+        for e in sorted(entries, key=lambda x: x['mean']):
+            writer.writerow([
+                e['benchmark'],
+                f"{e['mean']:.6f}" if isinstance(e['mean'], float) else e['mean'],
+                f"{e['mean_ci_lower']:.6f}" if isinstance(e['mean_ci_lower'], float) else e['mean_ci_lower'],
+                f"{e['mean_ci_upper']:.6f}" if isinstance(e['mean_ci_upper'], float) else e['mean_ci_upper'],
+                f"{e['std_dev']:.6f}" if isinstance(e['std_dev'], float) else e['std_dev'],
+                f"{e['rel_stddev']:.6f}" if isinstance(e['rel_stddev'], float) else e['rel_stddev'],
+                str(e['high_variance']),
+                f"{e['mean_us']:.6f}",
+                f"{e['mean_ms']:.6f}",
+                e['file']
+            ])
 
 # Derive suite (first path component) for each Criterion entry for per-suite grouping
 # Path can use / or \ depending on OS
@@ -121,94 +128,98 @@ criterion_suite_order = sorted(criterion_suites.keys(), key=suite_sort_key)
 # STRESS TESTS
 # ============================================================================
 stress_entries = []
-for suite_dir in sorted(STRESS_ROOT.glob('*/')):
-    if not suite_dir.is_dir():
-        continue
-    latest_json = suite_dir / 'latest.json'
-    if not latest_json.exists():
-        continue
-    try:
-        data = json.loads(latest_json.read_text())
-    except Exception as e:
-        print(f"skipping {latest_json} (read error): {e}")
-        continue
-    
-    suite = data.get('suite', suite_dir.name)
-    results = data.get('results', [])
-    
-    for result in results:
-        name = result.get('name', '')
-        duration = result.get('duration')
-        elements = result.get('elements')
-        all_runs = result.get('all_runs', [duration] if duration else [])
-        tags = result.get('tags', {})
-        scenario = tags.get('scenario', 'unknown')
-        
-        if duration is None or elements is None or elements == 0:
+if STRESS_ROOT.exists():
+    for suite_dir in sorted(STRESS_ROOT.glob('*/')):
+        if not suite_dir.is_dir():
             continue
-        
-        # Compute statistics
-        throughput_ops_per_ns = elements / duration if duration > 0 else 0
-        throughput_ops_per_us = throughput_ops_per_ns * 1e3
-        throughput_ops_per_ms = throughput_ops_per_ns * 1e6
-        throughput_ops_per_s = throughput_ops_per_ns * 1e9
-        
-        duration_us = duration / 1e3
-        duration_ms = duration / 1e6
-        per_op_ns = duration / elements if elements > 0 else 0
-        per_op_us = per_op_ns / 1e3
-        
-        # Variance across runs
-        if len(all_runs) > 1:
-            avg_run = sum(all_runs) / len(all_runs)
-            variance = sum((x - avg_run) ** 2 for x in all_runs) / len(all_runs)
-            stddev = variance ** 0.5
-            rel_stddev_runs = stddev / avg_run if avg_run > 0 else 0
-        else:
-            stddev = 0
-            rel_stddev_runs = 0
-        
-        stress_entries.append({
-            'suite': suite,
-            'name': name,
-            'scenario': scenario,
-            'layer': tags.get('layer'),  # tier4: direct/tcp/websocket/multiclient
-            'duration_ns': duration,
-            'duration_us': duration_us,
-            'duration_ms': duration_ms,
-            'elements': elements,
-            'per_op_ns': per_op_ns,
-            'per_op_us': per_op_us,
-            'throughput_ops_per_ns': throughput_ops_per_ns,
-            'throughput_ops_per_us': throughput_ops_per_us,
-            'throughput_ops_per_ms': throughput_ops_per_ms,
-            'throughput_ops_per_s': throughput_ops_per_s,
-            'num_runs': len(all_runs),
-            'stddev_runs': stddev,
-            'rel_stddev_runs': rel_stddev_runs,
-            'file': str(latest_json)
-        })
+        latest_json = suite_dir / 'latest.json'
+        if not latest_json.exists():
+            continue
+        try:
+            data = json.loads(latest_json.read_text())
+        except Exception as e:
+            print(f"skipping {latest_json} (read error): {e}")
+            continue
 
-# Write Stress CSV
-with STRESS_CSV.open('w', newline='', encoding='utf-8') as f:
-    writer = csv.writer(f)
-    writer.writerow(['suite', 'name', 'scenario', 'duration_ms', 'elements', 'per_op_us', 'throughput_ops_per_s', 'runs', 'stddev_runs_ns', 'rel_stddev_runs', 'file'])
-    for e in sorted(stress_entries, key=lambda x: x['throughput_ops_per_s'], reverse=True):
-        writer.writerow([
-            e['suite'],
-            e['name'],
-            e['scenario'],
-            f"{e['duration_ms']:.2f}",
-            e['elements'],
-            f"{e['per_op_us']:.6f}",
-            f"{e['throughput_ops_per_s']:.2f}",
-            e['num_runs'],
-            f"{e['stddev_runs']:.2f}",
-            f"{e['rel_stddev_runs']:.6f}" if e['rel_stddev_runs'] else "NA",
-            e['file']
-        ])
+        suite = data.get('suite', suite_dir.name)
+        results = data.get('results', [])
+
+        for result in results:
+            name = result.get('name', '')
+            duration = result.get('duration')
+            elements = result.get('elements')
+            all_runs = result.get('all_runs', [duration] if duration else [])
+            tags = result.get('tags', {})
+            scenario = tags.get('scenario', 'unknown')
+
+            if duration is None or elements is None or elements == 0:
+                continue
+
+            # Compute statistics
+            throughput_ops_per_ns = elements / duration if duration > 0 else 0
+            throughput_ops_per_us = throughput_ops_per_ns * 1e3
+            throughput_ops_per_ms = throughput_ops_per_ns * 1e6
+            throughput_ops_per_s = throughput_ops_per_ns * 1e9
+
+            duration_us = duration / 1e3
+            duration_ms = duration / 1e6
+            per_op_ns = duration / elements if elements > 0 else 0
+            per_op_us = per_op_ns / 1e3
+
+            # Variance across runs
+            if len(all_runs) > 1:
+                avg_run = sum(all_runs) / len(all_runs)
+                variance = sum((x - avg_run) ** 2 for x in all_runs) / len(all_runs)
+                stddev = variance ** 0.5
+                rel_stddev_runs = stddev / avg_run if avg_run > 0 else 0
+            else:
+                stddev = 0
+                rel_stddev_runs = 0
+
+            stress_entries.append({
+                'suite': suite,
+                'name': name,
+                'scenario': scenario,
+                'layer': tags.get('layer'),  # tier4: direct/tcp/websocket/multiclient
+                'duration_ns': duration,
+                'duration_us': duration_us,
+                'duration_ms': duration_ms,
+                'elements': elements,
+                'per_op_ns': per_op_ns,
+                'per_op_us': per_op_us,
+                'throughput_ops_per_ns': throughput_ops_per_ns,
+                'throughput_ops_per_us': throughput_ops_per_us,
+                'throughput_ops_per_ms': throughput_ops_per_ms,
+                'throughput_ops_per_s': throughput_ops_per_s,
+                'num_runs': len(all_runs),
+                'stddev_runs': stddev,
+                'rel_stddev_runs': rel_stddev_runs,
+                'file': str(latest_json)
+            })
+
+# Write Stress CSV (skip if stress dir missing)
+if STRESS_ROOT.exists():
+    STRESS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with STRESS_CSV.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['suite', 'name', 'scenario', 'duration_ms', 'elements', 'per_op_us', 'throughput_ops_per_s', 'runs', 'stddev_runs_ns', 'rel_stddev_runs', 'file'])
+        for e in sorted(stress_entries, key=lambda x: x['throughput_ops_per_s'], reverse=True):
+            writer.writerow([
+                e['suite'],
+                e['name'],
+                e['scenario'],
+                f"{e['duration_ms']:.2f}",
+                e['elements'],
+                f"{e['per_op_us']:.6f}",
+                f"{e['throughput_ops_per_s']:.2f}",
+                e['num_runs'],
+                f"{e['stddev_runs']:.2f}",
+                f"{e['rel_stddev_runs']:.6f}" if e['rel_stddev_runs'] else "NA",
+                e['file']
+            ])
 
 # Write unified Markdown summary with both Criterion and Stress tests
+OUT_MD.parent.mkdir(parents=True, exist_ok=True)
 with OUT_MD.open('w', encoding='utf-8') as f:
     f.write('# Benchmark & Stress Test Summary\n\n')
     f.write('Generated from Criterion benchmarks and stress tests.\n\n')
@@ -311,6 +322,8 @@ with OUT_MD.open('w', encoding='utf-8') as f:
     else:
         f.write('No stress test results found.\n')
 
-print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
-print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
+if CRITERION_ROOT.exists():
+    print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
+if STRESS_ROOT.exists():
+    print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
 print(f"Wrote {OUT_MD} (unified summary).")

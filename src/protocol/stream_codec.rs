@@ -8,7 +8,7 @@
 
 use crate::domains::stream::protocol::{IngestMetadata, StreamMessage, StreamWriteMode};
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 
@@ -35,7 +35,7 @@ pub fn parse_request(
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<StreamMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
         600 => parse_begin(&mut dec, route_family),
@@ -53,7 +53,7 @@ pub fn parse_request(
 
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &StreamResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
 
     match response {
         StreamResponse::Ok { session_id, data } => {
@@ -73,7 +73,10 @@ pub fn encode_response(response: &StreamResponse) -> Vec<u8> {
 // ===== Helper Parsers =====
 
 /// Wire format: `[string route][u64 expected_offset][optional bytes ingest_metadata]`
-fn parse_begin(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamMessage, String> {
+fn parse_begin(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<StreamMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let expected_offset = dec.get_u64()?;
@@ -94,7 +97,7 @@ fn parse_begin(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<Stream
 }
 
 /// Wire format: `[u64 session_id][bytes body][optional bytes metadata]`
-fn parse_append(dec: &mut TlvDecoder) -> Result<StreamMessage, String> {
+fn parse_append(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let session_id = dec.get_u64()?;
     let body = dec.get_bytes()?;
     let metadata = dec.get_optional_bytes()?.map(|b| b.to_vec().into());
@@ -111,7 +114,7 @@ fn parse_append(dec: &mut TlvDecoder) -> Result<StreamMessage, String> {
 }
 
 /// Wire format: `[u64 session_id][u8 mode]` where mode: 0=Buffered, 1=Sync
-fn parse_commit(dec: &mut TlvDecoder) -> Result<StreamMessage, String> {
+fn parse_commit(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let session_id = dec.get_u64()?;
     let mode_byte = dec.get_u8()?;
     let mode = match mode_byte {
@@ -128,7 +131,7 @@ fn parse_commit(dec: &mut TlvDecoder) -> Result<StreamMessage, String> {
 }
 
 /// Wire format: `[u64 session_id]`
-fn parse_rollback(dec: &mut TlvDecoder) -> Result<StreamMessage, String> {
+fn parse_rollback(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let session_id = dec.get_u64()?;
 
     if !dec.is_complete() {
@@ -139,7 +142,10 @@ fn parse_rollback(dec: &mut TlvDecoder) -> Result<StreamMessage, String> {
 }
 
 /// Wire format: `[string route][u64 from_offset][u64 limit][optional u64 max_bytes]`
-fn parse_read(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamMessage, String> {
+fn parse_read(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<StreamMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let from_offset = dec.get_u64()?;
@@ -160,7 +166,10 @@ fn parse_read(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamM
 }
 
 /// Wire format: `[string route]`
-fn parse_last(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamMessage, String> {
+fn parse_last(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<StreamMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
 
@@ -176,7 +185,7 @@ fn parse_last(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<StreamM
 
 /// Wire format: `[string route]`
 fn parse_get_metadata(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<StreamMessage, String> {
     let route_str = dec.get_string()?;
@@ -194,7 +203,7 @@ fn parse_get_metadata(
 
 /// Wire format: `[string pattern]`
 fn parse_subscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
@@ -216,7 +225,7 @@ fn parse_subscribe(
 
 /// Wire format: `[string pattern]`
 fn parse_unsubscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
@@ -240,7 +249,7 @@ fn parse_unsubscribe(
 ///
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_u64(subscription_id);
     enc.put_string(route.as_str());
     enc.put_bytes(payload);

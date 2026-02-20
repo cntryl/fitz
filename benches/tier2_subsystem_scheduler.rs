@@ -1,11 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::{Actor, Context};
 use std::sync::Arc;
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
@@ -22,21 +23,40 @@ impl Actor for SpawnActor {
     }
 }
 
+/// Full spawn cost (mailbox + router register + thread::spawn). High variance is expected from OS scheduling.
 fn bench_scheduler_spawn(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_scheduler");
     group.throughput(Throughput::Elements(1));
 
-    // Setup: Create scheduler ONCE, outside benchmark loop
     let scheduler = Arc::new(Scheduler::new(1));
     let address = test_address(1, "/bench/spawn");
 
-    // Warmup: ensure any lazy init happens before measurement
     scheduler.spawn(SpawnActor, address.clone(), 100);
 
     group.bench_function("spawn_single_actor", |b| {
         b.iter(|| {
-            // Measure: Spawn actor only (scheduler is persistent)
             scheduler.spawn(SpawnActor, black_box(address.clone()), 100);
+        })
+    });
+
+    group.finish();
+}
+
+/// Registration only (no thread). Isolates router + mailbox cost from thread creation.
+fn bench_scheduler_register_only(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_scheduler");
+    group.throughput(Throughput::Elements(1));
+
+    let scheduler = Arc::new(Scheduler::new(1));
+    let router = scheduler.router();
+
+    group.bench_function("register_only", |b| {
+        let mut idx = 0u64;
+        b.iter(|| {
+            let address = test_address(1, &format!("/bench/reg/{}", idx));
+            idx = idx.wrapping_add(1);
+            let mailbox = Mailbox::new(100);
+            router.register(black_box(address), Arc::new(mailbox));
         })
     });
 
@@ -59,7 +79,6 @@ fn bench_scheduler_spawn_cross_family(c: &mut Criterion) {
     group.bench_function("spawn_different_family", |b| {
         let mut idx = 0usize;
         b.iter(|| {
-            // Measure: Spawn actor from rotating address pool
             scheduler.spawn(
                 SpawnActor,
                 black_box(addresses[idx % addresses.len()].clone()),
@@ -74,7 +93,7 @@ fn bench_scheduler_spawn_cross_family(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
-    targets = bench_scheduler_spawn, bench_scheduler_spawn_cross_family
+    config = criterion_config::criterion_config_for_tier2();
+    targets = bench_scheduler_spawn, bench_scheduler_register_only, bench_scheduler_spawn_cross_family
 }
 criterion_main!(benches);

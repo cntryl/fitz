@@ -645,9 +645,9 @@ pub fn build_rpc_response_delivery(
     stream_end: bool,
     body: &[u8],
 ) -> Vec<u8> {
-    use fitz::protocol::tlv_codec::TlvEncoder;
+    use fitz::protocol::payload_codec::PayloadEncoder;
 
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_bytes(correlation_id.as_bytes());
     enc.put_u64(seq);
     enc.put_bytes(body);
@@ -692,7 +692,7 @@ pub struct RpcResponseDelivery {
 
 /// Parse RPC REQUEST delivery (msg_type 302) sent to workers
 pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, String> {
-    use fitz::protocol::tlv_codec::TlvDecoder;
+    use fitz::protocol::payload_codec::PayloadDecoder;
 
     let mut parser = TlvFrameParser::new(frame.to_vec());
     let (msg_type, payload) = parser
@@ -702,7 +702,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
         return Err(format!("Unexpected RPC request msg_type: {}", msg_type));
     }
 
-    let mut dec = TlvDecoder::new(&payload);
+    let mut dec = PayloadDecoder::new(&payload);
     let correlation_id_bytes = dec.get_bytes()?;
     if correlation_id_bytes.len() != 16 {
         return Err("Correlation ID must be 16 bytes".to_string());
@@ -729,7 +729,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
 
 /// Parse RPC RESPONSE delivery (msg_type 303) received by callers
 pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, String> {
-    use fitz::protocol::tlv_codec::TlvDecoder;
+    use fitz::protocol::payload_codec::PayloadDecoder;
 
     let mut parser = TlvFrameParser::new(frame.to_vec());
     let (msg_type, payload) = parser
@@ -739,7 +739,7 @@ pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, 
         return Err(format!("Unexpected RPC response msg_type: {}", msg_type));
     }
 
-    let mut dec = TlvDecoder::new(&payload);
+    let mut dec = PayloadDecoder::new(&payload);
     let correlation_id_bytes = dec.get_bytes()?;
     if correlation_id_bytes.len() != 16 {
         return Err("Correlation ID must be 16 bytes".to_string());

@@ -1,21 +1,24 @@
-//! Shared TLV encoding/decoding utilities
+//! Sequential payload encoding for domain message bodies.
 //!
-//! Common helpers used across all domain codecs.
+//! This is **not** TLV (tag-length-value). It encodes/decodes a fixed order of
+//! typed fields (scalars, length-prefixed strings/bytes, optionals). Used by
+//! domain codecs (RPC, lease, schedule, notice, stream, etc.) to serialize
+//! the body of messages. For the wire-level frame format (real TLV), see [`crate::protocol::tlv`].
 
 use bytes::BufMut;
 
-/// Helper for encoding TLV (Tag-Length-Value) format
-pub struct TlvEncoder {
+/// Encoder for sequential typed fields in message payloads.
+pub struct PayloadEncoder {
     buf: Vec<u8>,
 }
 
-impl Default for TlvEncoder {
+impl Default for PayloadEncoder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TlvEncoder {
+impl PayloadEncoder {
     /// Create a new encoder
     pub fn new() -> Self {
         Self { buf: Vec::new() }
@@ -100,13 +103,13 @@ impl TlvEncoder {
     }
 }
 
-/// Helper for decoding TLV format with bounds checking
-pub struct TlvDecoder<'a> {
+/// Decoder for sequential typed fields with bounds checking.
+pub struct PayloadDecoder<'a> {
     payload: &'a [u8],
     offset: usize,
 }
 
-impl<'a> TlvDecoder<'a> {
+impl<'a> PayloadDecoder<'a> {
     /// Create a new decoder
     pub fn new(payload: &'a [u8]) -> Self {
         Self { payload, offset: 0 }
@@ -244,7 +247,7 @@ mod tests {
     #[test]
     fn should_roundtrip_scalars() {
         // Arrange
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u8(42);
         enc.put_u16(1000);
         enc.put_u32(100000);
@@ -252,7 +255,7 @@ mod tests {
 
         // Act
         let buf = enc.finish();
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
 
         // Assert
         assert_eq!(dec.get_u8().unwrap(), 42);
@@ -265,13 +268,13 @@ mod tests {
     #[test]
     fn should_roundtrip_strings() {
         // Arrange
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("hello");
         enc.put_string("world");
 
         // Act
         let buf = enc.finish();
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
 
         // Assert
         assert_eq!(dec.get_string().unwrap(), "hello");
@@ -282,12 +285,12 @@ mod tests {
     #[test]
     fn should_roundtrip_bytes() {
         // Arrange
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_bytes(b"test data");
 
         // Act
         let buf = enc.finish();
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
 
         // Assert
         assert_eq!(dec.get_bytes().unwrap(), Bytes::from("test data"));
@@ -297,7 +300,7 @@ mod tests {
     #[test]
     fn should_roundtrip_optional() {
         // Arrange
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_optional_u64(Some(42));
         enc.put_optional_u64(None);
         enc.put_optional_string(Some("hello"));
@@ -305,7 +308,7 @@ mod tests {
 
         // Act
         let buf = enc.finish();
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
 
         // Assert
         assert_eq!(dec.get_optional_u64().unwrap(), Some(42));
@@ -324,7 +327,7 @@ mod tests {
         let buf = vec![1, 2]; // incomplete u32
 
         // Act
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
 
         // Assert
         assert!(dec.get_u32().is_err());
@@ -333,13 +336,13 @@ mod tests {
     #[test]
     fn should_validate_utf8() {
         // Arrange
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u32(4); // length
         let mut buf = enc.finish();
         buf.extend_from_slice(&[255, 255, 255, 255]); // invalid UTF-8
 
         // Act
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
 
         // Assert
         assert!(dec.get_string().is_err());

@@ -8,7 +8,7 @@
 
 use crate::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
 use crate::protocol::frame_context::FrameContext;
-use crate::protocol::tlv_codec::{TlvDecoder, TlvEncoder};
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use uuid::Uuid;
 
@@ -30,7 +30,7 @@ pub fn parse_request(
     payload: &[u8],
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
         300 => parse_subscribe(&mut dec, route_family),
@@ -44,7 +44,7 @@ pub fn parse_request(
 
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
 
     match response {
         RpcResponseMsg::Ok { data } => {
@@ -63,7 +63,10 @@ pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
 // ===== Helper Parsers =====
 
 /// Wire format: `[string worker_addr]`
-fn parse_subscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
+fn parse_subscribe(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<RpcMessage, String> {
     let worker_addr =
         RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
 
@@ -76,7 +79,7 @@ fn parse_subscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<Rp
 
 /// Wire format: `[string worker_addr]`
 fn parse_unsubscribe(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
     let worker_addr =
@@ -91,7 +94,7 @@ fn parse_unsubscribe(
 
 /// Wire format: `[bytes correlation_id][string route][string reply_route][bytes body]`
 fn parse_rpc_request(
-    dec: &mut TlvDecoder,
+    dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
     let correlation_id_bytes = dec.get_bytes()?;
@@ -120,7 +123,7 @@ fn parse_rpc_request(
     )))
 }
 
-fn parse_rpc_response(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
+fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
     let correlation_id_bytes = dec.get_bytes()?;
     if correlation_id_bytes.len() != 16 {
         return Err("Correlation ID must be 16 bytes (UUID)".to_string());
@@ -145,7 +148,7 @@ fn parse_rpc_response(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
     }))
 }
 
-fn parse_ack(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
+fn parse_ack(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
     let correlation_id_bytes = dec.get_bytes()?;
     if correlation_id_bytes.len() != 16 {
         return Err("Correlation ID must be 16 bytes (UUID)".to_string());
@@ -169,7 +172,7 @@ fn parse_ack(dec: &mut TlvDecoder) -> Result<RpcMessage, String> {
 ///
 /// This encodes the RpcWorkItem to be sent from route actor to worker session actor.
 pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWorkItem) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_bytes(work_item.correlation_id.as_bytes());
     enc.put_string(work_item.route.as_str());
     enc.put_string(work_item.reply_route.as_str());
@@ -181,7 +184,7 @@ pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWor
 ///
 /// Wire format: `[bytes correlation_id][u64 seq][bytes body][u8 stream_end]`
 pub fn encode_response_message(response: &RpcResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_bytes(response.correlation_id.as_bytes());
     enc.put_u64(response.seq);
     enc.put_bytes(&response.body);
@@ -196,7 +199,7 @@ pub fn encode_response_message(response: &RpcResponse) -> Vec<u8> {
 /// Sent to acknowledge receipt of a worker's RESPONSE message (303).
 /// This unblocks the worker so they can send additional responses.
 pub fn encode_ack(correlation_id: &Uuid) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     enc.put_bytes(correlation_id.as_bytes());
     enc.finish()
 }

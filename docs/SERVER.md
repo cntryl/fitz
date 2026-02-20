@@ -212,20 +212,17 @@ impl Engine {
 - **Queue:** `{realm}/{area}/{resource}/msg:{message_id}` → `{body}`
 - **Lease:** `{realm}/{area}/{resource}` → `{owner, ttl, token}`
 ## Wire Protocol Implementation
-### TLV Encoding/Decoding
-**Location:** `src/protocol/tlv.rs`
-TLV format (already defined in [CLIENT.md](CLIENT.md)):
-- Type: u16 (single byte if ≤0xFE, else 0xFF escape + 2-byte BE)
-- Length: u32 BE
-- Value: exactly `length` bytes
+### Payload encoding (domain message bodies)
+**Location:** `src/protocol/payload_codec.rs`
+Sequential typed fields (not frame TLV): fixed-order scalars and length-prefixed strings/bytes. Used by domain codecs to encode request/response bodies. Frame-level TLV is in `src/protocol/tlv.rs`.
 **Implementation pattern:**
 ```rust
-pub struct TlvDecoder<'a> {
-    bytes: &'a [u8],
+pub struct PayloadDecoder<'a> {
+    payload: &'a [u8],
     offset: usize,
 }
-impl TlvDecoder {
-    pub fn new(bytes: &[u8]) -> Self { /* ... */ }
+impl PayloadDecoder {
+    pub fn new(payload: &[u8]) -> Self { /* ... */ }
     
     pub fn get_u8(&mut self) -> Result<u8> { /* ... */ }
     pub fn get_u16(&mut self) -> Result<u16> { /* ... */ }
@@ -235,10 +232,10 @@ impl TlvDecoder {
     pub fn get_bytes(&mut self) -> Result<Vec<u8>> { /* ... */ }
     pub fn is_complete(&self) -> bool { /* ... */ }
 }
-pub struct TlvEncoder {
-    bytes: Vec<u8>,
+pub struct PayloadEncoder {
+    buf: Vec<u8>,
 }
-impl TlvEncoder {
+impl PayloadEncoder {
     pub fn new() -> Self { /* ... */ }
     
     pub fn put_u8(&mut self, val: u8) { /* ... */ }
@@ -247,7 +244,7 @@ impl TlvEncoder {
     pub fn put_u64(&mut self, val: u64) { /* ... */ }
     pub fn put_string(&mut self, s: &str) { /* ... */ }
     pub fn put_bytes(&mut self, b: &[u8]) { /* ... */ }
-    pub fn finish(self) -> Vec<u8> { /* ... */ }
+    pub fn finish(&mut self) -> Vec<u8> { /* ... */ }
 }
 ```
 **Rules:**
@@ -319,7 +316,7 @@ pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
 ) -> Result<DomainMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
     
     match ctx.msg_type {
         MSG_TYPE_OP1 => parse_operation1(&mut dec),
@@ -329,7 +326,7 @@ pub fn parse_request(
 }
 /// Encode response → TLV bytes
 pub fn encode_response(response: &DomainResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     
     match response {
         DomainResponse::Ok { fields... } => {
@@ -388,7 +385,7 @@ impl KvActor {
 **Codec** (`src/protocol/kv_codec.rs`):
 ```rust
 pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<KvMessage, String> {
-    let mut dec = TlvDecoder::new(payload);
+    let mut dec = PayloadDecoder::new(payload);
     
     match ctx.msg_type {
         100 => {
@@ -409,7 +406,7 @@ pub fn parse_request(ctx: &FrameContext, payload: &[u8]) -> Result<KvMessage, St
     }
 }
 pub fn encode_response(response: &KvResponse) -> Vec<u8> {
-    let mut enc = TlvEncoder::new();
+    let mut enc = PayloadEncoder::new();
     
     match response {
         KvResponse::BeginOk { tx_id } => {
@@ -624,7 +621,7 @@ mod tests {
     #[test]
     fn should_parse_operation_from_tlv() {
         // Arrange
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(123);
         enc.put_string("test");
         let bytes = enc.finish();

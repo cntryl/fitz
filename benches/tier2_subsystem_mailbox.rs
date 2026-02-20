@@ -3,8 +3,8 @@ use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
 use fitz::runtime::{Actor, Context};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 struct MessageActor;
 
@@ -35,6 +35,9 @@ fn bench_mailbox_send(c: &mut Criterion) {
     group.finish();
 }
 
+/// Send 100 messages per iteration. Variance (rel_stddev ~0.10+) is expected from
+/// scheduler/thread wakeups and channel contention; run with a single worker and no
+/// other load to reduce noise.
 fn bench_mailbox_capacity(c: &mut Criterion) {
     let scheduler = Scheduler::new(1);
     let address = RouteAddress::new(
@@ -61,7 +64,7 @@ fn bench_mailbox_capacity(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier2();
     targets = bench_mailbox_send, bench_mailbox_capacity
 }
 criterion_main!(benches);

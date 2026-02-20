@@ -21,7 +21,7 @@
 //! GetResult:  `[u8 0][u8 found][u32 value_len][value bytes]`
 //! Error:      `[u8 1][u32 error_len][error_msg UTF-8]`
 
-use crate::codec::{TlvDecoder, TlvEncoder};
+use crate::codec::{PayloadDecoder, PayloadEncoder};
 use crate::connection::SharedConnection;
 use crate::error::{FitzError, Result};
 use crate::protocol::{message_type, TransactionMode};
@@ -46,7 +46,7 @@ impl KvClient {
     ///
     /// Returns a `KvTransaction` which holds the tx_id and route internally.
     pub fn begin(&self, route: &str, mode: TransactionMode) -> Result<KvTransaction> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string(route);
         enc.put_u8(mode as u8);
         enc.put_u8(0); // durable: false
@@ -56,7 +56,7 @@ impl KvClient {
             .send_request(message_type::KV_BEGIN, &enc.finish())?;
 
         // Server: [u8 0][u64 tx_id] on success
-        let mut dec = TlvDecoder::new(&resp);
+        let mut dec = PayloadDecoder::new(&resp);
         let status = dec.get_u8()?;
         if status == 1 {
             let msg = dec.get_string()?;
@@ -90,7 +90,7 @@ impl KvTransaction {
     ///
     /// Returns `Ok(None)` when the key does not exist.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(self.tx_id);
         enc.put_string(&self.route);
         enc.put_bytes(key);
@@ -100,7 +100,7 @@ impl KvTransaction {
             .send_request(message_type::KV_GET, &enc.finish())?;
 
         // Server: [u8 0][u8 found][u32 len][value bytes]
-        let mut dec = TlvDecoder::new(&resp);
+        let mut dec = PayloadDecoder::new(&resp);
         let status = dec.get_u8()?;
         if status == 1 {
             let msg = dec.get_string()?;
@@ -118,7 +118,7 @@ impl KvTransaction {
 
     /// Put a key-value pair.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(self.tx_id);
         enc.put_string(&self.route);
         enc.put_bytes(key);
@@ -133,7 +133,7 @@ impl KvTransaction {
 
     /// Delete a key.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(self.tx_id);
         enc.put_string(&self.route);
         enc.put_bytes(key);
@@ -147,7 +147,7 @@ impl KvTransaction {
 
     /// Commit the transaction (consumes self).
     pub fn commit(self) -> Result<()> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(self.tx_id);
         enc.put_string(&self.route);
 
@@ -160,7 +160,7 @@ impl KvTransaction {
 
     /// Rollback the transaction (consumes self).
     pub fn rollback(self) -> Result<()> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(self.tx_id);
         enc.put_string(&self.route);
 
@@ -181,7 +181,7 @@ fn decode_ok_response(buf: &[u8]) -> Result<()> {
     if buf.is_empty() {
         return Err(FitzError::Codec("Empty response".into()));
     }
-    let mut dec = TlvDecoder::new(buf);
+    let mut dec = PayloadDecoder::new(buf);
     let status = dec.get_u8()?;
     match status {
         0 => Ok(()),
@@ -206,7 +206,7 @@ mod tests {
         let mut buf = vec![0x00];
         buf.extend_from_slice(&7u64.to_be_bytes());
 
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
         let status = dec.get_u8().unwrap();
         assert_eq!(status, 0);
         let tx_id = dec.get_u64().unwrap();
@@ -236,7 +236,7 @@ mod tests {
         buf.extend_from_slice(&(5u32).to_be_bytes());
         buf.extend_from_slice(b"alice");
 
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
         let status = dec.get_u8().unwrap();
         assert_eq!(status, 0);
         let found = dec.get_u8().unwrap();
@@ -251,7 +251,7 @@ mod tests {
         let mut buf = vec![0x00, 0x00];
         buf.extend_from_slice(&(0u32).to_be_bytes());
 
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
         let status = dec.get_u8().unwrap();
         assert_eq!(status, 0);
         let found = dec.get_u8().unwrap();
@@ -262,13 +262,13 @@ mod tests {
 
     #[test]
     fn should_encode_begin_request() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("kv://prod/app/users");
         enc.put_u8(TransactionMode::ReadWrite as u8);
         enc.put_u8(0);
         let payload = enc.finish();
 
-        let mut dec = TlvDecoder::new(&payload);
+        let mut dec = PayloadDecoder::new(&payload);
         assert_eq!(dec.get_string().unwrap(), "kv://prod/app/users");
         assert_eq!(dec.get_u8().unwrap(), 1); // ReadWrite
         assert_eq!(dec.get_u8().unwrap(), 0); // durable
@@ -277,13 +277,13 @@ mod tests {
 
     #[test]
     fn should_encode_get_request() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(42); // tx_id
         enc.put_string("kv://prod/app/users");
         enc.put_bytes(b"user:1");
         let payload = enc.finish();
 
-        let mut dec = TlvDecoder::new(&payload);
+        let mut dec = PayloadDecoder::new(&payload);
         assert_eq!(dec.get_u64().unwrap(), 42);
         assert_eq!(dec.get_string().unwrap(), "kv://prod/app/users");
         assert_eq!(dec.get_bytes().unwrap(), b"user:1");

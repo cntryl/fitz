@@ -3,8 +3,8 @@ use fitz::auth::{Access, Permission};
 use fitz::runtime::routing::Route;
 use fitz::session::permissions::SessionPermissions;
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn bench_permission_compilation(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - precompute permission strings
@@ -311,7 +311,7 @@ fn bench_permission_allows_allow_all(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets =
         bench_permission_compilation,
         bench_permission_allows_exact_match,

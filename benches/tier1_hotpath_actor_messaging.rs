@@ -5,8 +5,8 @@ use fitz::runtime::{Actor, Context};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 struct PingActor;
 
@@ -93,7 +93,7 @@ fn bench_message_overhead(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets = bench_send_to_other, bench_send_to_self, bench_message_overhead
 }
 criterion_main!(benches);

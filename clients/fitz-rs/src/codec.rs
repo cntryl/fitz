@@ -1,13 +1,16 @@
-//! TLV (Tag-Length-Value) encoding and decoding
+//! Payload codec: sequential typed fields for domain message bodies.
+//!
+//! Matches the server's payload_codec format (not TLV; fixed-order typed fields).
+//! Frame-level encode/decode is in `encode_message_frame` / `decode_message_frame`.
 
 use crate::error::{FitzError, Result};
 
-/// TLV encoder for building wire frames
-pub struct TlvEncoder {
+/// Encoder for message payloads (sequential typed fields).
+pub struct PayloadEncoder {
     buf: Vec<u8>,
 }
 
-impl TlvEncoder {
+impl PayloadEncoder {
     pub fn new() -> Self {
         Self { buf: Vec::new() }
     }
@@ -50,19 +53,19 @@ impl TlvEncoder {
     }
 }
 
-impl Default for TlvEncoder {
+impl Default for PayloadEncoder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// TLV decoder for parsing wire frames
-pub struct TlvDecoder<'a> {
+/// Decoder for message payloads (sequential typed fields).
+pub struct PayloadDecoder<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
-impl<'a> TlvDecoder<'a> {
+impl<'a> PayloadDecoder<'a> {
     pub fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
     }
@@ -185,33 +188,33 @@ mod tests {
 
     #[test]
     fn should_encode_and_decode_u64() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_u64(0x0123456789ABCDEF);
         let buf = enc.finish();
 
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
         let value = dec.get_u64().unwrap();
         assert_eq!(value, 0x0123456789ABCDEF);
     }
 
     #[test]
     fn should_encode_and_decode_string() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("hello");
         let buf = enc.finish();
 
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
         let value = dec.get_string().unwrap();
         assert_eq!(value, "hello");
     }
 
     #[test]
     fn should_encode_and_decode_bytes() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_bytes(b"data");
         let buf = enc.finish();
 
-        let mut dec = TlvDecoder::new(&buf);
+        let mut dec = PayloadDecoder::new(&buf);
         let value = dec.get_bytes().unwrap();
         assert_eq!(value, b"data");
     }

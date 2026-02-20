@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::runtime::matcher::Pattern;
 use fitz::runtime::routing::Route;
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 /// Exact literal route match (best case)
 fn bench_exact_match(c: &mut Criterion) {
@@ -190,7 +190,7 @@ fn bench_backtracking_knee(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets = bench_exact_match, bench_single_wildcard, bench_double_star_end, bench_double_star_middle,
               bench_negative_match_late_fail, bench_depth_knee, bench_pattern_complexity_knee, bench_backtracking_knee
 }

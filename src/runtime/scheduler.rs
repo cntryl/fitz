@@ -66,6 +66,13 @@ impl Scheduler {
     /// - Start a dedicated thread for message processing
     /// - Return an ActorRef for sending messages to the actor
     ///
+    /// # Cost and variance
+    ///
+    /// Full spawn cost includes mailbox creation, router registration, and `thread::spawn`.
+    /// Tier 2 subsystem_scheduler benchmarks measure this full cost; variance (rel_stddev
+    /// ~0.10–0.15) is expected from OS thread scheduling. Use the `register_only` bench
+    /// to isolate registration cost from thread creation.
+    ///
     /// # Message Processing
     ///
     /// The actor processes messages in batches (up to 16 per iteration) to reduce

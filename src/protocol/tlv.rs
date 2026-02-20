@@ -1,6 +1,8 @@
-//! TLV (Type-Length-Value) codec for protocol messages
+//! Frame-level TLV (Type-Length-Value) codec for the wire protocol.
 //!
-//! TLV frames are decoded into typed records without routing decisions.
+//! Encodes/decodes multiplexed protocol frames: each record has a message type (u16),
+//! 2-byte length, and value bytes. Used for CONNECT, RPC, notice, stream, etc. on the wire.
+//! For encoding domain message *payloads* (sequential typed fields), see [`crate::protocol::payload_codec`].
 
 use bytes::{BufMut, Bytes, BytesMut};
 use std::fmt;

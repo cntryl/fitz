@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::runtime::context::{TimerId, TimerManager};
 use std::time::Duration;
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn bench_timer_id_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("hotpath_context");
@@ -244,7 +244,7 @@ fn bench_timer_manager_clear(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets =
         bench_timer_id_creation,
         bench_timer_manager_schedule_once,

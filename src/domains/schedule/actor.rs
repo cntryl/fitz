@@ -166,7 +166,8 @@ impl ScheduleActor {
         self.last_scan_time = now;
         let now_ms = Self::instant_to_ms(now);
         let mut fired = Vec::new();
-        let mut to_reschedule = Vec::new();
+        // Reuse single vec for persistence: (route, cron, payload, next_fire) matches store API
+        let mut to_reschedule: Vec<(String, String, Bytes, Instant)> = Vec::new();
         let mut heap_popped = Vec::new();
 
         // Peek the heap for schedules ready to fire (fire_ms <= now_ms)
@@ -181,40 +182,63 @@ impl ScheduleActor {
             }
         }
 
-        // Process fired schedules
+        // Process fired schedules: build to_reschedule in store API shape (no extra batch clone)
         for (_fire_ms, route) in heap_popped {
             if let Some(def) = self.schedules.get_mut(&route) {
                 // Use cached parsed cron instead of reparsing
                 let next_fire = def.parsed_cron.next_fire_time(now);
                 def.next_fire_time = next_fire;
-                let next_fire_ms = Self::instant_to_ms(next_fire);
 
-                // Collect for batch persistence
                 to_reschedule.push((
                     route.clone(),
                     def.cron.clone(),
                     def.payload.clone(),
                     next_fire,
-                    next_fire_ms,
                 ));
-
                 fired.push((route.clone(), def.payload.clone()));
                 info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
             }
         }
 
-        // Batch reschedule: one transaction for all inserts
-        let batch: Vec<_> = to_reschedule
-            .iter()
-            .map(|(route, cron, payload, next_fire, _)| {
-                (route.clone(), cron.clone(), payload.clone(), *next_fire)
-            })
-            .collect();
+        // Batch reschedule: one transaction, pass to_reschedule directly (no extra clone)
         let _ = self
             .store
-            .insert_batch(self.family.as_u64(), &batch, self.write_options);
-        for (route, _cron, _payload, _next_fire, next_fire_ms) in to_reschedule {
-            self.ready_heap.push((Reverse(next_fire_ms), route));
+            .insert_batch(self.family.as_u64(), &to_reschedule, self.write_options);
+        for (route, _cron, _payload, next_fire) in to_reschedule {
+            self.ready_heap
+                .push((Reverse(Self::instant_to_ms(next_fire)), route));
+        }
+
+        fired
+    }
+
+    /// Scan and fire without persisting or re-adding to heap (for benchmarking CPU cost only).
+    #[doc(hidden)]
+    pub fn scan_and_fire_cpu_only(&mut self) -> Vec<(String, Bytes)> {
+        let now = Instant::now();
+        if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
+            return Vec::new();
+        }
+        self.last_scan_time = now;
+        let now_ms = Self::instant_to_ms(now);
+        let mut fired = Vec::new();
+        let mut heap_popped = Vec::new();
+
+        while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
+            if fire_ms <= now_ms {
+                if let Some((Reverse(_fire_ms), route)) = self.ready_heap.pop() {
+                    heap_popped.push(route);
+                }
+            } else {
+                break;
+            }
+        }
+
+        for route in heap_popped {
+            if let Some(def) = self.schedules.get_mut(&route) {
+                let _next_fire = def.parsed_cron.next_fire_time(now);
+                fired.push((route.clone(), def.payload.clone()));
+            }
         }
 
         fired

@@ -3,8 +3,8 @@ use fitz::runtime::envelope::{Envelope, MessageId};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::time::{Duration, Instant};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 // Simple message type for benchmarking
 #[derive(Clone)]
@@ -297,7 +297,7 @@ fn bench_type_erasure_overhead(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets =
         bench_message_id_generation,
         bench_envelope_creation,

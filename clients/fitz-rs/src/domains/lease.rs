@@ -18,9 +18,9 @@
 //! Error:   `[u8 1][u32 error_len][error_msg UTF-8]`
 //!
 //! The `[u8 has_token][optional u64]` encoding matches
-//! `TlvEncoder::put_optional_u64` on the server.
+//! `PayloadEncoder::put_optional_u64` on the server.
 
-use crate::codec::{TlvDecoder, TlvEncoder};
+use crate::codec::{PayloadDecoder, PayloadEncoder};
 use crate::connection::SharedConnection;
 use crate::error::{FitzError, Result};
 use crate::protocol::message_type;
@@ -61,7 +61,7 @@ impl LeaseClient {
     ///
     /// Returns the fencing token on success.
     pub fn acquire(&self, route: &str, owner_id: &str, ttl_secs: u64) -> Result<LeaseGrant> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string(route);
         enc.put_string(owner_id);
         enc.put_u64(ttl_secs);
@@ -89,7 +89,7 @@ impl LeaseClient {
         fencing_token: u64,
         ttl_secs: u64,
     ) -> Result<LeaseGrant> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string(route);
         enc.put_string(owner_id);
         enc.put_u64(fencing_token);
@@ -111,7 +111,7 @@ impl LeaseClient {
     ///
     /// `fencing_token` must match the current token.
     pub fn release(&self, route: &str, owner_id: &str, fencing_token: u64) -> Result<()> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string(route);
         enc.put_string(owner_id);
         enc.put_u64(fencing_token);
@@ -128,7 +128,7 @@ impl LeaseClient {
     ///
     /// Returns whether the lease is held (with fencing token) or free.
     pub fn query(&self, route: &str) -> Result<LeaseStatus> {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string(route);
 
         let resp = self
@@ -147,7 +147,7 @@ impl LeaseClient {
 /// Decode the standard lease response format.
 ///
 /// Server wire format (from `lease_codec::encode_response` +
-/// `TlvEncoder::put_optional_u64`):
+/// `PayloadEncoder::put_optional_u64`):
 ///
 ///   Success: `[u8 0][u8 has_token][u64 token if has_token=1]`
 ///   Error:   `[u8 1][u32 error_len][error_msg UTF-8]`
@@ -159,7 +159,7 @@ fn decode_success_response(buf: &[u8]) -> Result<Option<u64>> {
         return Err(FitzError::Codec("Empty response".into()));
     }
 
-    let mut dec = TlvDecoder::new(buf);
+    let mut dec = PayloadDecoder::new(buf);
     let status = dec.get_u8()?;
 
     match status {
@@ -219,14 +219,14 @@ mod tests {
 
     #[test]
     fn should_encode_acquire_request() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("lease://prod/locks/leader");
         enc.put_string("node-1");
         enc.put_u64(30);
         let payload = enc.finish();
 
         // Verify round-trip
-        let mut dec = TlvDecoder::new(&payload);
+        let mut dec = PayloadDecoder::new(&payload);
         assert_eq!(dec.get_string().unwrap(), "lease://prod/locks/leader");
         assert_eq!(dec.get_string().unwrap(), "node-1");
         assert_eq!(dec.get_u64().unwrap(), 30);
@@ -235,14 +235,14 @@ mod tests {
 
     #[test]
     fn should_encode_renew_request() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("lease://prod/locks/leader");
         enc.put_string("node-1");
         enc.put_u64(12345); // fencing token
         enc.put_u64(60); // ttl
         let payload = enc.finish();
 
-        let mut dec = TlvDecoder::new(&payload);
+        let mut dec = PayloadDecoder::new(&payload);
         assert_eq!(dec.get_string().unwrap(), "lease://prod/locks/leader");
         assert_eq!(dec.get_string().unwrap(), "node-1");
         assert_eq!(dec.get_u64().unwrap(), 12345);
@@ -252,13 +252,13 @@ mod tests {
 
     #[test]
     fn should_encode_release_request() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("lease://prod/locks/leader");
         enc.put_string("node-1");
         enc.put_u64(12345);
         let payload = enc.finish();
 
-        let mut dec = TlvDecoder::new(&payload);
+        let mut dec = PayloadDecoder::new(&payload);
         assert_eq!(dec.get_string().unwrap(), "lease://prod/locks/leader");
         assert_eq!(dec.get_string().unwrap(), "node-1");
         assert_eq!(dec.get_u64().unwrap(), 12345);
@@ -267,11 +267,11 @@ mod tests {
 
     #[test]
     fn should_encode_query_request() {
-        let mut enc = TlvEncoder::new();
+        let mut enc = PayloadEncoder::new();
         enc.put_string("lease://prod/locks/leader");
         let payload = enc.finish();
 
-        let mut dec = TlvDecoder::new(&payload);
+        let mut dec = PayloadDecoder::new(&payload);
         assert_eq!(dec.get_string().unwrap(), "lease://prod/locks/leader");
         assert!(dec.is_empty());
     }

@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn bench_mux_route_reuse(c: &mut Criterion) {
     let sizes = [0usize, 16usize, 64usize];
@@ -85,7 +85,7 @@ fn bench_mux_route_decode_each(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets = bench_mux_route_reuse, bench_mux_route_decode_each
 }
 criterion_main!(benches);
