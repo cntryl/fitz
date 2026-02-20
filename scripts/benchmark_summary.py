@@ -89,11 +89,33 @@ with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
             e['file']
         ])
 
+# Derive suite (first path component) for each Criterion entry for per-suite grouping
+# Path can use / or \ depending on OS
+for e in entries:
+    parts = e['benchmark'].replace('\\', '/').split('/')
+    e['suite'] = parts[0] if parts else 'other'
+
 # Write a small Markdown summary: top 10 fastest and slowest, and high-variance list
 sorted_by_mean = sorted(entries, key=lambda x: x['mean'])
 fastest = sorted_by_mean[:10]
 slowest = sorted_by_mean[-10:][::-1]
 high_var = [e for e in entries if e['high_variance']]
+
+# Group Criterion entries by suite (tier) for per-suite summaries
+criterion_suites = {}
+for e in entries:
+    suite_name = e['suite']
+    if suite_name not in criterion_suites:
+        criterion_suites[suite_name] = []
+    criterion_suites[suite_name].append(e)
+# Sort suite names: tier1_* first, then tier2_*, then rest alphabetically
+def suite_sort_key(name):
+    if name.startswith('tier1_'):
+        return (0, name)
+    if name.startswith('tier2_'):
+        return (1, name)
+    return (2, name)
+criterion_suite_order = sorted(criterion_suites.keys(), key=suite_sort_key)
 
 # ============================================================================
 # STRESS TESTS
@@ -217,12 +239,33 @@ with OUT_MD.open('w', encoding='utf-8') as f:
         f.write('|---|---:|---:|---:|\n')
         for e in sorted(high_var, key=lambda x: x['rel_stddev'], reverse=True):
             f.write(f"| {e['benchmark']} | {e['mean']:.6f} | {e['std_dev'] or 'NA'} | {e['rel_stddev']:.6f} |\n")
-    
+
+    # ========== CRITERION PER-SUITE (ALL TIERS) ==========
+    f.write('\n## Per-Suite Results (Criterion)\n\n')
+    for suite_name in criterion_suite_order:
+        suite_entries = criterion_suites[suite_name]
+        # Sort by mean (fastest first) within suite
+        suite_entries_sorted = sorted(suite_entries, key=lambda x: x['mean'])
+        total_mean_ns = sum(e['mean'] for e in suite_entries_sorted)
+        count = len(suite_entries_sorted)
+        avg_ns = total_mean_ns / count if count else 0
+        f.write(f'### {suite_name}\n\n')
+        f.write(f'**Benchmarks**: {count} | **Avg mean**: {avg_ns/1e3:.3f} µs (total {total_mean_ns/1e6:.2f} ms)\n\n')
+        f.write('| benchmark | mean_ns | mean_us | mean_ms | std_dev | rel_stddev |\n')
+        f.write('|---:|---:|---:|---:|---:|---:|\n')
+        for e in suite_entries_sorted:
+            norm = e['benchmark'].replace('\\', '/')
+            bench_short = norm.split('/', 1)[-1] if '/' in norm else e['benchmark']
+            rel = f"{e['rel_stddev']:.4f}" if e['rel_stddev'] is not None else "NA"
+            std = f"{e['std_dev']:.4f}" if isinstance(e['std_dev'], float) else (str(e['std_dev']) if e['std_dev'] is not None else "NA")
+            f.write(f"| {bench_short} | {e['mean']:.2f} | {e['mean_us']:.4f} | {e['mean_ms']:.6f} | {std} | {rel} |\n")
+        f.write('\n')
+
     # ========== STRESS TEST SECTION ==========
     f.write('\n# Stress Tests\n\n')
     if stress_entries:
         f.write('Ordered by throughput (highest first).\n\n')
-        f.write('## Per-Suite Results\n\n')
+        f.write('## Per-Suite Results (Stress)\n\n')
         
         # Group by suite
         suites = {}

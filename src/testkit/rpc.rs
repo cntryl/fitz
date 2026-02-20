@@ -48,8 +48,8 @@ pub fn create_test_rpc_request(
     RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id,
-        route: std::sync::Arc::new(Route::new(route)),
-        reply_route: std::sync::Arc::new(Route::new(reply_route)),
+        route: Route::new(route),
+        reply_route: Route::new(reply_route),
         body: Bytes::from(body.to_vec()),
     }
 }

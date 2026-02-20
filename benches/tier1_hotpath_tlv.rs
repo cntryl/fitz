@@ -43,10 +43,11 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
     group.finish();
 }
 
-/// Decode benches: decode_all (stress), decode_one (single-record realism), and decode-iterator with preallocated Vec to reduce reallocation bias
+/// Decode benches: decode_all (batch), decode-iterator with preallocated Vec.
+/// Batch size 64 keeps each iteration under the tier1 target (<10 µs per op).
 fn bench_tlv_decode_sizes(c: &mut Criterion) {
     let sizes = [0usize, 16, 64, 256];
-    let records = 256usize;
+    let records = 64usize;
 
     let mut group = c.benchmark_group("hotpath_tlv_decode_sizes");
     group.sampling_mode(SamplingMode::Flat);

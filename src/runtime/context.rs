@@ -8,10 +8,12 @@ use std::time::{Duration, Instant};
 pub struct TimerId(u64);
 
 impl TimerId {
+    #[inline]
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
+    #[inline]
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -33,19 +35,23 @@ impl Timer {
         }
     }
 
+    #[inline]
     pub fn id(&self) -> TimerId {
         self.id
     }
 
+    #[inline]
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
 
+    #[inline]
     pub fn interval(&self) -> Option<Duration> {
         self.interval
     }
 
     /// Check if this timer has fired
+    #[inline]
     pub fn is_fired(&self, now: Instant) -> bool {
         now >= self.deadline
     }
@@ -236,6 +242,7 @@ impl TimerManager {
     }
 
     /// Schedule a one-time timer
+    #[inline]
     pub fn schedule_once(&mut self, delay: Duration) -> TimerId {
         let timer_id = TimerId::new(self.next_timer_id);
         self.next_timer_id += 1;
@@ -248,6 +255,7 @@ impl TimerManager {
     }
 
     /// Schedule a repeating timer
+    #[inline]
     pub fn schedule_repeat(&mut self, delay: Duration, interval: Duration) -> TimerId {
         let timer_id = TimerId::new(self.next_timer_id);
         self.next_timer_id += 1;
@@ -260,6 +268,7 @@ impl TimerManager {
     }
 
     /// Cancel a timer
+    #[inline]
     pub fn cancel(&mut self, timer_id: TimerId) -> bool {
         if let Some(entry) = self.timers.remove(&timer_id) {
             self.wheel.remove(entry.level, entry.slot, timer_id);
@@ -269,6 +278,7 @@ impl TimerManager {
     }
 
     /// Get all fired timers and reschedule repeating ones
+    #[inline]
     pub fn fired_timers(&mut self) -> Vec<TimerId> {
         let now = Instant::now();
         let start_instant = self.start_instant;
@@ -322,6 +332,7 @@ impl TimerManager {
     }
 
     /// Get the next timer deadline
+    #[inline]
     pub fn next_deadline(&self) -> Option<Instant> {
         let next_tick = self.recompute_next_deadline_tick()?;
         let deadline = self

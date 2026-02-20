@@ -55,6 +55,7 @@ pub enum PatternSegment {
 
 impl Pattern {
     /// Create a new pattern from a route string
+    #[inline]
     pub fn new(route: &str) -> Self {
         let segments = parse_pattern(route);
         Self {
@@ -64,11 +65,13 @@ impl Pattern {
     }
 
     /// Get the original route pattern
+    #[inline]
     pub fn route(&self) -> &str {
         &self.route
     }
 
     /// Check if this pattern matches a given route
+    #[inline]
     pub fn matches(&self, route: &Route) -> bool {
         let route_str = route.as_str();
 

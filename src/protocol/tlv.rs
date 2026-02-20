@@ -15,18 +15,22 @@ impl MessageType {
 
     pub const CONNECT: MessageType = MessageType(1); // control connect message
 
+    #[inline]
     pub fn new(value: u16) -> Self {
         Self(value)
     }
 
+    #[inline]
     pub fn as_u16(&self) -> u16 {
         self.0
     }
 
+    #[inline]
     pub fn is_single_byte(&self) -> bool {
         self.0 <= Self::MAX_SINGLE_BYTE
     }
 
+    #[inline]
     pub fn encoded_type_len(&self) -> usize {
         if self.is_single_byte() {
             1
@@ -35,6 +39,7 @@ impl MessageType {
         }
     }
 
+    #[inline]
     pub fn encoded_size(&self, value_len: usize) -> usize {
         self.encoded_type_len() + 2 + value_len
     }
@@ -320,7 +325,7 @@ impl TlvEncoder {
     }
 
     /// Encode a record. Inline for hot-path performance.
-    #[inline(always)]
+    #[inline]
     pub fn encode(&mut self, msg_type: MessageType, value: &[u8]) {
         // If msg_type is in single-byte range, write a single u8; otherwise write escape marker + BE u16
         if msg_type.is_single_byte() {

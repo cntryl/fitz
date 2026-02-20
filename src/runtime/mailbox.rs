@@ -47,11 +47,13 @@ impl Mailbox {
     }
 
     /// Get a sender for this mailbox
+    #[inline]
     pub fn sender(&self) -> Sender<Envelope> {
         self.sender.clone()
     }
 
     /// Get a receiver for this mailbox
+    #[inline]
     pub fn receiver(&self) -> &Receiver<Envelope> {
         &self.receiver
     }
@@ -105,6 +107,7 @@ impl Clone for Mailbox {
 /// This allows the router (in transport) to deliver envelopes to mailboxes
 /// (in runtime) without creating a circular dependency.
 impl MailboxSink for Mailbox {
+    #[inline]
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.sender.try_send(envelope).map_err(|e| match e {
             crossbeam_channel::TrySendError::Full(_) => DeliveryError::MailboxFull {
@@ -115,6 +118,7 @@ impl MailboxSink for Mailbox {
         })
     }
 
+    #[inline]
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.high_priority.try_send(envelope).map_err(|e| match e {
             crossbeam_channel::TrySendError::Full(_) => DeliveryError::HighLaneFull {

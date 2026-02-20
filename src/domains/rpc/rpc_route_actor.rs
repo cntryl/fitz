@@ -33,7 +33,6 @@ use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::{RouteAddress, RouteFamily};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -68,16 +67,15 @@ impl PartialOrd for ExpiringLease {
 
 /// Tracks a leased request assigned to a worker
 ///
-/// Optimized for zero-allocation dispatch:
+/// Optimized for minimal allocation:
 /// - Stores worker_index instead of RouteAddress (no clone)
-/// - Uses Arc<Route> for reply route (shared ownership)
 /// - No request storage (already dispatched to worker)
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct Lease {
     correlation_id: Uuid,
     worker_index: usize, // Index into workers vec (no allocation)
-    reply_route: std::sync::Arc<crate::runtime::routing::Route>, // Shared ownership
+    reply_route: crate::runtime::routing::Route,
     expiration: Instant,
 }
 
@@ -226,7 +224,7 @@ impl RpcRouteActor {
                     request.family_id, self.family
                 ),
             );
-            self.send_error(error, request.reply_route.as_ref());
+            self.send_error(error, &request.reply_route);
             return;
         }
 
@@ -237,7 +235,7 @@ impl RpcRouteActor {
         if self.pending.len() >= self.capacity {
             // Send backpressure error to client
             let error = RpcError::backpressure(request.correlation_id);
-            self.send_error(error, request.reply_route.as_ref());
+            self.send_error(error, &request.reply_route);
             return;
         }
 
@@ -254,7 +252,7 @@ impl RpcRouteActor {
     fn handle_response(&mut self, response: RpcResponse, ctx: &mut Context<Self>) {
         // Check if we have a lease for this correlation ID
         if let Some(lease) = self.leases.get(&response.correlation_id) {
-            let reply_route = Arc::clone(&lease.reply_route); // Cheap Arc clone
+            let reply_route = lease.reply_route.clone();
 
             // Forward response to client inbox
             // TODO: Send to ReplyInboxActor at reply_route
@@ -281,6 +279,7 @@ impl RpcRouteActor {
     /// - No request clone (already has ownership)
     /// - No worker_addr clone (use index)
     /// - Arc for reply_route (shared ownership)
+    #[inline]
     fn dispatch_to_worker(&mut self, request: RpcRequest, ctx: &mut Context<Self>) {
         // Pop next ready worker from queue
         if let Some(idx) = self.ready_queue.pop_front() {
@@ -293,12 +292,12 @@ impl RpcRouteActor {
                 self.ready_queue.push_back(idx);
             }
 
-            // Create lease with minimal data (Arc::clone only, no string alloc)
+            // Create lease with minimal data
             let expiration = Instant::now() + self.lease_timeout;
             let lease = Lease {
                 correlation_id: request.correlation_id,
                 worker_index: idx, // Store index, not address
-                reply_route: Arc::clone(&request.reply_route),
+                reply_route: request.reply_route.clone(),
                 expiration,
             };
             self.leases.insert(request.correlation_id, lease.clone());
@@ -326,6 +325,7 @@ impl RpcRouteActor {
     /// Release a lease without dispatching pending (internal use)
     ///
     /// Uses worker_index for O(1) lookup (no linear search needed)
+    #[inline]
     fn release_lease_internal(&mut self, correlation_id: &Uuid) {
         if let Some(lease) = self.leases.remove(correlation_id) {
             // Direct O(1) lookup by index (no linear search)
@@ -387,7 +387,7 @@ impl RpcRouteActor {
 
                 // Send timeout error to client
                 let error = RpcError::timeout(correlation_id);
-                self.send_error(error, lease.reply_route.as_ref());
+                self.send_error(error, &lease.reply_route);
 
                 // NOTE: We don't re-enqueue for retry since we don't have the original request
                 // (removed request clone for performance). Client should retry if needed.
@@ -518,8 +518,8 @@ mod tests {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
-            route: Arc::new(Route::new("rpc://test/route")),
-            reply_route: Arc::new(Route::new("inbox://session/123")),
+            route: Route::new("rpc://test/route"),
+            reply_route: Route::new("inbox://session/123"),
             body: Bytes::from(vec![1, 2, 3]),
         };
 

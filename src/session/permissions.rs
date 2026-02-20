@@ -84,6 +84,7 @@ impl SessionPermissions {
     }
 
     /// Check whether the permission set allows the given access to the route
+    #[inline]
     pub fn allows(&self, route: &crate::runtime::routing::Route, access: Access) -> bool {
         // Create cache key from route and access
         let route_hash = route_to_hash(route.as_str());
@@ -143,6 +144,7 @@ impl fmt::Display for SessionPermissions {
 }
 
 /// Convert route string to a hash for cache key
+#[inline]
 fn route_to_hash(route: &str) -> u64 {
     let mut hash: u64 = 5381;
     for byte in route.as_bytes() {
@@ -152,6 +154,7 @@ fn route_to_hash(route: &str) -> u64 {
 }
 
 /// Convert Access to a compact bit representation for cache key
+#[inline]
 fn access_to_bits(access: Access) -> u8 {
     match access {
         Access::Read => 1,

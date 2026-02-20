@@ -22,14 +22,12 @@
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// RPC request from client to route actor
 ///
 /// Sent by clients to initiate request/response interaction with a worker.
 /// Contains all information needed for routing, correlation, and reply delivery.
-/// Uses `Arc<Route>` for route and reply_route to avoid cloning strings on dispatch.
 #[derive(Debug, Clone)]
 pub struct RpcRequest {
     /// Route family for isolation
@@ -39,17 +37,17 @@ pub struct RpcRequest {
     pub correlation_id: Uuid,
 
     /// Target RPC route (e.g., "rpc://acme/auth/user/create")
-    pub route: Arc<Route>,
+    pub route: Route,
 
     /// Reply inbox route (e.g., "inbox://session/123")
-    pub reply_route: Arc<Route>,
+    pub reply_route: Route,
 
     /// Request payload (Bytes for zero-copy)
     pub body: Bytes,
 }
 
 impl RpcRequest {
-    /// Create new RPC request (wraps route and reply_route in Arc once)
+    /// Create new RPC request
     pub fn new(
         family_id: RouteFamily,
         correlation_id: Uuid,
@@ -60,8 +58,8 @@ impl RpcRequest {
         Self {
             family_id,
             correlation_id,
-            route: Arc::new(route),
-            reply_route: Arc::new(reply_route),
+            route,
+            reply_route,
             body,
         }
     }
@@ -196,40 +194,35 @@ impl RpcMessage {
 ///
 /// Contains the minimal information needed for a worker to process a request
 /// and send responses back to the client. Created from RpcRequest before
-/// dispatching to the worker pool. Uses Arc<Route> to avoid cloning route strings.
+/// dispatching to the worker pool.
 #[derive(Debug, Clone)]
 pub struct RpcWorkItem {
     /// Correlation ID for tracking
     pub correlation_id: Uuid,
 
     /// Target route (for worker context/logging)
-    pub route: Arc<Route>,
+    pub route: Route,
 
     /// Reply route for sending responses
-    pub reply_route: Arc<Route>,
+    pub reply_route: Route,
 
     /// Request payload
     pub body: Bytes,
 }
 
 impl RpcWorkItem {
-    /// Create work item from request (Arc::clone only, no string alloc)
+    /// Create work item from request
     pub fn from_request(req: &RpcRequest) -> Self {
         Self {
             correlation_id: req.correlation_id,
-            route: Arc::clone(&req.route),
-            reply_route: Arc::clone(&req.reply_route),
+            route: req.route.clone(),
+            reply_route: req.reply_route.clone(),
             body: req.body.clone(),
         }
     }
 
     /// Create work item directly
-    pub fn new(
-        correlation_id: Uuid,
-        route: Arc<Route>,
-        reply_route: Arc<Route>,
-        body: Bytes,
-    ) -> Self {
+    pub fn new(correlation_id: Uuid, route: Route, reply_route: Route, body: Bytes) -> Self {
         Self {
             correlation_id,
             route,

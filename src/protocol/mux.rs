@@ -13,7 +13,7 @@ impl ChannelId {
     /// Number of channels (stable)
     pub const COUNT: usize = 6;
 
-    #[inline(always)]
+    #[inline]
     pub fn idx(self) -> usize {
         self as usize
     }
@@ -91,7 +91,7 @@ impl TypeMapping {
     }
 
     /// Get channel for msg_type. Fast path: if no overrides, do only a range check.
-    #[inline(always)]
+    #[inline]
     pub fn get_channel(&self, msg_type: u16) -> Option<ChannelId> {
         // If overrides exist, do a small linear scan first (overrides rare and small)
         if !self.overrides.is_empty() {

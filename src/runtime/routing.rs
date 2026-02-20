@@ -189,30 +189,34 @@ impl RouteFamily {
     /// let family = RouteFamily::new(1);
     /// assert_eq!(family.id(), 1);
     /// ```
+    #[inline]
     pub fn new(id: u64) -> Self {
-        if id > u32::MAX as u64 {
+        if id <= u32::MAX as u64 {
+            Self { id: id as u32 }
+        } else {
             tracing::warn!(
                 "RouteFamily {} exceeds u32::MAX, clamping to {}",
                 id,
                 u32::MAX
             );
             Self { id: u32::MAX }
-        } else {
-            Self { id: id as u32 }
         }
     }
 
     /// Create a route family directly from a u32 value
+    #[inline]
     pub fn from_u32(id: u32) -> Self {
         Self { id }
     }
 
     /// Get the family ID as u32
+    #[inline]
     pub fn id(&self) -> u32 {
         self.id
     }
 
     /// Get the family ID as u64 (for APIs that expect u64)
+    #[inline]
     pub fn as_u64(&self) -> u64 {
         self.id as u64
     }
@@ -298,11 +302,13 @@ impl Route {
     /// # use fitz::runtime::routing::Route;
     /// let route = Route::new("rpc://acme/auth/users/authenticate".to_string());
     /// ```
+    #[inline]
     pub fn new(path: impl Into<String>) -> Self {
         Self { path: path.into() }
     }
 
     /// Get the route path as a string slice
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.path
     }
@@ -346,21 +352,25 @@ impl RouteAddress {
     /// let route = Route::new("/user/123");
     /// let address = RouteAddress::new(family, route);
     /// ```
+    #[inline]
     pub fn new(family: RouteFamily, route: Route) -> Self {
         Self { family, route }
     }
 
     /// Get the route family
+    #[inline]
     pub fn family(&self) -> &RouteFamily {
         &self.family
     }
 
     /// Get the route
+    #[inline]
     pub fn route(&self) -> &Route {
         &self.route
     }
 
     /// Decompose into (family, route)
+    #[inline]
     pub fn into_parts(self) -> (RouteFamily, Route) {
         (self.family, self.route)
     }
