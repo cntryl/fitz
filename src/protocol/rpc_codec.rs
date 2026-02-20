@@ -64,7 +64,8 @@ pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
 
 /// Wire format: `[string worker_addr]`
 fn parse_subscribe(dec: &mut TlvDecoder, route_family: RouteFamily) -> Result<RpcMessage, String> {
-    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
+    let worker_addr =
+        RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -78,7 +79,8 @@ fn parse_unsubscribe(
     dec: &mut TlvDecoder,
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
-    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
+    let worker_addr =
+        RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());

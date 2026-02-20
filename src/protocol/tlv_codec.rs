@@ -98,7 +98,6 @@ impl TlvEncoder {
             }
         }
     }
-
 }
 
 /// Helper for decoding TLV format with bounds checking
