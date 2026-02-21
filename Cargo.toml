@@ -74,7 +74,7 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 criterion = { version = "0.4", features = ["async_futures"] }
 cntryl-stress = "0.2"
-serial_test = "0.5"
+serial_test = "3.3"
 tempfile = "3"
 rand = "0.8"
 
