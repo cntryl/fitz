@@ -34,10 +34,12 @@
 //! - Router is thread-safe and cloneable
 //! - Route families are strictly isolated (no cross-family routing)
 
+use crate::observability as obs;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::routing::RouteAddress;
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::{debug, trace, warn};
 
 /// Trait for delivering envelopes to actor mailboxes
@@ -304,8 +306,21 @@ impl Router {
     /// - Deadlines in envelope are not enforced (sink's responsibility)
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
+        let start = Instant::now();
 
         trace!(destination = %dest, "Router: routing envelope");
+
+        // Hot path: sample at 0.1% for span visibility; always record metrics
+        let route_str = dest.route().as_str();
+        let domain = route_str.split("://").next().unwrap_or("unknown");
+
+        if should_sample_hot_path() {
+            let _span = tracing::debug_span!(
+                obs::SPAN_ROUTE_MATCH,
+                route = %dest,
+                domain = domain
+            );
+        }
 
         // Try exact RouteAddress lookup first
         let sink = if let Some(sink) = self.registry.get(&dest) {
@@ -322,6 +337,12 @@ impl Router {
                 .get_by_domain(domain)
                 .ok_or_else(|| {
                     warn!(destination = %dest, domain = domain, "Router: no route found (exact or domain pattern)");
+
+                    // Record metrics
+                    if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+                        metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
+                    }
+
                     RouteError::RouteNotFound(dest.clone())
                 })?
         };
@@ -329,10 +350,25 @@ impl Router {
         match sink.deliver(envelope) {
             Ok(()) => {
                 debug!(destination = %dest, "Router: envelope delivered successfully");
+
+                // Record success metrics
+                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+                    metrics.histogram_observe_us(
+                        obs::METRIC_ROUTE_MATCH_LATENCY,
+                        start.elapsed().as_micros() as u64,
+                    );
+                }
+
                 Ok(())
             }
             Err(e) => {
                 warn!(destination = %dest, error = %e, "Router: delivery failed");
+
+                // Record failure metrics
+                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+                    metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
+                }
+
                 Err(RouteError::DeliveryFailed(dest, e))
             }
         }
@@ -389,6 +425,15 @@ impl Default for Router {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Helper: Determine if current hot path operation should be sampled
+/// Returns true ~1 in 1000 times (0.1% sampling ratio)
+fn should_sample_hot_path() -> bool {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_nanos() as u64).is_multiple_of(1000))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

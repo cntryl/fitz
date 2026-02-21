@@ -1,6 +1,6 @@
 //! Prometheus metrics endpoint
 
-use crate::boot::Runtime;
+use crate::boot::{observability, Runtime};
 use hyper::{Body, Response, StatusCode};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -61,10 +61,59 @@ fn generate_prometheus_metrics(runtime: Arc<Runtime>) -> String {
     ));
     output.push('\n');
 
+    // Add observability metrics (from MetricsCollector)
+    add_observability_metrics(&mut output);
+
     // Domain-specific metrics
     add_domain_metrics(&mut output, &runtime);
 
     output
+}
+
+/// Add metrics from the observability MetricsCollector
+fn add_observability_metrics(output: &mut String) {
+    // Try to get metrics (will fail gracefully if not yet initialized)
+    match std::panic::catch_unwind(|| {
+        let metrics = observability::metrics();
+
+        let mut result = String::new();
+
+        // Export counters
+        result.push_str("# Observability metrics from MetricsCollector\n");
+        for (name, value) in metrics.export_counters() {
+            result.push_str(&format!("{} {}\n", name, value));
+        }
+
+        result.push('\n');
+
+        // Export gauges
+        for (name, value) in metrics.export_gauges() {
+            result.push_str(&format!("{} {}\n", name, value));
+        }
+
+        result.push('\n');
+
+        // Export histograms (simplified bucket output)
+        for (name, buckets) in metrics.export_histograms() {
+            let bucket_bounds = ["1ms", "5ms", "10ms", "50ms", "100ms", "500ms", "1s", "5s"];
+            let mut cumsum = 0u64;
+            for (i, bucket_bound) in bucket_bounds.iter().enumerate() {
+                cumsum += buckets[i];
+                result.push_str(&format!("{}{{le=\"{}\"}} {}\n", name, bucket_bound, cumsum));
+            }
+            cumsum += buckets[8]; // +Inf
+            result.push_str(&format!("{}{{le=\"+Inf\"}} {}\n", name, cumsum));
+            result.push_str(&format!("{}_count {}\n", name, cumsum));
+        }
+
+        result
+    }) {
+        Ok(metrics_output) => output.push_str(&metrics_output),
+        Err(_) => {
+            // MetricsCollector not yet initialized; skip or log
+            tracing::debug!("MetricsCollector not yet initialized in metrics endpoint");
+        }
+    }
 }
 
 fn add_domain_metrics(output: &mut String, runtime: &Runtime) {

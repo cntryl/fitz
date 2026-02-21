@@ -2,6 +2,7 @@
 
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
+use crate::observability as obs;
 use crate::session::manager::Ingress;
 use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
@@ -43,6 +44,13 @@ pub fn spawn_tcp_listener_with_bound_socket(
         loop {
             match tcp_listener.accept().await {
                 Ok((stream, peer_addr)) => {
+                    // Record connection opened counter
+                    if let Ok(collector) =
+                        std::panic::catch_unwind(crate::boot::observability::metrics)
+                    {
+                        collector.counter_inc(obs::METRIC_CONNECTIONS_OPENED);
+                    }
+
                     info!("TCP connection from {}", peer_addr);
                     let ingress = ingress.clone();
                     let config = tcp_config.clone();
@@ -97,6 +105,13 @@ pub fn spawn_http_listener_with_bound_socket(
         loop {
             match http_listener.accept().await {
                 Ok((stream, peer_addr)) => {
+                    // Record connection opened counter
+                    if let Ok(collector) =
+                        std::panic::catch_unwind(crate::boot::observability::metrics)
+                    {
+                        collector.counter_inc(obs::METRIC_CONNECTIONS_OPENED);
+                    }
+
                     info!("HTTP connection from {}", peer_addr);
                     let ingress = ingress.clone();
                     let config = http_config.clone();
@@ -235,6 +250,11 @@ async fn handle_tcp_connection(
     // Run TCP handler (reads frames and forwards to ingress) - this will block until client closes
     handler.run().await?;
 
+    // Record connection closed counter
+    if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        collector.counter_inc(obs::METRIC_CONNECTIONS_CLOSED);
+    }
+
     Ok(())
 }
 
@@ -290,7 +310,10 @@ async fn handle_http_upgrade(
         tracing::debug!("HTTP connection error: {}", e);
     }
 
-    // Decrement connection count
+    // Record connection closed counter and decrement connection count
+    if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        collector.counter_inc(obs::METRIC_CONNECTIONS_CLOSED);
+    }
     runtime.decrement_connections();
 
     Ok(())

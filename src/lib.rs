@@ -9,6 +9,7 @@ pub mod boot;
 pub mod client;
 pub mod control;
 pub mod domains;
+pub mod observability;
 pub mod prelude;
 pub mod protocol;
 pub mod runtime;

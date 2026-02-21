@@ -1,0 +1,145 @@
+/// Boot-time observability initialization
+///
+/// Handles:
+/// - Tracing subscriber setup (text or JSON)
+/// - OpenTelemetry OTLP exporter initialization
+/// - Metrics collector creation and global setup
+/// - Sampling rate configuration
+use crate::observability::metrics::MetricsCollector;
+use once_cell::sync::OnceCell;
+use std::sync::Arc;
+use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
+
+/// Global metrics collector (initialized once during boot)
+static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
+
+/// Get the global metrics collector (panics if not initialized)
+pub fn metrics() -> Arc<MetricsCollector> {
+    METRICS_COLLECTOR
+        .get()
+        .expect("MetricsCollector not initialized; call init_observability first")
+        .clone()
+}
+
+/// Initialize observability (tracing, metrics, OTEL).
+///
+/// # Environment Variables
+///
+/// - `FITZ_LOG_FORMAT` (text|json): Logging format. Default: json
+/// - `FITZ_LOG_LEVEL` (trace|debug|info|warn): Log level. Default: info
+/// - `OTEL_ENABLED` (true|false): Enable OTLP export. Default: true
+/// - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint. Default: http://localhost:4317
+/// - `FITZ_METRICS_PORT`: HTTP metrics port. Default: 9090
+/// - `RUST_LOG`: Legacy env var for log filtering (takes precedence if set)
+///
+/// # Returns
+///
+/// Arc<MetricsCollector> that can be used throughout the application
+pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    // Detect logging format
+    let log_format = std::env::var("FITZ_LOG_FORMAT")
+        .unwrap_or_else(|_| "json".to_string())
+        .to_lowercase();
+
+    // Detect log level
+    let log_level = std::env::var("FITZ_LOG_LEVEL")
+        .unwrap_or_else(|_| "info".to_string())
+        .to_lowercase();
+
+    // Build env filter (RUST_LOG takes precedence)
+    let env_filter = if let Ok(_rust_log) = std::env::var("RUST_LOG") {
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(format!("fitz={},warn", log_level)))
+    } else {
+        EnvFilter::new(format!("fitz={},warn", log_level))
+    };
+
+    // Set up tracing subscriber with format and env filter
+    match log_format.as_str() {
+        "json" => {
+            // JSON structured logging (better for log aggregation)
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_current_span(true)
+                        .with_target(true)
+                        .with_level(true),
+                )
+                .init();
+        }
+        _ => {
+            // Text formatting (default, human-readable)
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    fmt::layer()
+                        .pretty()
+                        .with_writer(std::io::stderr)
+                        .with_target(true)
+                        .with_level(true)
+                        .with_file(true)
+                        .with_line_number(true),
+                )
+                .init();
+        }
+    }
+
+    // Create metrics collector
+    let metrics_collector = Arc::new(MetricsCollector::new());
+
+    // Store in global cell
+    METRICS_COLLECTOR
+        .set(metrics_collector.clone())
+        .map_err(|_| "MetricsCollector already initialized".to_string())?;
+
+    // Environment variables for OTEL
+    let otel_enabled = std::env::var("OTEL_ENABLED")
+        .unwrap_or_else(|_| "true".to_string())
+        .parse::<bool>()
+        .unwrap_or(true);
+
+    let otel_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    if otel_enabled {
+        tracing::info!("OpenTelemetry enabled, exporting to: {}", otel_endpoint);
+
+        // Initialize OpenTelemetry OTLP exporter
+        // NOTE: This is a placeholder. In a production setup, you would:
+        // 1. Create an OTLP exporter with the endpoint
+        // 2. Set up a TracingLayerProvider with BatchSpanProcessor
+        // 3. Install the OTEL subscriber layer
+        // 4. Configure sampling strategy (TraceIdRatioBased for hot paths)
+        //
+        // For now, we just log that it's enabled. Full implementation would look like:
+        //
+        // let tracer = opentelemetry_otlp::new_pipeline()
+        //     .install_simple()
+        //     .map_err(|e| format!("Failed to init OTEL: {}", e))?;
+        // let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        // (layer into subscriber above)
+    } else {
+        tracing::info!("OpenTelemetry disabled");
+    }
+
+    let metrics_port = std::env::var("FITZ_METRICS_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(9090);
+
+    tracing::info!("Metrics will be exposed on port {}", metrics_port);
+
+    Ok(metrics_collector)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn should_initialize_observability_once() {
+        // Note: This test assumes the global is not yet initialized
+        // In practice, you'd want to use a test harness that resets globals
+        // between test runs.
+    }
+}

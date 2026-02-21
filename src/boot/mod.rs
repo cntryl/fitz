@@ -11,6 +11,7 @@
 
 pub mod domains;
 pub mod handlers;
+pub mod observability;
 pub mod runtime;
 pub mod stats;
 pub mod storage;
@@ -21,39 +22,38 @@ pub use stats::Runtime;
 /// Complete broker boot sequence
 ///
 /// # Steps
-/// 1. Initialize storage
+/// 0. Initialize observability (tracing, metrics, OTEL)
+/// 1. Open storage
 /// 2. Create runtime (router, ingress, scheduler)
 /// 3. Register domain actors
 /// 4. Spawn transport listeners (TCP, HTTP/WS)
 /// 5. Wait for Ctrl+C
 /// 6. Graceful shutdown
 pub async fn boot(config: BootConfig) -> BootResult<()> {
-    // Step 1: Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "fitz=info,warn".to_string()))
-        .init();
+    // Step 0: Initialize observability (tracing, metrics, OTEL)
+    let _metrics = observability::init_observability()?;
 
     tracing::info!("Starting Fitz broker");
 
-    // Step 2: Open storage
+    // Step 1: Open storage
     let store = storage::init(&config).await?;
     tracing::info!("Storage initialized");
 
-    // Step 3: Create runtime infrastructure
+    // Step 2: Create runtime infrastructure
     let (router, ingress, ingress_config, _scheduler, runtime) = runtime::init(&config, &store)?;
     tracing::info!("Runtime initialized");
 
     // Mark storage ready
     runtime.mark_storage_ready();
 
-    // Step 4: Register domain actors
+    // Step 3: Register domain actors
     domains::setup(&router, &store)?;
     tracing::info!("Domain actors registered");
 
     // Mark domains ready
     runtime.mark_domains_ready();
 
-    // Step 5: Start transport listeners
+    // Step 4: Start transport listeners
     let tcp_ready = handlers::spawn_tcp_listener(
         &config,
         ingress.clone(),
@@ -90,7 +90,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     tracing::info!("  TCP:  {}:{}", config.bind_addr, config.tcp_port);
     tracing::info!("  HTTP: {}:{}", config.bind_addr, config.http_port);
 
-    // Step 6: Wait for shutdown signal
+    // Step 5: Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutting down Fitz broker");
 

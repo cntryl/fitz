@@ -39,7 +39,13 @@ rustls-native-certs = "0.7"
 rcgen = "0.12"
 crc32fast = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "ansi"] }
+tracing-opentelemetry = "0.21"
+tracing-appender = "0.2"
+opentelemetry = { version = "0.20", features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "0.13", features = ["tonic"] }
+opentelemetry_sdk = { version = "0.20", features = ["rt-tokio"] }
+prometheus = { version = "0.13", optional = true }
 async-trait = "0.1"
 
 # Lock-free / concurrency crates used by lease service

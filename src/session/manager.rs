@@ -14,11 +14,13 @@
 //! - **API** (`api/tcp.rs`, `api/ws/mod.rs`) consumes this trait.
 //! - **Other session helpers** remain in their respective modules.
 
+use crate::observability as obs;
 use crate::protocol::frame::ChannelId;
 use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
 
 /// Outcome from the runtime for a single protocol message
@@ -151,6 +153,12 @@ impl Default for RuntimeIngress {
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
         let session_id = session.session_id;
+
+        // Record session opened counter
+        if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            collector.counter_inc(obs::METRIC_SESSIONS_CREATED);
+        }
+
         info!(
             session_id = session_id,
             transport = %session.transport_kind,
@@ -191,6 +199,11 @@ impl Ingress for RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
     ) -> IngressDecision {
+        // Record frame received counter
+        if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            collector.counter_inc(obs::METRIC_FRAMES_RECEIVED);
+        }
+
         debug!(
             session_id = session_id,
             channel = ?channel_id,
@@ -602,7 +615,30 @@ impl Ingress for RuntimeIngress {
 
                     // Check session actor's authorization
                     if let Some(actor_ref) = self.get_session_actor(session_id) {
-                        if !actor_ref.authorize(&auth_route, access) {
+                        // 100% sample: authorization is critical path
+                        let _span = tracing::debug_span!(
+                            obs::SPAN_PERMISSION_CHECK,
+                            session_id = session_id,
+                            route = %auth_route.as_str(),
+                            access = ?access,
+                        );
+                        let _guard = _span.enter();
+                        let start = Instant::now();
+
+                        let authorized = actor_ref.authorize(&auth_route, access);
+
+                        // Record latency
+                        if let Ok(collector) =
+                            std::panic::catch_unwind(crate::boot::observability::metrics)
+                        {
+                            let elapsed_us = start.elapsed().as_micros() as u64;
+                            collector.histogram_observe_us(
+                                obs::METRIC_PERMISSION_CHECK_LATENCY,
+                                elapsed_us,
+                            );
+                        }
+
+                        if !authorized {
                             warn!(
                                 session_id = session_id,
                                 msg_type = msg_type.as_u16(),
@@ -610,6 +646,14 @@ impl Ingress for RuntimeIngress {
                                 access = ?access,
                                 "Ingress: authorization DENIED"
                             );
+
+                            // Counter: auth failures
+                            if let Ok(collector) =
+                                std::panic::catch_unwind(crate::boot::observability::metrics)
+                            {
+                                collector.counter_inc(obs::METRIC_AUTH_FAILURES);
+                            }
+
                             return IngressDecision::Close(
                                 "unauthorized: permission denied".to_string(),
                             );
@@ -682,6 +726,11 @@ impl Ingress for RuntimeIngress {
     }
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
+        // Record session closed counter
+        if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            collector.counter_inc(obs::METRIC_SESSIONS_CLOSED);
+        }
+
         info!(session_id = session_id, reason = %reason, "Ingress: session closing");
 
         // Dispatch cleanup to all subscribable domains BEFORE removing session state.
