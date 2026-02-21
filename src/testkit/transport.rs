@@ -61,12 +61,9 @@ impl TestServer {
             .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
-        // Initialize tracing once for tests
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                std::env::var("RUST_LOG").unwrap_or_else(|_| "info,fitz=debug".to_string()),
-            )
-            .try_init();
+        // Initialize observability (metrics + tracing) once for tests
+        // Safe to call multiple times - will only initialize once
+        let _ = crate::boot::observability::try_init_observability();
 
         if auth_required {
             init_auth_env();

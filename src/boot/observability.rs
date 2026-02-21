@@ -21,6 +21,20 @@ pub fn metrics() -> Arc<MetricsCollector> {
         .clone()
 }
 
+/// Try to initialize observability, returning existing collector if already initialized.
+///
+/// This is safe to call multiple times (useful for tests).
+/// Returns the existing collector if already initialized, or creates a new one.
+pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    // Check if already initialized
+    if let Some(existing) = METRICS_COLLECTOR.get() {
+        return Ok(existing.clone());
+    }
+
+    // Not initialized yet, call full init
+    init_observability()
+}
+
 /// Initialize observability (tracing, metrics, OTEL).
 ///
 /// # Environment Variables

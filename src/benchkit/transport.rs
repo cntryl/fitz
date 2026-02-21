@@ -213,6 +213,11 @@ pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Parse lease token from response data
+///
+/// Wire format for ACQUIRE success:
+/// - data[0]: status (0 = success)
+/// - data[1]: response_type (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued)
+/// - data[2-9]: fencing_token (u64 big-endian)
 pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
     if data.len() < 2 {
         return Err("Token data too short".to_string());
@@ -223,9 +228,11 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
         return Err("Lease operation failed".to_string());
     }
 
-    let has_token = data[1];
-    if has_token == 0 {
-        return Err("No token in response".to_string());
+    // data[1] is response_type (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued)
+    // All of these include a fencing token
+    let response_type = data[1];
+    if response_type > 3 {
+        return Err(format!("Invalid response_type: {}", response_type));
     }
 
     if data.len() < 10 {

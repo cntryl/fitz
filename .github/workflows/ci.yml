@@ -2,34 +2,43 @@ name: CI
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *"
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "*.toml"
+      - ".cargo/**"
   pull_request:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "*.toml"
+      - ".cargo/**"
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 20 
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-  benchmarks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Run all benchmarks
-        run: |
-          BENCH_QUICK=1 BENCH_RUNS=3 cargo bench --no-fail-fast
-      - name: Generate benchmark summary
-        run: python3 scripts/benchmark_summary.py
-      - name: Upload bench summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-summary
-          path: target/bench_summary.md
+      - name: Update Rust toolchain
+        run: rustup update stable
+
+      - name: Validate Test Structure
+        run: python ./scripts/validate_tests.py --summary
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build
+
+      - name: Test
+        run: cargo test
