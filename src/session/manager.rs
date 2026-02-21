@@ -1434,8 +1434,8 @@ mod tests {
     #[test]
     fn should_deny_e2e_notification_publish_via_ingress_snapshot() {
         // Arrange
-        use crate::domains::notice::NoticeRouteActor;
         use crate::domains::notice::session as notice_session;
+        use crate::domains::notice::NoticeRouteActor;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -1502,8 +1502,8 @@ mod tests {
     #[test]
     fn should_allow_e2e_notification_publish_via_ingress_snapshot() {
         // Arrange
-        use crate::domains::notice::NoticeRouteActor;
         use crate::domains::notice::session as notice_session;
+        use crate::domains::notice::NoticeRouteActor;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

@@ -149,7 +149,11 @@ fn should_restore_committed_kv_value_on_engine_restart() {
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("reopen engine"),
     );
-    std::env::set_current_dir(&original_dir).expect("Failed to restore original directory");
+
+    // Restore original directory with fallback to workspace root on Windows
+    if std::env::set_current_dir(&original_dir).is_err() {
+        let _ = std::env::set_current_dir(env!("CARGO_MANIFEST_DIR"));
+    }
 
     let mut actor2 = KvActor::new(reopened);
     let b2 = actor2.handle(KvMessage::Begin {

@@ -1,8 +1,8 @@
 // Consolidated lease advanced tests
 // Combined from: lease_queueing.rs, lease_timers.rs
 
-use fitz::domains::lease::LeaseActor;
 use fitz::domains::lease::protocol::{LeaseMessage, LeaseResponse};
+use fitz::domains::lease::LeaseActor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::RouteAddress;

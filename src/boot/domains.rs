@@ -2012,8 +2012,7 @@ impl MailboxSink for LeaseDomainSink {
             }
         };
 
-        let response_bytes =
-            crate::protocol::lease_codec::encode_domain_response(&domain_response);
+        let response_bytes = crate::protocol::lease_codec::encode_domain_response(&domain_response);
         let response_ctx = FrameContext::new(
             frame_ctx.session_id,
             frame_ctx.channel_id,

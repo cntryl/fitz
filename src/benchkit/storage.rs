@@ -55,8 +55,13 @@ pub fn create_local_bench_store() -> (Arc<cntryl_midge::Engine>, tempfile::TempD
     // If creation fails because it already exists, ignore the error.
     let _ = store.create_column_family("cf_1");
 
-    // Restore original directory
-    std::env::set_current_dir(&original_dir).expect("Failed to restore original directory");
+    // Restore original directory. On Windows, this can fail if the original directory
+    // was deleted, so we try to restore but don't panic if it fails. Instead, change
+    // to a known-good directory (the workspace root).
+    if std::env::set_current_dir(&original_dir).is_err() {
+        // Fallback: try to change to the workspace root
+        let _ = std::env::set_current_dir(env!("CARGO_MANIFEST_DIR"));
+    }
 
     (store, temp_dir)
 }
