@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
 )
 
 // TCPTransport implements Transport for TCP connections with length-prefix framing.

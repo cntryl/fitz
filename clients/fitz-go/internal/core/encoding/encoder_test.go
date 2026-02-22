@@ -227,7 +227,7 @@ func BenchmarkWriteBytes(b *testing.B) {
 
 func BenchmarkWriteRoute(b *testing.B) {
 	buf := bytes.NewBuffer(make([]byte, 0, 64))
-	route := "schedule://acme/backup"
+	route := "schedule://acme/jobs/backup/run"
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

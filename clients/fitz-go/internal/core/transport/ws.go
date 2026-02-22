@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
 )
 
 // WebSocket opcodes (RFC 6455)

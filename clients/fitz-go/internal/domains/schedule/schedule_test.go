@@ -145,7 +145,7 @@ func TestShouldDefineScheduleTargets(t *testing.T) {
 // Benchmarks
 
 func BenchmarkEncodeScheduleCreate(b *testing.B) {
-	route := "schedule://acme/backup"
+	route := "schedule://acme/jobs/backup/run"
 	cronExpr := "0 0 * * *"
 	payload := []byte("backup-payload")
 	w := scheduleCreatePayloadWriter(route, cronExpr, payload)
@@ -160,7 +160,7 @@ func BenchmarkEncodeScheduleCreate(b *testing.B) {
 }
 
 func BenchmarkEncodeScheduleCancel(b *testing.B) {
-	route := "schedule://acme/backup"
+	route := "schedule://acme/jobs/backup/run"
 	w := scheduleCancelPayloadWriter(route)
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -185,7 +185,7 @@ func BenchmarkEncodeScheduleList(b *testing.B) {
 }
 
 func BenchmarkEncodeScheduleSubscribe(b *testing.B) {
-	pattern := "schedule://acme/*"
+	pattern := "schedule://acme/jobs/*"
 	w := scheduleSubscribePayloadWriter(pattern)
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
@@ -198,7 +198,7 @@ func BenchmarkEncodeScheduleSubscribe(b *testing.B) {
 }
 
 func BenchmarkEncodeScheduleUnsubscribe(b *testing.B) {
-	pattern := "schedule://acme/*"
+	pattern := "schedule://acme/jobs/*"
 	w := scheduleUnsubscribePayloadWriter(pattern)
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)

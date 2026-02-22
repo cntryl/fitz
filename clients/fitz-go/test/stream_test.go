@@ -75,7 +75,7 @@ func TestShouldReadRecordsInOrderGivenOffsetRangeWhenReadCalled(t *testing.T) {
 		require.NoError(t, sess.Commit(ctx))
 
 		// Act — read from offset 0, limit 10.
-		iter, err := f.Client().Stream().ReadResource(ctx, route, 0, 10)
+		iter, err := f.Client().Stream().Consume(ctx, route, 0, 10)
 		require.NoError(t, err)
 		defer iter.Close()
 
@@ -144,7 +144,7 @@ func TestShouldRollbackUncommittedAppendsGivenActiveSessionWhenRollbackCalled(t 
 		require.NoError(t, err, "Rollback should succeed")
 
 		// Read should return no records.
-		iter, err := f.Client().Stream().ReadResource(ctx, route, 0, 10)
+		iter, err := f.Client().Stream().Consume(ctx, route, 0, 10)
 		require.NoError(t, err)
 		defer iter.Close()
 
@@ -218,9 +218,9 @@ func TestShouldGetMetadataGivenExistingStreamWhenGetMetadataCalled(t *testing.T)
 	})
 }
 
-// TestShouldRejectReadGivenOffsetBeyondWatermarkWhenReadResourceCalled verifies
-// ReadResource with offset beyond the stream's watermark returns an error.
-func TestShouldRejectReadGivenOffsetBeyondWatermarkWhenReadResourceCalled(t *testing.T) {
+// TestShouldRejectReadGivenOffsetBeyondWatermarkWhenConsumeCalled verifies
+// Consume with offset beyond the stream's watermark returns an error.
+func TestShouldRejectReadGivenOffsetBeyondWatermarkWhenConsumeCalled(t *testing.T) {
 	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
 		f := fixture.NewTestFixture(t, transport)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -237,14 +237,14 @@ func TestShouldRejectReadGivenOffsetBeyondWatermarkWhenReadResourceCalled(t *tes
 		require.NoError(t, sess.Commit(ctx))
 
 		// Act — read from offset far beyond written data.
-		iter, err := f.Client().Stream().ReadResource(ctx, route, 999999, 10)
+		iter, err := f.Client().Stream().Consume(ctx, route, 999999, 10)
 		if err != nil {
 			assert.Error(t, err)
 			return
 		}
 		defer iter.Close()
 
-		// Server may fail at ReadResource or when consuming the iterator.
+		// Server may fail at Consume or when consuming the iterator.
 		for iter.Next() {
 			// Should not return records for offset beyond watermark.
 		}

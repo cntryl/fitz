@@ -8,7 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
 )
 
 // pendingRequest represents one in-flight request awaiting response.

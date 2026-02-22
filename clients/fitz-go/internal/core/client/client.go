@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"github.com/cntryl/fitz-go/internal/core/transport"
 	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/domains/kv"
@@ -22,6 +19,9 @@ import (
 	"github.com/cntryl/fitz-go/internal/domains/rpc"
 	"github.com/cntryl/fitz-go/internal/domains/schedule"
 	"github.com/cntryl/fitz-go/internal/domains/stream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // TransportType specifies the transport protocol.
@@ -71,8 +71,8 @@ type Config struct {
 	TransportType TransportType // Auto, WebSocket, or TCP
 
 	// Observability (optional)
-	Logger *slog.Logger   // When nil, no logging.
-	Tracer trace.Tracer   // When nil, otel.Tracer(module) is used for spans.
+	Logger *slog.Logger // When nil, no logging.
+	Tracer trace.Tracer // When nil, otel.Tracer(module) is used for spans.
 }
 
 // defaultConfig returns default client configuration.

@@ -174,5 +174,11 @@ func (f *TestFixture) UniqueResource() string {
 
 // UniqueRoute generates a unique route string for the given domain scheme.
 func (f *TestFixture) UniqueRoute(scheme string) string {
-	return fmt.Sprintf("%s://%s/%s/%s", scheme, f.UniqueRealm(), f.UniqueArea(), f.UniqueResource())
+	realm := f.UniqueRealm()
+	area := f.UniqueArea()
+	resource := f.UniqueResource()
+	if scheme == "schedule" {
+		return fmt.Sprintf("%s://%s/%s/%s/%s", scheme, realm, area, resource, "run")
+	}
+	return fmt.Sprintf("%s://%s/%s/%s", scheme, realm, area, resource)
 }

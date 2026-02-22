@@ -189,6 +189,12 @@ github.com/yourorg/fitz-go/
     └── kv_example.go
 ```
 
+#### Route Validation Notes
+
+- Most domains use `scheme://realm/area/resource`.
+- Schedule routes include an operation segment: `schedule://realm/area/resource/operation`.
+- For schedule create/cancel, pass the full 4-segment route (for example, `schedule://prod/jobs/cleanup/run`).
+
 #### Idiomatic Patterns
 
 **1. Use context.Context for cancellation**

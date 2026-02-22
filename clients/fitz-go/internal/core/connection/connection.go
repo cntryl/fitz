@@ -91,8 +91,8 @@ type Config struct {
 	ReconnectBackoff time.Duration
 
 	// Observability (optional)
-	Logger *slog.Logger   // When nil, no logging.
-	Tracer trace.Tracer   // When nil, otel.Tracer(module) is used.
+	Logger *slog.Logger // When nil, no logging.
+	Tracer trace.Tracer // When nil, otel.Tracer(module) is used.
 }
 
 // DefaultConfig returns default configuration.

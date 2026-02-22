@@ -72,8 +72,8 @@ type Client interface {
 	// Returns a session on which to call Append, then Commit or Rollback.
 	Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error)
 
-	// ReadResource reads records from the given route starting at fromOffset.
-	ReadResource(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
+	// Consume reads records from the given route starting at fromOffset.
+	Consume(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
 
 	// Last returns the most recent record in the stream.
 	Last(ctx context.Context, route string) (*Record, error)
@@ -277,23 +277,23 @@ func (s *session) Rollback(ctx context.Context) error {
 	return nil
 }
 
-// ReadResource per server stream_codec.rs:
+// Consume per server stream_codec.rs:
 // Request: [string route][u64 from_offset][u64 limit][optional u64 max_bytes]
 // Response: [status][u8 has_session_id][u64?][bytes data]
-func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
-	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.ReadResource", trace.WithAttributes(
+func (c *client) Consume(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Consume", trace.WithAttributes(
 		attribute.String("fitz.route", route),
 		attribute.Int64("fitz.from_offset", int64(fromOffset)),
 		attribute.Int64("fitz.limit", int64(limit)),
 	))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("stream.ReadResource", "route", route, "from_offset", fromOffset, "limit", limit)
+		log.Debug("stream.Consume", "route", route, "from_offset", fromOffset, "limit", limit)
 	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamRead, streamReadPayloadWriter(route, fromOffset, limit, nil))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.ReadResource failed", "route", route, "error", err)
+			log.Error("stream.Consume failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("READ request failed: %w", err)
 	}
@@ -301,13 +301,13 @@ func (c *client) ReadResource(ctx context.Context, route string, fromOffset uint
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.ReadResource failed", "route", route, "error", err)
+			log.Error("stream.Consume failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("READ failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.ReadResource failed", "route", route, "status", "unexpected")
+			log.Error("stream.Consume failed", "route", route, "status", "unexpected")
 		}
 		return nil, fmt.Errorf("READ failed: unexpected status")
 	}

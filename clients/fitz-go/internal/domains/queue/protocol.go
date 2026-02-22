@@ -23,7 +23,7 @@ const (
 //   - ErrLeaseExpiredQ: lease on a reserved message has expired (Q suffix to avoid clash with lease package).
 //   - ErrMessageNotFound: the message id or token is unknown.
 //   - ErrQueueNotFound: the queue route does not exist.
-//   - ErrQueueFull: backpressure; consider SendWithRetry or ReceiveWithRetry.
+//   - ErrQueueFull: backpressure.
 var (
 	ErrInvalidToken    = errors.New("invalid token")
 	ErrLeaseExpiredQ   = errors.New("lease expired")

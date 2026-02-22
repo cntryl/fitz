@@ -19,7 +19,7 @@ services:
     build:
       context: ../fitz
       dockerfile: Dockerfile
-    container_name: fitz-node
+    container_name: node
     ports:
       - "4090:4090" # HTTP/WebSocket (admin API + data plane)
       - "4091:4091" # TCP (binary protocol)

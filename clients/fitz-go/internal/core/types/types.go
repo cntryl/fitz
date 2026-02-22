@@ -15,11 +15,17 @@ import (
 // unauthenticated connections.
 type TokenProvider func(ctx context.Context) (string, error)
 
-// ValidateRoute checks that a route string matches the expected format:
+// ValidateRoute checks that a route string matches the expected format.
+//
+// Default format (most domains):
 //
 //	<expectedScheme>://realm/area/resource
 //
-// All three path segments must be non-empty. The scheme prefix is validated
+// Schedule format:
+//
+//	<expectedScheme>://realm/area/resource/operation
+//
+// All path segments must be non-empty. The scheme prefix is validated
 // against expectedScheme (e.g., "queue", "stream", "rpc", "lease", "schedule").
 func ValidateRoute(route string, expectedScheme string) error {
 	prefix := expectedScheme + "://"
@@ -27,12 +33,20 @@ func ValidateRoute(route string, expectedScheme string) error {
 		return fmt.Errorf("%s route must start with %s", expectedScheme, prefix)
 	}
 	path := route[len(prefix):]
-	segs := strings.SplitN(path, "/", 4)
-	if len(segs) != 3 {
-		return fmt.Errorf("%s route must have exactly 3 segments: realm/area/resource", expectedScheme)
+	requiredSegments := 3
+	segmentDesc := "realm/area/resource"
+	if expectedScheme == "schedule" {
+		requiredSegments = 4
+		segmentDesc = "realm/area/resource/operation"
 	}
-	if segs[0] == "" || segs[1] == "" || segs[2] == "" {
-		return fmt.Errorf("%s route segments must be non-empty", expectedScheme)
+	segs := strings.SplitN(path, "/", requiredSegments+1)
+	if len(segs) != requiredSegments {
+		return fmt.Errorf("%s route must have exactly %d segments: %s", expectedScheme, requiredSegments, segmentDesc)
+	}
+	for i := 0; i < requiredSegments; i++ {
+		if segs[i] == "" {
+			return fmt.Errorf("%s route segments must be non-empty", expectedScheme)
+		}
 	}
 	return nil
 }
