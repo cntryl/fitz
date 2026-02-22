@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -107,6 +108,12 @@ func (c *client) Publish(ctx context.Context, route string, body []byte) error {
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("notice.Publish", "route", route)
 	}
+
+	// Validate route format (exact route for publish, not pattern)
+	if err := types.ValidateRoute(route, "notice"); err != nil {
+		return fmt.Errorf("invalid route: %w", err)
+	}
+
 	if err := c.conn.SendFireAndForgetWithWriter(ctx, protocol.MessageTypeNoticePublish, publishPayloadWriter(route, body)); err != nil {
 		if log := c.conn.Logger(); log != nil {
 			log.Error("notice.Publish failed", "route", route, "error", err)

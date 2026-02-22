@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -62,6 +63,12 @@ func (c *client) Begin(ctx context.Context, route string, opts ...BeginOption) (
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("kv.Begin", "route", route)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "kv"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
+
 	// Apply options
 	cfg := beginConfig{
 		durability: DurabilityBuffered, // Default to buffered for performance
@@ -124,6 +131,12 @@ func (c *client) BeginRead(ctx context.Context, route string) (ReadTx, error) {
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("kv.BeginRead", "route", route)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "kv"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
+
 	// Encode BEGIN request with ReadOnly mode
 	// Send request and wait for response
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeKvBegin, beginPayloadWriter(route, TxModeReadOnly, DurabilityBuffered))

@@ -8,6 +8,7 @@ import (
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/retry"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -125,6 +126,12 @@ func (c *client) Send(ctx context.Context, route string, body []byte) (uint64, e
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("queue.Send", "route", route)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "queue"); err != nil {
+		return 0, fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueEnqueue, enqueuePayloadWriter(route, body, 0))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
@@ -198,12 +205,19 @@ func (c *client) ReceiveWithRetry(ctx context.Context, route string, leaseSecs u
 func (c *client) Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error) {
 	ctx, span := c.conn.Tracer().Start(ctx, "fitz.queue.Receive", trace.WithAttributes(
 		attribute.String("fitz.route", route),
+		attribute.Int64("fitz.lease_secs", int64(leaseSecs)),
 		attribute.Int("fitz.batch_size", int(batchSize)),
 	))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("queue.Receive", "route", route, "batch_size", batchSize)
+		log.Debug("queue.Receive", "route", route, "lease_secs", leaseSecs, "batch_size", batchSize)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "queue"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueReserve, reservePayloadWriter(route, leaseSecs, batchSize, 0))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {

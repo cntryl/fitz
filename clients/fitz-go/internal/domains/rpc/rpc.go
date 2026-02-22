@@ -13,6 +13,7 @@ import (
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
 	"github.com/cntryl/fitz-go/internal/core/retry"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -260,6 +261,11 @@ func (c *client) Subscribe(ctx context.Context, route string, handler RPCHandler
 	}
 	c.initRPCHandler()
 
+	// Validate route format
+	if err := types.ValidateRoute(route, "rpc"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeRpcSubscribeWorker, rpcSubscribeWorkerPayloadWriter(route))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
@@ -312,6 +318,11 @@ func (c *client) Call(ctx context.Context, route string, body []byte, timeout ti
 		log.Debug("rpc.Call", "route", route)
 	}
 	c.initRPCHandler()
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "rpc"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
 
 	// Generate correlation ID
 	var correlationID [16]byte

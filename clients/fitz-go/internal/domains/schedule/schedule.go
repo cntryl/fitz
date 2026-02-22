@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -54,8 +55,11 @@ type Client interface {
 	// Cancel cancels a schedule by route (route-based identity per CLIENT_SPEC).
 	Cancel(ctx context.Context, route string) error
 
-	// List returns all schedules in the current realm (no parameters per spec).
-	List(ctx context.Context) ([]ScheduleEntry, error)
+	// List retrieves schedules with pagination.
+	// offset: starting position (0-based). Use 0 for first page.
+	// limit: maximum entries to return (0 = server default of 100).
+	// Returns: schedule entries for this page, total count of all schedules, error.
+	List(ctx context.Context, offset, limit uint64) ([]ScheduleEntry, uint64, error)
 
 	// Subscribe subscribes to schedule fire notifications for the given route pattern.
 	// When a schedule fires, the handler is invoked with the schedule's payload.
@@ -118,6 +122,12 @@ func (c *client) Create(ctx context.Context, route string, cronExpr string, payl
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("schedule.Create", "route", route, "cron", cronExpr)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "schedule"); err != nil {
+		return "", fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCreate, scheduleCreatePayloadWriter(route, cronExpr, payload))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
@@ -159,6 +169,12 @@ func (c *client) Cancel(ctx context.Context, route string) error {
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("schedule.Cancel", "route", route)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "schedule"); err != nil {
+		return fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleCancel, scheduleCancelPayloadWriter(route))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
@@ -184,20 +200,21 @@ func (c *client) Cancel(ctx context.Context, route string) error {
 	return nil
 }
 
-// List per CLIENT_SPEC.md: Request empty (no parameters). Response: [status][has_entry]; when has_entry=1: [route_len][route][cron_len][cron][payload_len][payload]. Read until has_entry=0.
-// Note: Spec defines streaming LIST (multiple response frames). This implementation reads a single response frame; if the server sends multiple frames per LIST, connection layer would need a SendStreamingRequest or similar to read until has_entry=0 across frames.
-func (c *client) List(ctx context.Context) ([]ScheduleEntry, error) {
+// List per CLIENT_SPEC.md: Request [optional u64 offset][optional u64 limit]. Response: [status][u64 total_count][has_entry]; when has_entry=1: [route_len][route][cron_len][cron][payload_len][payload]. Read until has_entry=0.
+// offset: starting offset (0-based), default 0
+// limit: max entries per page (0 = server default of 100), default 0
+func (c *client) List(ctx context.Context, offset, limit uint64) ([]ScheduleEntry, uint64, error) {
 	ctx, span := c.conn.Tracer().Start(ctx, "fitz.schedule.List")
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("schedule.List")
+		log.Debug("schedule.List", "offset", offset, "limit", limit)
 	}
-	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleList, scheduleListPayloadWriter())
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeScheduleList, scheduleListPayloadWriter(offset, limit))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
 			log.Error("schedule.List failed", "error", err)
 		}
-		return nil, fmt.Errorf("LIST request failed: %w", err)
+		return nil, 0, fmt.Errorf("LIST request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
@@ -205,44 +222,54 @@ func (c *client) List(ctx context.Context) ([]ScheduleEntry, error) {
 		if log := c.conn.Logger(); log != nil {
 			log.Error("schedule.List failed", "error", err)
 		}
-		return nil, fmt.Errorf("LIST failed: %w", mapScheduleError(err.Error()))
+		return nil, 0, fmt.Errorf("LIST failed: %w", mapScheduleError(err.Error()))
 	}
 	if !success {
 		if log := c.conn.Logger(); log != nil {
 			log.Error("schedule.List failed", "status", "unexpected")
 		}
-		return nil, fmt.Errorf("LIST failed: unexpected status")
+		return nil, 0, fmt.Errorf("LIST failed: unexpected status")
 	}
 
+	// Parse total_count
+	if len(remaining) < 8 {
+		return nil, 0, fmt.Errorf("LIST response missing total_count")
+	}
+	totalCount, bytesRead, err := connection.ReadU64BE(remaining, 0)
+	if err != nil {
+		return nil, 0, fmt.Errorf("LIST failed to parse total_count: %w", err)
+	}
+	remaining = remaining[bytesRead:]
+
 	var entries []ScheduleEntry
-	offset := 0
-	for offset < len(remaining) {
-		if offset+1 > len(remaining) {
+	pos := 0 // Parse position in remaining bytes
+	for pos < len(remaining) {
+		if pos+1 > len(remaining) {
 			break
 		}
-		hasEntry := remaining[offset]
-		offset++
+		hasEntry := remaining[pos]
+		pos++
 
 		if hasEntry == 0 {
 			break
 		}
 
 		// Per spec: route_len, route, cron_len, cron, payload_len, payload
-		routeStr, newOffset, err := connection.ReadString(remaining, offset)
+		routeStr, newPos, err := connection.ReadString(remaining, pos)
 		if err != nil {
 			break
 		}
-		offset = newOffset
-		cronStr, newOffset, err := connection.ReadString(remaining, offset)
+		pos = newPos
+		cronStr, newPos, err := connection.ReadString(remaining, pos)
 		if err != nil {
 			break
 		}
-		offset = newOffset
-		payloadBytes, newOffset, err := connection.ReadBytes(remaining, offset)
+		pos = newPos
+		payloadBytes, newPos, err := connection.ReadBytes(remaining, pos)
 		if err != nil {
 			break
 		}
-		offset = newOffset
+		pos = newPos
 		payloadCopy := make([]byte, len(payloadBytes))
 		copy(payloadCopy, payloadBytes)
 		entries = append(entries, ScheduleEntry{
@@ -253,7 +280,7 @@ func (c *client) List(ctx context.Context) ([]ScheduleEntry, error) {
 		})
 	}
 
-	return entries, nil
+	return entries, totalCount, nil
 }
 
 // Subscribe per CLIENT_SPEC.md (703): Request [route_pattern]. Response (status=0) only; no subscription_id in response.

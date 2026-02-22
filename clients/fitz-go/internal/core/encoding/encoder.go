@@ -76,6 +76,18 @@ func WriteU32(buf *bytes.Buffer, v uint32) {
 	connection.WriteU32BE(buf, v)
 }
 
+// WriteOptionalU64 writes an optional uint64: [u8 has_value][u64 value if has_value=1].
+// Per payload_codec.rs: flag byte (1 = Some, 0 = None), then 8 bytes if present.
+func WriteOptionalU64(buf *bytes.Buffer, v uint64) {
+	if v == 0 {
+		// Treat 0 as not provided (matches server default behavior)
+		buf.WriteByte(0)
+	} else {
+		buf.WriteByte(1)
+		connection.WriteU64BE(buf, v)
+	}
+}
+
 // WriteString writes a length-prefixed string: [u32 length][bytes].
 // This is the most common pattern across all domains.
 func WriteString(buf *bytes.Buffer, s string) {

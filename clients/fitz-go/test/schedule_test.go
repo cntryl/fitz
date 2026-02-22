@@ -103,7 +103,7 @@ func TestShouldListSchedulesGivenMultipleSchedulesWhenListCalled(t *testing.T) {
 		require.NoError(t, err)
 
 		// Act
-		entries, err := f.Client().Schedule().List(ctx)
+		entries, totalCount, err := f.Client().Schedule().List(ctx, 0, 100) // First page, 100 entries
 
 		// Assert
 		require.NoError(t, err)
@@ -112,6 +112,7 @@ func TestShouldListSchedulesGivenMultipleSchedulesWhenListCalled(t *testing.T) {
 		_ = id1
 		_ = id2
 		_ = entries
+		_ = totalCount // Ignore total for now (other tests may have created schedules)
 	})
 }
 
@@ -149,10 +150,11 @@ func TestShouldReturnListWithoutErrorGivenSchedulesWhenListCalled(t *testing.T) 
 
 		f.ConnectOrSkip(ctx)
 
-		entries, err := f.Client().Schedule().List(ctx)
+		entries, totalCount, err := f.Client().Schedule().List(ctx, 0, 0) // offset=0, limit=0 (server default)
 
 		require.NoError(t, err)
 		require.NotNil(t, entries)
+		_ = totalCount // Ignore totalCount in this test
 		// In a shared broker, other tests may have created schedules; we only assert no error.
 	})
 }

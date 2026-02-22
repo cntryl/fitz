@@ -269,9 +269,26 @@ impl ScheduleActor {
                 Ok(()) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },
-            ScheduleMessage::List => {
-                let defs = self.list_defs();
-                let entries = defs
+            ScheduleMessage::List { offset, limit } => {
+                let mut all_defs = self.list_defs();
+                let total_count = all_defs.len() as u64;
+
+                // Apply pagination
+                let start = offset as usize;
+                let end = if limit == 0 {
+                    all_defs.len()
+                } else {
+                    std::cmp::min(start + (limit as usize), all_defs.len())
+                };
+
+                // Take the requested slice
+                let page_defs: Vec<_> = if start < all_defs.len() {
+                    all_defs.drain(start..end).collect()
+                } else {
+                    vec![]
+                };
+
+                let entries = page_defs
                     .into_iter()
                     .map(|(route, cron, payload)| ScheduleListEntry {
                         route,
@@ -279,7 +296,11 @@ impl ScheduleActor {
                         payload,
                     })
                     .collect();
-                ScheduleResponse::ListDefs(entries)
+
+                ScheduleResponse::ListDefs {
+                    entries,
+                    total_count,
+                }
             }
             ScheduleMessage::Subscribe { .. } => {
                 // Subscription handled by router, not actor

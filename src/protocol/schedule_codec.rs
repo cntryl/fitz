@@ -40,8 +40,12 @@ pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
         ScheduleResponse::Ok => {
             enc.put_u8(0); // success flag
         }
-        ScheduleResponse::ListDefs(entries) => {
+        ScheduleResponse::ListDefs {
+            entries,
+            total_count,
+        } => {
             enc.put_u8(0); // success flag
+            enc.put_u64(*total_count); // total count of all schedules
             for entry in entries {
                 enc.put_u8(1); // has_entry
                 enc.put_string(&entry.route);
@@ -91,9 +95,18 @@ fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     Ok(ScheduleMessage::Cancel { route })
 }
 
-/// Parse LIST message (no parameters)
-fn parse_list(_dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
-    Ok(ScheduleMessage::List)
+/// Parse LIST message
+/// Wire format (optional): [u64 offset][u64 limit]
+/// If no parameters provided, defaults to offset=0, limit=100
+fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+    let offset = dec.get_optional_u64()?.unwrap_or(0);
+    let limit = dec.get_optional_u64()?.unwrap_or(100);
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(ScheduleMessage::List { offset, limit })
 }
 
 /// Parse SUBSCRIBE message

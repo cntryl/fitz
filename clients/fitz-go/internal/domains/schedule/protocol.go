@@ -53,9 +53,11 @@ func scheduleCancelPayloadWriter(route string) func(*bytes.Buffer) {
 	}
 }
 
-func scheduleListPayloadWriter() func(*bytes.Buffer) {
+func scheduleListPayloadWriter(offset, limit uint64) func(*bytes.Buffer) {
 	return func(buf *bytes.Buffer) {
-		_ = buf // empty payload
+		// Optional pagination parameters (default to 0, 100 on server if not provided)
+		encoding.WriteOptionalU64(buf, offset)
+		encoding.WriteOptionalU64(buf, limit)
 	}
 }
 

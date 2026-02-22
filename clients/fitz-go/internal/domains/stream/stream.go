@@ -8,6 +8,7 @@ import (
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -86,6 +87,12 @@ func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64)
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("stream.Begin", "route", route, "expected_offset", expectedOffset)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "stream"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamBegin, streamBeginPayloadWriter(route, expectedOffset, nil))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {

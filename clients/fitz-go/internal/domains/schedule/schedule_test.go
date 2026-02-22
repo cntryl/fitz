@@ -173,7 +173,7 @@ func BenchmarkEncodeScheduleCancel(b *testing.B) {
 }
 
 func BenchmarkEncodeScheduleList(b *testing.B) {
-	w := scheduleListPayloadWriter()
+	w := scheduleListPayloadWriter(0, 100) // offset=0, limit=100
 	buf := connection.GetBuffer()
 	defer connection.PutBuffer(buf)
 	b.ReportAllocs()

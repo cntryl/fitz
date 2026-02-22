@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
+	"github.com/cntryl/fitz-go/internal/core/types"
 	"github.com/cntryl/fitz-go/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -120,12 +121,12 @@ type Client interface {
 
 // LeaseInfo holds lease query results per CLIENT_SPEC.md QUERY response.
 type LeaseInfo struct {
-	Held              bool
-	Token             []byte   // Not set from QUERY (server returns owner_id, not token)
-	TTL               uint32   // Deprecated: use TTLRemainingSecs
-	OwnerID           string   // Set when Held (owner_id from server)
-	TTLRemainingSecs  uint64   // Seconds until expiry when Held
-	PendingWaiters    uint32   // Count of clients waiting in queue
+	Held             bool
+	Token            []byte // Not set from QUERY (server returns owner_id, not token)
+	TTL              uint32 // Deprecated: use TTLRemainingSecs
+	OwnerID          string // Set when Held (owner_id from server)
+	TTLRemainingSecs uint64 // Seconds until expiry when Held
+	PendingWaiters   uint32 // Count of clients waiting in queue
 }
 
 type client struct {
@@ -149,6 +150,12 @@ func (c *client) Acquire(ctx context.Context, route string, ttlSecs uint64) (*Le
 	if log := c.conn.Logger(); log != nil {
 		log.Debug("lease.Acquire", "route", route, "ttl_secs", ttlSecs)
 	}
+
+	// Validate route format
+	if err := types.ValidateRoute(route, "lease"); err != nil {
+		return nil, fmt.Errorf("invalid route: %w", err)
+	}
+
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseAcquire, leaseAcquirePayloadWriter(route, ttlSecs))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {

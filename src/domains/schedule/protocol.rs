@@ -13,8 +13,13 @@ pub enum ScheduleMessage {
     },
     /// Cancel an existing schedule by route
     Cancel { route: String },
-    /// List all schedules
-    List,
+    /// List all schedules (supports pagination)
+    List {
+        /// Starting offset (0-based). Default: 0
+        offset: u64,
+        /// Maximum number of entries to return (0 = all remaining). Default: 100
+        limit: u64,
+    },
     /// Subscribe to schedule fire notifications by pattern (client -> server)
     Subscribe {
         family_id: RouteFamily,
@@ -41,8 +46,11 @@ pub enum ScheduleMessage {
 pub enum ScheduleResponse {
     /// Operation succeeded (no schedule_id returned - route is identity)
     Ok,
-    /// LIST operation: returns all schedules as (route, cron, payload) tuples
-    ListDefs(Vec<ScheduleListEntry>),
+    /// LIST operation: returns paginated schedules with total count
+    ListDefs {
+        entries: Vec<ScheduleListEntry>,
+        total_count: u64,
+    },
     /// Operation failed with error message
     Error(String),
 }
