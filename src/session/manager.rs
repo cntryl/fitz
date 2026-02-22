@@ -932,16 +932,16 @@ impl RuntimeIngress {
                 session_info.route_family,
                 payload.as_ref(),
             ) {
-                Ok(crate::domains::queue::QueueMessage::Enqueue { route, .. }) => {
+                Ok(crate::domains::queue::QueueMessage::Send { route, .. }) => {
                     Ok(Some(route.clone()))
                 }
-                Ok(crate::domains::queue::QueueMessage::Reserve { route, .. }) => {
+                Ok(crate::domains::queue::QueueMessage::Receive { route, .. }) => {
                     Ok(Some(route.clone()))
                 }
                 Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => {
                     Ok(Some(route.clone()))
                 }
-                Ok(crate::domains::queue::QueueMessage::Complete { route, .. }) => {
+                Ok(crate::domains::queue::QueueMessage::Ack { route, .. }) => {
                     Ok(Some(route.clone()))
                 }
                 Ok(_) => Ok(None),
@@ -956,7 +956,7 @@ impl RuntimeIngress {
                     Ok(crate::domains::lease::protocol::LeaseMessage::Acquire {
                         route, ..
                     }) => Ok(Some(route.clone())),
-                    Ok(crate::domains::lease::protocol::LeaseMessage::Renew { route, .. }) => {
+                    Ok(crate::domains::lease::protocol::LeaseMessage::Extend { route, .. }) => {
                         Ok(Some(route.clone()))
                     }
                     Ok(crate::domains::lease::protocol::LeaseMessage::Release {

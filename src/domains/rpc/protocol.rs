@@ -155,7 +155,7 @@ pub enum RpcMessage {
     ///
     /// Sent from RpcRouteActor to worker session actor to deliver a request.
     /// The session actor encodes this as message type 302 (REQUEST) on the wire.
-    RequestDelivery(RpcWorkItem),
+    Deliver(RpcWorkItem),
 }
 
 impl RpcMessage {
@@ -184,9 +184,9 @@ impl RpcMessage {
         Self::Ack { correlation_id }
     }
 
-    /// Create RequestDelivery message
-    pub fn request_delivery(work_item: RpcWorkItem) -> Self {
-        Self::RequestDelivery(work_item)
+    /// Create Deliver message
+    pub fn deliver(work_item: RpcWorkItem) -> Self {
+        Self::Deliver(work_item)
     }
 }
 

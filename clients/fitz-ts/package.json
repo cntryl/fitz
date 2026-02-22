@@ -1,0 +1,51 @@
+{
+  "name": "@cntryl/fitz",
+  "version": "0.1.0",
+  "description": "TypeScript client library for Fitz distributed system",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "vitest bench",
+    "lint": "eslint src tests",
+    "fmt": "prettier --write ."
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^10.0.1",
+    "prettier": "^3.8.1",
+    "terser": "^5.46.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18",
+    "ws": "^8.19.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0 || ^4.9"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cntryl/fitz-ts.git",
+    "directory": "/"
+  }
+}

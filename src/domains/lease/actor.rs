@@ -220,7 +220,7 @@ impl LeaseActor {
                     None => LeaseResponse::NotFound,
                 }
             }
-            LeaseMessage::Renew {
+            LeaseMessage::Extend {
                 family_id,
                 route,
                 owner_id,
@@ -231,7 +231,7 @@ impl LeaseActor {
                     return None;
                 }
                 match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_renew(key, owner_id, fencing_token, ttl_secs),
+                    Some(key) => self.handle_extend(key, owner_id, fencing_token, ttl_secs),
                     None => LeaseResponse::NotFound,
                 }
             }
@@ -475,8 +475,8 @@ impl LeaseActor {
         }
     }
 
-    /// Handle lease renewal
-    fn handle_renew(
+    /// Handle lease extension
+    fn handle_extend(
         &mut self,
         key: LeaseKey,
         owner_id: String,
@@ -486,39 +486,39 @@ impl LeaseActor {
         let now = self.clock.now();
         let ttl = Duration::from_secs(ttl_secs);
 
-        enum RenewDecision {
+        enum ExtendDecision {
             NotHeld,
             Expired,
             Fenced(u64),
-            Renew,
+            Extend,
         }
 
         let decision = match self.leases.get(&key) {
-            None => RenewDecision::NotHeld,
+            None => ExtendDecision::NotHeld,
             Some(state) => {
                 if state.is_expired(now) {
-                    RenewDecision::Expired
+                    ExtendDecision::Expired
                 } else if !state.is_held_by(&owner_id) {
-                    RenewDecision::NotHeld
+                    ExtendDecision::NotHeld
                 } else if state.fencing_token != fencing_token {
-                    RenewDecision::Fenced(state.fencing_token)
+                    ExtendDecision::Fenced(state.fencing_token)
                 } else {
-                    RenewDecision::Renew
+                    ExtendDecision::Extend
                 }
             }
         };
 
         match decision {
-            RenewDecision::NotHeld => LeaseResponse::NotHeld,
-            RenewDecision::Expired => LeaseResponse::Expired,
-            RenewDecision::Fenced(current_token) => LeaseResponse::Fenced { current_token },
-            RenewDecision::Renew => {
+            ExtendDecision::NotHeld => LeaseResponse::NotHeld,
+            ExtendDecision::Expired => LeaseResponse::Expired,
+            ExtendDecision::Fenced(current_token) => LeaseResponse::Fenced { current_token },
+            ExtendDecision::Extend => {
                 let new_token = self.next_fencing_token();
                 if let Some(state) = self.leases.get_mut(&key) {
                     state.expiry = now + ttl;
                     state.fencing_token = new_token;
                 }
-                LeaseResponse::Renewed {
+                LeaseResponse::Extended {
                     fencing_token: new_token,
                 }
             }

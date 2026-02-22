@@ -1,11 +1,11 @@
 //! Lease domain codec - distributed lock operations
 //!
 //! Encodes/decodes TLV messages for the lease domain.
-//! Supports Acquire, Renew, Release, Query operations.
+//! Supports Acquire, Extend, Release, Query operations.
 //!
 //! Wire format follows CLIENT_SPEC: ACQUIRE success includes response_type
 //! (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued) + fencing_token;
-//! RENEW success is new_fencing_token; RELEASE success is status only;
+//! EXTEND success is new_fencing_token; RELEASE success is status only;
 //! QUERY success is has_holder + optional holder details.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
@@ -37,7 +37,7 @@ pub fn parse_request(
 
     match ctx.msg_type.0 {
         400 => parse_acquire(&mut dec, route_family),
-        401 => parse_renew(&mut dec, route_family),
+        401 => parse_extend(&mut dec, route_family),
         402 => parse_release(&mut dec, route_family),
         403 => parse_query(&mut dec, route_family),
         407 => parse_subscribe(&mut dec, route_family),
@@ -50,7 +50,7 @@ pub fn parse_request(
 /// Encode domain LeaseResponse to wire bytes (CLIENT_SPEC).
 ///
 /// - ACQUIRE success: status=0, response_type (0–3), fencing_token
-/// - RENEW success: status=0, new_fencing_token
+/// - EXTEND success: status=0, new_fencing_token
 /// - RELEASE success: status=0
 /// - QUERY success (free): status=0, has_holder=0, pending_waiters=0
 /// - QUERY success (held): status=0, has_holder=1, owner_id, ttl_remaining_secs, pending_waiters
@@ -85,7 +85,7 @@ pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
             enc.put_u64(*fencing_token);
             enc.finish()
         }
-        DomainLeaseResponse::Renewed { fencing_token } => {
+        DomainLeaseResponse::Extended { fencing_token } => {
             enc.put_u8(0);
             enc.put_u64(*fencing_token);
             enc.finish()
@@ -176,7 +176,7 @@ fn parse_acquire(
 }
 
 /// Wire format: `[string route][string owner_id][u64 fencing_token][u64 ttl_secs]`
-fn parse_renew(
+fn parse_extend(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<LeaseMessage, String> {
@@ -190,7 +190,7 @@ fn parse_renew(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(LeaseMessage::Renew {
+    Ok(LeaseMessage::Extend {
         family_id: route_family,
         route,
         owner_id,

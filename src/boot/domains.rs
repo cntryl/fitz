@@ -728,8 +728,8 @@ impl MailboxSink for NoticeDomainSink {
                     subscription_id: None,
                 })
             }
-            NotificationMessage::Notify(_) => {
-                // Notify is internal delivery, no response needed
+            NotificationMessage::Deliver(_) => {
+                // Deliver is internal delivery, no response needed
                 Some(NoticeResponse::Ok {
                     subscription_id: None,
                 })
@@ -1043,11 +1043,11 @@ impl MailboxSink for RpcDomainSink {
                 );
                 None
             }
-            RpcMessage::RequestDelivery(_) => {
-                // RequestDelivery should only be sent TO workers by route actors,
+            RpcMessage::Deliver(_) => {
+                // Deliver should only be sent TO workers by route actors,
                 // not received from clients. Ignore or error.
                 Some(RpcResponseMsg::Error(
-                    "RequestDelivery not valid client message".to_string(),
+                    "Deliver not valid client message".to_string(),
                 ))
             }
         };
@@ -1255,7 +1255,7 @@ impl MailboxSink for QueueDomainSink {
             let mut actors = self.actors.lock();
 
             match queue_msg {
-                QueueMessage::Enqueue {
+                QueueMessage::Send {
                     family_id,
                     route,
                     body,
@@ -1279,9 +1279,9 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_enqueue(body, delay_seconds)
+                    actor.handle_send(body, delay_seconds)
                 }
-                QueueMessage::Reserve {
+                QueueMessage::Receive {
                     family_id,
                     route,
                     lease_seconds,
@@ -1306,7 +1306,7 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_reserve(lease_seconds, batch_size)
+                    actor.handle_receive(lease_seconds, batch_size)
                 }
                 QueueMessage::Extend {
                     family_id,
@@ -1335,7 +1335,7 @@ impl MailboxSink for QueueDomainSink {
                     actor.process_delayed_messages();
                     actor.handle_extend(id, token, lease_seconds)
                 }
-                QueueMessage::Complete {
+                QueueMessage::Ack {
                     family_id,
                     route,
                     id,
@@ -1359,7 +1359,7 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_complete(id, token)
+                    actor.handle_ack(id, token)
                 }
                 QueueMessage::LeaseExpired { .. } => {
                     // Internal message, not dispatched via sink
@@ -2057,7 +2057,7 @@ impl LeaseDomainSink {
         }
     }
 
-    fn handle_renew(
+    fn handle_extend(
         &self,
         key: crate::domains::lease::protocol::LeaseKey,
         owner_id: String,
@@ -2086,7 +2086,7 @@ impl LeaseDomainSink {
                     let new_token = self.next_fencing_token();
                     state.expiry = now + ttl;
                     state.fencing_token = new_token;
-                    LeaseResponse::Renewed {
+                    LeaseResponse::Extended {
                         fencing_token: new_token,
                     }
                 }
@@ -2233,7 +2233,7 @@ impl MailboxSink for LeaseDomainSink {
                 Some(key) => self.handle_acquire(key, effective_owner(owner_id), ttl_secs),
                 None => LeaseResponse::NotFound,
             },
-            LeaseMessage::Renew {
+            LeaseMessage::Extend {
                 family_id,
                 route,
                 owner_id,
@@ -2241,7 +2241,7 @@ impl MailboxSink for LeaseDomainSink {
                 ttl_secs,
             } => match LeaseKey::from_route(family_id, &route) {
                 Some(key) => {
-                    self.handle_renew(key, effective_owner(owner_id), fencing_token, ttl_secs)
+                    self.handle_extend(key, effective_owner(owner_id), fencing_token, ttl_secs)
                 }
                 None => LeaseResponse::NotFound,
             },

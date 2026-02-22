@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Lease is a handle representing an acquired lease. Renew and Release are called on it.
+// Lease is a handle representing an acquired lease. Extend and Release are called on it.
 type Lease struct {
 	Token     []byte
 	ExpiresAt int64
@@ -26,18 +26,18 @@ type Lease struct {
 	conn  *connection.Connection
 }
 
-// Renew extends the lease TTL. Returns the new expiry timestamp.
-func (l *Lease) Renew(ctx context.Context, ttlSecs uint64) (int64, error) {
-	return l.renewWithToken(ctx, l.Token, ttlSecs)
+// Extend extends the lease TTL. Returns the new expiry timestamp.
+func (l *Lease) Extend(ctx context.Context, ttlSecs uint64) (int64, error) {
+	return l.extendWithToken(ctx, l.Token, ttlSecs)
 }
 
-// RenewWithToken renews using an explicit token (e.g. for testing invalid token).
-func (l *Lease) RenewWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
-	return l.renewWithToken(ctx, token, ttlSecs)
+// ExtendWithToken extends using an explicit token (e.g. for testing invalid token).
+func (l *Lease) ExtendWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
+	return l.extendWithToken(ctx, token, ttlSecs)
 }
 
-func (l *Lease) renewWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
-	ctx, span := l.conn.Tracer().Start(ctx, "fitz.lease.Renew", trace.WithAttributes(
+func (l *Lease) extendWithToken(ctx context.Context, token []byte, ttlSecs uint64) (int64, error) {
+	ctx, span := l.conn.Tracer().Start(ctx, "fitz.lease.Extend", trace.WithAttributes(
 		attribute.String("fitz.route", l.route),
 		attribute.Int("fitz.ttl_secs", int(ttlSecs)),
 	))
@@ -47,20 +47,20 @@ func (l *Lease) renewWithToken(ctx context.Context, token []byte, ttlSecs uint64
 		if log := l.conn.Logger(); log != nil {
 			log.Error("lease.Renew failed", "route", l.route, "error", err)
 		}
-		return 0, fmt.Errorf("RENEW request failed: %w", err)
+		return 0, fmt.Errorf("EXTEND request failed: %w", err)
 	}
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
 		if log := l.conn.Logger(); log != nil {
 			log.Error("lease.Renew failed", "route", l.route, "error", err)
 		}
-		return 0, fmt.Errorf("RENEW failed: %w", mapLeaseError(err.Error()))
+		return 0, fmt.Errorf("EXTEND failed: %w", mapLeaseError(err.Error()))
 	}
 	if !success {
 		if log := l.conn.Logger(); log != nil {
 			log.Error("lease.Renew failed", "route", l.route, "status", "unexpected")
 		}
-		return 0, fmt.Errorf("RENEW failed: unexpected status")
+		return 0, fmt.Errorf("EXTEND failed: unexpected status")
 	}
 	// Per CLIENT_SPEC: success = [u8 status=0][u64 BE new_fencing_token]
 	if len(remaining) >= 8 {
@@ -136,7 +136,7 @@ func (s *Subscription) Unsubscribe() {
 // Client is the Lease domain client interface.
 type Client interface {
 	// Acquire attempts to acquire a lease on the given route.
-	// Returns a Lease handle on success; use Renew and Release on it.
+	// Returns a Lease handle on success; use Extend and Release on it.
 	// Returns ErrLeaseHeld when the lease is already held by another owner.
 	Acquire(ctx context.Context, route string, ttlSecs uint64) (*Lease, error)
 

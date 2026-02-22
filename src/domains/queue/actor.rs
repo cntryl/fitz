@@ -438,9 +438,9 @@ impl QueueActor {
         })
     }
 
-    /// Handle enqueue operation
-    pub fn handle_enqueue(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
-        // Track empty state before enqueue for notification
+    /// Handle send operation
+    pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        // Track empty state before send for notification
         let was_empty = self.ready_len() == 0;
 
         let now_instant = self.clock.now_instant();
@@ -524,14 +524,14 @@ impl QueueActor {
             self.needs_notify_availability = true;
         }
 
-        QueueResponse::Enqueued { id }
+        QueueResponse::Sent { id }
     }
 
-    /// Enqueue multiple messages in one transaction (batch).
+    /// Send multiple messages in one transaction (batch).
     /// Same semantics as N×handle_enqueue; use for throughput when the caller has many messages.
-    pub fn handle_enqueue_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
+    pub fn handle_send_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
         if items.is_empty() {
-            return QueueResponse::EnqueuedBatch { ids: vec![] };
+            return QueueResponse::SentBatch { ids: vec![] };
         }
 
         let now_instant = self.clock.now_instant();
@@ -610,7 +610,7 @@ impl QueueActor {
             }
         }
 
-        QueueResponse::EnqueuedBatch { ids }
+        QueueResponse::SentBatch { ids }
     }
 
     /// Handle reserve operation
@@ -627,7 +627,7 @@ impl QueueActor {
     /// between the Queue domain and the Notice domain.
     ///
     /// QueueActor never stores waiters or blocks on empty queues.
-    pub fn handle_reserve(
+    pub fn handle_receive(
         &mut self,
         lease_seconds: u64,
         batch_size: Option<usize>,
@@ -721,7 +721,7 @@ impl QueueActor {
             return QueueResponse::NotFound;
         }
 
-        QueueResponse::Reserved { messages }
+        QueueResponse::Received { messages }
     }
 
     /// Handle extend operation
@@ -769,8 +769,8 @@ impl QueueActor {
         QueueResponse::Extended
     }
 
-    /// Handle complete operation
-    pub fn handle_complete(&mut self, id: MessageId, token: u64) -> QueueResponse {
+    /// Handle acknowledge operation
+    pub fn handle_ack(&mut self, id: MessageId, token: u64) -> QueueResponse {
         use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
         let now = self.clock.now_instant();
@@ -882,7 +882,7 @@ impl QueueActor {
             Err(e) => eprintln!("WARN: Failed to begin tx to delete message {}: {:?}", id, e),
         }
 
-        let response = QueueResponse::Completed;
+        let response = QueueResponse::Acked;
 
         // Cache successful completion response
         if let Ok(bytes) = bincode::serialize(&response) {
@@ -1090,12 +1090,12 @@ impl Actor for QueueActor {
         }
 
         let response = match msg {
-            QueueMessage::Enqueue {
+            QueueMessage::Send {
                 body,
                 delay_seconds,
                 ..
             } => {
-                let resp = self.handle_enqueue(body, delay_seconds);
+                let resp = self.handle_send(body, delay_seconds);
                 // Check if availability notification is needed
                 if self.needs_notify_availability {
                     self.schedule_availability_notification(ctx);
@@ -1104,7 +1104,7 @@ impl Actor for QueueActor {
                 resp
             }
 
-            QueueMessage::Reserve {
+            QueueMessage::Receive {
                 lease_seconds,
                 batch_size,
                 wait_seconds,
@@ -1115,9 +1115,9 @@ impl Actor for QueueActor {
                 // If empty and wait_seconds > 0, RPC layer will:
                 //   1. Subscribe to notice://{realm}/{area}/{resource}/available
                 //   2. Wait up to wait_seconds for notice or timeout
-                //   3. Retry reserve on notice or timeout
+                //   3. Retry receive on notice or timeout
                 let _ = wait_seconds; // Unused by actor, used by RPC layer
-                self.handle_reserve(lease_seconds, batch_size)
+                self.handle_receive(lease_seconds, batch_size)
             }
 
             QueueMessage::Extend {
@@ -1127,7 +1127,7 @@ impl Actor for QueueActor {
                 ..
             } => self.handle_extend(id, token, lease_seconds),
 
-            QueueMessage::Complete { id, token, .. } => self.handle_complete(id, token),
+            QueueMessage::Ack { id, token, .. } => self.handle_ack(id, token),
 
             QueueMessage::LeaseExpired { id } => {
                 self.handle_lease_expired(id);

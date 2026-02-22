@@ -1,10 +1,10 @@
 //! Queue protocol message types and responses
 //!
 //! Defines the message types for queue operations:
-//! - **Enqueue**: Add message to queue
-//! - **Reserve**: Lease one or more messages for processing
-//! - **Extend**: Extend lease expiration for a reserved message
-//! - **Complete**: Mark message as processed and delete it
+//! - **Send**: Add message to queue
+//! - **Receive**: Lease one or more messages for processing
+//! - **Extend**: Extend lease expiration for a received message
+//! - **Ack**: Acknowledge and delete message
 //!
 //! # Queue Identity
 //!
@@ -14,26 +14,26 @@
 //!
 //! # Lease Semantics
 //!
-//! - Messages are reserved with a lease duration
+//! - Messages are received with a lease duration
 //! - While leased, messages are invisible to other consumers
 //! - Leases expire automatically, returning messages to the ready queue
 //! - Redelivered messages have incremented attempt counters
 //!
 //! # Token Protocol
 //!
-//! - Each reserved message gets a random u64 token
-//! - Tokens must be provided for extend/complete operations
+//! - Each received message gets a random u64 token
+//! - Tokens must be provided for extend/ack operations
 //! - Invalid tokens are rejected (prevents accidental duplicate operations)
 //! - Tokens are ephemeral (not persisted, regenerated on actor restart)
 //!
 //! # Long Polling (RPC-Level Only)
 //!
-//! Reserve operations support optional long polling via `wait_seconds`:
+//! Receive operations support optional long polling via `wait_seconds`:
 //! - QueueActor always returns immediately (never blocks)
 //! - If empty and `wait_seconds > 0`, RPC layer:
 //!   1. Subscribes to `notice://{realm}/{area}/{resource}/available`
 //!   2. Waits up to `wait_seconds` for a notice or timeout
-//!   3. Retries reserve on notice or timeout
+//!   3. Retries receive on notice or timeout
 //! - Notices are hints (at-most-once), not guarantees
 //! - QueueActor never stores waiters or blocking state
 
@@ -193,23 +193,23 @@ pub struct ReservedMessage {
 /// the actor messaging system.
 #[derive(Debug, Clone)]
 pub enum QueueMessage {
-    /// Enqueue a message
+    /// Send a message to the queue
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/enqueue`
+    /// Route format: `queue://{realm}/{area}/{resource}/send`
     ///
     /// Writes the message body to durable storage and adds it to the ready queue.
     /// If delay_seconds is provided, message won't be visible until delay elapses.
     /// Returns the MessageId for tracking.
-    Enqueue {
+    Send {
         family_id: RouteFamily,
         route: Route,
         body: Bytes,
         delay_seconds: Option<u64>,
     },
 
-    /// Reserve messages for processing
+    /// Receive messages for processing
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/reserve`
+    /// Route format: `queue://{realm}/{area}/{resource}/receive`
     ///
     /// Pops up to `batch_size` messages from the ready queue, creates leases,
     /// and returns them with bodies loaded from storage.
@@ -218,13 +218,13 @@ pub enum QueueMessage {
     ///
     /// # Long Polling (RPC-Level Only)
     ///
-    /// If `wait_seconds` is provided and reserve returns empty:
+    /// If `wait_seconds` is provided and receive returns empty:
     /// - RPC layer subscribes to `notice://{realm}/{area}/{resource}/available`
     /// - Waits up to `wait_seconds` for a notice or timeout
-    /// - Retries reserve on notice or timeout
+    /// - Retries receive on notice or timeout
     /// - QueueActor NEVER blocks or stores waiters
     /// - Notices are hints (at-most-once, no guarantee of message availability)
-    Reserve {
+    Receive {
         family_id: RouteFamily,
         route: Route,
         lease_seconds: u64,
@@ -246,14 +246,14 @@ pub enum QueueMessage {
         lease_seconds: u64,
     },
 
-    /// Complete message processing
+    /// Acknowledge message processing
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/complete`
+    /// Route format: `queue://{realm}/{area}/{resource}/ack`
     ///
-    /// Marks message as successfully processed.
+    /// Marks message as successfully processed and acknowledges delivery.
     /// Removes inflight entry and deletes durable record.
     /// Requires valid token. Fails if token mismatches or lease expired.
-    Complete {
+    Ack {
         family_id: RouteFamily,
         route: Route,
         id: MessageId,
@@ -323,20 +323,20 @@ impl QueueError {
 /// Queue operation responses
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueueResponse {
-    /// Message successfully enqueued
-    Enqueued { id: MessageId },
+    /// Message successfully sent
+    Sent { id: MessageId },
 
-    /// Multiple messages successfully enqueued in one batch (same semantics as N×Enqueued)
-    EnqueuedBatch { ids: Vec<MessageId> },
+    /// Multiple messages successfully sent in one batch (same semantics as N×Sent)
+    SentBatch { ids: Vec<MessageId> },
 
-    /// Messages successfully reserved
-    Reserved { messages: Vec<ReservedMessage> },
+    /// Messages successfully received
+    Received { messages: Vec<ReservedMessage> },
 
     /// Lease successfully extended
     Extended,
 
-    /// Message successfully completed
-    Completed,
+    /// Message successfully acknowledged
+    Acked,
 
     /// Subscription successfully registered
     SubscribeOk { subscription_id: u64 },

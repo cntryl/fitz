@@ -97,10 +97,10 @@ All communication uses **TLV (Tag-Length-Value) encoding**:
 | Domain | Range | Constants |
 |--------|-------|-----------|
 | KV | 100-199 | `BEGIN`, `GET`, `PUT`, `DELETE`, `COMMIT`, `ROLLBACK` |
-| Queue | 200-299 | `ENQUEUE`, `RESERVE`, `COMPLETE` |
+| Queue | 200-299 | `SEND`, `RECEIVE`, `ACK` |
 | Notice | 300-399 | `PUBLISH`, `SUBSCRIBE`, `UNSUBSCRIBE` |
-| RPC | 400-499 | `REQUEST`, `REPLY` |
-| Lease | 500-599 | `ACQUIRE`, `RENEW`, `SURRENDER` |
+| RPC | 400-499 | `SEND`, `RESPONSE` |
+| Lease | 500-599 | `ACQUIRE`, `EXTEND`, `RELEASE` |
 | Stream | 600-699 | `OPEN`, `WRITE`, `READ` |
 | Schedule | 700-799 | `SCHEDULE`, `CANCEL` |
 
@@ -132,9 +132,9 @@ tx.rollback()?;                // Discard all changes
 
 ```rust
 let queue = client.queue();
-queue.enqueue("queue-area", "queue-name", message)?;
-let item = queue.reserve("queue-area", "queue-name")?;
-queue.complete(item.id)?;
+queue.send("queue-area", "queue-name", message)?;
+let item = queue.receive("queue-area", "queue-name")?;
+queue.ack(item.id)?;
 ```
 
 ### Notice (Pub/Sub)
@@ -153,7 +153,7 @@ while let Some(msg) = subscriber.next()? {
 
 ```rust
 let rpc = client.rpc();
-let response = rpc.call("area", "service", request)?;
+let response = rpc.send("area", "service", request)?;
 ```
 
 ### Lease (Distributed Locks)
@@ -161,8 +161,8 @@ let response = rpc.call("area", "service", request)?;
 ```rust
 let lease = client.lease();
 let grant = lease.acquire("area", "resource", duration)?;
-grant.renew()?;
-grant.surrender()?;
+grant.extend()?;
+grant.release()?;
 ```
 
 ### Stream (Named Channels)

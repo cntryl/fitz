@@ -8,7 +8,7 @@
 //! on the wire.
 
 use crate::domains::notice::protocol::{
-    NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+    NotificationMessage, DeliverMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };
 use crate::protocol::frame_context::FrameContext;
@@ -47,7 +47,7 @@ pub fn parse_request(
         503 => {
             parse_unsubscribe_all(session_id, subscriber).map(NotificationMessage::UnsubscribeAll)
         }
-        504 => parse_notify(&mut dec).map(NotificationMessage::Notify),
+        504 => parse_deliver(&mut dec).map(NotificationMessage::Deliver),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -147,12 +147,12 @@ fn parse_unsubscribe_all(
     })
 }
 
-/// Encode a NOTICE NOTIFY (504) payload.
+/// Encode a NOTICE DELIVER (504) payload.
 ///
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
 ///
 /// The subscription_id allows client-side demultiplexing to the correct handler.
-/// The route and payload carry the actual notification content.
+/// The route and payload carry the actual delivery content.
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     enc.put_u64(subscription_id);
@@ -161,7 +161,7 @@ pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec
     enc.finish()
 }
 
-fn parse_notify(dec: &mut PayloadDecoder) -> Result<NotifyMessage, String> {
+fn parse_deliver(dec: &mut PayloadDecoder) -> Result<DeliverMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let payload = dec.get_bytes()?;
@@ -170,7 +170,7 @@ fn parse_notify(dec: &mut PayloadDecoder) -> Result<NotifyMessage, String> {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(NotifyMessage {
+    Ok(DeliverMessage {
         route: std::sync::Arc::new(route),
         payload: std::sync::Arc::new(payload),
     })

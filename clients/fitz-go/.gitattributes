@@ -1,0 +1,39 @@
+# Auto detect text files and normalize line endings to LF
+* text=auto
+
+# Go files
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+go.work text eol=lf
+go.work.sum text eol=lf
+
+# Markup & config
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.xml text eol=lf
+*.json text eol=lf
+*.jsonc text eol=lf
+*.toml text eol=lf
+
+# Shell scripts & Makefile
+*.sh text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.mp3 binary
+*.gz binary
+*.zip binary
+*.7z binary

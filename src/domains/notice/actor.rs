@@ -12,7 +12,7 @@
 //! - **UnsubscribeAll**: Clean up all subscriptions for a disconnected session
 
 use crate::domains::notice::protocol::{
-    NotificationMessage, NotifyMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+    NotificationMessage, DeliverMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };
 use crate::runtime::actor::{Actor, Context};
@@ -152,11 +152,11 @@ impl NoticeRouteActor {
         // Fan-out to each matching subscriber (only atomic increments, no clones)
         for subscription_id in matching_ids {
             if let Some((_, subscriber, _)) = self.subscriptions.get(&subscription_id) {
-                let notify = NotifyMessage::new_shared(
+                let deliver = DeliverMessage::new_shared(
                     std::sync::Arc::clone(&route),
                     std::sync::Arc::clone(&payload),
                 );
-                let _ = ctx.send(subscriber.clone(), NotificationMessage::Notify(notify));
+                let _ = ctx.send(subscriber.clone(), NotificationMessage::Deliver(deliver));
             }
         }
     }
@@ -183,8 +183,8 @@ impl Actor for NoticeRouteActor {
             NotificationMessage::UnsubscribeAll(unsubscribe_all) => {
                 self.handle_unsubscribe_all(unsubscribe_all)
             }
-            NotificationMessage::Notify(_) => {
-                // NoticeRouteActor doesn't receive Notify messages
+            NotificationMessage::Deliver(_) => {
+                // NoticeRouteActor doesn't receive Deliver messages
                 // (those are sent to subscribers via SessionActor)
             }
         }

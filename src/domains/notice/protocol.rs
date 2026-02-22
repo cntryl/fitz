@@ -5,7 +5,7 @@
 //! - **Subscribe**: Register pattern subscription
 //! - **Unsubscribe**: Remove specific subscription
 //! - **UnsubscribeAll**: Clean up session subscriptions on disconnect
-//! - **Notify**: Deliver published message to subscriber
+//! - **Deliver**: Deliver published message to subscriber
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::session::SessionId;
@@ -23,8 +23,8 @@ pub enum NotificationMessage {
     Unsubscribe(UnsubscribeMessage),
     /// Unsubscribe all subscriptions for a session (called on disconnect)
     UnsubscribeAll(UnsubscribeAllMessage),
-    /// Notify a subscriber of a published message (internal to NoticeRouteActor)
-    Notify(NotifyMessage),
+    /// Deliver a published message to a subscriber (internal to NoticeRouteActor)
+    Deliver(DeliverMessage),
 }
 
 /// Publish a message to all subscribers matching the route pattern
@@ -137,14 +137,14 @@ impl UnsubscribeAllMessage {
 /// Uses Arc for route and payload to enable zero-allocation fanout.
 /// Multiple subscribers share the same Arc pointers, avoiding per-subscriber clones.
 #[derive(Debug, Clone)]
-pub struct NotifyMessage {
+pub struct DeliverMessage {
     /// The route that was published to (shared via Arc)
     pub route: Arc<Route>,
     /// The payload published (shared via Arc)
     pub payload: Arc<Bytes>,
 }
 
-impl NotifyMessage {
+impl DeliverMessage {
     /// Create notification with owned data (converts to Arc)
     pub fn new(route: Route, payload: Bytes) -> Self {
         Self {

@@ -52,13 +52,13 @@ func (sub *Subscription) Unsubscribe() {
 }
 
 // StreamSession is a write session for appending to a stream.
-// Obtained from Begin; use Append, then Commit or Rollback.
+// Obtained from Begin; use Send, then Commit or Rollback.
 // Expected offset (OCC) is established at Begin and tracked by the session/server;
-// Append does not take or send expected_offset.
+// Send does not take or send expected_offset.
 // Per CLIENT_SPEC.md, operations on a session MUST be sequential.
 type StreamSession interface {
-	// Append adds a record to the stream. Returns the assigned offset when available.
-	Append(ctx context.Context, body []byte) (offset uint64, err error)
+	// Send adds a record to the stream. Returns the assigned offset when available.
+	Send(ctx context.Context, body []byte) (offset uint64, err error)
 	// Commit finalizes the write session and makes appends durable.
 	Commit(ctx context.Context) error
 	// Rollback discards uncommitted appends.
@@ -73,7 +73,7 @@ type Client interface {
 	Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error)
 
 	// Consume reads records from the given route starting at fromOffset.
-	Consume(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
+	Peek(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
 
 	// Last returns the most recent record in the stream.
 	Last(ctx context.Context, route string) (*Record, error)
@@ -167,8 +167,8 @@ func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64)
 
 // Append per server stream_codec.rs. Expected offset is tracked by the session (established at Begin).
 // Request: [u64 session_id][bytes body][optional bytes metadata]
-func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
-	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Append", trace.WithAttributes(
+func (s *session) Send(ctx context.Context, body []byte) (uint64, error) {
+	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Send", trace.WithAttributes(
 		attribute.String("fitz.route", s.route),
 		attribute.Int64("fitz.session_id", int64(s.sessionID)),
 	))
@@ -176,23 +176,23 @@ func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
 	resp, err := s.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamAppend, streamAppendPayloadWriter(s.sessionID, body, nil))
 	if err != nil {
 		if log := s.conn.Logger(); log != nil {
-			log.Error("stream.Append failed", "route", s.route, "session_id", s.sessionID, "error", err)
+			log.Error("stream.Send failed", "route", s.route, "session_id", s.sessionID, "error", err)
 		}
-		return 0, fmt.Errorf("APPEND request failed: %w", err)
+		return 0, fmt.Errorf("SEND request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
 		if log := s.conn.Logger(); log != nil {
-			log.Error("stream.Append failed", "route", s.route, "session_id", s.sessionID, "error", err)
+			log.Error("stream.Send failed", "route", s.route, "session_id", s.sessionID, "error", err)
 		}
-		return 0, fmt.Errorf("APPEND failed: %w", mapStreamError(err.Error()))
+		return 0, fmt.Errorf("SEND failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
 		if log := s.conn.Logger(); log != nil {
-			log.Error("stream.Append failed", "route", s.route, "session_id", s.sessionID, "status", "unexpected")
+			log.Error("stream.Send failed", "route", s.route, "session_id", s.sessionID, "status", "unexpected")
 		}
-		return 0, fmt.Errorf("APPEND failed: unexpected status")
+		return 0, fmt.Errorf("SEND failed: unexpected status")
 	}
 
 	offset := 0
@@ -280,20 +280,20 @@ func (s *session) Rollback(ctx context.Context) error {
 // Consume per server stream_codec.rs:
 // Request: [string route][u64 from_offset][u64 limit][optional u64 max_bytes]
 // Response: [status][u8 has_session_id][u64?][bytes data]
-func (c *client) Consume(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
-	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Consume", trace.WithAttributes(
+func (c *client) Peek(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Peek", trace.WithAttributes(
 		attribute.String("fitz.route", route),
 		attribute.Int64("fitz.from_offset", int64(fromOffset)),
 		attribute.Int64("fitz.limit", int64(limit)),
 	))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("stream.Consume", "route", route, "from_offset", fromOffset, "limit", limit)
+		log.Debug("stream.Peek", "route", route, "from_offset", fromOffset, "limit", limit)
 	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamRead, streamReadPayloadWriter(route, fromOffset, limit, nil))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Consume failed", "route", route, "error", err)
+			log.Error("stream.Peek failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("READ request failed: %w", err)
 	}
@@ -301,13 +301,13 @@ func (c *client) Consume(ctx context.Context, route string, fromOffset uint64, l
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Consume failed", "route", route, "error", err)
+			log.Error("stream.Peek failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("READ failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Consume failed", "route", route, "status", "unexpected")
+			log.Error("stream.Peek failed", "route", route, "status", "unexpected")
 		}
 		return nil, fmt.Errorf("READ failed: unexpected status")
 	}

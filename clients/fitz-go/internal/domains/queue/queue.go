@@ -15,7 +15,7 @@ import (
 )
 
 // QueueItem represents a received (reserved) queue message.
-// Extend and Complete are called on the item; route and token are tracked internally.
+// Extend and Ack are called on the item; route and token are tracked internally.
 type QueueItem struct {
 	ID    uint64
 	Token uint64
@@ -79,15 +79,15 @@ func (q *QueueItem) Extend(ctx context.Context, leaseSecs uint64) error {
 	return nil
 }
 
-// Complete acknowledges processing of this queue item and removes it from the queue.
-func (q *QueueItem) Complete(ctx context.Context) error {
-	return q.CompleteWithToken(ctx, q.Token)
+// Ack acknowledges processing of this queue item and removes it from the queue.
+func (q *QueueItem) Ack(ctx context.Context) error {
+	return q.AckWithToken(ctx, q.Token)
 }
 
-// CompleteWithToken completes the item using an explicit token (e.g. for testing invalid token).
-// Normally use Complete(ctx) which uses the item's token.
-func (q *QueueItem) CompleteWithToken(ctx context.Context, token uint64) error {
-	ctx, span := q.conn.Tracer().Start(ctx, "fitz.queue.Complete", trace.WithAttributes(
+// AckWithToken acknowledges the item using an explicit token (e.g. for testing invalid token).
+// Normally use Ack(ctx) which uses the item's token.
+func (q *QueueItem) AckWithToken(ctx context.Context, token uint64) error {
+	ctx, span := q.conn.Tracer().Start(ctx, "fitz.queue.Ack", trace.WithAttributes(
 		attribute.String("fitz.route", q.route),
 		attribute.Int64("fitz.message_id", int64(q.ID)),
 	))
@@ -95,22 +95,22 @@ func (q *QueueItem) CompleteWithToken(ctx context.Context, token uint64) error {
 	resp, err := q.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueComplete, completePayloadWriter(q.route, q.ID, token))
 	if err != nil {
 		if log := q.conn.Logger(); log != nil {
-			log.Error("queue.Complete failed", "route", q.route, "id", q.ID, "error", err)
+			log.Error("queue.Ack failed", "route", q.route, "id", q.ID, "error", err)
 		}
-		return fmt.Errorf("COMPLETE request failed: %w", err)
+		return fmt.Errorf("ACK request failed: %w", err)
 	}
 	success, _, err := parseQueueResponse(resp)
 	if err != nil {
 		if log := q.conn.Logger(); log != nil {
-			log.Error("queue.Complete failed", "route", q.route, "id", q.ID, "error", err)
+			log.Error("queue.Ack failed", "route", q.route, "id", q.ID, "error", err)
 		}
-		return fmt.Errorf("COMPLETE failed: %w", err)
+		return fmt.Errorf("ACK failed: %w", err)
 	}
 	if !success {
 		if log := q.conn.Logger(); log != nil {
-			log.Error("queue.Complete failed", "route", q.route, "id", q.ID, "status", "unexpected")
+			log.Error("queue.Ack failed", "route", q.route, "id", q.ID, "status", "unexpected")
 		}
-		return fmt.Errorf("COMPLETE failed: unexpected status")
+		return fmt.Errorf("ACK failed: unexpected status")
 	}
 	return nil
 }
@@ -121,7 +121,7 @@ type Client interface {
 	Send(ctx context.Context, route string, body []byte) (msgID uint64, err error)
 
 	// Receive reserves up to batchSize messages with the given lease duration.
-	// Each returned QueueItem has Extend and Complete methods.
+	// Each returned QueueItem has Extend and Ack methods.
 	Receive(ctx context.Context, route string, leaseSecs uint64, batchSize uint32) ([]*QueueItem, error)
 
 	// Subscribe registers a handler for availability notifications (empty -> non-empty transition).

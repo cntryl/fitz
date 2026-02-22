@@ -29,8 +29,8 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to enqueue a message. Returns Err if authorization fails.
-    pub fn enqueue(
+    /// Attempt to send a message. Returns Err if authorization fails.
+    pub fn send(
         &self,
         family: RouteFamily,
         route: Route,
@@ -39,15 +39,15 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
-        // Extract base route (strip /enqueue suffix if present)
+        // Extract base route (strip /send suffix if present)
         let base_route = Self::extract_base_route(&route);
 
-        // Enqueue requires write access (adding messages is a write operation)
+        // Send requires write access (adding messages is a write operation)
         if !self.permissions.allows(&base_route, Access::Write) {
-            return Err("unauthorized: enqueue".to_string());
+            return Err("unauthorized: send".to_string());
         }
 
-        let msg = QueueMessage::Enqueue {
+        let msg = QueueMessage::Send {
             family_id: family,
             route,
             body,
@@ -57,9 +57,9 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to reserve messages. Returns Err if authorization fails.
+    /// Attempt to receive messages. Returns Err if authorization fails.
     #[allow(clippy::too_many_arguments)]
-    pub fn reserve(
+    pub fn receive(
         &self,
         family: RouteFamily,
         route: Route,
@@ -69,15 +69,15 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
-        // Extract base route (strip /reserve suffix if present)
+        // Extract base route (strip /receive suffix if present)
         let base_route = Self::extract_base_route(&route);
 
-        // Reserve requires read access (consuming messages is a read operation)
+        // Receive requires read access (consuming messages is a read operation)
         if !self.permissions.allows(&base_route, Access::Read) {
-            return Err("unauthorized: reserve".to_string());
+            return Err("unauthorized: receive".to_string());
         }
 
-        let msg = QueueMessage::Reserve {
+        let msg = QueueMessage::Receive {
             family_id: family,
             route,
             lease_seconds,
@@ -119,8 +119,8 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to complete a message. Returns Err if authorization fails.
-    pub fn complete(
+    /// Attempt to acknowledge a message. Returns Err if authorization fails.
+    pub fn ack(
         &self,
         family: RouteFamily,
         route: Route,
@@ -129,15 +129,15 @@ impl SessionActor {
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
-        // Extract base route (strip /complete suffix if present)
+        // Extract base route (strip /ack suffix if present)
         let base_route = Self::extract_base_route(&route);
 
-        // Complete requires write access (deleting messages is a write operation)
+        // Ack requires write access (deleting messages is a write operation)
         if !self.permissions.allows(&base_route, Access::Write) {
-            return Err("unauthorized: complete".to_string());
+            return Err("unauthorized: ack".to_string());
         }
 
-        let msg = QueueMessage::Complete {
+        let msg = QueueMessage::Ack {
             family_id: family,
             route,
             id,
@@ -149,14 +149,14 @@ impl SessionActor {
 
     /// Helper to extract base route by stripping known operation suffixes.
     /// For queue operations, the base route is the resource path without the operation.
-    /// e.g., "queue://realm/area/jobs/enqueue" -> "queue://realm/area/jobs"
+    /// e.g., "queue://realm/area/jobs/send" -> "queue://realm/area/jobs"
     fn extract_base_route(route: &Route) -> Route {
         let path = route.as_str();
         let base = path
-            .strip_suffix("/enqueue")
-            .or_else(|| path.strip_suffix("/reserve"))
+            .strip_suffix("/send")
+            .or_else(|| path.strip_suffix("/receive"))
             .or_else(|| path.strip_suffix("/extend"))
-            .or_else(|| path.strip_suffix("/complete"))
+            .or_else(|| path.strip_suffix("/ack"))
             .unwrap_or(path);
         Route::new(base)
     }
@@ -200,16 +200,16 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_unauthenticated_enqueue() {
+    fn should_reject_unauthenticated_send() {
         // Arrange
         let session = SessionActor::new(SessionId(1), SessionPermissions::from_permissions(vec![]));
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
 
         // Act
-        let result = session.enqueue(
+        let result = session.send(
             RouteFamily::new(1),
-            Route::new("queue://realm/area/jobs/enqueue"),
+            Route::new("queue://realm/area/jobs/send"),
             Bytes::from("test"),
             None,
             &mut actor,
@@ -218,11 +218,11 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "unauthorized: enqueue");
+        assert_eq!(result.unwrap_err(), "unauthorized: send");
     }
 
     #[test]
-    fn should_allow_authorized_enqueue() {
+    fn should_allow_authorized_send() {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
@@ -235,9 +235,9 @@ mod tests {
         let mut ctx = make_ctx();
 
         // Act
-        let result = session.enqueue(
+        let result = session.send(
             RouteFamily::new(1),
-            Route::new("queue://realm/area/jobs/enqueue"),
+            Route::new("queue://realm/area/jobs/send"),
             Bytes::from("test"),
             None,
             &mut actor,

@@ -314,7 +314,7 @@ impl RpcRouteActor {
             // Send REQUEST to worker actor (encoded as message type 302 on wire)
             let _ = ctx.send(
                 worker_addr,
-                crate::domains::rpc::protocol::RpcMessage::RequestDelivery(work_item),
+                crate::domains::rpc::protocol::RpcMessage::Deliver(work_item),
             );
         } else {
             // No available workers, re-queue
@@ -440,8 +440,8 @@ impl Actor for RpcRouteActor {
             RpcMessage::Ack { correlation_id } => {
                 self.handle_ack(correlation_id, ctx);
             }
-            RpcMessage::RequestDelivery(_) => {
-                // RequestDelivery is sent TO workers, not received by route actor
+            RpcMessage::Deliver(_) => {
+                // Deliver is sent TO workers, not received by route actor
                 // Ignore if misrouted
             }
         }

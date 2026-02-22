@@ -59,9 +59,9 @@ type Client interface {
 	// Subscribe registers a worker handler for the given route.
 	Subscribe(ctx context.Context, route string, handler RPCHandler) (*Subscription, error)
 
-	// Call sends an RPC request and returns an iterator over response frames.
+	// Send sends an RPC request and returns an iterator over response frames.
 	// Callers must call Close on the returned iterator when done to release resources.
-	Call(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error)
+	Send(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error)
 }
 
 type client struct {
@@ -301,15 +301,15 @@ func (c *client) unsubscribeWorker(route string) {
 	_ = err  // ignore errors
 }
 
-// Call per CLIENT_SPEC.md:
+// Send per CLIENT_SPEC.md:
 // Request: [correlation_id(16)][route_len][route][reply_route_len][reply_route][body_len][body]
 // Response: [status] (ack that request was dispatched)
 // Actual responses come via RPC RESPONSE (303) messages.
-func (c *client) Call(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error) {
-	ctx, span := c.conn.Tracer().Start(ctx, "fitz.rpc.Call", trace.WithAttributes(attribute.String("fitz.route", route)))
+func (c *client) Send(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.rpc.Send", trace.WithAttributes(attribute.String("fitz.route", route)))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("rpc.Call", "route", route)
+		log.Debug("rpc.Send", "route", route)
 	}
 	c.initRPCHandler()
 

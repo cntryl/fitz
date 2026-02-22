@@ -16,8 +16,8 @@ pub struct AcquireRequest {
     pub wait_seconds: u32,
 }
 
-/// Parameters for a renew lease operation
-pub struct RenewRequest {
+/// Parameters for an extend lease operation
+pub struct ExtendRequest {
     pub family: RouteFamily,
     pub route: Route,
     pub owner_id: String,
@@ -77,19 +77,19 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to renew a lease. Returns Err if authorization fails.
-    pub fn renew(
+    /// Attempt to extend a lease. Returns Err if authorization fails.
+    pub fn extend(
         &self,
-        request: RenewRequest,
+        request: ExtendRequest,
         lease_actor: &mut LeaseActor,
         ctx: &mut Context<LeaseActor>,
     ) -> Result<(), String> {
-        // Renew requires write access (maintaining a lock is a write operation)
+        // Extend requires write access (maintaining a lock is a write operation)
         if !self.permissions.allows(&request.route, Access::Write) {
-            return Err("unauthorized: renew".to_string());
+            return Err("unauthorized: extend".to_string());
         }
 
-        let msg = LeaseMessage::Renew {
+        let msg = LeaseMessage::Extend {
             family_id: request.family,
             route: request.route,
             owner_id: request.owner_id,

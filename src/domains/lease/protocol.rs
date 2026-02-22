@@ -2,7 +2,7 @@
 //!
 //! Defines the message types for lease operations:
 //! - **Acquire**: Request exclusive ownership
-//! - **Renew**: Extend lease expiration
+//! - **Extend**: Extend lease expiration
 //! - **Release**: Relinquish ownership
 //! - **Query**: Inspect lease status (debugging)
 //! - **Tick**: Runtime-driven expiration (scheduler)
@@ -156,13 +156,13 @@ pub enum LeaseMessage {
         wait_seconds: u32,
     },
 
-    /// Renew a lease
+    /// Extend a lease
     ///
-    /// Route format: `/{realm}/{area}/{resource}/renew`
+    /// Route format: `/{realm}/{area}/{resource}/extend`
     /// Lease identity: (family_id, realm, area, resource)
     /// Extends the lease expiration if the fencing token matches.
     /// Fails if the token is outdated or the lease is no longer held.
-    Renew {
+    Extend {
         family_id: RouteFamily,
         route: Route,
         owner_id: String,
@@ -268,8 +268,8 @@ pub enum LeaseResponse {
     /// The client should back off and retry later.
     QueueFull { pending_count: usize },
 
-    /// Lease successfully renewed
-    Renewed { fencing_token: u64 },
+    /// Lease successfully extended
+    Extended { fencing_token: u64 },
 
     /// Lease successfully released
     Released,

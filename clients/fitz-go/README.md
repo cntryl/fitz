@@ -21,7 +21,7 @@ The Go client now compiles successfully after fixing:
 - Lease: `Acquire()`
 - Notice: `Publish()`
 - Queue: `Send()`, `Receive()`
-- RPC: `Call()`, `Subscribe()`
+- RPC: `Send()`, `Subscribe()`
 - Stream: `Begin()`
 - Schedule: `Create()`, `Cancel()`
 - Consistent error messages for malformed routes across all domains

@@ -37,18 +37,18 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
 
     let mut buf = Vec::new();
     match response {
-        QueueResponse::Enqueued { id } => {
+        QueueResponse::Sent { id } => {
             buf.put_u8(0); // status: success
             buf.put_u64(id.as_u64());
         }
-        QueueResponse::EnqueuedBatch { ids } => {
+        QueueResponse::SentBatch { ids } => {
             buf.put_u8(0); // status: success
             buf.put_u32(ids.len() as u32);
             for id in ids {
                 buf.put_u64(id.as_u64());
             }
         }
-        QueueResponse::Reserved { messages } => {
+        QueueResponse::Received { messages } => {
             buf.put_u8(0); // status: success
             buf.put_u32(messages.len() as u32);
             for msg in messages {
@@ -62,7 +62,7 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
             buf.put_u8(0); // status: success
                            // Empty response
         }
-        QueueResponse::Completed => {
+        QueueResponse::Acked => {
             buf.put_u8(0); // status: success
                            // Empty response
         }
@@ -185,7 +185,7 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
         None
     };
 
-    Ok(QueueMessage::Enqueue {
+    Ok(QueueMessage::Send {
         family_id,
         route: Route::new(&route_str),
         body,
@@ -262,7 +262,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
         None
     };
 
-    Ok(QueueMessage::Reserve {
+    Ok(QueueMessage::Receive {
         family_id,
         route: Route::new(&route_str),
         lease_seconds,
@@ -372,7 +372,7 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
         payload[offset + 7],
     ]);
 
-    Ok(QueueMessage::Complete {
+    Ok(QueueMessage::Ack {
         family_id,
         route: Route::new(&route_str),
         id,
