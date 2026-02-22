@@ -137,6 +137,12 @@ pub struct LeaseActor {
 
     /// Maximum pending acquirers per lease (default 100)
     max_queue_depth: usize,
+
+    /// Pending availability notification (for debouncing)
+    pending_publish: Option<crate::runtime::DomainPublishEvent>,
+
+    /// Timer ID for debounced availability notifications
+    notify_timer: Option<TimerId>,
 }
 
 impl LeaseActor {
@@ -156,6 +162,8 @@ impl LeaseActor {
             clock,
             max_wait_seconds: 30,
             max_queue_depth: 100,
+            pending_publish: None,
+            notify_timer: None,
         }
     }
 
@@ -175,6 +183,8 @@ impl LeaseActor {
             clock,
             max_wait_seconds,
             max_queue_depth,
+            pending_publish: None,
+            notify_timer: None,
         }
     }
 
@@ -239,6 +249,8 @@ impl LeaseActor {
                         let response = self.handle_release(key.clone(), owner_id, fencing_token);
 
                         if matches!(response, LeaseResponse::Released) {
+                            // Schedule debounced availability notification
+                            self.schedule_availability_notification(ctx);
                             self.grant_next_waiter(&key, ctx);
                         }
 
@@ -258,6 +270,12 @@ impl LeaseActor {
             }
             LeaseMessage::Tick => {
                 self.expire_old_leases(ctx);
+                return None;
+            }
+            LeaseMessage::Subscribe { .. }
+            | LeaseMessage::Unsubscribe { .. }
+            | LeaseMessage::UnsubscribeAll => {
+                // Subscription messages are handled by LeaseDomainSink subscription state
                 return None;
             }
         };
@@ -296,14 +314,16 @@ impl LeaseActor {
             return LeaseResponse::Timeout; // Or return error; spec says reject
         }
 
-        // Check if lease is available
-        let is_expired = self
-            .leases
-            .get(&key)
-            .map(|state| state.is_expired(now))
-            .unwrap_or(false);
+        // Expire the lease if needed and promote queued waiters before new acquires.
+        self.expire_lease_if_needed(&key, now, ctx);
 
-        if !self.leases.contains_key(&key) || is_expired {
+        // If the lease is currently unowned but a queue exists, promote the next waiter first.
+        if !self.leases.contains_key(&key) {
+            self.grant_next_waiter(&key, ctx);
+        }
+
+        // Check if lease is available
+        if !self.leases.contains_key(&key) {
             // Lease doesn't exist or is expired - grant it immediately
             let token = self.next_fencing_token();
             let expiry = now + ttl;
@@ -514,7 +534,7 @@ impl LeaseActor {
     ) -> LeaseResponse {
         let now = self.clock.now();
 
-        match self.leases.get(&key) {
+        let response = match self.leases.get(&key) {
             None => {
                 // Idempotent delete: if lease doesn't exist, it's already released
                 LeaseResponse::Released
@@ -532,12 +552,14 @@ impl LeaseActor {
                         current_token: state.fencing_token,
                     }
                 } else {
-                    // Valid release - remove lease
+                    // Valid release - remove lease and set notification flag
                     self.leases.remove(&key);
                     LeaseResponse::Released
                 }
             }
-        }
+        };
+
+        response
     }
 
     /// Handle lease query (for testing/debugging)
@@ -567,6 +589,52 @@ impl LeaseActor {
             }
         }
     }
+
+    /// Schedule availability notification (debounced)
+    ///
+    /// Publishes to `lease://{realm}/{area}/{resource}/changed` when a lease
+    /// is released or expires. Uses 25ms debounce to coalesce multiple events.
+    fn schedule_availability_notification(&mut self, ctx: &mut Context<LeaseActor>) {
+        if self.notify_timer.is_some() {
+            // Already scheduled - timer will handle transmission
+            return;
+        }
+
+        // Build the notification route to publish to
+        // Format: lease://realm/area/resource/changed
+        let route = crate::runtime::routing::Route::new("lease://*/*/*/changed");
+
+        self.pending_publish = Some(crate::runtime::DomainPublishEvent::new(
+            self.family,
+            route,
+            bytes::Bytes::new(),
+        ));
+
+        // Schedule timer for 25ms debounce
+        self.notify_timer = Some(ctx.timer_manager().schedule_once(Duration::from_millis(25)));
+    }
+
+    /// Remove an expired lease and promote queued waiters before new acquires.
+    fn expire_lease_if_needed(
+        &mut self,
+        key: &LeaseKey,
+        now: Instant,
+        ctx: &mut Context<LeaseActor>,
+    ) {
+        let is_expired = self
+            .leases
+            .get(key)
+            .map(|state| state.is_expired(now))
+            .unwrap_or(false);
+
+        if !is_expired {
+            return;
+        }
+
+        self.leases.remove(key);
+        self.schedule_availability_notification(ctx);
+        self.grant_next_waiter(key, ctx);
+    }
 }
 
 impl Default for LeaseActor {
@@ -584,11 +652,21 @@ impl Actor for LeaseActor {
         }
     }
 
-    /// Handle timer callback for waiter timeouts
+    /// Handle timer callback for waiter timeouts and debounced notifications
     ///
-    /// Called when a waiting acquire request times out.
-    /// Sends Timeout response to the waiting client.
+    /// Called when a waiting acquire request times out or when the debounce
+    /// timer for availability notifications fires.
     fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        // Check if this is the availability notification timer
+        if Some(timer_id) == self.notify_timer {
+            self.notify_timer = None;
+            if let Some(event) = self.pending_publish.take() {
+                ctx.publish_event(event).ok();
+            }
+            return;
+        }
+
+        // Otherwise, it's a waiter timeout
         // Look up which lease this timer belongs to
         let lease_key = match self.timer_to_waiter.get(&timer_id) {
             Some(key) => key.clone(),
@@ -637,9 +715,14 @@ impl LeaseActor {
             .map(|(k, _)| k.clone())
             .collect();
 
-        // Remove expired leases
+        // Remove expired leases and schedule notification if any expired
         for key in &expired_keys {
             self.leases.remove(key);
+        }
+
+        if !expired_keys.is_empty() {
+            // Schedule debounced availability notification for expired leases
+            self.schedule_availability_notification(ctx);
         }
 
         // Grant next waiter for each expired lease
@@ -1299,6 +1382,51 @@ mod tests {
                 assert_eq!(pending_waiters, 0);
             }
             _ => panic!("expected status after second promotion"),
+        }
+    }
+
+    #[test]
+    fn should_promote_waiter_when_expired_before_new_acquire() {
+        // Arrange
+        let clock = MockClock::new();
+        let clock_ref = Arc::new(clock);
+        let mut actor = LeaseActor::with_clock(
+            RouteFamily::new(1),
+            Box::new(MockClock {
+                now: clock_ref.now.clone(),
+            }),
+        );
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("race", "locks", "expire-queue");
+
+        let _ = actor.handle_acquire(key.clone(), "owner1".to_string(), 5, 0, None, &mut ctx);
+        let _ = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
+
+        clock_ref.advance(Duration::from_secs(10));
+
+        // Act
+        let response =
+            actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 0, None, &mut ctx);
+
+        // Assert
+        assert!(matches!(
+            response,
+            LeaseResponse::HeldByOther {
+                current_owner
+            } if current_owner == "owner2"
+        ));
+
+        let status = actor.handle_query(key);
+        match status {
+            LeaseResponse::Status {
+                owner_id,
+                pending_waiters,
+                ..
+            } => {
+                assert_eq!(owner_id, "owner2");
+                assert_eq!(pending_waiters, 0);
+            }
+            _ => panic!("Expected Status after promotion"),
         }
     }
 

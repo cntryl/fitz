@@ -40,6 +40,9 @@ pub fn parse_request(
         401 => parse_renew(&mut dec, route_family),
         402 => parse_release(&mut dec, route_family),
         403 => parse_query(&mut dec, route_family),
+        407 => parse_subscribe(&mut dec, route_family),
+        408 => parse_unsubscribe(&mut dec, route_family),
+        409 => Ok(LeaseMessage::UnsubscribeAll),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -122,6 +125,15 @@ pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
             encode_error(&format!("Fenced: current_token={}", current_token))
         }
         DomainLeaseResponse::Expired => encode_error("Expired"),
+        DomainLeaseResponse::SubscribeOk { subscription_id } => {
+            enc.put_u8(0);
+            enc.put_u64(*subscription_id);
+            enc.finish()
+        }
+        DomainLeaseResponse::UnsubscribeOk => {
+            enc.put_u8(0);
+            enc.finish()
+        }
     }
 }
 
@@ -225,4 +237,49 @@ fn parse_query(
         family_id: route_family,
         route,
     })
+}
+/// Wire format: `[string pattern]`
+fn parse_subscribe(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
+    let pattern = dec.get_string()?;
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(LeaseMessage::Subscribe {
+        family_id: route_family,
+        pattern,
+    })
+}
+
+/// Wire format: `[string pattern]`
+fn parse_unsubscribe(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<LeaseMessage, String> {
+    let pattern = dec.get_string()?;
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(LeaseMessage::Unsubscribe {
+        family_id: route_family,
+        pattern,
+    })
+}
+
+/// Encode a lease change notification
+///
+/// Wire format: `[u64 subscription_id][string route][bytes payload]`
+pub fn encode_notify(subscription_id: u64, route: &str, _payload: &[u8]) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    enc.put_u64(subscription_id);
+    enc.put_string(route);
+    // Minimal payload for leases (just signal the change)
+    enc.put_bytes(&[]);
+    enc.finish()
 }

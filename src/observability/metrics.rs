@@ -299,27 +299,41 @@ mod tests {
 
     #[test]
     fn should_increment_gauge() {
+        // Arrange
         let mc = MetricsCollector::new();
         mc.gauge_set("test_gauge", 10);
+
+        // Act
         mc.gauge_inc("test_gauge");
+
+        // Assert
         assert_eq!(mc.gauge_get("test_gauge"), 11);
     }
 
     #[test]
     fn should_decrement_gauge() {
+        // Arrange
         let mc = MetricsCollector::new();
         mc.gauge_set("test_gauge", 10);
+
+        // Act
         mc.gauge_dec("test_gauge");
+
+        // Assert
         assert_eq!(mc.gauge_get("test_gauge"), 9);
     }
 
     #[test]
     fn should_observe_histogram_ms() {
+        // Arrange
         let mc = MetricsCollector::new();
+
+        // Act
         mc.histogram_observe_ms("test_histogram", 1);
         mc.histogram_observe_ms("test_histogram", 5);
         mc.histogram_observe_ms("test_histogram", 100);
 
+        // Assert
         let buckets = mc.histogram_get_buckets("test_histogram").unwrap();
         assert_eq!(buckets[0], 1); // 0-1ms bucket
         assert_eq!(buckets[1], 1); // 2-5ms bucket
@@ -328,20 +342,28 @@ mod tests {
 
     #[test]
     fn should_observe_histogram_us() {
+        // Arrange
         let mc = MetricsCollector::new();
+
+        // Act
         mc.histogram_observe_us("test_histogram", 1000); // 1ms
 
+        // Assert
         let buckets = mc.histogram_get_buckets("test_histogram").unwrap();
         assert_eq!(buckets[0], 1);
     }
 
     #[test]
     fn should_export_prometheus_text() {
+        // Arrange
         let mc = MetricsCollector::new();
         mc.counter_add("test_counter", 42);
         mc.gauge_set("test_gauge", 10);
 
+        // Act
         let text = mc.to_prometheus_text();
+
+        // Assert
         assert!(text.contains("test_counter 42"));
         assert!(text.contains("test_gauge 10"));
     }

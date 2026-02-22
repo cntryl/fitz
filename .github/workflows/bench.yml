@@ -26,22 +26,22 @@ jobs:
       - name: Run Tier 1 benchmarks (hotpath)
         run: cargo bench --bench 'tier1_*'
         env:
-          RAYON_NUM_THREADS: 2
+          RAYON_NUM_THREADS: 4
 
       - name: Run Tier 2 benchmarks (subsystem)
         run: cargo bench --bench 'tier2_*'
         env:
-          RAYON_NUM_THREADS: 2
+          RAYON_NUM_THREADS: 4
 
       - name: Run Tier 3 benchmarks (system)
         run: cargo bench --bench 'tier3_*'
         env:
-          RAYON_NUM_THREADS: 2
+          RAYON_NUM_THREADS: 4
 
       - name: Run Tier 4 benchmarks (integration)
         run: cargo bench --bench 'tier4_*'
         env:
-          RAYON_NUM_THREADS: 2
+          RAYON_NUM_THREADS: 4
 
       - name: Upload Criterion artifacts
         uses: actions/upload-artifact@v6

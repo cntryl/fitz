@@ -266,9 +266,12 @@ fn should_upsert_schedule_by_route() {
     assert!(matches!(response2, ScheduleResponse::Ok));
 
     // Verify only one schedule exists
-    let list_response = actor.handle(ScheduleMessage::List);
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
     match list_response {
-        ScheduleResponse::ListDefs(entries) => {
+        ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].route, route);
             assert_eq!(entries[0].cron, "0 3 * * *");
@@ -301,9 +304,12 @@ fn should_cancel_schedule_by_route() {
     assert!(matches!(response, ScheduleResponse::Ok));
 
     // Verify schedule is gone
-    let list_response = actor.handle(ScheduleMessage::List);
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
     match list_response {
-        ScheduleResponse::ListDefs(entries) => {
+        ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 0);
         }
         _ => panic!("Expected ListDefs response"),
@@ -349,11 +355,14 @@ fn should_list_all_schedules() {
     });
 
     // Act
-    let response = actor.handle(ScheduleMessage::List);
+    let response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
 
     // Assert
     match response {
-        ScheduleResponse::ListDefs(entries) => {
+        ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 3);
 
             // Verify all routes present
@@ -372,11 +381,14 @@ fn should_list_empty_when_no_schedules() {
     let mut actor = make_schedule_actor();
 
     // Act
-    let response = actor.handle(ScheduleMessage::List);
+    let response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
 
     // Assert
     match response {
-        ScheduleResponse::ListDefs(entries) => {
+        ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 0);
         }
         _ => panic!("Expected ListDefs response"),
@@ -399,11 +411,14 @@ fn should_preserve_payload_in_schedule() {
     });
 
     // Act
-    let response = actor.handle(ScheduleMessage::List);
+    let response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
 
     // Assert
     match response {
-        ScheduleResponse::ListDefs(entries) => {
+        ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].payload, payload);
         }

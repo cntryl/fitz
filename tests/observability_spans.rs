@@ -7,34 +7,43 @@ mod tests {
 
     #[test]
     fn should_measure_latency() {
+        // Arrange
         let span = tracing::info_span!("test_span");
         let guard = LatencyGuard::new(span, None);
 
+        // Act
         thread::sleep(Duration::from_millis(10));
-
         let elapsed_ms = guard.elapsed_ms();
+
+        // Assert
         assert!((10..100).contains(&elapsed_ms));
     }
 
     #[test]
     fn should_convert_to_microseconds() {
+        // Arrange
         let span = tracing::info_span!("test_span");
         let guard = LatencyGuard::new(span, None);
 
+        // Act
         thread::sleep(Duration::from_millis(1));
-
         let elapsed_us = guard.elapsed_us();
+
+        // Assert
         assert!(elapsed_us >= 1000);
     }
 
     #[test]
     fn should_calculate_seconds_as_float() {
+        // Arrange
         let span = tracing::info_span!("test_span");
         let guard = LatencyGuard::new(span, None);
 
+        // Act
         thread::sleep(Duration::from_millis(5));
-
         let elapsed_secs = guard.elapsed_secs();
+
+        // Assert
         assert!((0.005..0.1).contains(&elapsed_secs));
     }
 

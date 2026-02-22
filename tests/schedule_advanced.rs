@@ -96,9 +96,12 @@ fn should_handle_multiple_schedules_with_different_frequencies() {
     }
 
     // Verify all created
-    let list_response = actor.handle(ScheduleMessage::List);
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
     match list_response {
-        fitz::domains::schedule::ScheduleResponse::ListDefs(entries) => {
+        fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 4);
         }
         _ => panic!("Expected ListDefs response"),
@@ -222,9 +225,12 @@ fn should_replace_schedule_preserving_ordering() {
     ));
 
     // Verify updated
-    let list_response = actor.handle(ScheduleMessage::List);
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
     match list_response {
-        fitz::domains::schedule::ScheduleResponse::ListDefs(entries) => {
+        fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].cron, "0 3 * * *");
         }
@@ -256,9 +262,12 @@ fn should_maintain_independence_between_schedules() {
     });
 
     // Assert - only job2 remains
-    let list_response = actor.handle(ScheduleMessage::List);
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
     match list_response {
-        fitz::domains::schedule::ScheduleResponse::ListDefs(entries) => {
+        fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].route, "schedule://acme/job2");
         }

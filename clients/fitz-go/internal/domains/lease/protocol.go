@@ -119,3 +119,17 @@ func leaseQueryPayloadWriter(route string) func(*bytes.Buffer) {
 		encoding.WriteRoute(buf, route)
 	}
 }
+
+// Subscription payload writers for SUBSCRIBE/UNSUBSCRIBE
+
+func subscribePayloadWriter(pattern string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, pattern)
+	}
+}
+
+func unsubscribePayloadWriter(pattern string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, pattern)
+	}
+}

@@ -260,6 +260,39 @@ pub enum QueueMessage {
         token: u64,
     },
 
+    /// Subscribe to queue availability notifications
+    ///
+    /// Registers a subscription for notifications when the queue transitions
+    /// from empty to non-empty state. Notifications are debounced (25ms) and
+    /// lightweight (no message data included).
+    ///
+    /// The server publishes notifications to `{route}/available` which matches
+    /// subscriptions to the base route via wildcard pattern matching.
+    Subscribe {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    },
+
+    /// Unsubscribe from queue availability notifications
+    ///
+    /// Removes a specific subscription identified by pattern and session.
+    Unsubscribe {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    },
+
+    /// Unsubscribe all queue subscriptions for a session
+    ///
+    /// Called on session disconnect to cleanup all subscriptions.
+    UnsubscribeAll {
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    },
+
     /// Internal timer expiration event
     ///
     /// Not exposed via external routes.
@@ -304,6 +337,12 @@ pub enum QueueResponse {
 
     /// Message successfully completed
     Completed,
+
+    /// Subscription successfully registered
+    SubscribeOk { subscription_id: u64 },
+
+    /// Subscription successfully removed
+    UnsubscribeOk,
 
     /// Invalid token (mismatch with expected value)
     InvalidToken,

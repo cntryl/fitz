@@ -104,7 +104,10 @@ fn should_complete_system_list_10_schedules(ctx: &mut StressContext) {
     }
 
     ctx.measure(|| {
-        let _response = actor.handle(ScheduleMessage::List);
+        let _response = actor.handle(ScheduleMessage::List {
+            offset: 0,
+            limit: 0,
+        });
     });
 }
 
@@ -126,7 +129,10 @@ fn should_complete_system_list_100_schedules(ctx: &mut StressContext) {
     }
 
     ctx.measure(|| {
-        let _response = actor.handle(ScheduleMessage::List);
+        let _response = actor.handle(ScheduleMessage::List {
+            offset: 0,
+            limit: 0,
+        });
     });
 }
 
@@ -148,7 +154,10 @@ fn should_complete_system_list_1000_schedules(ctx: &mut StressContext) {
     }
 
     ctx.measure(|| {
-        let _response = actor.handle(ScheduleMessage::List);
+        let _response = actor.handle(ScheduleMessage::List {
+            offset: 0,
+            limit: 0,
+        });
     });
 }
 
@@ -179,7 +188,10 @@ fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
         });
 
         // LIST
-        let _r2 = actor.handle(ScheduleMessage::List);
+        let _r2 = actor.handle(ScheduleMessage::List {
+            offset: 0,
+            limit: 0,
+        });
 
         // CREATE (another)
         let _r3 = actor.handle(ScheduleMessage::Create {

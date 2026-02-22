@@ -19,10 +19,13 @@ const (
 	MessageTypeKvScan        uint16 = 108
 
 	// Queue Domain (200-299). 201 = ENQUEUE_BATCH is reserved per CLIENT_SPEC; do not use.
-	MessageTypeQueueEnqueue  uint16 = 200
-	MessageTypeQueueReserve   uint16 = 202
-	MessageTypeQueueExtend   uint16 = 203
-	MessageTypeQueueComplete uint16 = 204
+	MessageTypeQueueEnqueue     uint16 = 200
+	MessageTypeQueueReserve     uint16 = 202
+	MessageTypeQueueExtend      uint16 = 203
+	MessageTypeQueueComplete    uint16 = 204
+	MessageTypeQueueSubscribe   uint16 = 207
+	MessageTypeQueueUnsubscribe uint16 = 208
+	MessageTypeQueueNotify      uint16 = 209 // Server -> Client only
 
 	// RPC Domain (300-399)
 	MessageTypeRpcSubscribeWorker   uint16 = 300
@@ -32,10 +35,13 @@ const (
 	MessageTypeRpcAck               uint16 = 304
 
 	// Lease Domain (400-499)
-	MessageTypeLeaseAcquire uint16 = 400
-	MessageTypeLeaseRenew   uint16 = 401
-	MessageTypeLeaseRelease uint16 = 402
-	MessageTypeLeaseQuery   uint16 = 403
+	MessageTypeLeaseAcquire     uint16 = 400
+	MessageTypeLeaseRenew       uint16 = 401
+	MessageTypeLeaseRelease     uint16 = 402
+	MessageTypeLeaseQuery       uint16 = 403
+	MessageTypeLeaseSubscribe   uint16 = 407
+	MessageTypeLeaseUnsubscribe uint16 = 408
+	MessageTypeLeaseNotify      uint16 = 409 // Server -> Client only
 
 	// Notice Domain (500-599)
 	MessageTypeNoticePublish        uint16 = 500

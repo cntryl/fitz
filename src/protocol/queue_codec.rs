@@ -10,6 +10,9 @@ pub mod msg_type {
     pub const RESERVE: u16 = 202;
     pub const EXTEND: u16 = 203;
     pub const COMPLETE: u16 = 204;
+    pub const SUBSCRIBE: u16 = 207;
+    pub const UNSUBSCRIBE: u16 = 208;
+    pub const QUEUE_NOTIFY: u16 = 209;
 }
 
 /// Parse Queue request from bytes
@@ -60,6 +63,15 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
                            // Empty response
         }
         QueueResponse::Completed => {
+            buf.put_u8(0); // status: success
+                           // Empty response
+        }
+        QueueResponse::SubscribeOk { subscription_id } => {
+            buf.put_u8(0); // status: success
+            buf.put_u8(1); // has_subscription_id
+            buf.put_u64(*subscription_id);
+        }
+        QueueResponse::UnsubscribeOk => {
             buf.put_u8(0); // status: success
                            // Empty response
         }
@@ -366,6 +378,82 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
         id,
         token,
     })
+}
+
+/// Parse Subscribe request (wire format: [string pattern])
+///
+/// `session_id` and `subscriber` are injected by the session layer.
+pub fn parse_subscribe(
+    route_family: RouteFamily,
+    payload: &[u8],
+    session_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+) -> Result<QueueMessage, String> {
+    let mut offset = 0;
+
+    // Parse pattern string
+    let pattern_str = parse_route_string(payload, &mut offset)?;
+
+    Ok(QueueMessage::Subscribe {
+        family_id: route_family,
+        pattern: Route::new(&pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+/// Parse Unsubscribe request (wire format: [string pattern])
+///
+/// `session_id` and `subscriber` are injected by the session layer.
+pub fn parse_unsubscribe(
+    route_family: RouteFamily,
+    payload: &[u8],
+    session_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+) -> Result<QueueMessage, String> {
+    let mut offset = 0;
+
+    // Parse pattern string
+    let pattern_str = parse_route_string(payload, &mut offset)?;
+
+    Ok(QueueMessage::Unsubscribe {
+        family_id: route_family,
+        pattern: Route::new(&pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+/// Parse UnsubscribeAll request (no wire payload, session-scoped)
+///
+/// `session_id` and `subscriber` are injected by the session layer.
+pub fn parse_unsubscribe_all(
+    session_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+) -> QueueMessage {
+    QueueMessage::UnsubscribeAll {
+        session_id,
+        subscriber,
+    }
+}
+
+/// Encode a QUEUE_NOTIFY (209) payload.
+///
+/// Wire format: `[u64 subscription_id][string route][bytes payload]`
+pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u64(subscription_id);
+
+    let route_str = route.as_str();
+    buf.put_u32(route_str.len() as u32);
+    buf.put_slice(route_str.as_bytes());
+
+    buf.put_u32(payload.len() as u32);
+    buf.put_slice(payload);
+
+    buf
 }
 
 #[cfg(test)]

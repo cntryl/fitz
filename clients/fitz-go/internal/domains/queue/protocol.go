@@ -304,3 +304,14 @@ func completePayloadWriter(route string, messageID uint64, leaseToken uint64) fu
 		encoding.WriteU64(buf, leaseToken)
 	}
 }
+func subscribePayloadWriter(pattern string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, pattern)
+	}
+}
+
+func unsubscribePayloadWriter(pattern string) func(*bytes.Buffer) {
+	return func(buf *bytes.Buffer) {
+		encoding.WriteRoute(buf, pattern)
+	}
+}

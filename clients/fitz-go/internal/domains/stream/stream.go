@@ -5,6 +5,7 @@ package stream
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/iter"
@@ -25,6 +26,29 @@ type Metadata struct {
 	FirstOffset uint64
 	LastOffset  uint64
 	RecordCount uint64
+}
+
+// CommitNotification is a notification of stream data availability.
+type CommitNotification struct {
+	Route string
+}
+
+// CommitHandler handles stream commit notifications.
+type CommitHandler func(context.Context, CommitNotification) error
+
+// Subscription represents a stream subscription.
+type Subscription struct {
+	subID   uint64
+	pattern string
+	client  *client
+	handler CommitHandler
+}
+
+// Unsubscribe removes the subscription.
+func (sub *Subscription) Unsubscribe() {
+	if sub.client != nil {
+		sub.client.unsubscribe(sub)
+	}
 }
 
 // StreamSession is a write session for appending to a stream.
@@ -56,10 +80,17 @@ type Client interface {
 
 	// GetMetadata returns stream metadata.
 	GetMetadata(ctx context.Context, route string) (*Metadata, error)
+
+	// Subscribe registers a handler for stream commit notifications.
+	// Pattern should be a wildcard pattern (e.g., "stream://realm/area/resource/available").
+	Subscribe(ctx context.Context, pattern string, handler CommitHandler) (*Subscription, error)
 }
 
 type client struct {
-	conn *connection.Connection
+	conn          *connection.Connection
+	mu            sync.RWMutex
+	subscriptions map[uint64]*Subscription
+	initialized   bool
 }
 
 // session is the concrete implementation of StreamSession.
@@ -71,7 +102,10 @@ type session struct {
 
 // NewClient creates a new Stream domain client.
 func NewClient(conn *connection.Connection) Client {
-	return &client{conn: conn}
+	return &client{
+		conn:          conn,
+		subscriptions: make(map[uint64]*Subscription),
+	}
 }
 
 // Begin per server stream_codec.rs:
@@ -488,4 +522,106 @@ func parseRecord(data []byte, offset int) (*Record, error) {
 	copy(rec.Body, bodyData)
 
 	return rec, nil
+}
+
+// initNotifyHandler registers the NOTIFY handler on first use.
+func (c *client) initNotifyHandler() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.initialized {
+		return
+	}
+	c.initialized = true
+	c.conn.RegisterNotifyHandler(c.handleNotify)
+}
+
+// handleNotify is called by the mux when a NOTIFY (609) frame arrives.
+func (c *client) handleNotify(subID uint64, route string, payload []byte) {
+	c.mu.RLock()
+	sub, ok := c.subscriptions[subID]
+	c.mu.RUnlock()
+
+	if !ok {
+		return // Unknown subscription
+	}
+
+	notif := CommitNotification{
+		Route: route,
+	}
+
+	// Call handler asynchronously to avoid blocking the dispatch loop
+	go func() {
+		_ = sub.handler(context.Background(), notif)
+	}()
+}
+
+// Subscribe registers a handler for stream commit notifications.
+// Pattern should be a wildcard pattern (e.g., "stream://realm/area/resource/available").
+func (c *client) Subscribe(ctx context.Context, pattern string, handler CommitHandler) (*Subscription, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Subscribe", trace.WithAttributes(attribute.String("fitz.pattern", pattern)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("stream.Subscribe", "pattern", pattern)
+	}
+	c.initNotifyHandler()
+
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamSubscribe, subscribePayloadWriter(pattern))
+	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
+	}
+
+	success, remaining, err := connection.ParseStandardResponse(resp)
+	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: %w", mapStreamError(err.Error()))
+	}
+	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("stream.Subscribe failed", "pattern", pattern, "status", "unexpected")
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
+	}
+
+	// Parse subscription_id: [u64]
+	if len(remaining) < 8 {
+		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
+	}
+
+	subID, _, err := connection.ReadU64BE(remaining, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse subscription_id: %w", err)
+	}
+
+	sub := &Subscription{
+		subID:   subID,
+		pattern: pattern,
+		client:  c,
+		handler: handler,
+	}
+
+	c.mu.Lock()
+	c.subscriptions[subID] = sub
+	c.mu.Unlock()
+
+	return sub, nil
+}
+
+// unsubscribe removes a subscription.
+func (c *client) unsubscribe(sub *Subscription) {
+	c.mu.Lock()
+	delete(c.subscriptions, sub.subID)
+	c.mu.Unlock()
+
+	// Send UNSUBSCRIBE to server (best-effort, ignore errors).
+	ctx := context.Background()
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamUnsubscribe, unsubscribePayloadWriter(sub.pattern))
+	if err != nil {
+		return
+	}
+	connection.ParseStandardResponse(resp)
 }

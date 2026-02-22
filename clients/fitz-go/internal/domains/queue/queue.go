@@ -5,6 +5,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
 	"github.com/cntryl/fitz-go/internal/core/retry"
@@ -23,6 +24,30 @@ type QueueItem struct {
 
 	route string
 	conn  *connection.Connection
+}
+
+// AvailabilityNotification represents an availability notification from the queue.
+type AvailabilityNotification struct {
+	Route string
+}
+
+// AvailabilityHandler is called when availability notification arrives.
+type AvailabilityHandler func(ctx context.Context, notif AvailabilityNotification) error
+
+// Subscription represents an active queue availability subscription.
+// Call Unsubscribe to stop receiving and release the subscription.
+type Subscription struct {
+	subID   uint64
+	pattern string
+	client  *client
+	handler AvailabilityHandler
+}
+
+// Unsubscribe removes this subscription.
+func (s *Subscription) Unsubscribe() {
+	if s.client != nil {
+		s.client.unsubscribe(s)
+	}
 }
 
 // Extend extends the lease on this queue item.
@@ -106,15 +131,27 @@ type Client interface {
 
 	// ReceiveWithRetry reserves messages with exponential backoff retry on backpressure.
 	ReceiveWithRetry(ctx context.Context, route string, leaseSecs uint64, batchSize uint32, maxRetries int) ([]*QueueItem, error)
+
+	// Subscribe registers a handler for availability notifications (empty -> non-empty transition).
+	// Returns a Subscription that can be used to unsubscribe.
+	// Per CLIENT_SPEC.md, the pattern parameter is optional; if provided, it will be used to filter notifications.
+	Subscribe(ctx context.Context, pattern string, handler AvailabilityHandler) (*Subscription, error)
 }
 
 type client struct {
 	conn *connection.Connection
+
+	mu            sync.RWMutex
+	subscriptions map[uint64]*Subscription // subID -> subscription
+	initialized   bool
 }
 
 // NewClient creates a new Queue domain client.
 func NewClient(conn *connection.Connection) Client {
-	return &client{conn: conn}
+	return &client{
+		conn:          conn,
+		subscriptions: make(map[uint64]*Subscription),
+	}
 }
 
 // Send per CLIENT_SPEC.md:
@@ -275,4 +312,106 @@ func (c *client) Receive(ctx context.Context, route string, leaseSecs uint64, ba
 	}
 
 	return items, nil
+}
+
+// initNotifyHandler registers the NOTIFY handler on first use.
+func (c *client) initNotifyHandler() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.initialized {
+		return
+	}
+	c.initialized = true
+	c.conn.RegisterNotifyHandler(c.handleNotify)
+}
+
+// handleNotify is called by the mux when a NOTIFY (209) frame arrives.
+func (c *client) handleNotify(subID uint64, route string, payload []byte) {
+	c.mu.RLock()
+	sub, ok := c.subscriptions[subID]
+	c.mu.RUnlock()
+
+	if !ok {
+		return // Unknown subscription
+	}
+
+	notif := AvailabilityNotification{
+		Route: route,
+	}
+
+	// Call handler asynchronously to avoid blocking the dispatch loop
+	go func() {
+		_ = sub.handler(context.Background(), notif)
+	}()
+}
+
+// Subscribe registers a handler for availability notifications.
+// Pattern should be a wildcard pattern (e.g., "queue://realm/area/resource/*" or "queue://realm/area/resource").
+func (c *client) Subscribe(ctx context.Context, pattern string, handler AvailabilityHandler) (*Subscription, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.queue.Subscribe", trace.WithAttributes(attribute.String("fitz.pattern", pattern)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("queue.Subscribe", "pattern", pattern)
+	}
+	c.initNotifyHandler()
+
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueSubscribe, subscribePayloadWriter(pattern))
+	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
+	}
+
+	success, remaining, err := parseQueueResponse(resp)
+	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: %w", err)
+	}
+	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("queue.Subscribe failed", "pattern", pattern, "status", "unexpected")
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
+	}
+
+	// Parse subscription_id: [u64]
+	if len(remaining) < 8 {
+		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
+	}
+
+	subID, _, err := connection.ReadU64BE(remaining, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse subscription_id: %w", err)
+	}
+
+	sub := &Subscription{
+		subID:   subID,
+		pattern: pattern,
+		client:  c,
+		handler: handler,
+	}
+
+	c.mu.Lock()
+	c.subscriptions[subID] = sub
+	c.mu.Unlock()
+
+	return sub, nil
+}
+
+// unsubscribe removes a subscription.
+func (c *client) unsubscribe(sub *Subscription) {
+	c.mu.Lock()
+	delete(c.subscriptions, sub.subID)
+	c.mu.Unlock()
+
+	// Send UNSUBSCRIBE to server (best-effort, ignore errors).
+	ctx := context.Background()
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeQueueUnsubscribe, unsubscribePayloadWriter(sub.pattern))
+	if err != nil {
+		return
+	}
+	parseQueueResponse(resp)
 }

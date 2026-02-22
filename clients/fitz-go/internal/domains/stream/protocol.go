@@ -212,15 +212,16 @@ func streamGetMetadataPayloadWriter(route string) func(*bytes.Buffer) {
 	}
 }
 
-func streamSubscribePayloadWriter(route string, fromOffset uint64) func(*bytes.Buffer) {
+// Subscription payload writers for SUBSCRIBE/UNSUBSCRIBE
+
+func subscribePayloadWriter(pattern string) func(*bytes.Buffer) {
 	return func(buf *bytes.Buffer) {
-		encoding.WriteRoute(buf, route)
-		encoding.WriteU64(buf, fromOffset)
+		encoding.WriteRoute(buf, pattern)
 	}
 }
 
-func streamUnsubscribePayloadWriter(route string) func(*bytes.Buffer) {
+func unsubscribePayloadWriter(pattern string) func(*bytes.Buffer) {
 	return func(buf *bytes.Buffer) {
-		encoding.WriteRoute(buf, route)
+		encoding.WriteRoute(buf, pattern)
 	}
 }

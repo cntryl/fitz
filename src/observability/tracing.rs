@@ -63,24 +63,32 @@ mod tests {
 
     #[test]
     fn should_measure_elapsed_time() {
+        // Arrange
         let span = tracing::info_span!("test");
         let guard = LatencyGuard::new(span, None);
-        std::thread::sleep(std::time::Duration::from_millis(10));
 
+        // Act
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let elapsed_ms = guard.elapsed_ms();
+
+        // Assert
         // Should be approximately 10ms, allow some variance
-        assert!(guard.elapsed_ms() >= 10);
-        assert!(guard.elapsed_ms() < 100);
+        assert!(elapsed_ms >= 10);
+        assert!(elapsed_ms < 100);
     }
 
     #[test]
     fn should_convert_units() {
+        // Arrange
         let span = tracing::info_span!("test");
         let guard = LatencyGuard::new(span, None);
-        std::thread::sleep(std::time::Duration::from_millis(1));
 
+        // Act
+        std::thread::sleep(std::time::Duration::from_millis(1));
         let ms = guard.elapsed_ms();
         let us = guard.elapsed_us();
 
+        // Assert
         // us should be approximately 1000x larger
         assert!(us >= ms * 1000 - 100); // Allow some variance
         assert!(us <= ms * 1000 + 1000);

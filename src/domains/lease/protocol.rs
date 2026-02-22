@@ -199,6 +199,39 @@ pub enum LeaseMessage {
     /// This is sent periodically by the scheduler to ensure leases
     /// are expired even when not being actively accessed.
     Tick,
+
+    /// Subscribe to availability notifications
+    ///
+    /// Route format: `/{realm}/{area}/{resource}/subscribe`
+    /// Lease identity: (family_id, realm, area, resource)
+    /// Subscribes to change notifications on a lease. Notifications are published
+    /// when the lease is released or expires. Client provides a pattern that will be
+    /// used to match against notification routes.
+    ///
+    /// pattern: Wildcard pattern to subscribe to (e.g., "lease://acme/locks/db-migration/changed")
+    Subscribe {
+        family_id: RouteFamily,
+        pattern: String,
+    },
+
+    /// Unsubscribe from availability notifications
+    ///
+    /// Route format: `/{realm}/{area}/{resource}/unsubscribe`
+    /// Lease identity: (family_id, realm, area, resource)
+    /// Unsubscribes from change notifications for a specific pattern.
+    /// If pattern is not currently subscribed, returns UnsubscribeOk anyway (idempotent).
+    ///
+    /// pattern: Wildcard pattern to unsubscribe from
+    Unsubscribe {
+        family_id: RouteFamily,
+        pattern: String,
+    },
+
+    /// Unsubscribe from all availability notifications
+    ///
+    /// Removes all active subscriptions for this session.
+    /// Called automatically on session disconnect.
+    UnsubscribeAll,
 }
 
 /// Lease operation responses
@@ -263,4 +296,10 @@ pub enum LeaseResponse {
         expires_in_secs: u64,
         pending_waiters: usize,
     },
+
+    /// Successfully subscribed to lease notifications
+    SubscribeOk { subscription_id: u64 },
+
+    /// Successfully unsubscribed from lease notifications
+    UnsubscribeOk,
 }

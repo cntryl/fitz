@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/cntryl/fitz-go/internal/core/connection"
@@ -108,6 +109,30 @@ func (l *Lease) releaseWithToken(ctx context.Context, token []byte) error {
 	return nil
 }
 
+// ChangeNotification represents a change notification from the lease domain.
+type ChangeNotification struct {
+	Route string
+}
+
+// ChangeHandler is called when a lease change notification arrives (released or expired).
+type ChangeHandler func(ctx context.Context, notif ChangeNotification) error
+
+// Subscription represents an active lease change subscription.
+// Call Unsubscribe to stop receiving and release the subscription.
+type Subscription struct {
+	subID   uint64
+	pattern string
+	client  *client
+	handler ChangeHandler
+}
+
+// Unsubscribe removes this subscription.
+func (s *Subscription) Unsubscribe() {
+	if s.client != nil {
+		s.client.unsubscribe(s)
+	}
+}
+
 // Client is the Lease domain client interface.
 type Client interface {
 	// Acquire attempts to acquire a lease on the given route.
@@ -117,6 +142,10 @@ type Client interface {
 
 	// Query returns current lease status for the route.
 	Query(ctx context.Context, route string) (*LeaseInfo, error)
+
+	// Subscribe registers a handler for lease change notifications (released or expired).
+	// Returns a Subscription that can be used to unsubscribe.
+	Subscribe(ctx context.Context, pattern string, handler ChangeHandler) (*Subscription, error)
 }
 
 // LeaseInfo holds lease query results per CLIENT_SPEC.md QUERY response.
@@ -131,11 +160,18 @@ type LeaseInfo struct {
 
 type client struct {
 	conn *connection.Connection
+
+	mu            sync.RWMutex
+	subscriptions map[uint64]*Subscription // subID -> subscription
+	initialized   bool
 }
 
 // NewClient creates a new Lease domain client.
 func NewClient(conn *connection.Connection) Client {
-	return &client{conn: conn}
+	return &client{
+		conn:          conn,
+		subscriptions: make(map[uint64]*Subscription),
+	}
 }
 
 // Acquire per CLIENT_SPEC.md:
@@ -295,4 +331,106 @@ func isLeaseHeldError(err error) bool {
 	}
 	msg := err.Error()
 	return bytes.Contains([]byte(msg), []byte("held")) || bytes.Contains([]byte(msg), []byte("already"))
+}
+
+// initNotifyHandler registers the NOTIFY handler on first use.
+func (c *client) initNotifyHandler() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.initialized {
+		return
+	}
+	c.initialized = true
+	c.conn.RegisterNotifyHandler(c.handleNotify)
+}
+
+// handleNotify is called by the mux when a NOTIFY (409) frame arrives.
+func (c *client) handleNotify(subID uint64, route string, payload []byte) {
+	c.mu.RLock()
+	sub, ok := c.subscriptions[subID]
+	c.mu.RUnlock()
+
+	if !ok {
+		return // Unknown subscription
+	}
+
+	notif := ChangeNotification{
+		Route: route,
+	}
+
+	// Call handler asynchronously to avoid blocking the dispatch loop
+	go func() {
+		_ = sub.handler(context.Background(), notif)
+	}()
+}
+
+// Subscribe registers a handler for lease change notifications.
+// Pattern should be a wildcard pattern (e.g., "lease://realm/area/resource/changed" or "lease://realm/area/**/changed").
+func (c *client) Subscribe(ctx context.Context, pattern string, handler ChangeHandler) (*Subscription, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.lease.Subscribe", trace.WithAttributes(attribute.String("fitz.pattern", pattern)))
+	defer span.End()
+	if log := c.conn.Logger(); log != nil {
+		log.Debug("lease.Subscribe", "pattern", pattern)
+	}
+	c.initNotifyHandler()
+
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseSubscribe, subscribePayloadWriter(pattern))
+	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("lease.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE request failed: %w", err)
+	}
+
+	success, remaining, err := connection.ParseStandardResponse(resp)
+	if err != nil {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("lease.Subscribe failed", "pattern", pattern, "error", err)
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: %w", mapLeaseError(err.Error()))
+	}
+	if !success {
+		if log := c.conn.Logger(); log != nil {
+			log.Error("lease.Subscribe failed", "pattern", pattern, "status", "unexpected")
+		}
+		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
+	}
+
+	// Parse subscription_id: [u64]
+	if len(remaining) < 8 {
+		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
+	}
+
+	subID, _, err := connection.ReadU64BE(remaining, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse subscription_id: %w", err)
+	}
+
+	sub := &Subscription{
+		subID:   subID,
+		pattern: pattern,
+		client:  c,
+		handler: handler,
+	}
+
+	c.mu.Lock()
+	c.subscriptions[subID] = sub
+	c.mu.Unlock()
+
+	return sub, nil
+}
+
+// unsubscribe removes a subscription.
+func (c *client) unsubscribe(sub *Subscription) {
+	c.mu.Lock()
+	delete(c.subscriptions, sub.subID)
+	c.mu.Unlock()
+
+	// Send UNSUBSCRIBE to server (best-effort, ignore errors).
+	ctx := context.Background()
+	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeLeaseUnsubscribe, unsubscribePayloadWriter(sub.pattern))
+	if err != nil {
+		return
+	}
+	connection.ParseStandardResponse(resp)
 }

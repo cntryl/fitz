@@ -200,6 +200,15 @@ pub struct QueueActor {
     /// Delayed visibility heap: messages not yet visible (earliest first, min-heap)
     delayed: BinaryHeap<Reverse<DelayedMessage>>,
 
+    /// Pending availability notification (debounced)
+    pending_publish: Option<crate::runtime::domain_event::DomainPublishEvent>,
+
+    /// Debounce timer for availability notifications
+    notify_timer: Option<crate::runtime::context::TimerId>,
+
+    /// Flag indicating that availability notification is needed (set by enqueue)
+    needs_notify_availability: bool,
+
     /// Clock for time-based operations
     clock: Box<dyn Clock>,
 
@@ -220,6 +229,7 @@ pub struct QueueActor {
 
 impl QueueActor {
     const READY_SHARDS: usize = 8;
+    const NOTICE_DEBOUNCE_MS: u64 = 25;
 
     /// Create a new queue actor. Persistence mode is locked to buffered-only (throughput-first).
     pub fn new(
@@ -264,6 +274,9 @@ impl QueueActor {
             inflight: HashMap::new(),
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
+            pending_publish: None,
+            notify_timer: None,
+            needs_notify_availability: false,
             clock,
             max_attempts,
             dedup_store,
@@ -377,6 +390,31 @@ impl QueueActor {
         self.ready_shards.iter().any(|shard| shard.contains(&id))
     }
 
+    /// Schedule debounced availability notification
+    fn schedule_availability_notification(&mut self, ctx: &mut Context<Self>) {
+        // Build notification route: queue://{realm}/{area}/{resource}/available
+        let route_str = format!(
+            "queue://{}/{}/{}/available",
+            self.queue_key.realm, self.queue_key.area, self.queue_key.resource
+        );
+        let route = crate::runtime::routing::Route::new(route_str);
+
+        // Minimal payload (empty JSON)
+        let payload = bytes::Bytes::from("{}");
+
+        let publish_event =
+            crate::runtime::domain_event::DomainPublishEvent::new(self.family, route, payload);
+
+        // Store and debounce the publish (do not send immediately)
+        self.pending_publish = Some(publish_event);
+        if self.notify_timer.is_none() {
+            let timer_id = ctx
+                .timer_manager()
+                .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
+            self.notify_timer = Some(timer_id);
+        }
+    }
+
     /// Deserialize QueueRecord from bytes
     fn decode_record(bytes: &[u8]) -> Result<QueueRecord, String> {
         if bytes.len() < 16 {
@@ -402,6 +440,9 @@ impl QueueActor {
 
     /// Handle enqueue operation
     pub fn handle_enqueue(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        // Track empty state before enqueue for notification
+        let was_empty = self.ready_len() == 0;
+
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
         let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
@@ -475,6 +516,12 @@ impl QueueActor {
         } else {
             self.delayed
                 .push(Reverse(DelayedMessage { id, visible_at }));
+        }
+
+        // Emit availability notification if queue transitioned from empty to non-empty
+        // (only for immediately visible messages, not delayed ones)
+        if was_empty && visible_at <= now_instant && self.ready_len() > 0 {
+            self.needs_notify_availability = true;
         }
 
         QueueResponse::Enqueued { id }
@@ -1047,7 +1094,15 @@ impl Actor for QueueActor {
                 body,
                 delay_seconds,
                 ..
-            } => self.handle_enqueue(body, delay_seconds),
+            } => {
+                let resp = self.handle_enqueue(body, delay_seconds);
+                // Check if availability notification is needed
+                if self.needs_notify_availability {
+                    self.schedule_availability_notification(ctx);
+                    self.needs_notify_availability = false;
+                }
+                resp
+            }
 
             QueueMessage::Reserve {
                 lease_seconds,
@@ -1078,6 +1133,13 @@ impl Actor for QueueActor {
                 self.handle_lease_expired(id);
                 return; // No response needed for internal timer message
             }
+
+            // Subscribe/Unsubscribe/UnsubscribeAll are handled at QueueDomainSink level, not in actor
+            QueueMessage::Subscribe { .. }
+            | QueueMessage::Unsubscribe { .. }
+            | QueueMessage::UnsubscribeAll { .. } => {
+                return; // No response needed, handled by sink
+            }
         };
 
         // Send response back to the client via reply
@@ -1086,6 +1148,16 @@ impl Actor for QueueActor {
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
         // Recovery is handled during actor construction; started() is a no-op.
+    }
+
+    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        // If availability notification timer fired, send pending publish
+        if self.notify_timer.is_some() && Some(timer_id) == self.notify_timer {
+            if let Some(event) = self.pending_publish.take() {
+                let _ = ctx.publish_event(event);
+            }
+            self.notify_timer = None;
+        }
     }
 }
 
