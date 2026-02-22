@@ -313,7 +313,9 @@ impl Actor for MyDomainActor {
 4. Add metric counters/histograms for success/failure/latency
 5. Test with: `FITZ_LOG_LEVEL=debug OTEL_ENABLED=false cargo test`
 
-### Step 2: Verify JSON Logging
+### Step 2: Verify JSON Logging (Opt-In)
+
+By default, Fitz emits human-readable, colorized text logs. Set `FITZ_LOG_FORMAT=json` to opt into structured JSON output.
 
 ```bash
 FITZ_LOG_FORMAT=json FITZ_LOG_LEVEL=info ./target/debug/fitz > /tmp/fitz.log 2>&1 &
@@ -426,7 +428,7 @@ See `tests/observability_spans.rs` and `tests/observability_metrics.rs` for comp
 Quick local test:
 
 ```bash
-# Run a single integration test with JSON logging enabled
+# Run a single integration test with JSON logging enabled (opt-in)
 FITZ_LOG_FORMAT=json FITZ_LOG_LEVEL=debug cargo test kv_basics -- --nocapture
 ```
 

@@ -39,7 +39,7 @@ pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::er
 ///
 /// # Environment Variables
 ///
-/// - `FITZ_LOG_FORMAT` (text|json): Logging format. Default: json
+/// - `FITZ_LOG_FORMAT` (text|json): Logging format. Default: text
 /// - `FITZ_LOG_LEVEL` (trace|debug|info|warn): Log level. Default: info
 /// - `OTEL_ENABLED` (true|false): Enable OTLP export. Default: true
 /// - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint. Default: http://localhost:4317
@@ -52,7 +52,7 @@ pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::er
 pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Detect logging format
     let log_format = std::env::var("FITZ_LOG_FORMAT")
-        .unwrap_or_else(|_| "json".to_string())
+        .unwrap_or_else(|_| "text".to_string())
         .to_lowercase();
 
     // Detect log level
@@ -89,12 +89,14 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
                 .with(env_filter)
                 .with(
                     fmt::layer()
-                        .pretty()
+                        .compact()
+                        .with_timer(fmt::time::SystemTime)
+                        .with_ansi(true)
                         .with_writer(std::io::stderr)
                         .with_target(true)
                         .with_level(true)
-                        .with_file(true)
-                        .with_line_number(true),
+                        .with_file(false)
+                        .with_line_number(false),
                 )
                 .init();
         }
