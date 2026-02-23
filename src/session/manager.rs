@@ -783,12 +783,20 @@ impl Ingress for RuntimeIngress {
                 route_family,
                 crate::runtime::routing::Route::new("lease://cleanup"),
             );
-            let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup);
+            let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
             let _ = router.route(lease_envelope);
+
+            // Send cleanup to Queue domain
+            let queue_addr = crate::runtime::routing::RouteAddress::new(
+                route_family,
+                crate::runtime::routing::Route::new("queue://cleanup"),
+            );
+            let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
+            let _ = router.route(queue_envelope);
 
             tracing::debug!(
                 session_id = session_id,
-                "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, and Lease domains"
+                "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
             );
         }
 
@@ -927,26 +935,63 @@ impl RuntimeIngress {
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
-            200..=299 => match crate::protocol::queue_codec::parse_request(
-                mt,
-                session_info.route_family,
-                payload.as_ref(),
-            ) {
-                Ok(crate::domains::queue::QueueMessage::Send { route, .. }) => {
-                    Ok(Some(route.clone()))
+            200..=299 => {
+                let mt = msg_type.as_u16();
+                if mt == crate::protocol::queue_codec::msg_type::SUBSCRIBE {
+                    match crate::protocol::queue_codec::parse_subscribe(
+                        session_info.route_family,
+                        payload.as_ref(),
+                        session_info.session_id,
+                        crate::runtime::routing::RouteAddress::new(
+                            session_info.route_family,
+                            Route::new(""),
+                        ),
+                    ) {
+                        Ok(crate::domains::queue::QueueMessage::Subscribe { pattern, .. }) => {
+                            Ok(Some(pattern.clone()))
+                        }
+                        Err(e) => Err(e),
+                        Ok(_) => Err("parse_subscribe returned unexpected variant".to_string()),
+                    }
+                } else if mt == crate::protocol::queue_codec::msg_type::UNSUBSCRIBE {
+                    match crate::protocol::queue_codec::parse_unsubscribe(
+                        session_info.route_family,
+                        payload.as_ref(),
+                        session_info.session_id,
+                        crate::runtime::routing::RouteAddress::new(
+                            session_info.route_family,
+                            Route::new(""),
+                        ),
+                    ) {
+                        Ok(crate::domains::queue::QueueMessage::Unsubscribe { pattern, .. }) => {
+                            Ok(Some(pattern.clone()))
+                        }
+                        Err(e) => Err(e),
+                        Ok(_) => Err("parse_unsubscribe returned unexpected variant".to_string()),
+                    }
+                } else {
+                    match crate::protocol::queue_codec::parse_request(
+                        mt,
+                        session_info.route_family,
+                        payload.as_ref(),
+                    ) {
+                        Ok(crate::domains::queue::QueueMessage::Send { route, .. }) => {
+                            Ok(Some(route.clone()))
+                        }
+                        Ok(crate::domains::queue::QueueMessage::Receive { route, .. }) => {
+                            Ok(Some(route.clone()))
+                        }
+                        Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => {
+                            Ok(Some(route.clone()))
+                        }
+                        Ok(crate::domains::queue::QueueMessage::Ack { route, .. }) => {
+                            Ok(Some(route.clone()))
+                        }
+                        Ok(_) => Ok(None),
+                        Err(e) => Err(e),
+                    }
                 }
-                Ok(crate::domains::queue::QueueMessage::Receive { route, .. }) => {
-                    Ok(Some(route.clone()))
-                }
-                Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => {
-                    Ok(Some(route.clone()))
-                }
-                Ok(crate::domains::queue::QueueMessage::Ack { route, .. }) => {
-                    Ok(Some(route.clone()))
-                }
-                Ok(_) => Ok(None),
-                Err(e) => Err(e),
-            },
+            }
             400..=499 => {
                 match crate::protocol::lease_codec::parse_request(
                     &ctx,

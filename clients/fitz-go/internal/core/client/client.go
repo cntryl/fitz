@@ -393,10 +393,11 @@ func (c *Client) SendRequest(ctx context.Context, msgType uint16, payload []byte
 	return c.conn.SendRequest(ctx, msgType, payload)
 }
 
-// RegisterNotifyHandler registers handler for Notice NOTIFY messages.
-// Called by Notice domain client.
-func (c *Client) RegisterNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
-	c.conn.RegisterNotifyHandler(handler)
+// RegisterNotifyHandler registers handler for NOTIFY messages for the given message type.
+// msgType should be protocol.MessageTypeQueueNotify (209), MessageTypeLeaseNotify (409),
+// MessageTypeNoticeNotify (504), or MessageTypeStreamNotify (609).
+func (c *Client) RegisterNotifyHandler(msgType uint16, handler func(subID uint64, route string, payload []byte)) {
+	c.conn.RegisterNotifyHandler(msgType, handler)
 }
 
 // RegisterRPCResponseHandler registers handler for RPC RESPONSE messages.

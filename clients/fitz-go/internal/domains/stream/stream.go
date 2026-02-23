@@ -532,7 +532,7 @@ func (c *client) initNotifyHandler() {
 		return
 	}
 	c.initialized = true
-	c.conn.RegisterNotifyHandler(c.handleNotify)
+	c.conn.RegisterNotifyHandler(protocol.MessageTypeStreamNotify, c.handleNotify)
 }
 
 // handleNotify is called by the mux when a NOTIFY (609) frame arrives.

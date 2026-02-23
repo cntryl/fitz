@@ -557,9 +557,11 @@ func (c *Connection) Close() error {
 	return err
 }
 
-// RegisterNotifyHandler registers handler for Notice NOTIFY messages.
-func (c *Connection) RegisterNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
-	c.mux.SetNotifyHandler(handler)
+// RegisterNotifyHandler registers handler for NOTIFY messages for the given message type.
+// msgType should be protocol.MessageTypeQueueNotify (209), MessageTypeLeaseNotify (409),
+// MessageTypeNoticeNotify (504), or MessageTypeStreamNotify (609).
+func (c *Connection) RegisterNotifyHandler(msgType uint16, handler func(subID uint64, route string, payload []byte)) {
+	c.mux.SetNotifyHandler(msgType, handler)
 }
 
 // RegisterScheduleNotifyHandler registers handler for Schedule NOTIFY messages (705).

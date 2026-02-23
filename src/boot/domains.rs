@@ -1145,8 +1145,10 @@ impl QueueDomainSink {
         let family_id = event.family_id.as_u64();
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
+            let mut matched = 0;
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
+                    matched += 1;
                     let notify_payload = crate::protocol::queue_codec::encode_notify(
                         sub.subscription_id,
                         &event.route,
@@ -1162,9 +1164,39 @@ impl QueueDomainSink {
                         ),
                     );
                     let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
-                    let _ = self.router.route(notify_envelope);
+                    if let Err(e) = self.router.route(notify_envelope) {
+                        tracing::warn!(
+                            domain = "queue",
+                            destination = %sub.subscriber,
+                            error = ?e,
+                            "Queue: failed to route 209 to subscriber inbox"
+                        );
+                    } else {
+                        tracing::debug!(
+                            domain = "queue",
+                            session_id = sub.session_id,
+                            destination = %sub.subscriber,
+                            "Queue: routed 209 to subscriber"
+                        );
+                    }
                 }
             }
+            if matched == 0 {
+                tracing::debug!(
+                    domain = "queue",
+                    family_id = family_id,
+                    route = %event.route,
+                    subscription_count = state.subscriptions.len(),
+                    "Queue: no subscription matched event route"
+                );
+            }
+        } else {
+            tracing::debug!(
+                domain = "queue",
+                family_id = family_id,
+                route = %event.route,
+                "Queue: no family state for event (no subscriptions in this family)"
+            );
         }
         Ok(())
     }
@@ -1200,6 +1232,12 @@ impl MailboxSink for QueueDomainSink {
             return self.handle_domain_publish(event);
         }
 
+        // PATH 1b: SessionCleanup from disconnect handler
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all(cleanup.session_id);
+            return Ok(());
+        }
+
         // PATH 2: FrameContext from client wire frames (Subscribe/Unsubscribe/etc)
         // or internal timer events to be routed to actors
 
@@ -1221,23 +1259,74 @@ impl MailboxSink for QueueDomainSink {
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
 
-        // Parse queue message using codec
-        // Per CLIENT_SPEC: All Queue operations now include full route on wire
-        let queue_msg = match crate::protocol::queue_codec::parse_request(
-            frame_ctx.msg_type.as_u16(),
-            route_family,
-            &frame_ctx.payload,
-        ) {
-            Ok(msg) => msg,
-            Err(e) => {
-                tracing::warn!(
-                    domain = "queue",
-                    session = frame_ctx.session_id,
-                    msg_type = frame_ctx.msg_type.as_u16(),
-                    error = %e,
-                    "Failed to parse Queue message"
-                );
-                return Err(DeliveryError::ActorStopped);
+        // Parse queue message using codec.
+        // Subscribe (207) and Unsubscribe (208) need session_id and subscriber from envelope.
+        let queue_msg = {
+            let mt = frame_ctx.msg_type.as_u16();
+            if mt == crate::protocol::queue_codec::msg_type::SUBSCRIBE {
+                let subscriber = envelope
+                    .source()
+                    .cloned()
+                    .unwrap_or_else(|| route_addr.clone());
+                match crate::protocol::queue_codec::parse_subscribe(
+                    route_family,
+                    &frame_ctx.payload,
+                    frame_ctx.session_id,
+                    subscriber,
+                ) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        tracing::warn!(
+                            domain = "queue",
+                            session = frame_ctx.session_id,
+                            msg_type = mt,
+                            error = %e,
+                            "Failed to parse Queue SUBSCRIBE"
+                        );
+                        return Err(DeliveryError::ActorStopped);
+                    }
+                }
+            } else if mt == crate::protocol::queue_codec::msg_type::UNSUBSCRIBE {
+                let subscriber = envelope
+                    .source()
+                    .cloned()
+                    .unwrap_or_else(|| route_addr.clone());
+                match crate::protocol::queue_codec::parse_unsubscribe(
+                    route_family,
+                    &frame_ctx.payload,
+                    frame_ctx.session_id,
+                    subscriber,
+                ) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        tracing::warn!(
+                            domain = "queue",
+                            session = frame_ctx.session_id,
+                            msg_type = mt,
+                            error = %e,
+                            "Failed to parse Queue UNSUBSCRIBE"
+                        );
+                        return Err(DeliveryError::ActorStopped);
+                    }
+                }
+            } else {
+                match crate::protocol::queue_codec::parse_request(
+                    frame_ctx.msg_type.as_u16(),
+                    route_family,
+                    &frame_ctx.payload,
+                ) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        tracing::warn!(
+                            domain = "queue",
+                            session = frame_ctx.session_id,
+                            msg_type = frame_ctx.msg_type.as_u16(),
+                            error = %e,
+                            "Failed to parse Queue message"
+                        );
+                        return Err(DeliveryError::ActorStopped);
+                    }
+                }
             }
         };
 
@@ -1251,7 +1340,7 @@ impl MailboxSink for QueueDomainSink {
         // Dispatch to per-queue actor or handle subscription
         use crate::domains::queue::protocol::{QueueKey, QueueMessage};
 
-        let response = {
+        let (response, availability_notify_route) = {
             let mut actors = self.actors.lock();
 
             match queue_msg {
@@ -1279,7 +1368,13 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_send(body, delay_seconds)
+                    let resp = actor.handle_send(body, delay_seconds);
+                    let notify_route = if actor.take_needs_notify_availability() {
+                        Some(route)
+                    } else {
+                        None
+                    };
+                    (resp, notify_route)
                 }
                 QueueMessage::Receive {
                     family_id,
@@ -1306,7 +1401,7 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_receive(lease_seconds, batch_size)
+                    (actor.handle_receive(lease_seconds, batch_size), None)
                 }
                 QueueMessage::Extend {
                     family_id,
@@ -1333,7 +1428,7 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_extend(id, token, lease_seconds)
+                    (actor.handle_extend(id, token, lease_seconds), None)
                 }
                 QueueMessage::Ack {
                     family_id,
@@ -1359,13 +1454,19 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    actor.handle_ack(id, token)
+                    (
+                        actor.handle_ack(id, token),
+                        None,
+                    )
                 }
                 QueueMessage::LeaseExpired { .. } => {
                     // Internal message, not dispatched via sink
-                    crate::domains::queue::QueueResponse::Error {
-                        message: "LeaseExpired is an internal message".to_string(),
-                    }
+                    (
+                        crate::domains::queue::QueueResponse::Error {
+                            message: "LeaseExpired is an internal message".to_string(),
+                        },
+                        None,
+                    )
                 }
 
                 QueueMessage::Subscribe {
@@ -1420,11 +1521,13 @@ impl MailboxSink for QueueDomainSink {
                         new_id
                     };
 
-                    crate::domains::queue::QueueResponse::SubscribeOk {
-                        subscription_id: sub_id,
-                    }
+                    (
+                        crate::domains::queue::QueueResponse::SubscribeOk {
+                            subscription_id: sub_id,
+                        },
+                        None,
+                    )
                 }
-
                 QueueMessage::Unsubscribe {
                     family_id,
                     pattern,
@@ -1446,15 +1549,37 @@ impl MailboxSink for QueueDomainSink {
                         "Queue subscription removed"
                     );
 
-                    crate::domains::queue::QueueResponse::UnsubscribeOk
+                    (
+                        crate::domains::queue::QueueResponse::UnsubscribeOk,
+                        None,
+                    )
                 }
-
                 QueueMessage::UnsubscribeAll { session_id, .. } => {
                     self.unsubscribe_all(session_id);
-                    crate::domains::queue::QueueResponse::UnsubscribeOk
+                    (
+                        crate::domains::queue::QueueResponse::UnsubscribeOk,
+                        None,
+                    )
                 }
             }
         };
+
+        // If we just did a Send that transitioned empty->non-empty, fan out QUEUE_NOTIFY (209) to subscribers
+        if let Some(notify_route) = availability_notify_route {
+            tracing::debug!(
+                domain = "queue",
+                route = %notify_route,
+                "Queue: fanning out availability notification (209)"
+            );
+            let event = crate::runtime::DomainPublishEvent::new(
+                route_family,
+                notify_route,
+                bytes::Bytes::from("{}"),
+            );
+            if let Err(e) = self.handle_domain_publish(&event) {
+                tracing::warn!(domain = "queue", error = ?e, "Queue: handle_domain_publish failed");
+            }
+        }
 
         // Encode and route response back
         let response_bytes = crate::protocol::queue_codec::encode_response(&response);
@@ -1677,7 +1802,8 @@ impl MailboxSink for StreamDomainSink {
         use crate::protocol::stream_codec::StreamResponse;
 
         // Enforce expected_offset at Begin; track session->route for Commit (advance next_offset).
-        let response = match stream_msg {
+        // If Commit advances a route, we emit STREAM_NOTIFY (609) to matching subscribers.
+        let (response, commit_notify_route) = match stream_msg {
             StreamMessage::Begin {
                 route,
                 expected_offset,
@@ -1710,48 +1836,70 @@ impl MailboxSink for StreamDomainSink {
                 }
                 let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
                 state.session_to_route.insert(session_id, route_key);
-                StreamResponse::Ok {
-                    session_id: Some(session_id),
-                    data: vec![],
-                }
+                (
+                    StreamResponse::Ok {
+                        session_id: Some(session_id),
+                        data: vec![],
+                    },
+                    None,
+                )
             }
-            StreamMessage::Append { .. } => StreamResponse::Ok {
-                session_id: None,
-                data: vec![],
-            },
-            StreamMessage::Commit { session_id, .. } => {
-                let mut state = self.write_state.lock();
-                if let Some(route_key) = state.session_to_route.remove(&session_id) {
-                    state
-                        .next_offset_by_route
-                        .entry(route_key)
-                        .and_modify(|n| *n += 1)
-                        .or_insert(1);
-                }
+            StreamMessage::Append { .. } => (
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
-                }
+                },
+                None,
+            ),
+            StreamMessage::Commit { session_id, .. } => {
+                let mut state = self.write_state.lock();
+                let commit_route = state.session_to_route.remove(&session_id).map(|route_key| {
+                    state
+                        .next_offset_by_route
+                        .entry(route_key.clone())
+                        .and_modify(|n| *n += 1)
+                        .or_insert(1);
+                    crate::runtime::routing::Route::new(route_key)
+                });
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data: vec![],
+                    },
+                    commit_route,
+                )
             }
             StreamMessage::Rollback { session_id, .. } => {
                 self.write_state.lock().session_to_route.remove(&session_id);
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data: vec![],
+                    },
+                    None,
+                )
+            }
+            StreamMessage::Read { .. } => (
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
-                }
-            }
-            StreamMessage::Read { .. } => StreamResponse::Ok {
-                session_id: None,
-                data: vec![],
-            },
-            StreamMessage::Last { .. } => StreamResponse::Ok {
-                session_id: None,
-                data: vec![],
-            },
-            StreamMessage::GetMetadata { .. } => StreamResponse::Ok {
-                session_id: None,
-                data: vec![],
-            },
+                },
+                None,
+            ),
+            StreamMessage::Last { .. } => (
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                },
+                None,
+            ),
+            StreamMessage::GetMetadata { .. } => (
+                StreamResponse::Ok {
+                    session_id: None,
+                    data: vec![],
+                },
+                None,
+            ),
             StreamMessage::Subscribe {
                 family_id,
                 pattern,
@@ -1802,10 +1950,13 @@ impl MailboxSink for StreamDomainSink {
                     new_id
                 };
 
-                StreamResponse::Ok {
-                    session_id: Some(sub_id),
-                    data: vec![],
-                }
+                (
+                    StreamResponse::Ok {
+                        session_id: Some(sub_id),
+                        data: vec![],
+                    },
+                    None,
+                )
             }
             StreamMessage::Unsubscribe {
                 family_id,
@@ -1820,26 +1971,44 @@ impl MailboxSink for StreamDomainSink {
                         !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
                     });
                 }
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data: vec![],
+                    },
+                    None,
+                )
             }
             StreamMessage::UnsubscribeAll { session_id, .. } => {
                 self.unsubscribe_all(session_id);
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                }
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data: vec![],
+                    },
+                    None,
+                )
             }
-            _ => {
+            _ => (
                 // Internal messages (RequestLease, LeaseGranted, etc.)
                 StreamResponse::Ok {
                     session_id: None,
                     data: vec![],
-                }
-            }
+                },
+                None,
+            )
         };
+
+        // If we just committed a stream session, fan out STREAM_NOTIFY (609) to matching subscribers
+        if let Some(route) = commit_notify_route {
+            let payload = bytes::Bytes::from("{}");
+            let event = crate::runtime::DomainPublishEvent::new(
+                frame_ctx.route_family,
+                route,
+                payload,
+            );
+            let _ = self.handle_domain_publish(&event);
+        }
 
         // Encode and route response back
         let response_bytes = crate::protocol::stream_codec::encode_response(&response);
@@ -3006,5 +3175,104 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    /// Integration test: Subscribe then Send must result in QUEUE_NOTIFY (209) delivered to inbox.
+    #[test]
+    fn should_fan_out_queue_notify_209_after_send_when_subscribed() {
+        use crate::protocol::frame::ChannelId;
+        use crate::protocol::tlv::MessageType;
+        use bytes::Bytes;
+        use std::sync::Mutex;
+
+        use super::queue_notify_test_helpers::CaptureFrameContextSink;
+
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let queue_sink = Arc::new(QueueDomainSink::new(store.clone(), router.clone()));
+
+        // Capture sink: records msg_type of each FrameContext delivered to inbox
+        let received: Arc<Mutex<Vec<u16>>> = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let capture_sink = Arc::new(CaptureFrameContextSink {
+            msg_types: received_clone,
+        });
+
+        let family = RouteFamily::new(1);
+        let inbox_addr = RouteAddress::new(family, Route::new("inbox://session/1"));
+        let queue_inbound_addr = RouteAddress::new(family, Route::new("queue://inbound"));
+
+        router.register(
+            inbox_addr.clone(),
+            capture_sink as Arc<dyn crate::runtime::router::MailboxSink>,
+        );
+        router.register_domain_pattern("queue", queue_sink as Arc<dyn crate::runtime::router::MailboxSink>);
+
+        // 1) Subscribe (207): pattern "queue://realm/area/resource"
+        let pattern = "queue://realm/area/resource";
+        let mut sub_payload = Vec::new();
+        sub_payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+        sub_payload.extend_from_slice(pattern.as_bytes());
+
+        let sub_ctx = FrameContext::new(
+            1,
+            ChannelId::Pub,
+            MessageType::new(207),
+            Bytes::from(sub_payload),
+            family,
+        );
+        let sub_env = Envelope::from_route(inbox_addr.clone(), queue_inbound_addr.clone(), sub_ctx);
+        router.route(sub_env).expect("route subscribe");
+
+        // 2) Send (200): same route, body "x"
+        let route = "queue://realm/area/resource";
+        let body: &[u8] = b"x";
+        let mut send_payload = Vec::new();
+        send_payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        send_payload.extend_from_slice(route.as_bytes());
+        send_payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        send_payload.extend_from_slice(body);
+
+        let send_ctx = FrameContext::new(
+            1,
+            ChannelId::Pub,
+            MessageType::new(200),
+            Bytes::from(send_payload),
+            family,
+        );
+        let send_env = Envelope::from_route(inbox_addr.clone(), queue_inbound_addr.clone(), send_ctx);
+        router.route(send_env).expect("route send");
+
+        // 3) Assert inbox received 209 (QUEUE_NOTIFY)
+        let msg_types = received.lock().unwrap();
+        assert!(
+            msg_types.contains(&209),
+            "expected inbox to receive msg_type 209 (QUEUE_NOTIFY), got {:?}",
+            *msg_types
+        );
+    }
+}
+
+#[cfg(test)]
+mod queue_notify_test_helpers {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Sink that records msg_type of each FrameContext (used by queue notify test).
+    pub(super) struct CaptureFrameContextSink {
+        pub msg_types: Arc<Mutex<Vec<u16>>>,
+    }
+
+    impl MailboxSink for CaptureFrameContextSink {
+        fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            if let Some(ctx) = envelope.payload::<FrameContext>() {
+                self.msg_types.lock().unwrap().push(ctx.msg_type.as_u16());
+            }
+            Ok(())
+        }
+
+        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            self.deliver(envelope)
+        }
     }
 }

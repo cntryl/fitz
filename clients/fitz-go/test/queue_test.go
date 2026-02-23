@@ -290,7 +290,8 @@ func TestShouldNotifyGivenSubscribeWhenMessageEnqueued(t *testing.T) {
 		route := f.UniqueRoute("queue")
 
 		notifications := make(chan struct{}, 2)
-		sub, err := f.Client().Queue().Subscribe(ctx, route, func(_ context.Context, _ queue.AvailabilityNotification) error {
+		sub, err := f.Client().Queue().Subscribe(ctx, route, func(_ context.Context, n queue.AvailabilityNotification) error {
+			t.Logf("queue notification received: route=%s", n.Route)
 			notifications <- struct{}{}
 			return nil
 		})

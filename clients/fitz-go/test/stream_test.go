@@ -269,7 +269,8 @@ func TestShouldNotifyGivenSubscriptionWhenCommitAppends(t *testing.T) {
 		route := f.UniqueRoute("stream")
 		notifications := make(chan struct{}, 1)
 
-		sub, err := f.Client().Stream().Subscribe(ctx, route, func(_ context.Context, _ stream.CommitNotification) error {
+		sub, err := f.Client().Stream().Subscribe(ctx, route, func(_ context.Context, n stream.CommitNotification) error {
+			t.Logf("stream commit notification received: route=%s", n.Route)
 			notifications <- struct{}{}
 			return nil
 		})

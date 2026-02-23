@@ -28,7 +28,8 @@ type Multiplexer struct {
 	mu      sync.Mutex
 
 	// Async delivery handlers (Notice NOTIFY, Schedule NOTIFY, RPC REQUEST to worker, RPC RESPONSE per CLIENT_SPEC.md)
-	notifyHandler         func(subID uint64, route string, payload []byte)
+	// notifyHandlers keyed by message type (209 Queue, 409 Lease, 504 Notice, 609 Stream) so multiple domains can subscribe.
+	notifyHandlers      map[uint16]func(subID uint64, route string, payload []byte)
 	scheduleNotifyHandler func(subID uint64, payload []byte)
 	rpcReqHandler         func(payload []byte) // incoming RPC REQUEST (302) dispatched to worker
 	rpcRespHandler        func(correlationID [16]byte, payload []byte)
@@ -45,7 +46,8 @@ type Multiplexer struct {
 // NewMultiplexer creates a new multiplexer.
 func NewMultiplexer() *Multiplexer {
 	return &Multiplexer{
-		pending: make(map[uint16]*list.List),
+		pending:        make(map[uint16]*list.List),
+		notifyHandlers: make(map[uint16]func(subID uint64, route string, payload []byte)),
 	}
 }
 
@@ -106,8 +108,11 @@ func (m *Multiplexer) UnregisterRequest(msgType uint16, responseChan chan []byte
 // Called by the connection's dispatch loop when a frame arrives.
 func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	// Handle async deliveries (per CLIENT_SPEC.md MessageType ranges)
-	if msgType == 504 { // Notice NOTIFY
-		m.handleNotify(payload)
+	// Queue NOTIFY (209), Lease NOTIFY (409), Notice NOTIFY (504), Stream NOTIFY (609) use same payload format
+	if msgType == 209 || msgType == 409 || msgType == 504 || msgType == 609 {
+		if handler := m.notifyHandlers[msgType]; handler != nil {
+			m.handleNotify(payload, handler)
+		}
 		return
 	}
 	if msgType == 705 { // Schedule NOTIFY
@@ -174,9 +179,9 @@ func (m *Multiplexer) Dispatch(msgType uint16, payload []byte) {
 	}
 }
 
-// handleNotify processes Notice NOTIFY messages (async delivery).
+// handleNotify processes NOTIFY messages (209 Queue, 409 Lease, 504 Notice, 609 Stream).
 // Per CLIENT_SPEC.md: [u64 BE subscription_id][u32 route_len][route][u32 payload_len][payload]
-func (m *Multiplexer) handleNotify(payload []byte) {
+func (m *Multiplexer) handleNotify(payload []byte, handler func(subID uint64, route string, payload []byte)) {
 	if len(payload) < 8 {
 		return // Malformed
 	}
@@ -212,10 +217,7 @@ func (m *Multiplexer) handleNotify(payload []byte) {
 	}
 	msgPayload := payload[offset : offset+int(payloadLen)]
 
-	// Call registered handler (if set by domain client)
-	if m.notifyHandler != nil {
-		m.notifyHandler(subID, route, msgPayload)
-	}
+	handler(subID, route, msgPayload)
 }
 
 // handleScheduleNotify processes Schedule NOTIFY messages (705).
@@ -273,10 +275,13 @@ func (m *Multiplexer) handleRpcResponse(payload []byte) {
 	}
 }
 
-// SetNotifyHandler registers the handler for Notice NOTIFY messages.
-// Called by the Notice domain client.
-func (m *Multiplexer) SetNotifyHandler(handler func(subID uint64, route string, payload []byte)) {
-	m.notifyHandler = handler
+// SetNotifyHandler registers the handler for NOTIFY messages for the given message type.
+// msgType should be 209 (Queue), 409 (Lease), 504 (Notice), or 609 (Stream).
+func (m *Multiplexer) SetNotifyHandler(msgType uint16, handler func(subID uint64, route string, payload []byte)) {
+	if m.notifyHandlers == nil {
+		m.notifyHandlers = make(map[uint16]func(subID uint64, route string, payload []byte))
+	}
+	m.notifyHandlers[msgType] = handler
 }
 
 // SetScheduleNotifyHandler registers the handler for Schedule NOTIFY messages (705).

@@ -390,22 +390,25 @@ impl QueueActor {
         self.ready_shards.iter().any(|shard| shard.contains(&id))
     }
 
+    /// Returns true if an availability notification should be sent (queue transitioned empty->non-empty).
+    /// Clears the flag. Used by the domain sink when the actor is not run with a timer.
+    pub fn take_needs_notify_availability(&mut self) -> bool {
+        std::mem::take(&mut self.needs_notify_availability)
+    }
+
     /// Schedule debounced availability notification
+    /// Uses base queue route (queue://realm/area/resource) so subscription pattern matches.
     fn schedule_availability_notification(&mut self, ctx: &mut Context<Self>) {
-        // Build notification route: queue://{realm}/{area}/{resource}/available
         let route_str = format!(
-            "queue://{}/{}/{}/available",
+            "queue://{}/{}/{}",
             self.queue_key.realm, self.queue_key.area, self.queue_key.resource
         );
         let route = crate::runtime::routing::Route::new(route_str);
 
-        // Minimal payload (empty JSON)
         let payload = bytes::Bytes::from("{}");
-
         let publish_event =
             crate::runtime::domain_event::DomainPublishEvent::new(self.family, route, payload);
 
-        // Store and debounce the publish (do not send immediately)
         self.pending_publish = Some(publish_event);
         if self.notify_timer.is_none() {
             let timer_id = ctx
