@@ -52,13 +52,13 @@ func (sub *Subscription) Unsubscribe() {
 }
 
 // StreamSession is a write session for appending to a stream.
-// Obtained from Begin; use Send, then Commit or Rollback.
+// Obtained from Begin; use Append, then Commit or Rollback.
 // Expected offset (OCC) is established at Begin and tracked by the session/server;
-// Send does not take or send expected_offset.
+// Append does not take or send expected_offset.
 // Per CLIENT_SPEC.md, operations on a session MUST be sequential.
 type StreamSession interface {
-	// Send adds a record to the stream. Returns the assigned offset when available.
-	Send(ctx context.Context, body []byte) (offset uint64, err error)
+	// Append adds a record to the stream. Returns the assigned offset when available.
+	Append(ctx context.Context, body []byte) (offset uint64, err error)
 	// Commit finalizes the write session and makes appends durable.
 	Commit(ctx context.Context) error
 	// Rollback discards uncommitted appends.
@@ -72,11 +72,11 @@ type Client interface {
 	// Returns a session on which to call Append, then Commit or Rollback.
 	Begin(ctx context.Context, route string, expectedOffset uint64) (StreamSession, error)
 
-	// Consume reads records from the given route starting at fromOffset.
-	Peek(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
+	// Read reads records from the given route starting at fromOffset.
+	Read(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error)
 
-	// Last returns the most recent record in the stream.
-	Last(ctx context.Context, route string) (*Record, error)
+	// Peek returns the most recent record in the stream.
+	Peek(ctx context.Context, route string) (*Record, error)
 
 	// GetMetadata returns stream metadata.
 	GetMetadata(ctx context.Context, route string) (*Metadata, error)
@@ -167,8 +167,8 @@ func (c *client) Begin(ctx context.Context, route string, expectedOffset uint64)
 
 // Append per server stream_codec.rs. Expected offset is tracked by the session (established at Begin).
 // Request: [u64 session_id][bytes body][optional bytes metadata]
-func (s *session) Send(ctx context.Context, body []byte) (uint64, error) {
-	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Send", trace.WithAttributes(
+func (s *session) Append(ctx context.Context, body []byte) (uint64, error) {
+	ctx, span := s.conn.Tracer().Start(ctx, "fitz.stream.Append", trace.WithAttributes(
 		attribute.String("fitz.route", s.route),
 		attribute.Int64("fitz.session_id", int64(s.sessionID)),
 	))
@@ -277,23 +277,23 @@ func (s *session) Rollback(ctx context.Context) error {
 	return nil
 }
 
-// Consume per server stream_codec.rs:
+// Read per server stream_codec.rs:
 // Request: [string route][u64 from_offset][u64 limit][optional u64 max_bytes]
 // Response: [status][u8 has_session_id][u64?][bytes data]
-func (c *client) Peek(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
-	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Peek", trace.WithAttributes(
+func (c *client) Read(ctx context.Context, route string, fromOffset uint64, limit uint64) (iter.Iterator[Record], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Read", trace.WithAttributes(
 		attribute.String("fitz.route", route),
 		attribute.Int64("fitz.from_offset", int64(fromOffset)),
 		attribute.Int64("fitz.limit", int64(limit)),
 	))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("stream.Peek", "route", route, "from_offset", fromOffset, "limit", limit)
+		log.Debug("stream.Read", "route", route, "from_offset", fromOffset, "limit", limit)
 	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamRead, streamReadPayloadWriter(route, fromOffset, limit, nil))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Peek failed", "route", route, "error", err)
+			log.Error("stream.Read failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("READ request failed: %w", err)
 	}
@@ -324,35 +324,35 @@ func (c *client) Peek(ctx context.Context, route string, fromOffset uint64, limi
 	return iter.NewSliceIterator(records), nil
 }
 
-// Last per server stream_codec.rs:
+// Peek per server stream_codec.rs:
 // Request: [string route]
 // Response: [status][u8 has_session_id][u64?][bytes data]
-func (c *client) Last(ctx context.Context, route string) (*Record, error) {
-	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Last", trace.WithAttributes(attribute.String("fitz.route", route)))
+func (c *client) Peek(ctx context.Context, route string) (*Record, error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.stream.Peek", trace.WithAttributes(attribute.String("fitz.route", route)))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("stream.Last", "route", route)
+		log.Debug("stream.Peek", "route", route)
 	}
 	resp, err := c.conn.SendRequestWithWriter(ctx, protocol.MessageTypeStreamLast, streamLastPayloadWriter(route))
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Last failed", "route", route, "error", err)
+			log.Error("stream.Peek failed", "route", route, "error", err)
 		}
-		return nil, fmt.Errorf("LAST request failed: %w", err)
+		return nil, fmt.Errorf("PEEK request failed: %w", err)
 	}
 
 	success, remaining, err := connection.ParseStandardResponse(resp)
 	if err != nil {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Last failed", "route", route, "error", err)
+			log.Error("stream.Peek failed", "route", route, "error", err)
 		}
-		return nil, fmt.Errorf("LAST failed: %w", mapStreamError(err.Error()))
+		return nil, fmt.Errorf("PEEK failed: %w", mapStreamError(err.Error()))
 	}
 	if !success {
 		if log := c.conn.Logger(); log != nil {
-			log.Error("stream.Last failed", "route", route, "status", "unexpected")
+			log.Error("stream.Peek failed", "route", route, "status", "unexpected")
 		}
-		return nil, fmt.Errorf("LAST failed: unexpected status")
+		return nil, fmt.Errorf("PEEK failed: unexpected status")
 	}
 
 	// Skip optional session_id and extract data blob
@@ -365,7 +365,7 @@ func (c *client) Last(ctx context.Context, route string) (*Record, error) {
 
 	record, err := parseRecord(data, 0)
 	if err != nil {
-		return nil, fmt.Errorf("parse LAST response: %w", err)
+		return nil, fmt.Errorf("parse PEEK response: %w", err)
 	}
 
 	return record, nil

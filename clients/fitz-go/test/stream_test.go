@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cntryl/fitz-go/internal/domains/stream"
 	"github.com/cntryl/fitz-go/test/fixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func TestShouldAppendRecordsGivenValidSessionWhenAppendCalled(t *testing.T) {
 		sess, err := f.Client().Stream().Begin(ctx, route, 0)
 		require.NoError(t, err, "Begin should succeed")
 
-		// Act — append two records on the session.
+		// Act — send two records on the session.
 		offset1, err := sess.Append(ctx, []byte("record-1"))
 		require.NoError(t, err, "first Append should succeed")
 
@@ -75,7 +76,7 @@ func TestShouldReadRecordsInOrderGivenOffsetRangeWhenReadCalled(t *testing.T) {
 		require.NoError(t, sess.Commit(ctx))
 
 		// Act — read from offset 0, limit 10.
-		iter, err := f.Client().Stream().Consume(ctx, route, 0, 10)
+		iter, err := f.Client().Stream().Read(ctx, route, 0, 10)
 		require.NoError(t, err)
 		defer iter.Close()
 
@@ -144,7 +145,7 @@ func TestShouldRollbackUncommittedAppendsGivenActiveSessionWhenRollbackCalled(t 
 		require.NoError(t, err, "Rollback should succeed")
 
 		// Read should return no records.
-		iter, err := f.Client().Stream().Consume(ctx, route, 0, 10)
+		iter, err := f.Client().Stream().Read(ctx, route, 0, 10)
 		require.NoError(t, err)
 		defer iter.Close()
 
@@ -178,7 +179,7 @@ func TestShouldReturnLastRecordGivenExistingStreamWhenLastCalled(t *testing.T) {
 		require.NoError(t, sess.Commit(ctx))
 
 		// Act
-		rec, err := f.Client().Stream().Last(ctx, route)
+		rec, err := f.Client().Stream().Peek(ctx, route)
 
 		// Assert — server currently returns stub empty data for LAST
 		require.NoError(t, err)
@@ -237,7 +238,7 @@ func TestShouldRejectReadGivenOffsetBeyondWatermarkWhenConsumeCalled(t *testing.
 		require.NoError(t, sess.Commit(ctx))
 
 		// Act — read from offset far beyond written data.
-		iter, err := f.Client().Stream().Consume(ctx, route, 999999, 10)
+		iter, err := f.Client().Stream().Read(ctx, route, 999999, 10)
 		if err != nil {
 			assert.Error(t, err)
 			return
@@ -252,5 +253,43 @@ func TestShouldRejectReadGivenOffsetBeyondWatermarkWhenConsumeCalled(t *testing.
 			assert.Error(t, iter.Err())
 		}
 		// If no error, server may treat beyond-watermark as empty read (acceptable).
+	})
+}
+
+// TestShouldNotifyGivenSubscriptionWhenCommitAppends verifies commit notifications
+// are delivered to active stream subscriptions.
+func TestShouldNotifyGivenSubscriptionWhenCommitAppends(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		// Arrange
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		route := f.UniqueRoute("stream")
+		notifications := make(chan struct{}, 1)
+
+		sub, err := f.Client().Stream().Subscribe(ctx, route, func(_ context.Context, _ stream.CommitNotification) error {
+			notifications <- struct{}{}
+			return nil
+		})
+		require.NoError(t, err)
+		defer sub.Unsubscribe()
+
+		sess, err := f.Client().Stream().Begin(ctx, route, 0)
+		require.NoError(t, err)
+		_, err = sess.Append(ctx, []byte("notify"))
+		require.NoError(t, err)
+
+		// Act
+		require.NoError(t, sess.Commit(ctx))
+
+		// Assert
+		select {
+		case <-notifications:
+			// ok
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for stream commit notification")
+		}
 	})
 }

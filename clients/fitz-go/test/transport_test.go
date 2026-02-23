@@ -274,7 +274,7 @@ func TestShouldReturnErrorGivenContextCanceledWhenLongRequestInFlight(t *testing
 		// Worker that does not send any response for 3s, so caller blocks in Call().
 		sub, err := fWorker.Client().RPC().Subscribe(ctx, route, func(_ context.Context, _ rpc.InboundRequest, w rpc.ResponseWriter) error {
 			time.Sleep(3 * time.Second)
-			return w.Send([]byte("late"))
+			return w.Response([]byte("late"))
 		})
 		require.NoError(t, err)
 		defer sub.Unsubscribe()
@@ -282,7 +282,7 @@ func TestShouldReturnErrorGivenContextCanceledWhenLongRequestInFlight(t *testing
 		callCtx, callCancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() {
-			_, err := fCaller.Client().RPC().Call(callCtx, route, []byte("block"), 10*time.Second)
+			_, err := fCaller.Client().RPC().Request(callCtx, route, []byte("block"), 10*time.Second)
 			done <- err
 		}()
 
@@ -291,10 +291,7 @@ func TestShouldReturnErrorGivenContextCanceledWhenLongRequestInFlight(t *testing
 
 		select {
 		case err := <-done:
-			if err == nil {
-				t.Skip("client does not yet propagate context cancellation during RPC Call; skipping until implemented")
-			}
-			require.Error(t, err)
+			require.Error(t, err, "RPC Call should return error when context is canceled")
 			assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got: %v", err)
 		case <-time.After(5 * time.Second):
 			t.Fatal("Call did not return after context cancel")

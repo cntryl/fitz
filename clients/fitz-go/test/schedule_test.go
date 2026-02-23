@@ -158,3 +158,26 @@ func TestShouldReturnListWithoutErrorGivenSchedulesWhenListCalled(t *testing.T) 
 		// In a shared broker, other tests may have created schedules; we only assert no error.
 	})
 }
+
+// TestShouldSubscribeAndUnsubscribeGivenValidPatternWhenSubscribeCalled verifies
+// Subscribe returns a handle that can be unsubscribed without error.
+func TestShouldSubscribeAndUnsubscribeGivenValidPatternWhenSubscribeCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		// Arrange
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		pattern := f.UniqueRoute("schedule")
+
+		sub, err := f.Client().Schedule().Subscribe(ctx, pattern, func(_ context.Context, _ schedule.Notification) {})
+		require.NoError(t, err)
+
+		// Act
+		sub.Unsubscribe()
+
+		// Assert — no panic, no error, subscription handle is valid.
+		require.NotNil(t, sub)
+	})
+}

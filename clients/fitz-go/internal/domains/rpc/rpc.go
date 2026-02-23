@@ -28,7 +28,7 @@ type InboundRequest struct {
 
 // ResponseWriter allows a worker to send responses.
 type ResponseWriter interface {
-	Send(body []byte) error
+	Response(body []byte) error
 }
 
 // RPCHandler handles incoming RPC requests.
@@ -59,9 +59,9 @@ type Client interface {
 	// Subscribe registers a worker handler for the given route.
 	Subscribe(ctx context.Context, route string, handler RPCHandler) (*Subscription, error)
 
-	// Send sends an RPC request and returns an iterator over response frames.
+	// Request sends an RPC request and returns an iterator over response frames.
 	// Callers must call Close on the returned iterator when done to release resources.
-	Send(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error)
+	Request(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error)
 }
 
 type client struct {
@@ -301,17 +301,24 @@ func (c *client) unsubscribeWorker(route string) {
 	_ = err  // ignore errors
 }
 
-// Send per CLIENT_SPEC.md:
+// Request per CLIENT_SPEC.md:
 // Request: [correlation_id(16)][route_len][route][reply_route_len][reply_route][body_len][body]
 // Response: [status] (ack that request was dispatched)
 // Actual responses come via RPC RESPONSE (303) messages.
-func (c *client) Send(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error) {
-	ctx, span := c.conn.Tracer().Start(ctx, "fitz.rpc.Send", trace.WithAttributes(attribute.String("fitz.route", route)))
+func (c *client) Request(ctx context.Context, route string, body []byte, timeout time.Duration) (iter.Iterator[ResponseFrame], error) {
+	ctx, span := c.conn.Tracer().Start(ctx, "fitz.rpc.Request", trace.WithAttributes(attribute.String("fitz.route", route)))
 	defer span.End()
 	if log := c.conn.Logger(); log != nil {
-		log.Debug("rpc.Send", "route", route)
+		log.Debug("rpc.Request", "route", route)
 	}
 	c.initRPCHandler()
+
+	// Check if context is already canceled
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	// Validate route format
 	if err := types.ValidateRoute(route, "rpc"); err != nil {
@@ -337,7 +344,7 @@ func (c *client) Send(ctx context.Context, route string, body []byte, timeout ti
 		c.mu.Unlock()
 		close(ch)
 		if log := c.conn.Logger(); log != nil {
-			log.Error("rpc.Call failed", "route", route, "error", err)
+			log.Error("rpc.Request failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("REQUEST failed: %w", err)
 	}
@@ -349,7 +356,7 @@ func (c *client) Send(ctx context.Context, route string, body []byte, timeout ti
 		c.mu.Unlock()
 		close(ch)
 		if log := c.conn.Logger(); log != nil {
-			log.Error("rpc.Call failed", "route", route, "error", err)
+			log.Error("rpc.Request failed", "route", route, "error", err)
 		}
 		return nil, fmt.Errorf("REQUEST failed: %w", mapRPCError(err.Error()))
 	}
@@ -359,18 +366,59 @@ func (c *client) Send(ctx context.Context, route string, body []byte, timeout ti
 		c.mu.Unlock()
 		close(ch)
 		if log := c.conn.Logger(); log != nil {
-			log.Error("rpc.Call failed", "route", route, "status", "unexpected")
+			log.Error("rpc.Request failed", "route", route, "status", "unexpected")
 		}
 		return nil, fmt.Errorf("REQUEST failed: unexpected status")
 	}
 
-	return &rpcIterator{
+	iterator := &rpcIterator{
 		ch:            ch,
 		timeout:       timeout,
 		ctx:           ctx,
 		correlationID: correlationID,
 		client:        c,
-	}, nil
+	}
+
+	// Wait for first response or context cancellation
+	// This ensures Request() returns error if context is canceled before any responses arrive
+	select {
+	case frame, ok := <-ch:
+		if ok {
+			// Got first response, put it back in the channel for the iterator
+			// by creating a new channel and prepending this response
+			newCh := make(chan ResponseFrame, 32)
+			newCh <- frame
+			go func() {
+				for frame := range ch {
+					newCh <- frame
+				}
+				close(newCh)
+			}()
+			iterator.ch = newCh
+		}
+		return iterator, nil
+	case <-ctx.Done():
+		// Context canceled before any response
+		c.mu.Lock()
+		delete(c.pendingRPCs, correlationID)
+		c.mu.Unlock()
+		iterator.mu.Lock()
+		iterator.done = true
+		iterator.err = ctx.Err()
+		iterator.mu.Unlock()
+		close(ch)
+		return nil, ctx.Err()
+	case <-time.After(10 * time.Second):
+		// Timeout waiting for first response
+		c.mu.Lock()
+		delete(c.pendingRPCs, correlationID)
+		c.mu.Unlock()
+		iterator.mu.Lock()
+		iterator.done = true
+		iterator.err = ErrRPCTimeout
+		iterator.mu.Unlock()
+		return nil, ErrRPCTimeout
+	}
 }
 
 // responseWriter implements ResponseWriter for workers.
@@ -381,8 +429,8 @@ type responseWriter struct {
 	mu            sync.Mutex
 }
 
-// Send emits one response frame. RPC RESPONSE (303) is one-way: server forwards to caller and does not ack the worker.
-func (w *responseWriter) Send(body []byte) error {
+// Response emits one response frame. RPC RESPONSE (303) is one-way: server forwards to caller and does not ack the worker.
+func (w *responseWriter) Response(body []byte) error {
 	w.mu.Lock()
 	seq := w.seq
 	w.seq++
@@ -414,12 +462,16 @@ type rpcIterator struct {
 	current       ResponseFrame
 	err           error
 	done          bool
+	mu            sync.Mutex // Protects done and err
 }
 
 func (it *rpcIterator) Next() bool {
+	it.mu.Lock()
 	if it.done {
+		it.mu.Unlock()
 		return false
 	}
+	it.mu.Unlock()
 
 	timer := time.NewTimer(it.timeout)
 	defer timer.Stop()
@@ -427,18 +479,32 @@ func (it *rpcIterator) Next() bool {
 	select {
 	case frame, ok := <-it.ch:
 		if !ok {
+			it.mu.Lock()
 			it.done = true
+			it.mu.Unlock()
 			return false
 		}
 		it.current = frame
 		return true
 	case <-timer.C:
+		it.mu.Lock()
 		it.err = ErrRPCTimeout
 		it.done = true
+		it.mu.Unlock()
+		// Clean up pending RPC
+		it.client.mu.Lock()
+		delete(it.client.pendingRPCs, it.correlationID)
+		it.client.mu.Unlock()
 		return false
 	case <-it.ctx.Done():
+		it.mu.Lock()
 		it.err = it.ctx.Err()
 		it.done = true
+		it.mu.Unlock()
+		// Clean up pending RPC immediately when context is canceled
+		it.client.mu.Lock()
+		delete(it.client.pendingRPCs, it.correlationID)
+		it.client.mu.Unlock()
 		return false
 	}
 }
@@ -448,11 +514,15 @@ func (it *rpcIterator) Value() ResponseFrame {
 }
 
 func (it *rpcIterator) Err() error {
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	return it.err
 }
 
 func (it *rpcIterator) Close() error {
+	it.mu.Lock()
 	it.done = true
+	it.mu.Unlock()
 	// Clean up pending RPC
 	it.client.mu.Lock()
 	delete(it.client.pendingRPCs, it.correlationID)

@@ -275,6 +275,85 @@ func TestShouldScanKeysInOrderGivenRangeWhenScanCalled(t *testing.T) {
 	})
 }
 
+// TestShouldDeleteRangeGivenRangeWhenDeleteRangeCalled verifies DELETE_RANGE
+// removes keys within [startKey, endKey) and preserves keys outside the range.
+func TestShouldDeleteRangeGivenRangeWhenDeleteRangeCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		// Arrange
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
+
+		tx, err := f.Client().KV().Begin(ctx, route)
+		require.NoError(t, err)
+		require.NoError(t, tx.Put(ctx, []byte("a"), []byte("1")))
+		require.NoError(t, tx.Put(ctx, []byte("b"), []byte("2")))
+		require.NoError(t, tx.Put(ctx, []byte("c"), []byte("3")))
+		require.NoError(t, tx.Put(ctx, []byte("d"), []byte("4")))
+		require.NoError(t, tx.Commit(ctx))
+
+		// Act — delete range ["b", "d") which should remove b and c.
+		tx2, err := f.Client().KV().Begin(ctx, route)
+		require.NoError(t, err)
+		require.NoError(t, tx2.DeleteRange(ctx, []byte("b"), []byte("d")))
+		require.NoError(t, tx2.Commit(ctx))
+
+		// Assert — scan should return a and d only.
+		rtx, err := f.Client().KV().BeginRead(ctx, route)
+		require.NoError(t, err)
+		it, _, err := rtx.Scan(ctx, kv.ScanQuery{StartKey: []byte("a"), EndKey: []byte("z"), Limit: 10})
+		require.NoError(t, err)
+		defer it.Close()
+
+		var keys []string
+		for it.Next() {
+			keys = append(keys, string(it.Value().Key))
+		}
+		require.NoError(t, it.Err())
+		assert.Equal(t, []string{"a", "d"}, keys)
+	})
+}
+
+// TestShouldRespectLimitGivenScanCalled verifies SCAN limit is enforced.
+func TestShouldRespectLimitGivenScanCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		// Arrange
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+
+		route := kv.NewRoute(f.UniqueRealm(), f.UniqueArea(), f.UniqueResource()).String()
+
+		tx, err := f.Client().KV().Begin(ctx, route)
+		require.NoError(t, err)
+		require.NoError(t, tx.Put(ctx, []byte("a"), []byte("1")))
+		require.NoError(t, tx.Put(ctx, []byte("b"), []byte("2")))
+		require.NoError(t, tx.Put(ctx, []byte("c"), []byte("3")))
+		require.NoError(t, tx.Commit(ctx))
+
+		// Act — scan with limit 2.
+		rtx, err := f.Client().KV().BeginRead(ctx, route)
+		require.NoError(t, err)
+		it, _, err := rtx.Scan(ctx, kv.ScanQuery{StartKey: []byte("a"), EndKey: []byte("z"), Limit: 2})
+		require.NoError(t, err)
+		defer it.Close()
+
+		// Assert — iterator should return at most 2 items.
+		count := 0
+		for it.Next() {
+			count++
+		}
+		require.NoError(t, it.Err())
+		assert.Equal(t, 2, count)
+	})
+}
+
 // TestShouldRollbackChangesGivenActiveTransactionWhenRollbackCalled verifies
 // ROLLBACK discards all uncommitted changes so they are not visible afterward.
 func TestShouldRollbackChangesGivenActiveTransactionWhenRollbackCalled(t *testing.T) {

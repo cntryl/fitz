@@ -37,18 +37,17 @@ func TestShouldSendAndReceiveMessageGivenValidQueueWhenBasicWorkflow(t *testing.
 		msgID, err := f.Client().Queue().Send(ctx, route, []byte("task-payload"))
 		require.NoError(t, err)
 		assert.NotZero(t, msgID, "Send should return a message ID")
-
 		// Receive the message.
 		items, err := f.Client().Queue().Receive(ctx, route, 30, 1)
 		require.NoError(t, err)
 		require.Len(t, items, 1, "should receive exactly one message")
 		assert.Equal(t, []byte("task-payload"), items[0].Body)
 
-		// Complete the message (on the item).
-		err = items[0].Complete(ctx)
+		// Ack the message (on the item).
+		err = items[0].Ack(ctx)
 
 		// Assert
-		require.NoError(t, err, "Complete should succeed with valid token")
+		require.NoError(t, err, "Ack should succeed with valid token")
 	})
 }
 
@@ -128,7 +127,6 @@ func TestShouldRejectCompleteGivenInvalidTokenWhenTokenMismatch(t *testing.T) {
 		f.ConnectOrSkip(ctx)
 
 		route := f.UniqueRoute("queue")
-
 		_, err := f.Client().Queue().Send(ctx, route, []byte("token-check"))
 		require.NoError(t, err)
 
@@ -136,11 +134,11 @@ func TestShouldRejectCompleteGivenInvalidTokenWhenTokenMismatch(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, items, 1)
 
-		// Act — complete with wrong token (use CompleteWithToken to simulate invalid token).
-		err = items[0].CompleteWithToken(ctx, 9999999)
+		// Act — ack with wrong token (use AckWithToken to simulate invalid token).
+		err = items[0].AckWithToken(ctx, 9999999)
 
 		// Assert
-		assert.ErrorIs(t, err, queue.ErrInvalidToken, "complete with wrong token should fail")
+		assert.ErrorIs(t, err, queue.ErrInvalidToken, "ack with wrong token should fail")
 	})
 }
 
@@ -249,12 +247,79 @@ func TestShouldRejectCompleteGivenExpiredLeaseWhenCompleteCalled(t *testing.T) {
 		// Wait for lease to expire.
 		time.Sleep(4 * time.Second)
 
-		// Act — complete after lease expired (using the item's token).
-		err = items[0].Complete(ctx)
+		// Act — ack after lease expired (using the item's token).
+		err = items[0].Ack(ctx)
 
 		// Assert — server may return ErrLeaseExpiredQ or ErrMessageNotFound (message re-queued).
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, queue.ErrLeaseExpiredQ) || errors.Is(err, queue.ErrMessageNotFound),
 			"expected lease expired or message not found, got: %v", err)
+	})
+}
+
+// TestShouldReturnEmptyGivenNoMessagesWhenReceiveCalled verifies Receive
+// returns an empty slice when the queue has no messages.
+func TestShouldReturnEmptyGivenNoMessagesWhenReceiveCalled(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		route := f.UniqueRoute("queue")
+
+		// Act
+		items, err := f.Client().Queue().Receive(ctx, route, 30, 1)
+
+		// Assert
+		require.NoError(t, err)
+		require.NotNil(t, items)
+		assert.Empty(t, items, "expected no messages in empty queue")
+	})
+}
+
+// TestShouldNotifyGivenSubscribeWhenMessageEnqueued verifies availability
+// notifications are delivered on enqueue and stop after Unsubscribe.
+func TestShouldNotifyGivenSubscribeWhenMessageEnqueued(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		route := f.UniqueRoute("queue")
+
+		notifications := make(chan struct{}, 2)
+		sub, err := f.Client().Queue().Subscribe(ctx, route, func(_ context.Context, _ queue.AvailabilityNotification) error {
+			notifications <- struct{}{}
+			return nil
+		})
+		require.NoError(t, err)
+		defer sub.Unsubscribe()
+
+		// Act — enqueue a message to trigger availability.
+		_, err = f.Client().Queue().Send(ctx, route, []byte("notify-me"))
+		require.NoError(t, err)
+
+		// Assert — first notification received.
+		select {
+		case <-notifications:
+			// ok
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected availability notification")
+		}
+
+		// Unsubscribe and ensure no further notifications are delivered.
+		sub.Unsubscribe()
+
+		_, err = f.Client().Queue().Send(ctx, route, []byte("no-notify"))
+		require.NoError(t, err)
+
+		select {
+		case <-notifications:
+			t.Fatal("did not expect notification after unsubscribe")
+		case <-time.After(500 * time.Millisecond):
+			// ok
+		}
 	})
 }

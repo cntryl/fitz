@@ -89,11 +89,11 @@ func TestShouldExtendTTLGivenValidTokenWhenRenewCalled(t *testing.T) {
 		require.NotNil(t, l)
 
 		// Act
-		newExpiry, err := l.Renew(ctx, 60)
+		newExpiry, err := l.Extend(ctx, 60)
 
 		// Assert
 		require.NoError(t, err)
-		assert.Greater(t, newExpiry, time.Now().Unix(), "renewed expiry should be in the future")
+		assert.Greater(t, newExpiry, time.Now().Unix(), "extended expiry should be in the future")
 	})
 }
 
@@ -113,11 +113,11 @@ func TestShouldRejectRenewGivenInvalidTokenWhenTokenMismatch(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, l)
 
-		// Act — renew with a fabricated (wrong) token.
-		_, err = l.RenewWithToken(ctx, []byte("wrong-token"), 60)
+		// Act — extend with a fabricated (wrong) token.
+		_, err = l.ExtendWithToken(ctx, []byte("wrong-token"), 60)
 
 		// Assert
-		require.Error(t, err, "renew with invalid token should fail")
+		require.Error(t, err, "extend with invalid token should fail")
 	})
 }
 
@@ -230,5 +230,41 @@ func TestShouldQueryLeaseStatusGivenExistingLeaseWhenQueryCalled(t *testing.T) {
 		assert.True(t, info.Held, "query should report lease as held")
 		// Per CLIENT_SPEC QUERY response: server returns owner_id, ttl_remaining_secs, pending_waiters (not token)
 		assert.True(t, info.TTLRemainingSecs > 0 || info.OwnerID != "" || len(info.Token) > 0, "query should return holder info")
+	})
+}
+
+// TestShouldNotifyGivenSubscriptionWhenLeaseReleased verifies Subscribe delivers
+// change notifications on release for matching routes.
+func TestShouldNotifyGivenSubscriptionWhenLeaseReleased(t *testing.T) {
+	fixture.RunWithBothTransports(t, func(t *testing.T, transport fixture.TransportType) {
+		// Arrange
+		f := fixture.NewTestFixture(t, transport)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		f.ConnectOrSkip(ctx)
+		route := f.UniqueRoute("lease")
+		notifications := make(chan lease.ChangeNotification, 1)
+
+		sub, err := f.Client().Lease().Subscribe(ctx, route, func(_ context.Context, notif lease.ChangeNotification) error {
+			notifications <- notif
+			return nil
+		})
+		require.NoError(t, err)
+		defer sub.Unsubscribe()
+
+		l, err := f.Client().Lease().Acquire(ctx, route, 30)
+		require.NoError(t, err)
+
+		// Act
+		require.NoError(t, l.Release(ctx))
+
+		// Assert
+		select {
+		case notif := <-notifications:
+			assert.Equal(t, route, notif.Route)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for lease change notification")
+		}
 	})
 }
