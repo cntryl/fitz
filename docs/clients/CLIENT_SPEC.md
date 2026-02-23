@@ -1377,6 +1377,9 @@ Clients MUST:
 | Queue    | RESERVE            |       202 | Data          | Lease message(s)        |
 | Queue    | EXTEND             |       203 | Data          | Extend lease            |
 | Queue    | COMPLETE           |       204 | Data          | Mark complete           |
+| Queue    | SUBSCRIBE          |       207 | Data          | Subscribe to pattern    |
+| Queue    | UNSUBSCRIBE        |       208 | Data          | Unsubscribe pattern     |
+| Queue    | NOTIFY             |       209 | Notification  | Availability event      |
 | RPC      | SUBSCRIBE_WORKER   |       300 | Data          | Register worker         |
 | RPC      | UNSUBSCRIBE_WORKER |       301 | Data          | Unregister worker       |
 | RPC      | REQUEST            |       302 | Data          | Send request            |
@@ -2098,13 +2101,17 @@ Each domain has a specific wire format, verb set, and semantics. Implement each 
 [u32 BE]  route_pattern_len
 [bytes]   route_pattern (supports * and ** wildcards)
 Response (status=0):
-  [u8]     0
+  [u8]     0                    // status: success
+  [u8]     1                    // has_subscription_id flag (always 1 for success)
   [u64 BE] subscription_id
 Response (status=1):
-  [u8]     1
+  [u8]     1                    // status: error
   [u32 BE] error_len
   [bytes]  error_msg
 ```
+
+**Wire Format Note:**
+The success response uses the "optional u64" encoding pattern: a 1-byte flag followed by the value if present. For SUBSCRIBE success responses, the flag is always `1` (has value), followed by the `subscription_id` as a big-endian u64.
 
 **Idempotency:**
 - If client re-subscribes to same pattern, server returns the SAME `subscription_id`
@@ -2672,13 +2679,17 @@ Subscribe to stream change notifications for a route pattern.
 [u32 BE]  route_pattern_len
 [bytes]   route_pattern (supports * and ** wildcards)
 Response (status=0):
-  [u8]     0
+  [u8]     0                    // status: success
+  [u8]     1                    // has_subscription_id flag (always 1 for success)
   [u64 BE] subscription_id
 Response (status=1):
-  [u8]     1
+  [u8]     1                    // status: error
   [u32 BE] error_len
   [bytes]  error_msg
 ```
+
+**Wire Format Note:**
+The success response uses the "optional u64" encoding pattern: a 1-byte flag followed by the value if present. For SUBSCRIBE success responses, the flag is always `1` (has value), followed by the `subscription_id` as a big-endian u64.
 
 **Pattern Examples:**
 - `stream://realm/area/resource` — specific resource changes
@@ -2755,12 +2766,15 @@ Watermark advance notification:
 
 #### Message Types
 
-| Type | Name     |
-| ---: | -------- |
-|  200 | ENQUEUE  |
-|  202 | RESERVE  |
-|  203 | EXTEND   |
-|  204 | COMPLETE |
+| Type | Name        |
+| ---: | ----------- |
+|  200 | ENQUEUE     |
+|  202 | RESERVE     |
+|  203 | EXTEND      |
+|  204 | COMPLETE    |
+|  207 | SUBSCRIBE   |
+|  208 | UNSUBSCRIBE |
+|  209 | NOTIFY      |
 
 #### ENQUEUE Request
 
@@ -2842,6 +2856,75 @@ Response (status=1):
 - 4003 = ERR_MESSAGE_NOT_FOUND
 - 4004 = ERR_QUEUE_NOT_FOUND
 - 4005 = ERR_QUEUE_FULL
+
+#### Queue SUBSCRIBE (207)
+
+Subscribe to queue availability notifications for a route pattern.
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern (supports * and ** wildcards)
+Response (status=0):
+  [u8]     0                    // status: success
+  [u8]     1                    // has_subscription_id flag (always 1 for success)
+  [u64 BE] subscription_id
+Response (status=1):
+  [u8]     1                    // status: error
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+**Wire Format Note:**
+The success response uses the "optional u64" encoding pattern: a 1-byte flag followed by the value if present. For SUBSCRIBE success responses, the flag is always `1` (has value), followed by the `subscription_id` as a big-endian u64.
+
+**Pattern Examples:**
+- `queue://realm/area/resource` — specific resource availability
+- `queue://realm/area/*` — area-level (all resources in area)
+- `queue://realm/**` — realm-level (all areas and resources in realm)
+
+**Semantics:**
+- Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
+- Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
+- Server tracks subscriptions by `(session_id, route_pattern)` tuple
+- Wildcard patterns follow the same matching rules as Notice domain
+- Notifications are sent when messages become available in matching queues
+
+#### Queue UNSUBSCRIBE (208)
+
+Unsubscribe from queue availability notifications.
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern
+Response (status=0):
+  [u8]     0
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+**Design Notes:**
+- Client sends the original pattern string used in SUBSCRIBE
+- Idempotent: unsubscribing a non-existent pattern returns success
+
+#### Queue NOTIFY (209) — Server to Client
+
+Server pushes a queue availability notification to a subscriber.
+
+```
+[u64 BE]  subscription_id
+[u32 BE]  route_len
+[bytes]   route (exact resource route, not subscription pattern)
+[u32 BE]  payload_len
+[bytes]   payload (notification details)
+```
+
+**Client Handling:**
+- Client looks up `subscription_id` in local subscription map
+- Invokes registered handler(s) with the notification data
+- Handler receives exact route and notification payload
+- Notifications indicate message availability (consumer should RESERVE)
 
 #### Usage Example
 
@@ -4237,7 +4320,7 @@ Server pushes a schedule fire notification to a subscriber.
 | 106 | DELETE |
 | 107 | DELETE_RANGE |
 | 108 | SCAN |
-**Queue Domain (200–204):**
+**Queue Domain (200–209):**
 | Value | Name |
 |---:|---|
 | 200 | ENQUEUE |
@@ -4245,6 +4328,9 @@ Server pushes a schedule fire notification to a subscriber.
 | 202 | RESERVE |
 | 203 | EXTEND |
 | 204 | COMPLETE |
+| 207 | SUBSCRIBE |
+| 208 | UNSUBSCRIBE |
+| 209 | NOTIFY |
 **RPC Domain (300–304):**
 | Value | Name |
 |---:|---|

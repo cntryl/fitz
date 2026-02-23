@@ -587,12 +587,19 @@ func (c *client) Subscribe(ctx context.Context, pattern string, handler CommitHa
 		return nil, fmt.Errorf("SUBSCRIBE failed: unexpected status")
 	}
 
-	// Parse subscription_id: [u64]
-	if len(remaining) < 8 {
+	// Parse optional subscription_id: [u8 has_sub_id][u64 sub_id if has=1]
+	if len(remaining) < 1 {
+		return nil, fmt.Errorf("SUBSCRIBE response too short: got %d bytes", len(remaining))
+	}
+	hasSubID := remaining[0]
+	if hasSubID != 1 {
+		return nil, fmt.Errorf("SUBSCRIBE response missing subscription_id")
+	}
+	if len(remaining) < 9 {
 		return nil, fmt.Errorf("SUBSCRIBE response too short for subscription_id: got %d bytes", len(remaining))
 	}
 
-	subID, _, err := connection.ReadU64BE(remaining, 0)
+	subID, _, err := connection.ReadU64BE(remaining, 1)
 	if err != nil {
 		return nil, fmt.Errorf("parse subscription_id: %w", err)
 	}

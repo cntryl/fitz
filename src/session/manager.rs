@@ -963,9 +963,9 @@ impl RuntimeIngress {
                             Route::new(""),
                         ),
                     ) {
-                        Ok(crate::domains::queue::QueueMessage::Unsubscribe { pattern, .. }) => {
-                            Ok(Some(pattern.clone()))
-                        }
+                        Ok(crate::domains::queue::QueueMessage::Unsubscribe {
+                            pattern, ..
+                        }) => Ok(Some(pattern.clone())),
                         Err(e) => Err(e),
                         Ok(_) => Err("parse_unsubscribe returned unexpected variant".to_string()),
                     }

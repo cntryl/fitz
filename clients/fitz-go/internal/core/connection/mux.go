@@ -29,7 +29,7 @@ type Multiplexer struct {
 
 	// Async delivery handlers (Notice NOTIFY, Schedule NOTIFY, RPC REQUEST to worker, RPC RESPONSE per CLIENT_SPEC.md)
 	// notifyHandlers keyed by message type (209 Queue, 409 Lease, 504 Notice, 609 Stream) so multiple domains can subscribe.
-	notifyHandlers      map[uint16]func(subID uint64, route string, payload []byte)
+	notifyHandlers        map[uint16]func(subID uint64, route string, payload []byte)
 	scheduleNotifyHandler func(subID uint64, payload []byte)
 	rpcReqHandler         func(payload []byte) // incoming RPC REQUEST (302) dispatched to worker
 	rpcRespHandler        func(correlationID [16]byte, payload []byte)

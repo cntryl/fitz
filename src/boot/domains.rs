@@ -587,10 +587,19 @@ impl MailboxSink for NoticeDomainSink {
             &frame_ctx.payload,
             *envelope.destination().family(),
             crate::session::SessionId(frame_ctx.session_id),
-            envelope
-                .source()
-                .cloned()
-                .unwrap_or_else(|| envelope.destination().clone()),
+            // Determine subscriber address: use envelope source if available,
+            // otherwise use session inbox for routing notifications back to client
+            if let Some(src) = envelope.source() {
+                src.clone()
+            } else {
+                crate::runtime::routing::RouteAddress::new(
+                    *envelope.destination().family(),
+                    crate::runtime::routing::Route::new(format!(
+                        "inbox://session/{}",
+                        frame_ctx.session_id
+                    )),
+                )
+            },
         ) {
             Ok(msg) => msg,
             Err(e) => {
@@ -1264,10 +1273,34 @@ impl MailboxSink for QueueDomainSink {
         let queue_msg = {
             let mt = frame_ctx.msg_type.as_u16();
             if mt == crate::protocol::queue_codec::msg_type::SUBSCRIBE {
-                let subscriber = envelope
-                    .source()
-                    .cloned()
-                    .unwrap_or_else(|| route_addr.clone());
+                // Determine subscriber address: use envelope source if available,
+                // otherwise use session inbox for routing notifications back to client
+                let subscriber = if let Some(src) = envelope.source() {
+                    tracing::debug!(
+                        domain = "queue",
+                        session = frame_ctx.session_id,
+                        source = %src,
+                        "Queue SUBSCRIBE: using envelope source as subscriber"
+                    );
+                    src.clone()
+                } else {
+                    // Route notifications to the session inbox using RouteFamily::new(1)
+                    // which is the standard session inbox family used in handler registration
+                    let session_inbox = crate::runtime::routing::RouteAddress::new(
+                        crate::runtime::routing::RouteFamily::new(1),
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            frame_ctx.session_id
+                        )),
+                    );
+                    tracing::debug!(
+                        domain = "queue",
+                        session = frame_ctx.session_id,
+                        subscriber = %session_inbox,
+                        "Queue SUBSCRIBE: using session inbox as subscriber (no envelope source)"
+                    );
+                    session_inbox
+                };
                 match crate::protocol::queue_codec::parse_subscribe(
                     route_family,
                     &frame_ctx.payload,
@@ -1287,10 +1320,19 @@ impl MailboxSink for QueueDomainSink {
                     }
                 }
             } else if mt == crate::protocol::queue_codec::msg_type::UNSUBSCRIBE {
-                let subscriber = envelope
-                    .source()
-                    .cloned()
-                    .unwrap_or_else(|| route_addr.clone());
+                // Determine subscriber address: use envelope source if available,
+                // otherwise use session inbox for routing notifications back to client
+                let subscriber = if let Some(src) = envelope.source() {
+                    src.clone()
+                } else {
+                    crate::runtime::routing::RouteAddress::new(
+                        route_family,
+                        crate::runtime::routing::Route::new(format!(
+                            "inbox://session/{}",
+                            frame_ctx.session_id
+                        )),
+                    )
+                };
                 match crate::protocol::queue_codec::parse_unsubscribe(
                     route_family,
                     &frame_ctx.payload,
@@ -1454,10 +1496,7 @@ impl MailboxSink for QueueDomainSink {
                     });
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (
-                        actor.handle_ack(id, token),
-                        None,
-                    )
+                    (actor.handle_ack(id, token), None)
                 }
                 QueueMessage::LeaseExpired { .. } => {
                     // Internal message, not dispatched via sink
@@ -1549,17 +1588,11 @@ impl MailboxSink for QueueDomainSink {
                         "Queue subscription removed"
                     );
 
-                    (
-                        crate::domains::queue::QueueResponse::UnsubscribeOk,
-                        None,
-                    )
+                    (crate::domains::queue::QueueResponse::UnsubscribeOk, None)
                 }
                 QueueMessage::UnsubscribeAll { session_id, .. } => {
                     self.unsubscribe_all(session_id);
-                    (
-                        crate::domains::queue::QueueResponse::UnsubscribeOk,
-                        None,
-                    )
+                    (crate::domains::queue::QueueResponse::UnsubscribeOk, None)
                 }
             }
         };
@@ -1778,10 +1811,19 @@ impl MailboxSink for StreamDomainSink {
             &frame_ctx.payload,
             *envelope.destination().family(),
             crate::session::SessionId(frame_ctx.session_id),
-            envelope
-                .source()
-                .cloned()
-                .unwrap_or_else(|| envelope.destination().clone()),
+            // Determine subscriber address: use envelope source if available,
+            // otherwise use session inbox for routing notifications back to client
+            if let Some(src) = envelope.source() {
+                src.clone()
+            } else {
+                crate::runtime::routing::RouteAddress::new(
+                    *envelope.destination().family(),
+                    crate::runtime::routing::Route::new(format!(
+                        "inbox://session/{}",
+                        frame_ctx.session_id
+                    )),
+                )
+            },
         ) {
             Ok(msg) => {
                 tracing::debug!(
@@ -1996,17 +2038,14 @@ impl MailboxSink for StreamDomainSink {
                     data: vec![],
                 },
                 None,
-            )
+            ),
         };
 
         // If we just committed a stream session, fan out STREAM_NOTIFY (609) to matching subscribers
         if let Some(route) = commit_notify_route {
             let payload = bytes::Bytes::from("{}");
-            let event = crate::runtime::DomainPublishEvent::new(
-                frame_ctx.route_family,
-                route,
-                payload,
-            );
+            let event =
+                crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
             let _ = self.handle_domain_publish(&event);
         }
 
@@ -2751,10 +2790,19 @@ impl MailboxSink for ScheduleDomainSink {
             &frame_ctx.payload,
             *envelope.destination().family(),
             crate::session::SessionId(frame_ctx.session_id),
-            envelope
-                .source()
-                .cloned()
-                .unwrap_or_else(|| envelope.destination().clone()),
+            // Determine subscriber address: use envelope source if available,
+            // otherwise use session inbox for routing notifications back to client
+            if let Some(src) = envelope.source() {
+                src.clone()
+            } else {
+                crate::runtime::routing::RouteAddress::new(
+                    *envelope.destination().family(),
+                    crate::runtime::routing::Route::new(format!(
+                        "inbox://session/{}",
+                        frame_ctx.session_id
+                    )),
+                )
+            },
         ) {
             Ok(msg) => msg,
             Err(e) => {
@@ -3206,7 +3254,10 @@ mod tests {
             inbox_addr.clone(),
             capture_sink as Arc<dyn crate::runtime::router::MailboxSink>,
         );
-        router.register_domain_pattern("queue", queue_sink as Arc<dyn crate::runtime::router::MailboxSink>);
+        router.register_domain_pattern(
+            "queue",
+            queue_sink as Arc<dyn crate::runtime::router::MailboxSink>,
+        );
 
         // 1) Subscribe (207): pattern "queue://realm/area/resource"
         let pattern = "queue://realm/area/resource";
@@ -3240,7 +3291,8 @@ mod tests {
             Bytes::from(send_payload),
             family,
         );
-        let send_env = Envelope::from_route(inbox_addr.clone(), queue_inbound_addr.clone(), send_ctx);
+        let send_env =
+            Envelope::from_route(inbox_addr.clone(), queue_inbound_addr.clone(), send_ctx);
         router.route(send_env).expect("route send");
 
         // 3) Assert inbox received 209 (QUEUE_NOTIFY)
