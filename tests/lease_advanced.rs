@@ -316,7 +316,7 @@ fn should_allow_renew_with_valid_token() {
     };
 
     // Act
-    let renew = LeaseMessage::Renew {
+    let renew = LeaseMessage::Extend {
         family_id: fam,
         route: test_route.clone(),
         owner_id: "holder".to_string(),
@@ -327,8 +327,8 @@ fn should_allow_renew_with_valid_token() {
 
     // Assert
     match response {
-        LeaseResponse::Renewed { fencing_token } => assert!(fencing_token > token_a),
-        _ => panic!("Expected Renewed, got {:?}", response),
+        LeaseResponse::Extended { fencing_token } => assert!(fencing_token > token_a),
+        _ => panic!("Expected Extended, got {:?}", response),
     }
 }
 
@@ -350,7 +350,7 @@ fn should_fail_renew_with_invalid_token() {
     let _ = actor.handle_message(acquire, &mut ctx).unwrap();
 
     // Act
-    let renew_bad_token = LeaseMessage::Renew {
+    let renew_bad_token = LeaseMessage::Extend {
         family_id: fam,
         route: test_route.clone(),
         owner_id: "holder".to_string(),
@@ -693,7 +693,7 @@ fn should_handle_renew_on_expired_lease() {
     let _ = actor.handle_message(acquire, &mut ctx).unwrap();
 
     // Act
-    let renew = LeaseMessage::Renew {
+    let renew = LeaseMessage::Extend {
         family_id: fam,
         route: test_route.clone(),
         owner_id: "holder".to_string(),

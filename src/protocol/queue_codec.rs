@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn should_encode_enqueued_response() {
         // Arrange
-        let response = QueueResponse::Enqueued {
+        let response = QueueResponse::Sent {
             id: MessageId::new(42),
         };
 
@@ -537,7 +537,7 @@ mod tests {
         use crate::domains::queue::ReservedMessage;
 
         // Arrange
-        let response = QueueResponse::Reserved {
+        let response = QueueResponse::Received {
             messages: vec![ReservedMessage {
                 id: MessageId::new(1),
                 token: 999,

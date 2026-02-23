@@ -147,6 +147,8 @@ impl SessionActor {
         Ok(())
     }
 
+
+
     /// Helper to extract base route by stripping known operation suffixes.
     /// For queue operations, the base route is the resource path without the operation.
     /// e.g., "queue://realm/area/jobs/send" -> "queue://realm/area/jobs"
@@ -262,7 +264,7 @@ mod tests {
         let mut ctx = make_ctx();
 
         // Act
-        let result = session.reserve(
+        let result = session.receive(
             RouteFamily::new(1),
             Route::new("queue://realm/area/jobs/reserve"),
             30,
@@ -274,7 +276,7 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "unauthorized: reserve");
+        assert_eq!(result.unwrap_err(), "unauthorized: receive");
     }
 
     #[test]
@@ -291,9 +293,9 @@ mod tests {
         let mut ctx = make_ctx();
 
         // Act
-        let result = session.reserve(
+        let result = session.receive(
             RouteFamily::new(1),
-            Route::new("queue://realm/area/jobs/reserve"),
+            Route::new("queue://realm/area/jobs/receive"),
             30,
             Some(10),
             None,
@@ -348,9 +350,9 @@ mod tests {
         let mut ctx = make_ctx();
 
         // Act
-        let result = session.complete(
+        let result = session.ack(
             RouteFamily::new(1),
-            Route::new("queue://realm/area/jobs/complete"),
+            Route::new("queue://realm/area/jobs/ack"),
             crate::domains::queue::protocol::MessageId::new(1),
             12345,
             &mut actor,
@@ -359,7 +361,7 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "unauthorized: complete");
+        assert_eq!(result.unwrap_err(), "unauthorized: ack");
     }
 
     #[test]
@@ -376,9 +378,9 @@ mod tests {
         let mut ctx = make_ctx();
 
         // Act
-        let result = session.complete(
+        let result = session.ack(
             RouteFamily::new(1),
-            Route::new("queue://realm/area/jobs/complete"),
+            Route::new("queue://realm/area/jobs/ack"),
             crate::domains::queue::protocol::MessageId::new(1),
             12345,
             &mut actor,

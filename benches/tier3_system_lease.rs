@@ -85,7 +85,7 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     let mut phase = 0;
     ctx.measure(|| {
         if phase % 2 == 0 {
-            let msg = LeaseMessage::Renew {
+            let msg = LeaseMessage::Extend {
                 family_id: family,
                 route: route1.clone(),
                 owner_id: "client-1".to_string(),
@@ -94,7 +94,7 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
             };
             actor.receive(msg, &mut bench_ctx);
         } else {
-            let msg = LeaseMessage::Renew {
+            let msg = LeaseMessage::Extend {
                 family_id: family,
                 route: route2.clone(),
                 owner_id: "client-2".to_string(),
@@ -198,7 +198,7 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
                 actor.receive(msg, &mut bench_ctx);
             }
             1 => {
-                let msg = LeaseMessage::Renew {
+                let msg = LeaseMessage::Extend {
                     family_id: family,
                     route: route.clone(),
                     owner_id: "client-1".to_string(),

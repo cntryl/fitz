@@ -429,7 +429,7 @@ mod tests {
                 &self,
                 envelope: Envelope,
             ) -> Result<(), crate::runtime::router::DeliveryError> {
-                if let Some(crate::domains::notice::protocol::NotificationMessage::Notify(n)) =
+                if let Some(crate::domains::notice::protocol::NotificationMessage::Deliver(n)) =
                     envelope.payload::<crate::domains::notice::protocol::NotificationMessage>()
                 {
                     // Record payload bytes

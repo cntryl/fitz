@@ -528,7 +528,7 @@ impl QueueActor {
     }
 
     /// Send multiple messages in one transaction (batch).
-    /// Same semantics as N×handle_enqueue; use for throughput when the caller has many messages.
+    /// Same semantics as N×handle_send; use for throughput when the caller has many messages.
     pub fn handle_send_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
         if items.is_empty() {
             return QueueResponse::SentBatch { ids: vec![] };
@@ -1357,28 +1357,28 @@ pub mod tests {
 
         // Act - Enqueue
         let body = Bytes::from("test message");
-        let enqueue_response = actor.handle_enqueue(body.clone(), None);
+        let enqueue_response = actor.handle_send(body.clone(), None);
 
         // Assert - Enqueue
         let msg_id = match enqueue_response {
-            QueueResponse::Enqueued { id } => id,
+            QueueResponse::Sent { id } => id,
             _ => panic!("Expected Enqueued response"),
         };
         assert_eq!(actor.ready_len(), 1);
 
         // Act - Reserve
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         // Assert - Reserve
         match reserve_response {
-            QueueResponse::Reserved { messages } => {
+            QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, msg_id);
                 assert_eq!(messages[0].body, body);
                 assert_eq!(messages[0].attempts, 1);
                 assert_eq!(messages[0].lease_seconds, 30);
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected Received response"),
         }
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
@@ -1401,7 +1401,7 @@ pub mod tests {
         );
 
         // Act
-        let response = actor.handle_reserve(30, Some(10));
+        let response = actor.handle_receive(30, Some(10));
 
         // Assert
         match response {
@@ -1429,19 +1429,19 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body, None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let (msg_id, token) = match reserve_response {
-            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Received response"),
         };
 
         // Act
-        let response = actor.handle_complete(msg_id, token);
+        let response = actor.handle_ack(msg_id, token);
 
         // Assert
-        assert_eq!(response, QueueResponse::Completed);
+        assert_eq!(response, QueueResponse::Acked);
         assert_eq!(actor.inflight.len(), 0);
     }
 
@@ -1462,16 +1462,16 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body, None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let msg_id = match reserve_response {
-            QueueResponse::Reserved { messages } => messages[0].id,
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => messages[0].id,
+            _ => panic!("Expected Received response"),
         };
 
         // Act
-        let response = actor.handle_complete(msg_id, 99999);
+        let response = actor.handle_ack(msg_id, 99999);
 
         // Assert
         assert_eq!(response, QueueResponse::InvalidToken);
@@ -1497,12 +1497,12 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body, None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let (msg_id, token) = match reserve_response {
-            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Received response"),
         };
 
         let old_expiry = actor.inflight.get(&msg_id).unwrap().expires_at;
@@ -1534,12 +1534,12 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body, None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let msg_id = match reserve_response {
-            QueueResponse::Reserved { messages } => messages[0].id,
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => messages[0].id,
+            _ => panic!("Expected Received response"),
         };
 
         // Act
@@ -1568,12 +1568,12 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body.clone(), None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body.clone(), None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let msg_id = match reserve_response {
-            QueueResponse::Reserved { messages } => messages[0].id,
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => messages[0].id,
+            _ => panic!("Expected Received response"),
         };
 
         assert_eq!(actor.ready_len(), 0);
@@ -1589,16 +1589,16 @@ pub mod tests {
         assert!(actor.ready_contains(msg_id));
 
         // Act - Reserve again
-        let redelivery_response = actor.handle_reserve(30, Some(1));
+        let redelivery_response = actor.handle_receive(30, Some(1));
 
         // Assert - Attempts incremented
         match redelivery_response {
-            QueueResponse::Reserved { messages } => {
+            QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, msg_id);
                 assert_eq!(messages[0].attempts, 2); // Incremented from 1 to 2
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected Received response"),
         }
     }
 
@@ -1621,20 +1621,20 @@ pub mod tests {
         // Enqueue 5 messages
         for i in 0..5 {
             let body = Bytes::from(format!("message {}", i));
-            actor.handle_enqueue(body, None);
+            actor.handle_send(body, None);
         }
 
         // Act
-        let response = actor.handle_reserve(30, Some(3));
+        let response = actor.handle_receive(30, Some(3));
 
         // Assert
         match response {
-            QueueResponse::Reserved { messages } => {
+            QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 3);
                 assert_eq!(actor.ready_len(), 2); // 2 remaining
                 assert_eq!(actor.inflight.len(), 3);
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected Received response"),
         }
     }
 
@@ -1657,25 +1657,25 @@ pub mod tests {
         // Enqueue messages in known order
         for i in 0..5 {
             let body = Bytes::from(format!("msg-{}", i));
-            let _ = actor.handle_enqueue(body, None);
+            let _ = actor.handle_send(body, None);
         }
 
         // Act & Assert - Reserve and ensure all messages are returned
         let mut reserved_all = Vec::new();
         loop {
-            match actor.handle_reserve(30, Some(2)) {
-                QueueResponse::Reserved { messages } => {
+            match actor.handle_receive(30, Some(2)) {
+                QueueResponse::Received { messages } => {
                     for m in messages {
                         reserved_all.push(m.body);
                         // Simulate immediate completion to prevent redelivery
-                        let _ = actor.handle_complete(m.id, m.token);
+                        let _ = actor.handle_ack(m.id, m.token);
                     }
                 }
                 QueueResponse::NotFound => {
                     // Queue is empty, we're done
                     break;
                 }
-                _ => panic!("Expected Reserved or NotFound response"),
+                _ => panic!("Expected Received or NotFound response"),
             }
         }
 
@@ -1704,12 +1704,12 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body, None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let (msg_id, token) = match reserve_response {
-            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Received response"),
         };
 
         // Act - Extend before first timer expires
@@ -1744,12 +1744,12 @@ pub mod tests {
         );
 
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        actor.handle_send(body, None);
+        let reserve_response = actor.handle_receive(30, Some(1));
 
         let (msg_id, token) = match reserve_response {
-            QueueResponse::Reserved { messages } => (messages[0].id, messages[0].token),
-            _ => panic!("Expected Reserved response"),
+            QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
+            _ => panic!("Expected Received response"),
         };
 
         // Act - Advance past expiration
@@ -1768,7 +1768,7 @@ pub mod tests {
         let extend_response2 = actor.handle_extend(msg_id, token, 60);
         assert_eq!(extend_response2, QueueResponse::NotFound);
 
-        let complete_response = actor.handle_complete(msg_id, token);
+        let complete_response = actor.handle_ack(msg_id, token);
         assert_eq!(complete_response, QueueResponse::NotFound);
     }
 
@@ -1791,7 +1791,7 @@ pub mod tests {
 
         // Act
         let extend_response = actor.handle_extend(fake_id, 12345, 60);
-        let complete_response = actor.handle_complete(fake_id, 12345);
+        let complete_response = actor.handle_ack(fake_id, 12345);
 
         // Assert
         assert_eq!(extend_response, QueueResponse::NotFound);
@@ -1818,10 +1818,10 @@ pub mod tests {
 
         // Act - Enqueue with 30 second delay
         let body = Bytes::from("delayed message");
-        let response = actor.handle_enqueue(body.clone(), Some(30));
+        let response = actor.handle_send(body.clone(), Some(30));
 
         let msg_id = match response {
-            QueueResponse::Enqueued { id } => id,
+            QueueResponse::Sent { id } => id,
             _ => panic!("Expected Enqueued response"),
         };
 
@@ -1830,7 +1830,7 @@ pub mod tests {
         assert_eq!(actor.delayed.len(), 1);
 
         // Act - Try to reserve immediately (should be empty)
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        let reserve_response = actor.handle_receive(30, Some(1));
         match reserve_response {
             QueueResponse::NotFound => {
                 // Expected - delayed messages not yet available
@@ -1847,14 +1847,14 @@ pub mod tests {
         assert_eq!(actor.delayed.len(), 0);
 
         // Act - Reserve now succeeds
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        let reserve_response = actor.handle_receive(30, Some(1));
         match reserve_response {
-            QueueResponse::Reserved { messages } => {
+            QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, msg_id);
                 assert_eq!(messages[0].body, body);
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected Received response"),
         }
     }
 
@@ -1878,18 +1878,18 @@ pub mod tests {
 
         // Act - Enqueue message
         let body = Bytes::from("test message");
-        let enqueue_response = actor.handle_enqueue(body.clone(), None);
+        let enqueue_response = actor.handle_send(body.clone(), None);
         let msg_id = match enqueue_response {
-            QueueResponse::Enqueued { id } => id,
-            _ => panic!("Expected Enqueued response"),
+            QueueResponse::Sent { id } => id,
+            _ => panic!("Expected Sent response"),
         };
 
         // Simulate 3 failed delivery attempts
         for attempt in 1..=3 {
             // Reserve
-            let reserve_response = actor.handle_reserve(30, Some(1));
+            let reserve_response = actor.handle_receive(30, Some(1));
             match reserve_response {
-                QueueResponse::Reserved { messages } => {
+                QueueResponse::Received { messages } => {
                     assert_eq!(messages.len(), 1);
                     assert_eq!(messages[0].attempts, attempt);
                 }
@@ -1942,14 +1942,14 @@ pub mod tests {
 
         // Act - Enqueue message
         let body = Bytes::from("test message");
-        actor.handle_enqueue(body, None);
+        actor.handle_send(body, None);
 
         // Simulate 10 failed delivery attempts
         for attempt in 1..=10 {
             // Reserve
-            let reserve_response = actor.handle_reserve(30, Some(1));
+            let reserve_response = actor.handle_receive(30, Some(1));
             match reserve_response {
-                QueueResponse::Reserved { messages } => {
+                QueueResponse::Received { messages } => {
                     assert_eq!(messages.len(), 1);
                     assert_eq!(messages[0].attempts, attempt);
                 }
@@ -1966,13 +1966,13 @@ pub mod tests {
         }
 
         // Assert - Message still available after 10 attempts
-        let reserve_response = actor.handle_reserve(30, Some(1));
+        let reserve_response = actor.handle_receive(30, Some(1));
         match reserve_response {
-            QueueResponse::Reserved { messages } => {
+            QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].attempts, 11);
             }
-            _ => panic!("Expected Reserved response"),
+            _ => panic!("Expected Received response"),
         }
     }
 }

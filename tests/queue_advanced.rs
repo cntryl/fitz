@@ -45,8 +45,8 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     let mut message_ids = Vec::new();
     for i in 0..30 {
         let body = Bytes::from(format!("task {}", i));
-        match actor.handle_enqueue(body, None) {
-            QueueResponse::Enqueued { id } => message_ids.push(id),
+        match actor.handle_send(body, None) {
+            QueueResponse::Sent { id } => message_ids.push(id),
             _ => panic!("Expected Enqueued"),
         }
     }
@@ -57,8 +57,8 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     let mut _consumer_c_msgs = Vec::new();
 
     // Consumer A reserves 10 messages
-    match actor.handle_reserve(30, Some(10)) {
-        QueueResponse::Reserved { messages } => {
+    match actor.handle_receive(30, Some(10)) {
+        QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
             _consumer_a_msgs = messages;
         }
@@ -66,8 +66,8 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Consumer B reserves 10 messages
-    match actor.handle_reserve(30, Some(10)) {
-        QueueResponse::Reserved { messages } => {
+    match actor.handle_receive(30, Some(10)) {
+        QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
             _consumer_b_msgs = messages;
         }
@@ -75,8 +75,8 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Consumer C reserves remaining 10 messages
-    match actor.handle_reserve(30, Some(10)) {
-        QueueResponse::Reserved { messages } => {
+    match actor.handle_receive(30, Some(10)) {
+        QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
             _consumer_c_msgs = messages;
         }
@@ -123,15 +123,15 @@ fn should_redelivery_messages_after_crash() {
 
         for i in 0..10 {
             let body = Bytes::from(format!("task {}", i));
-            match actor.handle_enqueue(body, None) {
-                QueueResponse::Enqueued { id } => original_ids.push(id),
+            match actor.handle_send(body, None) {
+                QueueResponse::Sent { id } => original_ids.push(id),
                 _ => panic!("Expected Enqueued"),
             }
         }
 
         // Consumer reserves 5 messages (simulating in-flight state)
-        match actor.handle_reserve(30, Some(5)) {
-            QueueResponse::Reserved { messages } => {
+        match actor.handle_receive(30, Some(5)) {
+            QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 5);
             }
             _ => panic!("Expected Reserved"),
@@ -168,8 +168,8 @@ fn should_redelivery_messages_after_crash() {
     // Verify recovery can deliver all original messages
     let mut recovered_count = 0;
     loop {
-        match actor.handle_reserve(30, Some(5)) {
-            QueueResponse::Reserved { messages } => {
+        match actor.handle_receive(30, Some(5)) {
+            QueueResponse::Received { messages } => {
                 recovered_count += messages.len();
             }
             QueueResponse::NotFound => {
@@ -204,10 +204,10 @@ fn should_preserve_delayed_visibility_across_restart() {
         );
 
         // Message 1: immediately visible
-        actor.handle_enqueue(Bytes::from("immediate"), None);
+        actor.handle_send(Bytes::from("immediate"), None);
 
         // Message 2: delayed 1 hour
-        actor.handle_enqueue(Bytes::from("delayed_1h"), Some(3600));
+        actor.handle_send(Bytes::from("delayed_1h"), Some(3600));
 
         // Verify in-memory state
         assert_eq!(actor.ready_len(), 1, "Should have 1 ready message");
@@ -228,8 +228,8 @@ fn should_preserve_delayed_visibility_across_restart() {
     // Note: delayed is private field, so verify behavior through reserve instead
 
     // Verify immediately visible
-    match actor.handle_reserve(30, Some(1)) {
-        QueueResponse::Reserved { messages } => {
+    match actor.handle_receive(30, Some(1)) {
+        QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0].body, Bytes::from("immediate"));
         }
@@ -261,8 +261,8 @@ fn should_prevent_id_collisions_across_crash() {
 
         for i in 0..10 {
             let body = Bytes::from(format!("batch1-{}", i));
-            match actor.handle_enqueue(body, None) {
-                QueueResponse::Enqueued { id } => first_batch_ids.push(id.as_u64()),
+            match actor.handle_send(body, None) {
+                QueueResponse::Sent { id } => first_batch_ids.push(id.as_u64()),
                 _ => panic!("Expected Enqueued"),
             }
         }
@@ -285,8 +285,8 @@ fn should_prevent_id_collisions_across_crash() {
 
         for i in 0..10 {
             let body = Bytes::from(format!("batch2-{}", i));
-            match actor.handle_enqueue(body, None) {
-                QueueResponse::Enqueued { id } => second_batch_ids.push(id.as_u64()),
+            match actor.handle_send(body, None) {
+                QueueResponse::Sent { id } => second_batch_ids.push(id.as_u64()),
                 _ => panic!("Expected Enqueued"),
             }
         }
@@ -328,9 +328,9 @@ fn should_redelivery_message_on_lease_expiration() {
 
     // Act
     // Enqueue and reserve message
-    actor.handle_enqueue(Bytes::from("work"), None);
-    match actor.handle_reserve(30, Some(1)) {
-        QueueResponse::Reserved { messages } => {
+    actor.handle_send(Bytes::from("work"), None);
+    match actor.handle_receive(30, Some(1)) {
+        QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 1);
         }
         _ => panic!("Expected Reserved"),

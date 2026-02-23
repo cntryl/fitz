@@ -2,7 +2,7 @@
 // Combined from: lease_auth.rs, lease_semantics.rs, lease_realm_isolation.rs
 
 use fitz::auth::Permission;
-use fitz::domains::lease::session::{AcquireRequest, ReleaseRequest, RenewRequest, SessionActor};
+use fitz::domains::lease::session::{AcquireRequest, ReleaseRequest, ExtendRequest, SessionActor};
 use fitz::domains::lease::LeaseActor;
 use fitz::runtime::actor::{Actor, Context};
 use fitz::runtime::router::Router;
@@ -110,8 +110,8 @@ fn should_reject_unauthorized_lease_renew() {
     let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
 
     // Act
-    let res = session.renew(
-        RenewRequest {
+    let res = session.extend(
+        ExtendRequest {
             family: RouteFamily::new(1),
             route: Route::new("lease://realm/locks/db-migration"),
             owner_id: "owner1".to_string(),
@@ -124,7 +124,7 @@ fn should_reject_unauthorized_lease_renew() {
 
     // Assert
     assert!(res.is_err());
-    assert_eq!(res.unwrap_err(), "unauthorized: renew");
+    assert_eq!(res.unwrap_err(), "unauthorized: extend");
 }
 
 #[test]
@@ -344,7 +344,7 @@ fn should_renew_lease_with_valid_token() {
     actor.receive(acquire_msg, &mut ctx);
 
     // Act
-    let renew_msg = LeaseMessage::Renew {
+    let renew_msg = LeaseMessage::Extend {
         family_id: RouteFamily::new(1),
         route: route.clone(),
         owner_id: "client-1".to_string(),

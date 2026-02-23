@@ -251,8 +251,8 @@ mod tests {
         let session = SessionActor::new(SessionId(1), SessionPermissions::empty());
 
         // Act
-        let res = session.renew(
-            RenewRequest {
+        let res = session.extend(
+            ExtendRequest {
                 family: RouteFamily::new(1),
                 route: Route::new("lease://realm/locks/db-migration"),
                 owner_id: "owner1".to_string(),

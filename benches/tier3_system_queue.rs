@@ -31,9 +31,9 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         .map(|p| (p.clone(), None))
         .collect();
     ctx.measure(|| {
-        let _ = actor.handle_enqueue_batch(&batch_50);
+        let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
-            let _ = actor.handle_reserve(30, Some(1));
+            let _ = actor.handle_receive(30, Some(1));
         }
     });
 }
@@ -64,8 +64,8 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
     ctx.measure(|| {
-        let _ = actor.handle_enqueue_batch(&batch_mixed);
-        let _ = actor.handle_reserve(1, Some(10));
+        let _ = actor.handle_send_batch(&batch_mixed);
+        let _ = actor.handle_receive(1, Some(10));
     });
 }
 
@@ -98,7 +98,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
 
     let payload = Bytes::from_static(b"recovery message");
     for _ in 0..100 {
-        let _ = pre_actor.handle_enqueue(payload.clone(), None);
+        let _ = pre_actor.handle_send(payload.clone(), None);
     }
     drop(pre_actor);
 
@@ -126,9 +126,9 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
     ctx.measure(|| {
-        let _ = actor.handle_enqueue_batch(&batch_50);
+        let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
-            let _ = actor.handle_reserve(30, Some(1));
+            let _ = actor.handle_receive(30, Some(1));
         }
     });
 }

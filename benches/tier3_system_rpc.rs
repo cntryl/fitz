@@ -1,7 +1,7 @@
 //! RPC domain tier 3 system benchmarks using stress.
 //!
 //! Measures the **real in-proc RPC path**: request → route actor (correlation, dispatch)
-//! → worker (RequestDelivery) → response + ack → route actor (release lease).
+//! → worker (Deliver) → response + ack → route actor (release lease).
 //! Uses router + mailboxes so ctx.send() and message delivery are included.
 
 use bytes::Bytes;
@@ -17,7 +17,7 @@ use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Bench worker: receives RequestDelivery, immediately sends Response + Ack to route.
+/// Bench worker: receives Deliver, immediately sends Response + Ack to route.
 /// Exercises correlation map and mailbox delivery.
 struct BenchRpcWorker {
     route_addr: RouteAddress,
@@ -27,7 +27,7 @@ impl Actor for BenchRpcWorker {
     type Message = RpcMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        if let RpcMessage::RequestDelivery(work_item) = msg {
+        if let RpcMessage::Deliver(work_item) = msg {
             let resp = RpcResponse::single(work_item.correlation_id, work_item.body.clone());
             let _ = ctx.send(self.route_addr.clone(), RpcMessage::Response(resp));
             let _ = ctx.send(

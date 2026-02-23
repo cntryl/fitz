@@ -498,7 +498,7 @@ mod tests {
 
         // Act - Owner 1 tries to renew with stale token=1
         lease_actor_ref
-            .send(LeaseMessage::Renew {
+            .send(LeaseMessage::Extend {
                 family_id: test_family(1),
                 route: test_route("/lease/test"),
                 owner_id: "owner-1".to_string(),

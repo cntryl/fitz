@@ -49,7 +49,7 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
 
     ctx.measure(|| {
         actor.receive(
-            QueueMessage::Enqueue {
+            QueueMessage::Send {
                 family_id: RouteFamily::new(0),
                 route: Route::new(route.to_string()),
                 body: Bytes::from_static(b"msg"),

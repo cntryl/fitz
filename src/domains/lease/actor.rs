@@ -970,7 +970,7 @@ mod tests {
         };
 
         // Act
-        let renew_response = actor.handle_renew(
+        let renew_response = actor.handle_extend(
             test_key("acme", "locks", "test1"),
             "owner1".to_string(),
             token,
@@ -979,10 +979,10 @@ mod tests {
 
         // Assert
         match renew_response {
-            LeaseResponse::Renewed { fencing_token } => {
+            LeaseResponse::Extended { fencing_token } => {
                 assert!(fencing_token > token);
             }
-            _ => panic!("Expected Renewed"),
+            _ => panic!("Expected Extended"),
         }
     }
 
@@ -998,7 +998,7 @@ mod tests {
         );
 
         // Act
-        let response = actor.handle_renew(
+        let response = actor.handle_extend(
             test_key("acme", "locks", "test1"),
             "owner1".to_string(),
             999,
@@ -1039,7 +1039,7 @@ mod tests {
         clock_ref.advance(Duration::from_secs(10));
 
         // Act
-        let renew_response = actor.handle_renew(
+        let renew_response = actor.handle_extend(
             test_key("acme", "locks", "test1"),
             "owner1".to_string(),
             token,

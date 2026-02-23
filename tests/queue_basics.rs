@@ -91,7 +91,7 @@ fn should_isolate_queue_messages_by_realm() {
     let (mut queue_realm2, mut ctx2) = make_queue_actor("realm2", "tasks", "work");
 
     // Act
-    let msg1 = QueueMessage::Enqueue {
+    let msg1 = QueueMessage::Send {
         family_id: RouteFamily::new(1),
         route: Route::new("queue://realm1/tasks/work"),
         body: vec![1, 2, 3].into(),
@@ -99,7 +99,7 @@ fn should_isolate_queue_messages_by_realm() {
     };
     queue_realm1.receive(msg1, &mut ctx1);
 
-    let msg2 = QueueMessage::Enqueue {
+    let msg2 = QueueMessage::Send {
         family_id: RouteFamily::new(1),
         route: Route::new("queue://realm2/tasks/work"),
         body: vec![4, 5, 6].into(),
@@ -165,7 +165,7 @@ fn should_accept_queue_operations_only_in_bound_realm() {
     let (mut actor, mut ctx) = make_queue_actor("production", "tasks", "work");
 
     // Act
-    let msg = QueueMessage::Enqueue {
+    let msg = QueueMessage::Send {
         family_id: RouteFamily::new(1),
         route: Route::new("queue://production/tasks/work"),
         body: vec![1, 2, 3].into(),
