@@ -716,9 +716,11 @@ impl QueueActor {
             });
         }
 
-        // If no messages were reserved, return NotFound error
+        // If no messages were reserved, return an empty response (avoid NotFound)
+        // Clients expect an empty slice when the queue is empty rather than an error.
+        // Long‑polling is handled at the RPC layer using wait_seconds (see docs above).
         if messages.is_empty() {
-            return QueueResponse::NotFound;
+            return QueueResponse::Received { messages }
         }
 
         QueueResponse::Received { messages }

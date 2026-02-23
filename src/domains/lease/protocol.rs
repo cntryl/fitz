@@ -55,6 +55,12 @@ impl LeaseKey {
             None
         }
     }
+
+    /// Convert key back into a canonical lease route string (no operation suffix).
+    pub fn to_route(&self) -> Route {
+        let s = format!("lease://{}/{}/{}", self.realm, self.area, self.resource);
+        Route::new(&s)
+    }
 }
 
 #[cfg(test)]

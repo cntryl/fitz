@@ -1970,10 +1970,9 @@ impl LeaseDomainSink {
                         &event.payload,
                     );
 
+                    // build context using the actual subscriber session ID (previously hardcoded 0)
                     let notify_ctx = FrameContext::new(
-                        // XXX: Need a way to track session_id or channel for notification routing
-                        // For now, use a placeholder - this should come from subscriber metadata
-                        0,
+                        sub.session_id,
                         crate::protocol::frame::ChannelId::Sub,
                         crate::protocol::tlv::MessageType::new(409), // LEASE_NOTIFY
                         bytes::Bytes::from(notify_payload),
@@ -2251,7 +2250,16 @@ impl MailboxSink for LeaseDomainSink {
                 owner_id,
                 fencing_token,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_release(key, effective_owner(owner_id), fencing_token),
+                Some(key) => {
+                    let resp = self.handle_release(key.clone(), effective_owner(owner_id), fencing_token);
+                    if let crate::domains::lease::protocol::LeaseResponse::Released = resp {
+                        // Notify subscribers that this lease route is now available
+                        let route = key.to_route();
+                        let event = crate::runtime::DomainPublishEvent::new(key.family, route, bytes::Bytes::new());
+                        let _ = self.handle_domain_publish(&event);
+                    }
+                    resp
+                }
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Query { family_id, route } => {
@@ -2261,10 +2269,21 @@ impl MailboxSink for LeaseDomainSink {
                 }
             }
             LeaseMessage::Tick => {
-                // Proactively expire old leases
+                // Proactively expire old leases and notify for each expired route
                 let now = std::time::Instant::now();
                 let mut leases = self.leases.lock();
-                leases.retain(|_, state| state.expiry > now);
+                let expired_keys: Vec<crate::domains::lease::protocol::LeaseKey> = leases
+                    .iter()
+                    .filter(|(_, state)| state.expiry <= now)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+
+                for key in &expired_keys {
+                    leases.remove(key);
+                    let route = key.to_route();
+                    let event = crate::runtime::DomainPublishEvent::new(key.family, route, bytes::Bytes::new());
+                    let _ = self.handle_domain_publish(&event);
+                }
                 return Ok(());
             }
             LeaseMessage::Subscribe { family_id, pattern } => {

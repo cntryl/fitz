@@ -88,7 +88,7 @@ impl StreamActor {
 
         let area_actor_route = Route::new(format!("stream://{}/{}/__area__", realm, area));
         let commit_notification_route = Route::new(format!(
-            "stream://{}/{}/{}/available",
+            "stream://{}/{}/{}",
             realm, area, resource
         ));
 

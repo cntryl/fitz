@@ -249,8 +249,9 @@ impl LeaseActor {
                         let response = self.handle_release(key.clone(), owner_id, fencing_token);
 
                         if matches!(response, LeaseResponse::Released) {
-                            // Schedule debounced availability notification
-                            self.schedule_availability_notification(ctx);
+                            // Schedule debounced availability notification on the concrete lease route
+                            let route = key.to_route();
+                            self.schedule_availability_notification(ctx, route);
                             self.grant_next_waiter(&key, ctx);
                         }
 
@@ -594,16 +595,13 @@ impl LeaseActor {
     ///
     /// Publishes to `lease://{realm}/{area}/{resource}/changed` when a lease
     /// is released or expires. Uses 25ms debounce to coalesce multiple events.
-    fn schedule_availability_notification(&mut self, ctx: &mut Context<LeaseActor>) {
+    fn schedule_availability_notification(&mut self, ctx: &mut Context<LeaseActor>, route: crate::runtime::routing::Route) {
         if self.notify_timer.is_some() {
             // Already scheduled - timer will handle transmission
             return;
         }
 
-        // Build the notification route to publish to
-        // Format: lease://realm/area/resource/changed
-        let route = crate::runtime::routing::Route::new("lease://*/*/*/changed");
-
+        // Publish on the specific lease route (clients subscribe to the lease route itself)
         self.pending_publish = Some(crate::runtime::DomainPublishEvent::new(
             self.family,
             route,
@@ -632,7 +630,9 @@ impl LeaseActor {
         }
 
         self.leases.remove(key);
-        self.schedule_availability_notification(ctx);
+        // notify on the specific lease route
+        let route = key.to_route();
+        self.schedule_availability_notification(ctx, route);
         self.grant_next_waiter(key, ctx);
     }
 }
@@ -721,8 +721,12 @@ impl LeaseActor {
         }
 
         if !expired_keys.is_empty() {
-            // Schedule debounced availability notification for expired leases
-            self.schedule_availability_notification(ctx);
+            // Schedule debounced availability notification for each expired lease
+            // (debounce logic will coalesce notifications if they happen close together)
+            for key in &expired_keys {
+                let route = key.to_route();
+                self.schedule_availability_notification(ctx, route);
+            }
         }
 
         // Grant next waiter for each expired lease
