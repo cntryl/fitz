@@ -720,7 +720,7 @@ impl QueueActor {
         // Clients expect an empty slice when the queue is empty rather than an error.
         // Long‑polling is handled at the RPC layer using wait_seconds (see docs above).
         if messages.is_empty() {
-            return QueueResponse::Received { messages }
+            return QueueResponse::Received { messages };
         }
 
         QueueResponse::Received { messages }
@@ -1405,12 +1405,11 @@ pub mod tests {
         // Act
         let response = actor.handle_receive(30, Some(10));
 
-        // Assert
+        // Assert - empty queue returns Received with no messages (not NotFound)
         match response {
-            QueueResponse::NotFound => {
-                // Expected - empty queue returns NotFound
-            }
-            _ => panic!("Expected NotFound response for empty queue"),
+            QueueResponse::NotFound => {}
+            QueueResponse::Received { messages } if messages.is_empty() => {}
+            _ => panic!("Expected NotFound or empty Received response for empty queue"),
         }
     }
 
@@ -1667,6 +1666,10 @@ pub mod tests {
         loop {
             match actor.handle_receive(30, Some(2)) {
                 QueueResponse::Received { messages } => {
+                    if messages.is_empty() {
+                        // Queue is empty (actor returns empty Received, not NotFound)
+                        break;
+                    }
                     for m in messages {
                         reserved_all.push(m.body);
                         // Simulate immediate completion to prevent redelivery
@@ -1834,10 +1837,9 @@ pub mod tests {
         // Act - Try to reserve immediately (should be empty)
         let reserve_response = actor.handle_receive(30, Some(1));
         match reserve_response {
-            QueueResponse::NotFound => {
-                // Expected - delayed messages not yet available
-            }
-            _ => panic!("Expected NotFound response for delayed messages"),
+            QueueResponse::NotFound => {}
+            QueueResponse::Received { messages } if messages.is_empty() => {}
+            _ => panic!("Expected NotFound or empty Received response for delayed messages"),
         }
 
         // Act - Advance time past delay

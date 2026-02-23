@@ -8,7 +8,7 @@
 //! on the wire.
 
 use crate::domains::notice::protocol::{
-    NotificationMessage, DeliverMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+    DeliverMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };
 use crate::protocol::frame_context::FrameContext;

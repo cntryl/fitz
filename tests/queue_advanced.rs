@@ -170,10 +170,12 @@ fn should_redelivery_messages_after_crash() {
     loop {
         match actor.handle_receive(30, Some(5)) {
             QueueResponse::Received { messages } => {
+                if messages.is_empty() {
+                    break;
+                }
                 recovered_count += messages.len();
             }
             QueueResponse::NotFound => {
-                // Queue is empty, we're done
                 break;
             }
             _ => panic!("Expected Reserved or NotFound"),

@@ -595,7 +595,11 @@ impl LeaseActor {
     ///
     /// Publishes to `lease://{realm}/{area}/{resource}/changed` when a lease
     /// is released or expires. Uses 25ms debounce to coalesce multiple events.
-    fn schedule_availability_notification(&mut self, ctx: &mut Context<LeaseActor>, route: crate::runtime::routing::Route) {
+    fn schedule_availability_notification(
+        &mut self,
+        ctx: &mut Context<LeaseActor>,
+        route: crate::runtime::routing::Route,
+    ) {
         if self.notify_timer.is_some() {
             // Already scheduled - timer will handle transmission
             return;

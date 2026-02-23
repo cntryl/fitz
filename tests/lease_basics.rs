@@ -2,7 +2,7 @@
 // Combined from: lease_auth.rs, lease_semantics.rs, lease_realm_isolation.rs
 
 use fitz::auth::Permission;
-use fitz::domains::lease::session::{AcquireRequest, ReleaseRequest, ExtendRequest, SessionActor};
+use fitz::domains::lease::session::{AcquireRequest, ExtendRequest, ReleaseRequest, SessionActor};
 use fitz::domains::lease::LeaseActor;
 use fitz::runtime::actor::{Actor, Context};
 use fitz::runtime::router::Router;

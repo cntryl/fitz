@@ -147,8 +147,6 @@ impl SessionActor {
         Ok(())
     }
 
-
-
     /// Helper to extract base route by stripping known operation suffixes.
     /// For queue operations, the base route is the resource path without the operation.
     /// e.g., "queue://realm/area/jobs/send" -> "queue://realm/area/jobs"

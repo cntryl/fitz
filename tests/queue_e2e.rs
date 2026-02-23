@@ -72,7 +72,7 @@ async fn should_dequeue_message_ws() {
     should_dequeue_message::<WsQueueConnector>(&server).await;
 }
 
-// Generic test helper for error on dequeue empty
+// Generic test helper for dequeue on empty queue (returns success with 0 messages)
 async fn should_reject_dequeue_empty_queue<C>(server: &TestServer)
 where
     C: QueueConnector,
@@ -84,9 +84,11 @@ where
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
-    // Assert
-    let (_msg_type, status, _data) = parse_queue_response(&response);
-    assert_ne!(status, 0, "Expected failure for dequeue on empty queue");
+    // Assert - empty queue returns success with 0 messages (not an error)
+    let (_msg_type, status, data) = parse_queue_response(&response);
+    assert_eq!(status, 0, "Dequeue on empty queue returns success");
+    let messages = fixtures::transport::extract_queue_messages(&data).expect("extract messages");
+    assert!(messages.is_empty(), "Expected no messages from empty queue");
 }
 
 #[tokio::test]
@@ -115,18 +117,20 @@ where
         .await
         .expect("enqueue q1");
 
-    // Act - dequeue from different queue
+    // Act - dequeue from different queue (q2 is empty)
     let dequeue_q2 = build_queue_dequeue("queue://test/app/q2");
     let response = client
         .send_and_receive(&dequeue_q2, 2000)
         .await
         .expect("dequeue q2");
 
-    // Assert - should fail (different queue is empty)
-    let (_msg_type, status, _data) = parse_queue_response(&response);
-    assert_ne!(
-        status, 0,
-        "Expected failure for dequeue from different queue"
+    // Assert - different queue is empty, so success with 0 messages (isolation verified)
+    let (_msg_type, status, data) = parse_queue_response(&response);
+    assert_eq!(status, 0, "Dequeue from empty queue returns success");
+    let messages = fixtures::transport::extract_queue_messages(&data).expect("extract messages");
+    assert!(
+        messages.is_empty(),
+        "Expected no messages from q2 (enqueued only to q1)"
     );
 }
 

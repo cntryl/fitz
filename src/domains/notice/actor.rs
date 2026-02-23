@@ -12,7 +12,7 @@
 //! - **UnsubscribeAll**: Clean up all subscriptions for a disconnected session
 
 use crate::domains::notice::protocol::{
-    NotificationMessage, DeliverMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+    DeliverMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };
 use crate::runtime::actor::{Actor, Context};

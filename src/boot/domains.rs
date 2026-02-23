@@ -2251,11 +2251,16 @@ impl MailboxSink for LeaseDomainSink {
                 fencing_token,
             } => match LeaseKey::from_route(family_id, &route) {
                 Some(key) => {
-                    let resp = self.handle_release(key.clone(), effective_owner(owner_id), fencing_token);
+                    let resp =
+                        self.handle_release(key.clone(), effective_owner(owner_id), fencing_token);
                     if let crate::domains::lease::protocol::LeaseResponse::Released = resp {
                         // Notify subscribers that this lease route is now available
                         let route = key.to_route();
-                        let event = crate::runtime::DomainPublishEvent::new(key.family, route, bytes::Bytes::new());
+                        let event = crate::runtime::DomainPublishEvent::new(
+                            key.family,
+                            route,
+                            bytes::Bytes::new(),
+                        );
                         let _ = self.handle_domain_publish(&event);
                     }
                     resp
@@ -2281,7 +2286,11 @@ impl MailboxSink for LeaseDomainSink {
                 for key in &expired_keys {
                     leases.remove(key);
                     let route = key.to_route();
-                    let event = crate::runtime::DomainPublishEvent::new(key.family, route, bytes::Bytes::new());
+                    let event = crate::runtime::DomainPublishEvent::new(
+                        key.family,
+                        route,
+                        bytes::Bytes::new(),
+                    );
                     let _ = self.handle_domain_publish(&event);
                 }
                 return Ok(());

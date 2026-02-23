@@ -30,4 +30,4 @@ pub mod session;
 pub mod bench; // Zero-copy notification primitives for benchmarking
 
 pub use actor::NoticeRouteActor;
-pub use protocol::{NoticeError, NotificationMessage, DeliverMessage};
+pub use protocol::{DeliverMessage, NoticeError, NotificationMessage};
