@@ -1152,8 +1152,20 @@ impl QueueDomainSink {
         event: &crate::runtime::DomainPublishEvent,
     ) -> Result<(), DeliveryError> {
         let family_id = event.family_id.as_u64();
+        tracing::info!(
+            domain = "queue",
+            family_id = family_id,
+            route = %event.route,
+            "Queue: handle_domain_publish called (ENTRY)"
+        );
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
+            tracing::info!(
+                domain = "queue",
+                family_id = family_id,
+                subscription_count = state.subscriptions.len(),
+                "Queue: found family state with subscriptions"
+            );
             let mut matched = 0;
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
@@ -1412,6 +1424,13 @@ impl MailboxSink for QueueDomainSink {
                     actor.process_delayed_messages();
                     let resp = actor.handle_send(body, delay_seconds);
                     let notify_route = if actor.take_needs_notify_availability() {
+                        tracing::info!(
+                            domain = "queue",
+                            session = frame_ctx.session_id,
+                            route = %route,
+                            family_id = %family_id,
+                            "Queue: SEND triggered availability notification"
+                        );
                         Some(route)
                     } else {
                         None
@@ -1599,10 +1618,11 @@ impl MailboxSink for QueueDomainSink {
 
         // If we just did a Send that transitioned empty->non-empty, fan out QUEUE_NOTIFY (209) to subscribers
         if let Some(notify_route) = availability_notify_route {
-            tracing::debug!(
+            tracing::info!(
                 domain = "queue",
                 route = %notify_route,
-                "Queue: fanning out availability notification (209)"
+                route_family = route_family.id(),
+                "Queue: fanning out availability notification (209) - CALLING handle_domain_publish"
             );
             let event = crate::runtime::DomainPublishEvent::new(
                 route_family,
@@ -1610,7 +1630,9 @@ impl MailboxSink for QueueDomainSink {
                 bytes::Bytes::from("{}"),
             );
             if let Err(e) = self.handle_domain_publish(&event) {
-                tracing::warn!(domain = "queue", error = ?e, "Queue: handle_domain_publish failed");
+                tracing::warn!(domain = "queue", error = ?e, "Queue: handle_domain_publish FAILED");
+            } else {
+                tracing::info!(domain = "queue", "Queue: handle_domain_publish SUCCEEDED");
             }
         }
 
@@ -1727,10 +1749,24 @@ impl StreamDomainSink {
         event: &crate::runtime::DomainPublishEvent,
     ) -> Result<(), DeliveryError> {
         let family_id = event.family_id.as_u64();
+        tracing::info!(
+            domain = "stream",
+            family_id = family_id,
+            route = %event.route,
+            "Stream: handle_domain_publish called (ENTRY)"
+        );
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
+            tracing::info!(
+                domain = "stream",
+                family_id = family_id,
+                subscription_count = state.subscriptions.len(),
+                "Stream: found family state with subscriptions"
+            );
+            let mut matched = 0;
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
+                    matched += 1;
                     let notify_payload = crate::protocol::stream_codec::encode_notify(
                         sub.subscription_id,
                         &event.route,
@@ -1746,9 +1782,48 @@ impl StreamDomainSink {
                         ),
                     );
                     let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
-                    let _ = self.router.route(notify_envelope);
+                    if let Err(e) = self.router.route(notify_envelope) {
+                        tracing::warn!(
+                            domain = "stream",
+                            subscription_id = sub.subscription_id,
+                            destination = %sub.subscriber,
+                            error = ?e,
+                            "Stream: failed to route 609 to subscriber inbox"
+                        );
+                    } else {
+                        tracing::info!(
+                            domain = "stream",
+                            subscription_id = sub.subscription_id,
+                            destination = %sub.subscriber,
+                            "Stream: routed 609 to subscriber"
+                        );
+                    }
                 }
             }
+            if matched == 0 {
+                tracing::info!(
+                    domain = "stream",
+                    family_id = family_id,
+                    route = %event.route,
+                    subscription_count = state.subscriptions.len(),
+                    "Stream: NO SUBSCRIPTIONS MATCHED event route"
+                );
+            } else {
+                tracing::info!(
+                    domain = "stream",
+                    family_id = family_id,
+                    matched = matched,
+                    "Stream: matched {} subscriptions for route",
+                    matched
+                );
+            }
+        } else {
+            tracing::info!(
+                domain = "stream",
+                family_id = family_id,
+                route = %event.route,
+                "Stream: NO FAMILY STATE for event (no subscriptions in this family)"
+            );
         }
         Ok(())
     }
@@ -2043,10 +2118,20 @@ impl MailboxSink for StreamDomainSink {
 
         // If we just committed a stream session, fan out STREAM_NOTIFY (609) to matching subscribers
         if let Some(route) = commit_notify_route {
+            tracing::info!(
+                domain = "stream",
+                route = %route,
+                route_family = frame_ctx.route_family.id(),
+                "Stream: commit triggered availability notification - CALLING handle_domain_publish"
+            );
             let payload = bytes::Bytes::from("{}");
             let event =
                 crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
-            let _ = self.handle_domain_publish(&event);
+            if let Err(e) = self.handle_domain_publish(&event) {
+                tracing::warn!(domain = "stream", error = ?e, "Stream: handle_domain_publish FAILED");
+            } else {
+                tracing::info!(domain = "stream", "Stream: handle_domain_publish SUCCEEDED");
+            }
         }
 
         // Encode and route response back
