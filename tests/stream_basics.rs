@@ -7,7 +7,7 @@
 //! - Session lifecycle and concurrency control
 
 use bytes::Bytes;
-use fitz::domains::stream::protocol::{StreamMessage, StreamWriteMode};
+use fitz::domains::stream::protocol::{BatchCommitted, StreamMessage, StreamWriteMode};
 use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::StreamActor;
@@ -462,36 +462,36 @@ fn should_advance_watermark_only_on_contiguous_commits() {
     let (mut area_actor, mut area_ctx) = create_test_area_actor("realm1", "area1");
     // Act
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 1,
             last_area_offset: 3,
             first_realm_offset: 1,
             last_realm_offset: 3,
-        },
+        }),
         &mut area_ctx,
     );
     // Assert
     assert_eq!(area_actor.watermark(), 3);
     // Commit batch at offsets 6-8 (gap at 4-5)
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 6,
             last_area_offset: 8,
             first_realm_offset: 6,
             last_realm_offset: 8,
-        },
+        }),
         &mut area_ctx,
     );
     // Assert
     assert_eq!(area_actor.watermark(), 3);
     // Commit batch at offsets 4-5 (fills gap)
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 4,
             last_area_offset: 5,
             first_realm_offset: 4,
             last_realm_offset: 5,
-        },
+        }),
         &mut area_ctx,
     );
     // Assert
@@ -504,42 +504,42 @@ fn should_track_committed_ranges_for_gap_detection() {
     let (mut area_actor, mut area_ctx) = create_test_area_actor("realm1", "area1");
     // Act
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 1,
             last_area_offset: 3,
             first_realm_offset: 1,
             last_realm_offset: 3,
-        },
+        }),
         &mut area_ctx,
     );
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 6,
             last_area_offset: 8,
             first_realm_offset: 6,
             last_realm_offset: 8,
-        },
+        }),
         &mut area_ctx,
     );
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 11,
             last_area_offset: 13,
             first_realm_offset: 11,
             last_realm_offset: 13,
-        },
+        }),
         &mut area_ctx,
     );
     // Assert
     assert_eq!(area_actor.watermark(), 3);
     // Fill first gap
     area_actor.receive(
-        StreamMessage::BatchCommitted {
+        StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: 4,
             last_area_offset: 5,
             first_realm_offset: 4,
             last_realm_offset: 5,
-        },
+        }),
         &mut area_ctx,
     );
     // Watermark should advance to 8 (next gap starts at 9)
