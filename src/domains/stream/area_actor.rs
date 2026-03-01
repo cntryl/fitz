@@ -10,7 +10,9 @@ use crate::runtime::actor::Context;
 use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
-use super::protocol::{LeaseGrant, StreamMessage, DEFAULT_REALM_LEASE_BLOCK};
+use super::protocol::{
+    AreaWatermarkAdvanced, LeaseGrant, StreamMessage, DEFAULT_REALM_LEASE_BLOCK,
+};
 use super::store::StreamStore;
 
 /// AreaActor coordinates area-level offsets and watermark
@@ -188,11 +190,10 @@ impl AreaActor {
             }
 
             // Notify RealmActor
-            let notification = StreamMessage::AreaWatermarkAdvanced {
-                realm: self.realm.clone(),
+            let notification = StreamMessage::AreaWatermarkAdvanced(AreaWatermarkAdvanced {
                 area: self.area.clone(),
                 watermark: self.area_watermark,
-            };
+            });
             let realm_addr = self.realm_actor_address();
             let _ = ctx.send(realm_addr, notification);
         }
@@ -295,12 +296,8 @@ impl Actor for AreaActor {
             } => {
                 self.handle_request_lease(&realm, &area, count, &reply_to, ctx);
             }
-            StreamMessage::BatchCommitted {
-                first_area_offset,
-                last_area_offset,
-                ..
-            } => {
-                self.handle_batch_committed(first_area_offset, last_area_offset, ctx);
+            StreamMessage::BatchCommitted(commit) => {
+                self.handle_batch_committed(commit.first_area_offset, commit.last_area_offset, ctx);
             }
             StreamMessage::LeaseGranted { grant } => {
                 // Update realm lease from RealmActor

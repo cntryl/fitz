@@ -6,7 +6,13 @@
 //!
 //! - **LeaseHandle**: Holds an acquired lease with fencing token and expiration
 //! - **LeaseGuard**: Helper for acquiring leases and creating handles
-//! - **LeaseError**: Lease operation errors
+//!
+//! # Error Types
+//!
+//! This module defines `LeaseError` for **client-side** lease handle operations
+//! (checking validity, releasing, etc.). This is distinct from:
+//! - [`crate::protocol::error_codes::lease`] - Wire protocol error codes (5001-5009)
+//! - [`crate::domains::lease::protocol::LeaseError`] - Lease parsing/validation errors
 //!
 //! # Usage Pattern
 //!

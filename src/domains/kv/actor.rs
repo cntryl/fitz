@@ -632,9 +632,9 @@ impl KvActor {
 impl Actor for KvActor {
     type Message = KvMessage;
 
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        // KV operations are synchronous and return via response channel
-        let _response = self.handle(msg);
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+        let response = self.handle(msg);
+        let _ = ctx.reply(response).ok();
     }
 }
 

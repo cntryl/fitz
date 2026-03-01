@@ -235,19 +235,10 @@ pub enum StreamMessage {
     RequestRealmLease { count: u64 },
 
     /// Batch committed notification from StreamActor to AreaActor
-    BatchCommitted {
-        first_area_offset: u64,
-        last_area_offset: u64,
-        first_realm_offset: u64,
-        last_realm_offset: u64,
-    },
+    BatchCommitted(BatchCommitted),
 
     /// Area watermark advanced from AreaActor to RealmActor
-    AreaWatermarkAdvanced {
-        realm: String,
-        area: String,
-        watermark: u64,
-    },
+    AreaWatermarkAdvanced(AreaWatermarkAdvanced),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -274,9 +265,6 @@ pub struct LeaseGranted {
     pub realm_start: u64,
     pub realm_end_exclusive: u64,
 }
-
-// Backward compatibility alias (for gradual migration)
-pub type LeaseGrant = LeaseGranted;
 
 /// Write mode for stream commits
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,6 +371,25 @@ pub struct GetMetadataResponse {
     pub metadata: StreamMetadata,
 }
 
+/// Unified response type for all stream operations
+#[derive(Debug, Clone)]
+pub enum StreamResponse {
+    /// Response to Begin operation
+    BeginOk(BeginSessionResponse),
+    /// Response to Append operation
+    AppendOk(AppendResponse),
+    /// Response to Commit operation
+    CommitOk(CommitSessionResponse),
+    /// Response to Read operation
+    ReadOk(ReadResponse),
+    /// Response to Last operation
+    LastOk(PeekResponse),
+    /// Response to GetMetadata operation
+    MetadataOk(GetMetadataResponse),
+    /// Error response for any operation
+    Error(StreamError),
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -437,6 +444,9 @@ impl StreamError {
         }
     }
 }
+
+/// Backward compatibility alias
+pub type LeaseGrant = LeaseGranted;
 
 #[cfg(test)]
 mod tests {

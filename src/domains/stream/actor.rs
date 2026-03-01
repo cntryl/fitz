@@ -9,9 +9,9 @@ use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::protocol::{
-    AppendResponse, BeginSessionResponse, CommitSessionResponse, LeaseGrant, OffsetLease,
-    PeekResponse, ReadResponse, StreamError, StreamMessage, StreamWriteMode, DEFAULT_LEASE_SIZE,
-    MAX_EVENT_SIZE,
+    AppendResponse, BatchCommitted, BeginSessionResponse, CommitSessionResponse, LeaseGrant,
+    OffsetLease, PeekResponse, ReadResponse, StreamError, StreamMessage, StreamResponse,
+    StreamWriteMode, DEFAULT_LEASE_SIZE, MAX_EVENT_SIZE,
 };
 use super::store::{EventPayload, SessionId, StreamStore};
 use std::collections::VecDeque;
@@ -235,12 +235,12 @@ impl StreamActor {
         self.active_session = None;
 
         // Send BatchCommitted notification to AreaActor for watermark tracking
-        let notification = StreamMessage::BatchCommitted {
+        let notification = StreamMessage::BatchCommitted(BatchCommitted {
             first_area_offset: response.first_area_offset,
             last_area_offset: response.last_area_offset,
             first_realm_offset: response.first_realm_offset,
             last_realm_offset: response.last_realm_offset,
-        };
+        });
         let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
         let _ = ctx.send(area_addr, notification);
 
@@ -376,26 +376,47 @@ impl Actor for StreamActor {
     type Message = StreamMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        match msg {
+        let response = match msg {
             StreamMessage::Begin {
                 expected_offset,
                 ingest_metadata,
                 ..
             } => {
-                let _ = self.handle_begin_session(expected_offset, ingest_metadata, ctx);
+                match self.handle_begin_session(expected_offset, ingest_metadata, ctx) {
+                    Ok(resp) => StreamResponse::BeginOk(resp),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::Append {
                 session_id,
                 body,
                 metadata,
             } => {
-                let _ = self.handle_append_to_session(&session_id, body, metadata);
+                match self.handle_append_to_session(&session_id, body, metadata) {
+                    Ok(resp) => StreamResponse::AppendOk(resp),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::Commit { session_id, mode } => {
-                let _ = self.handle_commit_session(&session_id, mode, ctx);
+                match self.handle_commit_session(&session_id, mode, ctx) {
+                    Ok(resp) => StreamResponse::CommitOk(resp),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::Rollback { session_id } => {
-                let _ = self.handle_abort_session(&session_id);
+                match self.handle_abort_session(&session_id) {
+                    Ok(()) => StreamResponse::CommitOk(CommitSessionResponse {
+                        first_resource_offset: 0,
+                        last_resource_offset: 0,
+                        first_area_offset: 0,
+                        last_area_offset: 0,
+                        first_realm_offset: 0,
+                        last_realm_offset: 0,
+                        batch_size: 0,
+                        ingest_metadata: None,
+                    }),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::Read {
                 from_offset,
@@ -403,13 +424,22 @@ impl Actor for StreamActor {
                 max_bytes,
                 ..
             } => {
-                let _ = self.handle_read(from_offset, limit, max_bytes);
+                match self.handle_read(from_offset, limit, max_bytes) {
+                    Ok(resp) => StreamResponse::ReadOk(resp),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::Last { .. } => {
-                let _ = self.handle_last();
+                match self.handle_last() {
+                    Ok(resp) => StreamResponse::LastOk(resp),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::GetMetadata { .. } => {
-                let _ = self.handle_get_metadata();
+                match self.handle_get_metadata() {
+                    Ok(resp) => StreamResponse::MetadataOk(resp),
+                    Err(err) => StreamResponse::Error(err),
+                }
             }
             StreamMessage::LeaseGranted { grant } => {
                 // Update leases from AreaActor grant
@@ -418,9 +448,31 @@ impl Actor for StreamActor {
 
                 // Process any pending commits now that we have leases
                 self.process_pending_commits(ctx);
+                
+                // Internal message - no response needed
+                return;
             }
-            _ => {}
-        }
+            // Subscribe/Unsubscribe messages are handled at session level, not in actor
+            StreamMessage::Subscribe { .. }
+            | StreamMessage::Unsubscribe { .. }
+            | StreamMessage::UnsubscribeAll { .. } => {
+                return; // No response for pub/sub control messages
+            }
+            // Batch/watermark notifications from other actors - no response
+            StreamMessage::BatchCommitted(_) | StreamMessage::AreaWatermarkAdvanced(_) => {
+                return;
+            }
+            // Internal lease request - no response
+            StreamMessage::RequestLease { .. } => {
+                return;
+            }
+            // Internal realm lease request - no response
+            StreamMessage::RequestRealmLease { .. } => {
+                return;
+            }
+        };
+
+        let _ = ctx.reply(response).ok();
     }
 
     fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {

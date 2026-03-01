@@ -149,3 +149,4 @@ pub mod session;
 
 pub use actor::{Clock, QueueActor, SystemClock};
 pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
+pub use session::SessionActor;

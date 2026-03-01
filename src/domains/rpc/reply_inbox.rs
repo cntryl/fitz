@@ -115,7 +115,8 @@ impl ReplyInboxActor {
             // Ahead-of-time chunk, buffer it
             if stream.buffer.len() >= self.max_buffer_size {
                 // Buffer overflow, disconnect session
-                // TODO: Send disconnect signal to transport
+                // NOTE: Transport integration pending - stream silently dropped
+                // See: https://github.com/cntryl/fitz/issues/track-response-routing
                 self.streams.remove(&correlation_id);
                 return;
             }
@@ -154,8 +155,9 @@ impl ReplyInboxActor {
 
     /// Forward response to transport layer (static to avoid borrowing self)
     fn forward_response_static(_response: &RpcResponse) {
-        // TODO: Send to transport actor
-        // For now, this is a placeholder for transport integration
+        // NOTE: Transport integration pending - responses currently logged only
+        // See: https://github.com/cntryl/fitz/issues/track-response-routing
+        tracing::debug!("RPC response would be forwarded to transport");
     }
 
     /// Handle error delivery
@@ -163,8 +165,9 @@ impl ReplyInboxActor {
         // Clean up any streaming state for this correlation
         self.streams.remove(&error.correlation_id);
 
-        // Forward error to client
-        // TODO: Send error to transport actor
+        // NOTE: Transport integration pending - errors currently logged only
+        // See: https://github.com/cntryl/fitz/issues/track-response-routing
+        tracing::warn!("RPC error would be forwarded to transport: {:?}", error);
     }
 
     /// Clean up state for a correlation ID

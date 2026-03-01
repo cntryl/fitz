@@ -47,6 +47,7 @@
 
 pub mod actor;
 pub mod area_actor;
+pub mod constants;
 pub mod protocol;
 pub mod realm_actor;
 pub mod session;
@@ -56,9 +57,11 @@ pub mod store;
 // Re-exports
 pub use actor::StreamActor;
 pub use area_actor::AreaActor;
+pub use constants::{DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, NOTICE_DEBOUNCE_MS};
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamError, StreamMessage, StreamMetadata,
     StreamRecord,
 };
 pub use realm_actor::RealmActor;
+pub use session::SessionActor;
 pub use store::StreamStore;
