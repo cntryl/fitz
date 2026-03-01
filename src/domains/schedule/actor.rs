@@ -321,9 +321,9 @@ impl ScheduleActor {
 impl Actor for ScheduleActor {
     type Message = ScheduleMessage;
 
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        // Schedule operations are synchronous and return via response channel
-        let _response = self.handle(msg);
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+        let response = self.handle(msg);
+        let _ = ctx.reply(response).ok();
     }
 }
 

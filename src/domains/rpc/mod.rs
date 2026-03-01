@@ -47,10 +47,6 @@ pub mod actor;
 pub mod errors;
 pub mod protocol;
 pub mod reply_inbox;
-
-// Test helper - lightweight SessionActor stub for testing RPC authorization
-// Available in tests (both unit tests and integration tests)
-#[cfg_attr(not(test), doc(hidden))]
 pub mod session;
 
 // Re-export primary types
@@ -58,3 +54,4 @@ pub use actor::RpcRouteActor;
 pub use errors::{RpcError, RpcErrorCode};
 pub use protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};
+pub use session::SessionActor;

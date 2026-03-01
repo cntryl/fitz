@@ -5,7 +5,7 @@
 //! - Validate permissions before forwarding to ScheduleActor
 
 use crate::auth::Access;
-use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
+use crate::domains::schedule::ScheduleMessage;
 use crate::runtime::routing::Route;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
@@ -37,13 +37,15 @@ impl SessionActor {
                     return Err("unauthorized: write access required".to_string());
                 }
             }
-            ScheduleMessage::List => {
+            ScheduleMessage::List { .. } => {
                 // List requires read access
                 if !self.permissions.allows(route, Access::Read) {
                     return Err("unauthorized: read access required".to_string());
                 }
             }
-            ScheduleMessage::Subscribe { .. } | ScheduleMessage::Unsubscribe { .. } | ScheduleMessage::UnsubscribeAll { .. } => {
+            ScheduleMessage::Subscribe { .. }
+            | ScheduleMessage::Unsubscribe { .. }
+            | ScheduleMessage::UnsubscribeAll { .. } => {
                 // Subscribe requires read access (receiving notifications)
                 if !self.permissions.allows(route, Access::Read) {
                     return Err("unauthorized: read access required".to_string());

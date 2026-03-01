@@ -9,8 +9,7 @@
 
 use crate::auth::Access;
 use crate::domains::kv::actor::KvActor;
-use crate::domains::kv::protocol::KvMessage;
-use crate::domains::kv::TxMode;
+use crate::domains::kv::protocol::{KvMessage, KvResponse, TxMode};
 use crate::runtime::routing::Route;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
@@ -33,7 +32,7 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to begin a KV transaction. Returns Err if authorization fails.
+    /// Attempt to begin a KV transaction. Returns Err if authorization fails or actor returns error.
     pub fn begin(&self, msg: KvMessage, kv_actor: &mut KvActor) -> Result<(), String> {
         if let KvMessage::Begin {
             ref realm, mode, ..
@@ -65,8 +64,13 @@ impl SessionActor {
                 }
             }
 
-            kv_actor.handle(msg);
-            Ok(())
+            // Forward to actor and check for errors
+            let response = kv_actor.handle(msg);
+            match response {
+                KvResponse::BeginOk { .. } => Ok(()),
+                KvResponse::Error { error } => Err(format!("kv error: {}", error)),
+                _ => Ok(()),
+            }
         } else {
             Err("invalid message type for begin".to_string())
         }

@@ -21,13 +21,10 @@
 
 pub mod actor;
 pub mod protocol;
-
-// Test helper - lightweight SessionActor stub for testing notification authorization
-// Available in tests (both unit tests and integration tests)
-#[cfg_attr(not(test), doc(hidden))]
 pub mod session;
 
 pub mod bench; // Zero-copy notification primitives for benchmarking
 
 pub use actor::NoticeRouteActor;
 pub use protocol::{DeliverMessage, NoticeError, NotificationMessage};
+pub use session::SessionActor;

@@ -155,10 +155,8 @@ impl Actor for RealmActor {
             StreamMessage::RequestRealmLease { count, .. } => {
                 let _ = self.handle_request_realm_lease(count, ctx);
             }
-            StreamMessage::AreaWatermarkAdvanced {
-                area, watermark, ..
-            } => {
-                self.handle_area_watermark_advanced(area, watermark, ctx);
+            StreamMessage::AreaWatermarkAdvanced(adv) => {
+                self.handle_area_watermark_advanced(adv.area, adv.watermark, ctx);
             }
             _ => {}
         }

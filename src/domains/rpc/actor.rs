@@ -255,7 +255,8 @@ impl RpcRouteActor {
             let reply_route = lease.reply_route.clone();
 
             // Forward response to client inbox
-            // TODO: Send to ReplyInboxActor at reply_route
+            // NOTE: ReplyInboxActor integration pending - responses currently dropped
+            // See: https://github.com/cntryl/fitz/issues/track-response-routing
             let _ = reply_route; // Silence unused warning for now
 
             // If this is the final chunk, release the lease
@@ -402,7 +403,8 @@ impl RpcRouteActor {
 
     /// Send error to client inbox
     fn send_error(&self, _error: RpcError, _reply_route: &crate::runtime::routing::Route) {
-        // TODO: Send to ReplyInboxActor at reply_route
+        // NOTE: ReplyInboxActor integration pending - errors currently dropped
+        // See: https://github.com/cntryl/fitz/issues/track-response-routing
     }
 
     /// Try to dispatch pending requests to available workers
