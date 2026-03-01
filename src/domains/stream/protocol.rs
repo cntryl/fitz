@@ -445,6 +445,9 @@ impl StreamError {
     }
 }
 
+/// Backward compatibility alias
+pub type LeaseGrant = LeaseGranted;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +479,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-/// Backward compatibility alias
-pub type LeaseGrant = LeaseGranted;
