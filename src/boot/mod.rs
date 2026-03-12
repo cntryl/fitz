@@ -47,7 +47,8 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_storage_ready();
 
     // Step 3: Register domain actors
-    domains::setup(&router, &store)?;
+    let domains = domains::setup(&router, &store)?;
+    runtime.attach_domains(std::sync::Arc::new(domains));
     tracing::info!("Domain actors registered");
 
     // Mark domains ready

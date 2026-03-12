@@ -219,14 +219,18 @@ type RuntimeComponents = (
 /// - Runtime stats tracker for observability
 pub fn init(
     config: &BootConfig,
-    _store: &Arc<cntryl_midge::Engine>,
+    store: &Arc<cntryl_midge::Engine>,
 ) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
 
     // Create runtime components
     let router = Arc::new(Router::new());
     // Attach router to ingress so frames can be dispatched into domains
-    let ingress = Arc::new(RuntimeIngress::new(config.auth_required).with_router(router.clone()));
+    let ingress = Arc::new(
+        RuntimeIngress::new(config.auth_required)
+            .with_router(router.clone())
+            .with_store(store.clone()),
+    );
 
     let ingress_config = IngressConfig::default()
         .with_frame_size(config.max_frame_size)
@@ -238,6 +242,7 @@ pub fn init(
 
     // Create runtime stats tracker
     let runtime = crate::boot::Runtime::new(router.clone());
+    runtime.attach_ingress(ingress.clone());
 
     info!("Runtime initialized with {} worker threads", num_workers);
 

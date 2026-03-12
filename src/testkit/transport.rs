@@ -103,7 +103,8 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        crate::boot::domains::setup(&router, &store)?;
+        let domains = crate::boot::domains::setup(&router, &store)?;
+        runtime.attach_domains(Arc::new(domains));
 
         // Mark domains ready
         runtime.mark_domains_ready();

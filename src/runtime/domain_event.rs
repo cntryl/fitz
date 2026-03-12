@@ -1,5 +1,5 @@
 // LAYER: RUNTIME
-//! Domain-agnostic publish primitive for cross-domain event routing
+//! Domain-agnostic publish primitive for runtime-routed event delivery
 //!
 //! Any domain actor can emit a `DomainPublishEvent` via `Context::publish_event()`.
 //! The router delivers it to whichever domain sink handles the target route scheme.
@@ -31,7 +31,7 @@
 use crate::runtime::routing::{Route, RouteFamily};
 use bytes::Bytes;
 
-/// Domain-agnostic publish event for cross-domain event routing.
+/// Domain-agnostic publish event for runtime-routed event delivery.
 ///
 /// Emitted by domain actors via `Context::publish_event()` and received
 /// by domain sinks via the `Envelope` payload downcast in `MailboxSink::deliver()`.

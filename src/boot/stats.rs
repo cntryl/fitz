@@ -1,6 +1,10 @@
 //! Runtime statistics and observability
 
+use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
+use crate::session::manager::RuntimeIngress;
+use parking_lot::RwLock;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -38,6 +42,12 @@ pub struct Runtime {
 
     /// Total messages sent
     pub(crate) messages_sent: Arc<AtomicU64>,
+
+    /// Live ingress handle for session visibility
+    pub(crate) ingress: Arc<RwLock<Option<Arc<RuntimeIngress>>>>,
+
+    /// Domain sink handles for live admin stats
+    pub(crate) domains: Arc<RwLock<Option<Arc<DomainHandles>>>>,
 }
 
 impl Runtime {
@@ -54,7 +64,17 @@ impl Runtime {
             session_count: Arc::new(AtomicUsize::new(0)),
             messages_received: Arc::new(AtomicU64::new(0)),
             messages_sent: Arc::new(AtomicU64::new(0)),
+            ingress: Arc::new(RwLock::new(None)),
+            domains: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub fn attach_ingress(&self, ingress: Arc<RuntimeIngress>) {
+        *self.ingress.write() = Some(ingress);
+    }
+
+    pub fn attach_domains(&self, domains: Arc<DomainHandles>) {
+        *self.domains.write() = Some(domains);
     }
 
     // Storage status
@@ -116,7 +136,11 @@ impl Runtime {
     }
 
     pub fn session_count(&self) -> usize {
-        self.session_count.load(Ordering::Relaxed)
+        self.ingress
+            .read()
+            .as_ref()
+            .map(|ingress| ingress.session_count())
+            .unwrap_or_else(|| self.session_count.load(Ordering::Relaxed))
     }
 
     pub fn increment_sessions(&self) {
@@ -148,9 +172,20 @@ impl Runtime {
     // Active realms (derived from router state)
 
     pub fn active_realms(&self) -> Vec<String> {
-        // TODO: Query router for active route families/realms
-        // For now, return empty vec
-        vec![]
+        let Some(ingress) = self.ingress.read().clone() else {
+            return vec![];
+        };
+
+        let mut realms = BTreeSet::new();
+        for session in ingress.active_sessions() {
+            if let Some(claims) = &session.claims {
+                if !claims.tenant.is_empty() {
+                    realms.insert(claims.tenant.clone());
+                }
+            }
+        }
+
+        realms.into_iter().collect()
     }
 
     // Messages per second (simple calculation)
@@ -167,8 +202,11 @@ impl Runtime {
     // Domain-specific stats (stubs - to be implemented by querying domain actors)
 
     pub fn kv_transactions_active(&self) -> usize {
-        // TODO: Query KV domain for active transactions
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.kv.active_transaction_count())
+            .unwrap_or(0)
     }
 
     pub fn kv_keys_total(&self) -> usize {
@@ -177,38 +215,59 @@ impl Runtime {
     }
 
     pub fn notice_subscriptions_active(&self) -> usize {
-        // TODO: Query Notice domain for active subscriptions
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.notice.subscription_count())
+            .unwrap_or(0)
     }
 
     pub fn queue_messages_pending(&self) -> usize {
-        // TODO: Query Queue domain for pending messages
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.pending_message_count())
+            .unwrap_or(0)
     }
 
     pub fn queue_leases_active(&self) -> usize {
-        // TODO: Query Queue domain for active leases
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.active_lease_count())
+            .unwrap_or(0)
     }
 
     pub fn rpc_workers_registered(&self) -> usize {
-        // TODO: Query RPC domain for registered workers
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.worker_count())
+            .unwrap_or(0)
     }
 
     pub fn rpc_requests_pending(&self) -> usize {
-        // TODO: Query RPC domain for pending requests
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.pending_request_count())
+            .unwrap_or(0)
     }
 
     pub fn lease_active(&self) -> usize {
-        // TODO: Query Lease domain for active leases
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.lease.lease_count())
+            .unwrap_or(0)
     }
 
     pub fn stream_active(&self) -> usize {
-        // TODO: Query Stream domain for active streams
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.stream_count())
+            .unwrap_or(0)
     }
 
     pub fn kv_operations_per_second(&self) -> f64 {
@@ -227,8 +286,11 @@ impl Runtime {
     }
 
     pub fn stream_subscriptions_active(&self) -> usize {
-        // TODO: Query StreamDomainSink subscription_count() via router
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.subscription_count())
+            .unwrap_or(0)
     }
 
     pub fn notice_publishes_per_second(&self) -> f64 {
@@ -252,8 +314,11 @@ impl Runtime {
     }
 
     pub fn schedule_active(&self) -> usize {
-        // TODO: Query Schedule domain for active schedules
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.schedule_count())
+            .unwrap_or(0)
     }
 
     pub fn schedule_executions_per_minute(&self) -> f64 {
@@ -262,8 +327,11 @@ impl Runtime {
     }
 
     pub fn schedule_subscriptions_active(&self) -> usize {
-        // TODO: Query ScheduleDomainSink subscription_count() via router
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.subscription_count())
+            .unwrap_or(0)
     }
 
     // List methods for admin API
@@ -335,8 +403,39 @@ impl Runtime {
     }
 
     pub fn list_sessions(&self, _realm: Option<&str>) -> Vec<crate::api::admin::SessionInfo> {
-        // TODO: Query session manager for active sessions
-        vec![]
+        let Some(ingress) = self.ingress.read().clone() else {
+            return vec![];
+        };
+
+        ingress
+            .active_sessions()
+            .into_iter()
+            .filter(|session| match _realm {
+                Some(realm) => session
+                    .claims
+                    .as_ref()
+                    .map(|claims| claims.tenant == realm)
+                    .unwrap_or(false),
+                None => true,
+            })
+            .map(|session| crate::api::admin::SessionInfo {
+                session_id: session.session_id.to_string(),
+                realm: session
+                    .claims
+                    .as_ref()
+                    .map(|claims| claims.tenant.clone())
+                    .unwrap_or_default(),
+                connected_at: String::new(),
+                idle_seconds: 0,
+                messages_received: 0,
+                messages_sent: 0,
+                transport: session.transport_kind.to_string(),
+                remote_addr: session
+                    .peer_addr
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_default(),
+            })
+            .collect()
     }
 }
 

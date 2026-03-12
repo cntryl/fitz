@@ -164,10 +164,12 @@ pub async fn handle_request(
         }
 
         // WebSocket upgrade for data plane
-        (&Method::GET, "/ws") => {
-            // TODO: Implement WebSocket upgrade
-            Ok(super::not_found())
-        }
+        (&Method::GET, "/ws") => Ok(Response::builder()
+            .status(426)
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .header("Upgrade", "websocket")
+            .body(Body::from("WebSocket upgrade required"))
+            .unwrap()),
 
         // SPA static files - serve from root
         (&Method::GET, _) => serve_spa(path).await,
@@ -179,31 +181,52 @@ pub async fn handle_request(
 
 /// Check if request has valid authentication
 async fn check_auth(req: &Request<Body>) -> bool {
-    // Extract Authorization header
-    if let Some(auth_header) = req.headers().get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                // TODO: Validate JWT token
-                return !token.is_empty();
-            }
-        }
-    }
-
-    // For development/testing, allow if no auth configured
-    // TODO: Make this configurable
-    true
+    authenticate_request(req).await.is_ok()
 }
 
 /// Check if request has valid admin authentication
 async fn check_admin_auth(req: &Request<Body>) -> bool {
-    // First check basic auth
-    if !check_auth(req).await {
-        return false;
+    authenticate_request(req)
+        .await
+        .map(|claims| has_admin_access(&claims))
+        .unwrap_or(false)
+}
+
+async fn authenticate_request(req: &Request<Body>) -> Result<crate::auth::Claims, String> {
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .ok_or_else(|| "missing Authorization header".to_string())?;
+    let auth_str = auth_header
+        .to_str()
+        .map_err(|_| "invalid Authorization header".to_string())?;
+    let token = auth_str
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| "expected Bearer token".to_string())?;
+
+    let (_permissions, claims) = crate::auth::permissions_from_verified_jwt(token).await?;
+    Ok(claims)
+}
+
+fn has_admin_access(claims: &crate::auth::Claims) -> bool {
+    if claims
+        .roles
+        .iter()
+        .any(|role| matches!(role.as_str(), "admin" | "fitz-admin" | "fitz.admin"))
+    {
+        return true;
     }
 
-    // TODO: Check for admin permissions in JWT claims
-    // For now, if auth passes, allow admin access
-    true
+    let permissions = crate::session::permissions::SessionPermissions::from_permissions(
+        claims.permissions.clone(),
+    );
+    permissions.allows(
+        &crate::runtime::routing::Route::new("admin://system"),
+        crate::auth::Access::Read,
+    ) || permissions.allows(
+        &crate::runtime::routing::Route::new("admin://system"),
+        crate::auth::Access::Write,
+    )
 }
 
 /// Serve SPA static files from public/ directory

@@ -365,11 +365,13 @@ impl Session {
         &mut self,
         claims: crate::auth::Claims,
         permissions: SessionPermissions,
+        route_family: RouteFamily,
     ) -> Result<(), String> {
         // Update both atomically
         self.info.claims = Some(Arc::new(claims));
         self.info.permissions_snapshot = permissions;
         self.info.authenticated = true;
+        self.info.route_family = route_family;
         Ok(())
     }
 

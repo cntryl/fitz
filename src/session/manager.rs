@@ -46,6 +46,11 @@ pub trait Ingress: Send + Sync {
         message_payload: Bytes,
     ) -> IngressDecision;
 
+    /// Get current session info for transports that need to observe auth-driven updates.
+    fn get_session_info(&self, _session_id: u64) -> Option<SessionInfo> {
+        None
+    }
+
     /// Called when the transport closes the connection
     async fn on_close(&self, session_id: u64, reason: CloseReason);
 }
@@ -79,6 +84,10 @@ pub struct RuntimeIngress {
     router: Option<Arc<crate::runtime::Router>>,
     /// Optional callback for session events (for routing to handlers)
     event_handler: Option<Arc<dyn Fn(SessionEvent) + Send + Sync>>,
+    /// Control-plane-backed route family resolver
+    control_plane: Arc<crate::session::tenant::ControlPlaneStub>,
+    /// Storage engine used to ensure RouteFamily -> ColumnFamily alignment
+    store: Option<Arc<cntryl_midge::Engine>>,
     /// Whether authentication is required (if false, JWT is ignored and full access granted)
     auth_required: bool,
 }
@@ -91,6 +100,8 @@ impl RuntimeIngress {
             session_actors: Arc::new(DashMap::new()),
             router: None,
             event_handler: None,
+            control_plane: Arc::new(crate::session::tenant::ControlPlaneStub::new()),
+            store: None,
             auth_required,
         }
     }
@@ -109,6 +120,21 @@ impl RuntimeIngress {
     /// Attach a router reference for dispatching frames directly from ingress
     pub fn with_router(mut self, router: Arc<crate::runtime::Router>) -> Self {
         self.router = Some(router);
+        self
+    }
+
+    /// Attach storage for dynamic RouteFamily column-family creation.
+    pub fn with_store(mut self, store: Arc<cntryl_midge::Engine>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Attach a control plane resolver.
+    pub fn with_control_plane(
+        mut self,
+        control_plane: Arc<crate::session::tenant::ControlPlaneStub>,
+    ) -> Self {
+        self.control_plane = control_plane;
         self
     }
 
@@ -140,6 +166,61 @@ impl RuntimeIngress {
     /// Get session count
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    fn ensure_route_family_storage(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+    ) -> Result<(), String> {
+        if let Some(store) = &self.store {
+            crate::boot::storage::ensure_route_family(store.as_ref(), route_family)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn resolve_authenticated_route_family(
+        &self,
+        compact_jwt: &str,
+    ) -> Result<crate::runtime::routing::RouteFamily, String> {
+        let assignment = self.control_plane.assign_route_family(compact_jwt);
+        if assignment.created {
+            self.ensure_route_family_storage(assignment.family)?;
+        }
+        Ok(assignment.family)
+    }
+
+    fn apply_authenticated_session(
+        &self,
+        session_id: u64,
+        entry: &mut SessionInfo,
+        claims: crate::auth::Claims,
+        snapshot: SessionPermissions,
+        route_family: crate::runtime::routing::RouteFamily,
+    ) {
+        entry.permissions_snapshot = snapshot.clone();
+        entry.authenticated = true;
+        entry.claims = Some(Arc::new(claims.clone()));
+        entry.route_family = route_family;
+
+        let mut actor = crate::session::actor::SessionActor::new(
+            crate::session::session::SessionId(session_id),
+            snapshot.clone(),
+        );
+        actor.authenticate(claims, snapshot);
+        self.session_actors.insert(session_id, actor);
+    }
+
+    fn canonicalize_domain_route(
+        domain: &str,
+        route: crate::runtime::routing::Route,
+    ) -> crate::runtime::routing::Route {
+        let path = route.as_str();
+        if path.contains("://") {
+            return route;
+        }
+
+        crate::runtime::routing::Route::new(format!("{domain}://{}", path.trim_start_matches('/')))
     }
 }
 
@@ -243,256 +324,50 @@ impl Ingress for RuntimeIngress {
                         );
                     }
 
-                    // Auth is required - parse JWT
-                    // Try to prefer verified tokens when an issuer is present.
                     let compact = std::str::from_utf8(&message_payload).unwrap_or("");
                     debug!(
                         session_id = session_id,
                         jwt_len = compact.len(),
-                        "Ingress: parsing CONNECT JWT"
+                        "Ingress: verifying CONNECT JWT"
                     );
 
-                    // First, parse the token without verification to inspect claims for `iss`.
-                    match crate::auth::parse_jwt_noverify(compact) {
-                        Ok(claims) => {
-                            if !claims.iss.is_empty() {
-                                // Derive JWKS URL and attempt to ensure we have cached keys.
-                                match crate::auth::derive_jwks_url_from_issuer(&claims.iss) {
-                                    Ok(jwks_url) => {
-                                        // Try to fetch/cache JWKS; if this fails, fall back to no-verify parsing
-                                        match crate::auth::ensure_jwks_cached(&jwks_url).await {
-                                            Ok(_) => {
-                                                // Attempt verified permissions extraction. If verification fails, we may fall
-                                                // back to no-verify parsing in the case the JWT header is malformed.
-                                                match crate::auth::permissions_from_jwt_using_jwks(
-                                                    compact, &jwks_url,
-                                                )
-                                                .await
-                                                {
-                                                    Ok((snapshot, claims)) => {
-                                                        entry.permissions_snapshot =
-                                                            snapshot.clone();
-                                                        entry.authenticated = true;
-                                                        entry.claims =
-                                                            Some(Arc::new(claims.clone()));
-
-                                                        let mut actor = crate::session::actor::SessionActor::new(
-                                                            crate::session::session::SessionId(
-                                                                session_id,
-                                                            ),
-                                                            snapshot.clone(),
-                                                        );
-                                                        actor.authenticate(claims, snapshot);
-
-                                                        self.session_actors
-                                                            .insert(session_id, actor);
-
-                                                        notify_frame = Some(SessionFrame {
-                                                            session_id,
-                                                            channel_id,
-                                                            payload: message_payload.clone(),
-                                                        });
-                                                    }
-                                                    Err(e) => {
-                                                        // If the header is simply malformed (e.g. missing `alg`), allow
-                                                        // a fallback to the no-verify path for this test-friendly flow.
-                                                        if e.starts_with("invalid jwt header:") {
-                                                            debug!(session_id = session_id, error = %e, "Ingress: invalid JWT header, falling back to no-verify");
-                                                            match crate::auth::permissions_from_compact_jwt(compact) {
-                                                            Ok((snapshot, claims)) => {
-                                                                entry.permissions_snapshot = snapshot.clone();
-                                                                entry.authenticated = true;
-                                                                entry.claims = Some(Arc::new(claims.clone()));
-
-                                                                let mut actor = crate::session::actor::SessionActor::new(
-                                                                    crate::session::session::SessionId(session_id),
-                                                                    snapshot.clone(),
-                                                                );
-                                                                actor.authenticate(claims, snapshot);
-
-                                                                self.session_actors.insert(
-                                                                    session_id,
-                                                                    actor,
-                                                                );
-
-                                                                notify_frame = Some(SessionFrame {
-                                                                    session_id,
-                                                                    channel_id,
-                                                                    payload: message_payload.clone(),
-                                                                });
-                                                            }
-                                                            Err(e) => {
-                                                                error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (jwt header fallback)");
-                                                                return IngressDecision::Close(format!("connect failed: {}", e));
-                                                            }
-                                                        }
-                                                        } else {
-                                                            error!(
-                                                                session_id = session_id,
-                                                                error = %e,
-                                                                "Ingress: CONNECT failed (signature verification)"
-                                                            );
-                                                            return IngressDecision::Close(
-                                                                format!("connect failed: {}", e),
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                debug!(
-                                                    session_id = session_id,
-                                                    error = %e,
-                                                    "Ingress: JWKS fetch failed, falling back to no-verify"
-                                                );
-                                                // Fall back to no-verify parsing below
-                                                match crate::auth::permissions_from_compact_jwt(
-                                                    compact,
-                                                ) {
-                                                    Ok((snapshot, claims)) => {
-                                                        entry.permissions_snapshot =
-                                                            snapshot.clone();
-                                                        entry.authenticated = true;
-                                                        entry.claims =
-                                                            Some(Arc::new(claims.clone()));
-
-                                                        let mut actor = crate::session::actor::SessionActor::new(
-                                                            crate::session::session::SessionId(
-                                                                session_id,
-                                                            ),
-                                                            snapshot.clone(),
-                                                        );
-                                                        actor.authenticate(claims, snapshot);
-
-                                                        self.session_actors
-                                                            .insert(session_id, actor);
-
-                                                        notify_frame = Some(SessionFrame {
-                                                            session_id,
-                                                            channel_id,
-                                                            payload: message_payload.clone(),
-                                                        });
-                                                    }
-                                                    Err(e) => {
-                                                        error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify after JWKS fetch failure)");
-                                                        return IngressDecision::Close(format!(
-                                                            "connect failed: {}",
-                                                            e
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                    match crate::auth::permissions_from_verified_jwt(compact).await {
+                        Ok((snapshot, claims)) => {
+                            let route_family =
+                                match self.resolve_authenticated_route_family(compact) {
+                                    Ok(route_family) => route_family,
                                     Err(e) => {
-                                        debug!(
+                                        error!(
                                             session_id = session_id,
                                             error = %e,
-                                            "Ingress: JWKS derivation failed, falling back to no-verify"
+                                            "Ingress: CONNECT failed (route family resolution)"
                                         );
-                                        match crate::auth::permissions_from_compact_jwt(compact) {
-                                            Ok((snapshot, claims)) => {
-                                                entry.permissions_snapshot = snapshot.clone();
-                                                entry.authenticated = true;
-
-                                                let mut actor =
-                                                    crate::session::actor::SessionActor::new(
-                                                        crate::session::session::SessionId(
-                                                            session_id,
-                                                        ),
-                                                        snapshot.clone(),
-                                                    );
-                                                actor.authenticate(claims, snapshot);
-
-                                                self.session_actors.insert(session_id, actor);
-
-                                                notify_frame = Some(SessionFrame {
-                                                    session_id,
-                                                    channel_id,
-                                                    payload: message_payload.clone(),
-                                                });
-                                            }
-                                            Err(e) => {
-                                                error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify after JWKS derivation failure)");
-                                                return IngressDecision::Close(format!(
-                                                    "connect failed: {}",
-                                                    e
-                                                ));
-                                            }
-                                        }
+                                        return IngressDecision::Close(format!(
+                                            "connect failed: {}",
+                                            e
+                                        ));
                                     }
-                                }
-                            } else {
-                                // No issuer present; prefer HMAC verification when a shared secret is set.
-                                if let Ok(secret) = std::env::var("FITZ_JWT_HMAC_SECRET") {
-                                    match crate::auth::permissions_from_hmac_jwt(
-                                        compact,
-                                        secret.as_bytes(),
-                                    ) {
-                                        Ok((snapshot, claims)) => {
-                                            entry.permissions_snapshot = snapshot.clone();
-                                            entry.authenticated = true;
-                                            entry.claims = Some(Arc::new(claims.clone()));
+                                };
 
-                                            let mut actor =
-                                                crate::session::actor::SessionActor::new(
-                                                    crate::session::session::SessionId(session_id),
-                                                    snapshot.clone(),
-                                                );
-                                            actor.authenticate(claims, snapshot);
-
-                                            self.session_actors.insert(session_id, actor);
-
-                                            notify_frame = Some(SessionFrame {
-                                                session_id,
-                                                channel_id,
-                                                payload: message_payload.clone(),
-                                            });
-                                        }
-                                        Err(e) => {
-                                            error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (hmac verify)");
-                                            return IngressDecision::Close(format!(
-                                                "connect failed: {}",
-                                                e
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    // No issuer and no HMAC secret; fall back to no-verify path.
-                                    match crate::auth::permissions_from_compact_jwt(compact) {
-                                        Ok((snapshot, claims)) => {
-                                            entry.permissions_snapshot = snapshot.clone();
-                                            entry.authenticated = true;
-                                            entry.claims = Some(Arc::new(claims.clone()));
-
-                                            let mut actor =
-                                                crate::session::actor::SessionActor::new(
-                                                    crate::session::session::SessionId(session_id),
-                                                    snapshot.clone(),
-                                                );
-                                            actor.authenticate(claims, snapshot);
-
-                                            self.session_actors.insert(session_id, actor);
-
-                                            notify_frame = Some(SessionFrame {
-                                                session_id,
-                                                channel_id,
-                                                payload: message_payload.clone(),
-                                            });
-                                        }
-                                        Err(e) => {
-                                            error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (no-verify, no issuer)");
-                                            return IngressDecision::Close(format!(
-                                                "connect failed: {}",
-                                                e
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
+                            self.apply_authenticated_session(
+                                session_id,
+                                &mut entry,
+                                claims,
+                                snapshot,
+                                route_family,
+                            );
+                            notify_frame = Some(SessionFrame {
+                                session_id,
+                                channel_id,
+                                payload: message_payload.clone(),
+                            });
                         }
                         Err(e) => {
-                            error!(session_id = session_id, error = %e, "Ingress: CONNECT failed (JWT parse)");
+                            error!(
+                                session_id = session_id,
+                                error = %e,
+                                "Ingress: CONNECT failed (verification)"
+                            );
                             return IngressDecision::Close(format!("connect failed: {}", e));
                         }
                     }
@@ -725,6 +600,10 @@ impl Ingress for RuntimeIngress {
         IngressDecision::Accept
     }
 
+    fn get_session_info(&self, session_id: u64) -> Option<SessionInfo> {
+        self.get_session(session_id)
+    }
+
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
         // Record session closed counter
         if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
@@ -739,65 +618,63 @@ impl Ingress for RuntimeIngress {
         if let Some(router) = &self.router {
             let cleanup = crate::runtime::SessionCleanup { session_id };
 
-            // Get the session's route family for routing (default to 0 if session already removed)
-            let route_family = self
-                .sessions
-                .get(&session_id)
-                .map(|s| s.route_family)
-                .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
+            let route_family = self.sessions.get(&session_id).map(|s| s.route_family);
 
-            // Send cleanup to KV domain
-            let kv_addr = crate::runtime::routing::RouteAddress::new(
-                route_family,
-                crate::runtime::routing::Route::new("kv://cleanup"),
-            );
-            let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
-            let _ = router.route(kv_envelope);
+            if let Some(route_family) = route_family {
+                let kv_addr = crate::runtime::routing::RouteAddress::new(
+                    route_family,
+                    crate::runtime::routing::Route::new("kv://cleanup"),
+                );
+                let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
+                let _ = router.route(kv_envelope);
 
-            // Send cleanup to Notice domain
-            let notice_addr = crate::runtime::routing::RouteAddress::new(
-                route_family,
-                crate::runtime::routing::Route::new("notice://cleanup"),
-            );
-            let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
-            let _ = router.route(notice_envelope);
+                let notice_addr = crate::runtime::routing::RouteAddress::new(
+                    route_family,
+                    crate::runtime::routing::Route::new("notice://cleanup"),
+                );
+                let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
+                let _ = router.route(notice_envelope);
 
-            // Send cleanup to Stream domain
-            let stream_addr = crate::runtime::routing::RouteAddress::new(
-                route_family,
-                crate::runtime::routing::Route::new("stream://cleanup"),
-            );
-            let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
-            let _ = router.route(stream_envelope);
+                let stream_addr = crate::runtime::routing::RouteAddress::new(
+                    route_family,
+                    crate::runtime::routing::Route::new("stream://cleanup"),
+                );
+                let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
+                let _ = router.route(stream_envelope);
 
-            // Send cleanup to Schedule domain
-            let schedule_addr = crate::runtime::routing::RouteAddress::new(
-                route_family,
-                crate::runtime::routing::Route::new("schedule://cleanup"),
-            );
-            let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
-            let _ = router.route(schedule_envelope);
+                let schedule_addr = crate::runtime::routing::RouteAddress::new(
+                    route_family,
+                    crate::runtime::routing::Route::new("schedule://cleanup"),
+                );
+                let schedule_envelope =
+                    crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
+                let _ = router.route(schedule_envelope);
 
-            // Send cleanup to Lease domain
-            let lease_addr = crate::runtime::routing::RouteAddress::new(
-                route_family,
-                crate::runtime::routing::Route::new("lease://cleanup"),
-            );
-            let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
-            let _ = router.route(lease_envelope);
+                let lease_addr = crate::runtime::routing::RouteAddress::new(
+                    route_family,
+                    crate::runtime::routing::Route::new("lease://cleanup"),
+                );
+                let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
+                let _ = router.route(lease_envelope);
 
-            // Send cleanup to Queue domain
-            let queue_addr = crate::runtime::routing::RouteAddress::new(
-                route_family,
-                crate::runtime::routing::Route::new("queue://cleanup"),
-            );
-            let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
-            let _ = router.route(queue_envelope);
+                let queue_addr = crate::runtime::routing::RouteAddress::new(
+                    route_family,
+                    crate::runtime::routing::Route::new("queue://cleanup"),
+                );
+                let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
+                let _ = router.route(queue_envelope);
 
-            tracing::debug!(
-                session_id = session_id,
-                "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
-            );
+                tracing::debug!(
+                    session_id = session_id,
+                    route_family = route_family.id(),
+                    "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
+                );
+            } else {
+                tracing::debug!(
+                    session_id = session_id,
+                    "Ingress: session already removed before cleanup routing"
+                );
+            }
         }
 
         // Remove session and associated actor
@@ -909,12 +786,12 @@ impl RuntimeIngress {
                     Route::new(""),
                 ),
             ) {
-                Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => {
-                    Ok(Some(p.route.clone()))
-                }
-                Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => {
-                    Ok(Some(s.pattern.clone()))
-                }
+                Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => Ok(Some(
+                    Self::canonicalize_domain_route("notice", p.route.clone()),
+                )),
+                Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => Ok(
+                    Some(Self::canonicalize_domain_route("notice", s.pattern.clone())),
+                ),
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
@@ -947,9 +824,9 @@ impl RuntimeIngress {
                             Route::new(""),
                         ),
                     ) {
-                        Ok(crate::domains::queue::QueueMessage::Subscribe { pattern, .. }) => {
-                            Ok(Some(pattern.clone()))
-                        }
+                        Ok(crate::domains::queue::QueueMessage::Subscribe { pattern, .. }) => Ok(
+                            Some(Self::canonicalize_domain_route("queue", pattern.clone())),
+                        ),
                         Err(e) => Err(e),
                         Ok(_) => Err("parse_subscribe returned unexpected variant".to_string()),
                     }
@@ -965,7 +842,10 @@ impl RuntimeIngress {
                     ) {
                         Ok(crate::domains::queue::QueueMessage::Unsubscribe {
                             pattern, ..
-                        }) => Ok(Some(pattern.clone())),
+                        }) => Ok(Some(Self::canonicalize_domain_route(
+                            "queue",
+                            pattern.clone(),
+                        ))),
                         Err(e) => Err(e),
                         Ok(_) => Err("parse_unsubscribe returned unexpected variant".to_string()),
                     }
@@ -975,18 +855,18 @@ impl RuntimeIngress {
                         session_info.route_family,
                         payload.as_ref(),
                     ) {
-                        Ok(crate::domains::queue::QueueMessage::Send { route, .. }) => {
-                            Ok(Some(route.clone()))
-                        }
-                        Ok(crate::domains::queue::QueueMessage::Receive { route, .. }) => {
-                            Ok(Some(route.clone()))
-                        }
-                        Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => {
-                            Ok(Some(route.clone()))
-                        }
-                        Ok(crate::domains::queue::QueueMessage::Ack { route, .. }) => {
-                            Ok(Some(route.clone()))
-                        }
+                        Ok(crate::domains::queue::QueueMessage::Send { route, .. }) => Ok(Some(
+                            Self::canonicalize_domain_route("queue", route.clone()),
+                        )),
+                        Ok(crate::domains::queue::QueueMessage::Receive { route, .. }) => Ok(Some(
+                            Self::canonicalize_domain_route("queue", route.clone()),
+                        )),
+                        Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => Ok(Some(
+                            Self::canonicalize_domain_route("queue", route.clone()),
+                        )),
+                        Ok(crate::domains::queue::QueueMessage::Ack { route, .. }) => Ok(Some(
+                            Self::canonicalize_domain_route("queue", route.clone()),
+                        )),
                         Ok(_) => Ok(None),
                         Err(e) => Err(e),
                     }
@@ -1024,25 +904,34 @@ impl RuntimeIngress {
                     Route::new(""),
                 ),
             ) {
-                Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => {
-                    Ok(Some(route.clone()))
-                }
-                Ok(crate::domains::stream::protocol::StreamMessage::Read { route, .. }) => {
-                    Ok(Some(route.clone()))
-                }
-                Ok(crate::domains::stream::protocol::StreamMessage::Last { route, .. }) => {
-                    Ok(Some(route.clone()))
-                }
+                Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => Ok(
+                    Some(Self::canonicalize_domain_route("stream", route.clone())),
+                ),
+                Ok(crate::domains::stream::protocol::StreamMessage::Read { route, .. }) => Ok(
+                    Some(Self::canonicalize_domain_route("stream", route.clone())),
+                ),
+                Ok(crate::domains::stream::protocol::StreamMessage::Last { route, .. }) => Ok(
+                    Some(Self::canonicalize_domain_route("stream", route.clone())),
+                ),
                 Ok(crate::domains::stream::protocol::StreamMessage::GetMetadata {
                     route, ..
-                }) => Ok(Some(route.clone())),
+                }) => Ok(Some(Self::canonicalize_domain_route(
+                    "stream",
+                    route.clone(),
+                ))),
                 Ok(crate::domains::stream::protocol::StreamMessage::Subscribe {
                     pattern, ..
-                }) => Ok(Some(pattern.clone())),
+                }) => Ok(Some(Self::canonicalize_domain_route(
+                    "stream",
+                    pattern.clone(),
+                ))),
                 Ok(crate::domains::stream::protocol::StreamMessage::Unsubscribe {
                     pattern,
                     ..
-                }) => Ok(Some(pattern.clone())),
+                }) => Ok(Some(Self::canonicalize_domain_route(
+                    "stream",
+                    pattern.clone(),
+                ))),
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
@@ -1061,13 +950,22 @@ impl RuntimeIngress {
                         route,
                         cron: _,
                         payload: _,
-                    }) => Ok(Some(Route::new(route))),
+                    }) => Ok(Some(Self::canonicalize_domain_route(
+                        "schedule",
+                        Route::new(route),
+                    ))),
                     Ok(crate::domains::schedule::ScheduleMessage::Subscribe {
                         pattern, ..
-                    }) => Ok(Some(pattern.clone())),
+                    }) => Ok(Some(Self::canonicalize_domain_route(
+                        "schedule",
+                        pattern.clone(),
+                    ))),
                     Ok(crate::domains::schedule::ScheduleMessage::Unsubscribe {
                         pattern, ..
-                    }) => Ok(Some(pattern.clone())),
+                    }) => Ok(Some(Self::canonicalize_domain_route(
+                        "schedule",
+                        pattern.clone(),
+                    ))),
                     Ok(_) => Ok(None),
                     Err(e) => Err(e),
                 }
@@ -1084,7 +982,6 @@ mod tests {
     use crate::protocol::frame::ChannelId;
     use crate::runtime::routing::Route;
     use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
-    use base64::Engine;
     use bytes::Bytes;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1100,6 +997,18 @@ mod tests {
             authenticated: false,
             route_family: crate::runtime::routing::RouteFamily::new(0), // Test mode = family 0
         }
+    }
+
+    fn signed_hmac_jwt(payload: serde_json::Value) -> String {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header};
+
+        std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
+        jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &payload,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -1127,16 +1036,14 @@ mod tests {
 
             // First, perform a connect to authenticate the session
             let payload = serde_json::json!({
-                "iss": "https://idp.example/",
+                "iss": "",
                 "aud": "fitz-broker",
                 "sub": "user:2",
                 "exp": 9999999999u64,
                 "tid": "acme-prod",
                 "fitz": { "permissions": ["notice://prod/orders/**#read"] }
             });
-            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-            let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("{}");
-            let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
+            let jwt = signed_hmac_jwt(payload);
 
             let decision = ingress
                 .on_frame(
@@ -1184,16 +1091,14 @@ mod tests {
             ingress.on_open(session).await.unwrap();
             // Authenticate session with a connect
             let payload = serde_json::json!({
-                "iss": "https://idp.example/",
+                "iss": "",
                 "aud": "fitz-broker",
                 "sub": "user:3",
                 "exp": 9999999999u64,
                 "tid": "acme-prod",
                 "fitz": { "permissions": ["notice://prod/orders/**#read"] }
             });
-            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-            let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("{}");
-            let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
+            let jwt = signed_hmac_jwt(payload);
 
             ingress
                 .on_frame(
@@ -1268,21 +1173,18 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_with_valid_token() {
         // Arrange
-        use base64::Engine;
         let ingress = RuntimeIngress::new(true);
         let session = make_session_info(50, TransportKind::Tcp);
 
         let payload = serde_json::json!({
-            "iss": "https://idp.example/",
+            "iss": "",
             "aud": "fitz-broker",
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "fitz": { "permissions": ["notice://prod/orders/**#read"] }
         });
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("{}");
-        let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
+        let jwt = signed_hmac_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1310,22 +1212,79 @@ mod tests {
     }
 
     #[test]
+    fn should_assign_distinct_route_families_per_tenant() {
+        let ingress = RuntimeIngress::new(true);
+        let session_a = make_session_info(52, TransportKind::Tcp);
+        let session_b = make_session_info(53, TransportKind::Tcp);
+
+        let jwt_a = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:a",
+            "exp": 9999999999u64,
+            "tid": "tenant-a",
+            "fitz": { "permissions": ["notice://tenant-a/**#read"] }
+        }));
+        let jwt_b = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:b",
+            "exp": 9999999999u64,
+            "tid": "tenant-b",
+            "fitz": { "permissions": ["notice://tenant-b/**#read"] }
+        }));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session_a).await.unwrap();
+            ingress.on_open(session_b).await.unwrap();
+
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        52,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt_a),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        53,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt_b),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+        });
+
+        let session_a = ingress.get_session(52).unwrap();
+        let session_b = ingress.get_session(53).unwrap();
+        assert_ne!(session_a.route_family, session_b.route_family);
+        assert!(session_a.route_family.id() >= 2);
+        assert!(session_b.route_family.id() >= 2);
+    }
+
+    #[test]
     fn should_reject_connect_with_malformed_permissions() {
         // Arrange
         let ingress = RuntimeIngress::new(true);
         let session = make_session_info(51, TransportKind::Tcp);
 
         let payload = serde_json::json!({
-            "iss": "https://idp.example/",
+            "iss": "",
             "aud": "fitz-broker",
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "fitz": { "permissions": ["badperm#oops"] }
         });
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("{}");
-        let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
+        let jwt = signed_hmac_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1341,6 +1300,35 @@ mod tests {
                 .await;
 
             // Assert
+            assert!(matches!(decision, IngressDecision::Close(_)));
+        });
+    }
+
+    #[test]
+    fn should_reject_connect_when_issuer_cannot_derive_jwks() {
+        let ingress = RuntimeIngress::new(true);
+        let session = make_session_info(54, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "not-a-valid-issuer",
+            "aud": "fitz-broker",
+            "sub": "user:54",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "fitz": { "permissions": ["notice://prod/orders/**#read"] }
+        }));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            let decision = ingress
+                .on_frame(
+                    54,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt),
+                )
+                .await;
+
             assert!(matches!(decision, IngressDecision::Close(_)));
         });
     }
@@ -1483,21 +1471,18 @@ mod tests {
     #[test]
     fn should_update_session_actor_on_connect() {
         // Arrange
-        use base64::Engine;
         let ingress = RuntimeIngress::new(true);
         let session = make_session_info(61, TransportKind::Tcp);
 
         let payload = serde_json::json!({
-            "iss": "https://idp.example/",
+            "iss": "",
             "aud": "fitz-broker",
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "fitz": { "permissions": ["notice://prod/orders/**#write"] }
         });
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("{}");
-        let jwt = format!("{}.{}.{}", header_b64, b64, "sig");
+        let jwt = signed_hmac_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1533,22 +1518,20 @@ mod tests {
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
-        use base64::Engine;
         use bytes::Bytes;
 
         let ingress = RuntimeIngress::new(true);
         let session = make_session_info(70, TransportKind::Tcp);
 
         let payload = serde_json::json!({
-            "iss": "https://idp.example/",
+            "iss": "",
             "aud": "fitz-broker",
             "sub": "user:70",
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "fitz": { "permissions": ["notice://prod/orders/**#read"] }
         });
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let jwt = format!("{}.{}.{}", "{}", b64, "sig");
+        let jwt = signed_hmac_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1568,7 +1551,7 @@ mod tests {
         // Build a notice route actor and session wrapper from ingress snapshot
         let router = Router::new();
         let subscriber =
-            RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
+            RouteAddress::new(RouteFamily::new(1), Route::new("notice://realm/subscriber"));
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
         let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router));
 
@@ -1582,7 +1565,7 @@ mod tests {
         // Act: Publish should be rejected because session only has read
         let res = session_actor.publish(
             RouteFamily::new(1),
-            Route::new("notify://prod/orders/create"),
+            Route::new("notice://prod/orders/create"),
             Bytes::from("hi"),
             &mut actor,
             &mut ctx,
@@ -1601,22 +1584,20 @@ mod tests {
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
-        use base64::Engine;
         use bytes::Bytes;
 
         let ingress = RuntimeIngress::new(true);
         let session = make_session_info(71, TransportKind::Tcp);
 
         let payload = serde_json::json!({
-            "iss": "https://idp.example/",
+            "iss": "",
             "aud": "fitz-broker",
             "sub": "user:71",
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "fitz": { "permissions": ["notice://prod/orders/**#write"] }
         });
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let jwt = format!("{}.{}.{}", "{}", b64, "sig");
+        let jwt = signed_hmac_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1636,7 +1617,7 @@ mod tests {
         // Build a notice route actor and session wrapper from ingress snapshot
         let router = Router::new();
         let subscriber =
-            RouteAddress::new(RouteFamily::new(1), Route::new("notify://realm/subscriber"));
+            RouteAddress::new(RouteFamily::new(1), Route::new("notice://realm/subscriber"));
         let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
         let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router));
 
@@ -1650,7 +1631,7 @@ mod tests {
         // Act: Publish should succeed because session now has write
         let res = session_actor.publish(
             RouteFamily::new(1),
-            Route::new("notify://prod/orders/create"),
+            Route::new("notice://prod/orders/create"),
             Bytes::from("hello"),
             &mut actor,
             &mut ctx,
@@ -1715,5 +1696,83 @@ mod tests {
         assert!(perms.allows(&Route::new("kv://test/area/resource"), Access::Write));
         assert!(perms.allows(&Route::new("notice://test/area/resource"), Access::Write));
         assert!(perms.allows(&Route::new("rpc://test/area/resource"), Access::Write));
+    }
+
+    #[test]
+    fn should_canonicalize_scheme_less_domain_routes_for_authorization() {
+        assert_eq!(
+            RuntimeIngress::canonicalize_domain_route("queue", Route::new("tasks")).as_str(),
+            "queue://tasks"
+        );
+        assert_eq!(
+            RuntimeIngress::canonicalize_domain_route("notice", Route::new("patterns/*")).as_str(),
+            "notice://patterns/*"
+        );
+        assert_eq!(
+            RuntimeIngress::canonicalize_domain_route("stream", Route::new("stream-data")).as_str(),
+            "stream://stream-data"
+        );
+        assert_eq!(
+            RuntimeIngress::canonicalize_domain_route(
+                "notice",
+                Route::new("notice://test/notifications/**"),
+            )
+            .as_str(),
+            "notice://test/notifications/**"
+        );
+    }
+
+    #[test]
+    fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
+        let ingress = RuntimeIngress::new(false);
+        let mut session = make_session_info(91, TransportKind::Tcp);
+        session.route_family = crate::runtime::routing::RouteFamily::new(1);
+
+        let mut queue_payload = Vec::new();
+        queue_payload.extend_from_slice(&(5_u32).to_be_bytes());
+        queue_payload.extend_from_slice(b"tasks");
+        queue_payload.extend_from_slice(&(1_u32).to_be_bytes());
+        queue_payload.extend_from_slice(b"x");
+        queue_payload.push(0);
+        let queue_route = ingress
+            .derive_route_for_frame(
+                &session,
+                crate::protocol::tlv::MessageType::new(200),
+                &Bytes::from(queue_payload),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(queue_route.as_str(), "queue://tasks");
+
+        let pattern = b"patterns/*";
+        let mut notice_payload = Vec::new();
+        notice_payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+        notice_payload.extend_from_slice(pattern);
+        let notice_route = ingress
+            .derive_route_for_frame(
+                &session,
+                crate::protocol::tlv::MessageType::new(501),
+                &Bytes::from(notice_payload),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(notice_route.as_str(), "notice://patterns/*");
+
+        let stream_name = b"stream-data";
+        let mut stream_payload = Vec::new();
+        stream_payload.extend_from_slice(&(stream_name.len() as u32).to_be_bytes());
+        stream_payload.extend_from_slice(stream_name);
+        stream_payload.extend_from_slice(&0_u64.to_be_bytes());
+        stream_payload.extend_from_slice(&1000_u64.to_be_bytes());
+        stream_payload.push(0);
+        let stream_route = ingress
+            .derive_route_for_frame(
+                &session,
+                crate::protocol::tlv::MessageType::new(604),
+                &Bytes::from(stream_payload),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(stream_route.as_str(), "stream://stream-data");
     }
 }

@@ -300,6 +300,33 @@ pub async fn permissions_from_jwt_using_jwks(
     ))
 }
 
+/// Verify a JWT using the configured verification path.
+///
+/// Rules:
+/// - Tokens with `iss` must verify against issuer-derived JWKS.
+/// - Tokens without `iss` must verify with `FITZ_JWT_HMAC_SECRET`.
+/// - There is no permissive no-verify fallback.
+pub async fn permissions_from_verified_jwt(
+    compact: &str,
+) -> Result<
+    (
+        crate::session::permissions::SessionPermissions,
+        crate::auth::Claims,
+    ),
+    String,
+> {
+    let raw_claims = parse_jwt_noverify(compact)?;
+
+    if !raw_claims.iss.is_empty() {
+        let jwks_url = derive_jwks_url_from_issuer(&raw_claims.iss)?;
+        return permissions_from_jwt_using_jwks(compact, &jwks_url).await;
+    }
+
+    let secret = std::env::var("FITZ_JWT_HMAC_SECRET")
+        .map_err(|_| "missing FITZ_JWT_HMAC_SECRET for issuer-less JWT".to_string())?;
+    permissions_from_hmac_jwt(compact, secret.as_bytes())
+}
+
 /// Create default anonymous permissions with full access across all domains.
 /// Used when FITZ_AUTH_REQUIRED=false for development/testing.
 pub fn default_anonymous_permissions() -> crate::session::permissions::SessionPermissions {

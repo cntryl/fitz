@@ -127,6 +127,10 @@ impl KvDomainSink {
             "All KV transactions and resource locks released for session (disconnect cleanup)"
         );
     }
+
+    pub fn active_transaction_count(&self) -> usize {
+        self.tx_to_resource.lock().len()
+    }
 }
 
 impl MailboxSink for KvDomainSink {
@@ -539,6 +543,14 @@ impl NoticeDomainSink {
             "All notice subscriptions removed for session (disconnect cleanup)"
         );
     }
+
+    pub fn subscription_count(&self) -> usize {
+        let families = self.families.lock();
+        families
+            .values()
+            .map(|state| state.subscriptions.len())
+            .sum()
+    }
 }
 
 impl MailboxSink for NoticeDomainSink {
@@ -817,6 +829,15 @@ impl RpcDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    pub fn worker_count(&self) -> usize {
+        let state = self.state.lock();
+        state.workers.values().map(Vec::len).sum()
+    }
+
+    pub fn pending_request_count(&self) -> usize {
+        self.state.lock().pending.len()
     }
 }
 
@@ -1240,6 +1261,16 @@ impl QueueDomainSink {
         let families = self.families.lock();
         families.values().map(|s| s.subscriptions.len()).sum()
     }
+
+    pub fn pending_message_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors.values().map(|actor| actor.ready_len()).sum()
+    }
+
+    pub fn active_lease_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors.values().map(|actor| actor.inflight.len()).sum()
+    }
 }
 
 impl MailboxSink for QueueDomainSink {
@@ -1296,14 +1327,9 @@ impl MailboxSink for QueueDomainSink {
                     );
                     src.clone()
                 } else {
-                    // Route notifications to the session inbox using RouteFamily::new(1)
-                    // which is the standard session inbox family used in handler registration
-                    let session_inbox = crate::runtime::routing::RouteAddress::new(
-                        crate::runtime::routing::RouteFamily::new(1),
-                        crate::runtime::routing::Route::new(format!(
-                            "inbox://session/{}",
-                            frame_ctx.session_id
-                        )),
+                    let session_inbox = crate::runtime::routing::session_inbox_address(
+                        route_family,
+                        frame_ctx.session_id,
                     );
                     tracing::debug!(
                         domain = "queue",
@@ -1337,12 +1363,9 @@ impl MailboxSink for QueueDomainSink {
                 let subscriber = if let Some(src) = envelope.source() {
                     src.clone()
                 } else {
-                    crate::runtime::routing::RouteAddress::new(
+                    crate::runtime::routing::session_inbox_address(
                         route_family,
-                        crate::runtime::routing::Route::new(format!(
-                            "inbox://session/{}",
-                            frame_ctx.session_id
-                        )),
+                        frame_ctx.session_id,
                     )
                 };
                 match crate::protocol::queue_codec::parse_unsubscribe(
@@ -1846,6 +1869,10 @@ impl StreamDomainSink {
         let families = self.families.lock();
         families.values().map(|s| s.subscriptions.len()).sum()
     }
+
+    pub fn stream_count(&self) -> usize {
+        self.write_state.lock().next_offset_by_route.len()
+    }
 }
 
 impl MailboxSink for StreamDomainSink {
@@ -2243,6 +2270,18 @@ impl LeaseDomainSink {
 
         // Also remove all subscriptions for this session
         self.unsubscribe_all(session_id);
+    }
+
+    pub fn lease_count(&self) -> usize {
+        self.leases.lock().len()
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        let families = self.families.lock();
+        families
+            .values()
+            .map(|state| state.subscriptions.len())
+            .sum()
     }
 
     /// Handle domain publish event (availability notifications)
@@ -2835,6 +2874,11 @@ impl ScheduleDomainSink {
         let families = self.sub_families.lock();
         families.values().map(|s| s.subscriptions.len()).sum()
     }
+
+    pub fn schedule_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors.values().map(|actor| actor.list_defs().len()).sum()
+    }
 }
 
 impl MailboxSink for ScheduleDomainSink {
@@ -3065,6 +3109,17 @@ impl MailboxSink for ScheduleDomainSink {
 // DOMAIN SETUP
 // ═══════════════════════════════════════════════════════════════════════════
 
+#[derive(Clone)]
+pub struct DomainHandles {
+    pub kv: Arc<KvDomainSink>,
+    pub queue: Arc<QueueDomainSink>,
+    pub notice: Arc<NoticeDomainSink>,
+    pub stream: Arc<StreamDomainSink>,
+    pub rpc: Arc<RpcDomainSink>,
+    pub lease: Arc<LeaseDomainSink>,
+    pub schedule: Arc<ScheduleDomainSink>,
+}
+
 /// Set up all 7 domain actors and register them with the router
 ///
 /// Register all domain handlers with the router
@@ -3098,7 +3153,10 @@ impl MailboxSink for ScheduleDomainSink {
 /// - Dynamically allocated by the control plane per realm
 /// - Passed in client requests (part of the RouteAddress)
 /// - Enforced by the storage layer (aligned with Midge ColumnFamilyId)
-pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> BootResult<()> {
+pub fn setup(
+    router: &StdArc<Router>,
+    store: &StdArc<cntryl_midge::Engine>,
+) -> BootResult<DomainHandles> {
     // Register domain handlers globally using wildcard route family (matches all)
     // Each domain matches its route scheme pattern across ALL route families
 
@@ -3109,37 +3167,45 @@ pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> B
 
     // Queue domain: Handles all "queue://*" routes across all families
     let queue_sink = Arc::new(QueueDomainSink::new(store.clone(), router.clone()));
-    router.register_domain_pattern("queue", queue_sink as Arc<dyn MailboxSink>);
+    router.register_domain_pattern("queue", queue_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
     // Notice domain: Handles all "notice://*" routes across all families
     let notice_sink = Arc::new(NoticeDomainSink::new(router.clone()));
-    router.register_domain_pattern("notice", notice_sink as Arc<dyn MailboxSink>);
+    router.register_domain_pattern("notice", notice_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     // Stream domain: Handles all "stream://*" routes across all families
     let stream_sink = Arc::new(StreamDomainSink::new(store.clone(), router.clone()));
-    router.register_domain_pattern("stream", stream_sink as Arc<dyn MailboxSink>);
+    router.register_domain_pattern("stream", stream_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     // RPC domain: Handles all "rpc://*" routes across all families
     let rpc_sink = Arc::new(RpcDomainSink::new(router.clone()));
-    router.register_domain_pattern("rpc", rpc_sink as Arc<dyn MailboxSink>);
+    router.register_domain_pattern("rpc", rpc_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
     // Lease domain: Handles all "lease://*" routes across all families
     let lease_sink = Arc::new(LeaseDomainSink::new(router.clone()));
-    router.register_domain_pattern("lease", lease_sink as Arc<dyn MailboxSink>);
+    router.register_domain_pattern("lease", lease_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Lease domain (handles lease://* across all route families)");
 
     // Schedule domain: Handles all "schedule://*" routes across all families
     let schedule_sink = Arc::new(ScheduleDomainSink::new(store.clone(), router.clone()));
-    router.register_domain_pattern("schedule", schedule_sink as Arc<dyn MailboxSink>);
+    router.register_domain_pattern("schedule", schedule_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
     tracing::info!("All 7 domain sinks registered with router");
 
-    Ok(())
+    Ok(DomainHandles {
+        kv: kv_sink,
+        queue: queue_sink,
+        notice: notice_sink,
+        stream: stream_sink,
+        rpc: rpc_sink,
+        lease: lease_sink,
+        schedule: schedule_sink,
+    })
 }
 
 #[cfg(test)]

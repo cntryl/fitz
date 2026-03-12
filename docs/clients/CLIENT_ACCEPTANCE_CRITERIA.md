@@ -38,8 +38,9 @@ This document defines testable acceptance criteria for each Fitz domain. Client 
 **When:** Client sends CONNECT frame as first message after WebSocket upgrade  
 **Then:**
 
-- Server extracts routing information from JWT internally (e.g., RouteFamily from `tid`/`tenant_id`)
+- Server authenticates the JWT and establishes internal session state
 - Server responds with success (silent acceptance — no explicit ACK)
+- Client sends no extra shard or routing metadata
 - Client can proceed with domain operations
 - Subsequent frames are authorized per JWT `scopes`
 

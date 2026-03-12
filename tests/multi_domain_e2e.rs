@@ -1,20 +1,20 @@
-//! Cross-domain end-to-end tests
+//! Multi-domain end-to-end tests
 //!
-//! Tests interactions between multiple domains (queue+lease, notice+stream, rpc+stream, etc.)
-//! to verify correct coordination across domain boundaries.
+//! Tests that multiple independent domains can coexist on the same server runtime,
+//! remain isolated where expected, and support application-level composition.
 
 mod fixtures;
 use fitz::testkit::TestServer;
 use fixtures::transport::*;
 
 // ============================================================================
-// QUEUE + LEASE INTERACTION TESTS
+// QUEUE + LEASE COEXISTENCE TESTS
 // ============================================================================
 
 #[tokio::test]
-async fn should_extend_queue_message_lease_before_expiry_tcp() {
+async fn should_support_queue_enqueue_and_lease_acquire_on_same_server_tcp() {
     let server = TestServer::start().await.expect("start");
-    // Scenario: enqueue then acquire coordination lease.
+    // Scenario: enqueue a queue message, then acquire a lease in the same server runtime.
 
     // Arrange
     let mut queue_client = TcpQueueConnector::connect(&server)
@@ -40,13 +40,13 @@ async fn should_extend_queue_message_lease_before_expiry_tcp() {
     let (_msg_type, status, _data) = parse_queue_response(&enqueue_response);
     assert_eq!(status, 0, "Message should be enqueued");
     let (_msg_type, status, _data) = parse_lease_response(&lease_response);
-    assert_eq!(status, 0, "Lease should be acquired for coordination");
+    assert_eq!(status, 0, "Lease should be acquired successfully");
 }
 
 #[tokio::test]
-async fn should_extend_queue_message_lease_before_expiry_ws() {
+async fn should_support_queue_enqueue_and_lease_acquire_on_same_server_ws() {
     let server = TestServer::start().await.expect("start");
-    // Scenario: enqueue then acquire coordination lease.
+    // Scenario: enqueue a queue message, then acquire a lease in the same server runtime.
 
     // Arrange
     let mut queue_client = WsQueueConnector::connect(&server)
@@ -76,7 +76,7 @@ async fn should_extend_queue_message_lease_before_expiry_ws() {
 }
 
 #[tokio::test]
-async fn should_coordinate_queue_and_lease_for_multiple_messages_tcp() {
+async fn should_support_multiple_queue_messages_with_lease_usage_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: multiple enqueues coordinated by a lease.
 
@@ -109,11 +109,14 @@ async fn should_coordinate_queue_and_lease_for_multiple_messages_tcp() {
 
     // Assert
     let (_msg_type, status, _data) = parse_lease_response(&lease_response);
-    assert_eq!(status, 0, "Multiple message coordination should succeed");
+    assert_eq!(
+        status, 0,
+        "Lease usage should succeed after multiple queue operations"
+    );
 }
 
 #[tokio::test]
-async fn should_coordinate_queue_and_lease_for_multiple_messages_ws() {
+async fn should_support_multiple_queue_messages_with_lease_usage_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: multiple enqueues coordinated by a lease.
 
@@ -150,11 +153,11 @@ async fn should_coordinate_queue_and_lease_for_multiple_messages_ws() {
 }
 
 // ============================================================================
-// NOTICE + STREAM FANOUT TESTS
+// NOTICE + STREAM COEXISTENCE TESTS
 // ============================================================================
 
 #[tokio::test]
-async fn should_handle_concurrent_stream_append_and_notice_publish_tcp() {
+async fn should_allow_stream_append_with_active_notice_subscription_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: stream append alongside notice subscribe.
     // NOTE: PUBLISH is fire-and-forget per protocol spec, so we test SUBSCRIBE instead
@@ -202,7 +205,7 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_tcp() {
 }
 
 #[tokio::test]
-async fn should_handle_concurrent_stream_append_and_notice_publish_ws() {
+async fn should_allow_stream_append_with_active_notice_subscription_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: stream append alongside notice subscribe.
     // NOTE: PUBLISH is fire-and-forget per protocol spec, so we test SUBSCRIBE instead.
@@ -246,7 +249,7 @@ async fn should_handle_concurrent_stream_append_and_notice_publish_ws() {
 }
 
 #[tokio::test]
-async fn should_isolate_stream_reads_and_notice_subscriptions_tcp() {
+async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: notice subscription stays independent from stream reads.
 
@@ -296,7 +299,7 @@ async fn should_isolate_stream_reads_and_notice_subscriptions_tcp() {
 }
 
 #[tokio::test]
-async fn should_isolate_stream_reads_and_notice_subscriptions_ws() {
+async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: notice subscription stays independent from stream reads.
 
@@ -343,11 +346,11 @@ async fn should_isolate_stream_reads_and_notice_subscriptions_ws() {
 }
 
 // ============================================================================
-// RPC + STREAM CONCURRENT TESTS
+// RPC + STREAM COEXISTENCE TESTS
 // ============================================================================
 
 #[tokio::test]
-async fn should_handle_concurrent_rpc_request_and_stream_append_tcp() {
+async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: RPC request alongside stream append.
 
@@ -414,11 +417,14 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_tcp() {
     // RPC should succeed because worker is registered and responds
     assert_eq!(rpc_status, 0, "RPC should succeed with registered worker");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
-    assert_eq!(status, 0, "Stream append should succeed independently");
+    assert_eq!(
+        status, 0,
+        "Stream append should succeed while RPC is also in use"
+    );
 }
 
 #[tokio::test]
-async fn should_handle_concurrent_rpc_request_and_stream_append_ws() {
+async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: RPC request alongside stream append.
 
@@ -483,11 +489,14 @@ async fn should_handle_concurrent_rpc_request_and_stream_append_ws() {
     // RPC should succeed because worker is registered and responds
     assert_eq!(rpc_status, 0, "RPC should succeed with registered worker");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
-    assert_eq!(status, 0, "Stream append should succeed independently");
+    assert_eq!(
+        status, 0,
+        "Stream append should succeed while RPC is also in use"
+    );
 }
 
 #[tokio::test]
-async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
+async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: interleaved RPC calls with stream appends.
 
@@ -581,7 +590,7 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_tcp() {
 }
 
 #[tokio::test]
-async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
+async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: interleaved RPC calls with stream appends.
 
@@ -673,11 +682,11 @@ async fn should_handle_multiple_rpc_requests_with_stream_operations_ws() {
 }
 
 // ============================================================================
-// KV + LEASE DISTRIBUTED LOCKING TESTS
+// KV + LEASE APPLICATION-LEVEL COMPOSITION TESTS
 // ============================================================================
 
 #[tokio::test]
-async fn should_use_lease_as_lock_before_kv_write_tcp() {
+async fn should_allow_kv_writes_while_holding_lease_lock_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: lease acts as a lock for KV transaction.
 
@@ -715,7 +724,7 @@ async fn should_use_lease_as_lock_before_kv_write_tcp() {
 }
 
 #[tokio::test]
-async fn should_use_lease_as_lock_before_kv_write_ws() {
+async fn should_allow_kv_writes_while_holding_lease_lock_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: lease acts as a lock for KV transaction.
 
@@ -753,7 +762,7 @@ async fn should_use_lease_as_lock_before_kv_write_ws() {
 }
 
 #[tokio::test]
-async fn should_release_lock_after_kv_transaction_complete_tcp() {
+async fn should_allow_lease_release_after_kv_transaction_tcp() {
     let server = TestServer::start().await.expect("start");
     // Scenario: release lease after KV commit.
 
@@ -796,7 +805,7 @@ async fn should_release_lock_after_kv_transaction_complete_tcp() {
 }
 
 #[tokio::test]
-async fn should_release_lock_after_kv_transaction_complete_ws() {
+async fn should_allow_lease_release_after_kv_transaction_ws() {
     let server = TestServer::start().await.expect("start");
     // Scenario: release lease after KV commit.
 
@@ -839,13 +848,13 @@ async fn should_release_lock_after_kv_transaction_complete_ws() {
 }
 
 // ============================================================================
-// REALM ISOLATION ACROSS DOMAINS
+// REALM ISOLATION WITH MULTIPLE DOMAINS ACTIVE
 // ============================================================================
 
 #[tokio::test]
-async fn should_isolate_realms_across_domains_tcp() {
+async fn should_keep_realms_isolated_while_multiple_domains_are_active_tcp() {
     let server = TestServer::start().await.expect("start");
-    // Scenario: operations in separate realms stay independent.
+    // Scenario: operations in separate realms stay isolated while multiple domains are active.
 
     // Arrange
     let mut kv_client = TcpConnector::connect(&server).await.expect("kv connect");
@@ -868,14 +877,14 @@ async fn should_isolate_realms_across_domains_tcp() {
     let (_msg_type, status, _data) = parse_queue_response(&queue_response);
     assert_eq!(
         status, 0,
-        "Different realms should not interfere across domains"
+        "Different realms should remain isolated while multiple domains are active"
     );
 }
 
 #[tokio::test]
-async fn should_isolate_realms_across_domains_ws() {
+async fn should_keep_realms_isolated_while_multiple_domains_are_active_ws() {
     let server = TestServer::start().await.expect("start");
-    // Scenario: operations in separate realms stay independent.
+    // Scenario: operations in separate realms stay isolated while multiple domains are active.
 
     // Arrange
     let mut kv_client = WsConnector::connect(&server).await.expect("kv connect");

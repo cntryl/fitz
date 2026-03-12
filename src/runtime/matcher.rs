@@ -39,6 +39,7 @@ use crate::runtime::routing::Route;
 pub struct Pattern {
     /// The full route pattern (e.g., "notify://realm/area/*")
     route: String,
+    scheme: Option<String>,
     segments: Vec<PatternSegment>,
 }
 
@@ -57,9 +58,10 @@ impl Pattern {
     /// Create a new pattern from a route string
     #[inline]
     pub fn new(route: &str) -> Self {
-        let segments = parse_pattern(route);
+        let (scheme, segments) = parse_pattern(route);
         Self {
             route: route.to_string(),
+            scheme,
             segments,
         }
     }
@@ -73,16 +75,13 @@ impl Pattern {
     /// Check if this pattern matches a given route
     #[inline]
     pub fn matches(&self, route: &Route) -> bool {
-        let route_str = route.as_str();
+        let (route_scheme, route_segments) = split_route(route.as_str());
 
-        // Extract path after scheme (e.g., "notify://realm/area/resource" -> "realm/area/resource")
-        let path = if let Some(idx) = route_str.find("://") {
-            &route_str[idx + 3..]
-        } else {
-            route_str
-        };
-
-        let route_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        if let Some(pattern_scheme) = self.scheme.as_deref() {
+            if route_scheme != Some(pattern_scheme) {
+                return false;
+            }
+        }
 
         match_segments(&self.segments, &route_segments)
     }
@@ -90,15 +89,9 @@ impl Pattern {
 
 /// Parse a route pattern into segments
 pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
-    // Extract the path part after scheme (e.g., "notify://realm/area/*" -> "realm/area/*")
-    let path = if let Some(idx) = route.find("://") {
-        &route[idx + 3..]
-    } else {
-        route
-    };
-
-    path.split('/')
-        .filter(|s| !s.is_empty())
+    split_route(route)
+        .1
+        .into_iter()
         .map(|segment| match segment {
             "**" => PatternSegment::DoubleStar,
             "*" => PatternSegment::Star,
@@ -107,17 +100,39 @@ pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
         .collect()
 }
 
+/// Extract an optional scheme and borrowed path segments from a route string.
+#[inline]
+fn split_route(route: &str) -> (Option<&str>, Vec<&str>) {
+    let (scheme, path) = if let Some(idx) = route.find("://") {
+        (Some(&route[..idx]), &route[idx + 3..])
+    } else {
+        (None, route)
+    };
+
+    let segments = path.split('/').filter(|s| !s.is_empty()).collect();
+    (scheme, segments)
+}
+
+fn parse_pattern(route: &str) -> (Option<String>, Vec<PatternSegment>) {
+    let (scheme, segments) = split_route(route);
+    let segments = segments
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .map(|segment| match segment {
+            "**" => PatternSegment::DoubleStar,
+            "*" => PatternSegment::Star,
+            literal => PatternSegment::Literal(literal.to_string()),
+        })
+        .collect();
+    (scheme.map(str::to_string), segments)
+}
+
 /// Extract path segments from a route string as Strings
 /// DEPRECATED: Use extract_route_segments_borrowed for zero-copy matching
 pub fn extract_route_segments(route: &str) -> Vec<String> {
-    let path = if let Some(idx) = route.find("://") {
-        &route[idx + 3..]
-    } else {
-        route
-    };
-
-    path.split('/')
-        .filter(|s| !s.is_empty())
+    split_route(route)
+        .1
+        .into_iter()
         .map(|s| s.to_string())
         .collect()
 }
@@ -126,13 +141,7 @@ pub fn extract_route_segments(route: &str) -> Vec<String> {
 /// Zero-copy variant for hot-path matching
 #[inline]
 pub fn extract_route_segments_borrowed(route: &str) -> Vec<&str> {
-    let path = if let Some(idx) = route.find("://") {
-        &route[idx + 3..]
-    } else {
-        route
-    };
-
-    path.split('/').filter(|s| !s.is_empty()).collect()
+    split_route(route).1
 }
 
 /// Match pattern segments against route segments using index-based recursion
@@ -234,11 +243,6 @@ pub fn match_pattern_segments_borrowed(
     }
 }
 
-/// Parse a route pattern into segments (internal, kept for backward compat)
-fn parse_pattern(route: &str) -> Vec<PatternSegment> {
-    parse_pattern_segments(route)
-}
-
 /// Match route segments against pattern segments using index-based iteration
 /// (avoids recursive slicing overhead)
 #[inline]
@@ -305,23 +309,23 @@ mod tests {
 
     #[test]
     fn should_match_exact_route() {
-        let pattern = Pattern::new("notify://acme/orders/create");
-        assert!(pattern.matches(&route("notify://acme/orders/create")));
+        let pattern = Pattern::new("notice://acme/orders/create");
+        assert!(pattern.matches(&route("notice://acme/orders/create")));
     }
 
     #[test]
     fn should_not_match_different_route() {
-        let pattern = Pattern::new("notify://acme/orders/create");
-        assert!(!pattern.matches(&route("notify://acme/orders/update")));
+        let pattern = Pattern::new("notice://acme/orders/create");
+        assert!(!pattern.matches(&route("notice://acme/orders/update")));
     }
 
     #[test]
     fn should_match_single_star_wildcard() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/orders/*");
+        let pattern = Pattern::new("notice://acme/orders/*");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/create"));
+        let result = pattern.matches(&route("notice://acme/orders/create"));
 
         // Assert
         assert!(result);
@@ -330,10 +334,10 @@ mod tests {
     #[test]
     fn should_match_single_star_wildcard_update() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/orders/*");
+        let pattern = Pattern::new("notice://acme/orders/*");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/update"));
+        let result = pattern.matches(&route("notice://acme/orders/update"));
 
         // Assert
         assert!(result);
@@ -342,10 +346,10 @@ mod tests {
     #[test]
     fn should_match_single_star_wildcard_delete() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/orders/*");
+        let pattern = Pattern::new("notice://acme/orders/*");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/delete"));
+        let result = pattern.matches(&route("notice://acme/orders/delete"));
 
         // Assert
         assert!(result);
@@ -353,18 +357,18 @@ mod tests {
 
     #[test]
     fn should_not_match_across_single_star_boundary() {
-        let pattern = Pattern::new("notify://acme/orders/*");
+        let pattern = Pattern::new("notice://acme/orders/*");
         // * only matches one segment, not nested paths
-        assert!(!pattern.matches(&route("notify://acme/orders/items/create")));
+        assert!(!pattern.matches(&route("notice://acme/orders/items/create")));
     }
 
     #[test]
     fn should_match_double_star_from_middle() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/**/created");
+        let pattern = Pattern::new("notice://acme/**/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/created"));
+        let result = pattern.matches(&route("notice://acme/orders/created"));
 
         // Assert
         assert!(result);
@@ -373,10 +377,10 @@ mod tests {
     #[test]
     fn should_match_double_star_from_middle_no_segments() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/**/created");
+        let pattern = Pattern::new("notice://acme/**/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/created"));
+        let result = pattern.matches(&route("notice://acme/created"));
 
         // Assert
         assert!(result);
@@ -385,10 +389,10 @@ mod tests {
     #[test]
     fn should_match_double_star_from_middle_many_segments() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/**/created");
+        let pattern = Pattern::new("notice://acme/**/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/items/created"));
+        let result = pattern.matches(&route("notice://acme/orders/items/created"));
 
         // Assert
         assert!(result);
@@ -397,10 +401,10 @@ mod tests {
     #[test]
     fn should_match_double_star_at_end() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/orders/**");
+        let pattern = Pattern::new("notice://acme/orders/**");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/create"));
+        let result = pattern.matches(&route("notice://acme/orders/create"));
 
         // Assert
         assert!(result);
@@ -409,10 +413,10 @@ mod tests {
     #[test]
     fn should_match_double_star_at_end_no_segments() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/orders/**");
+        let pattern = Pattern::new("notice://acme/orders/**");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders"));
+        let result = pattern.matches(&route("notice://acme/orders"));
 
         // Assert
         assert!(result);
@@ -421,10 +425,10 @@ mod tests {
     #[test]
     fn should_match_double_star_at_end_many_segments() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/orders/**");
+        let pattern = Pattern::new("notice://acme/orders/**");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/items/create"));
+        let result = pattern.matches(&route("notice://acme/orders/items/create"));
 
         // Assert
         assert!(result);
@@ -433,10 +437,10 @@ mod tests {
     #[test]
     fn should_not_match_double_star_across_unrelated_prefix() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/**");
+        let pattern = Pattern::new("notice://acme/**");
 
         // Act
-        let result = pattern.matches(&route("notify://other/orders"));
+        let result = pattern.matches(&route("notice://other/orders"));
 
         // Assert
         assert!(!result);
@@ -445,10 +449,10 @@ mod tests {
     #[test]
     fn should_match_multiple_wildcards() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/*/*/created");
+        let pattern = Pattern::new("notice://acme/*/*/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/create/created"));
+        let result = pattern.matches(&route("notice://acme/orders/create/created"));
 
         // Assert
         assert!(result);
@@ -457,10 +461,10 @@ mod tests {
     #[test]
     fn should_match_multiple_wildcards_inventory() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/*/*/created");
+        let pattern = Pattern::new("notice://acme/*/*/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/inventory/check/created"));
+        let result = pattern.matches(&route("notice://acme/inventory/check/created"));
 
         // Assert
         assert!(result);
@@ -469,10 +473,10 @@ mod tests {
     #[test]
     fn should_not_match_multiple_wildcards_insufficient_segments() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/*/*/created");
+        let pattern = Pattern::new("notice://acme/*/*/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/created"));
+        let result = pattern.matches(&route("notice://acme/orders/created"));
 
         // Assert
         assert!(!result);
@@ -505,10 +509,10 @@ mod tests {
     #[test]
     fn should_match_double_star_with_no_segments() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/**");
+        let pattern = Pattern::new("notice://acme/**");
 
         // Act
-        let result = pattern.matches(&route("notify://acme"));
+        let result = pattern.matches(&route("notice://acme"));
 
         // Assert
         assert!(result);
@@ -517,10 +521,10 @@ mod tests {
     #[test]
     fn should_match_double_star_with_related_prefix() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/**");
+        let pattern = Pattern::new("notice://acme/**");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders"));
+        let result = pattern.matches(&route("notice://acme/orders"));
 
         // Assert
         assert!(result);
@@ -529,12 +533,28 @@ mod tests {
     #[test]
     fn should_not_match_literal_when_pattern_expects_wildcard() {
         // Arrange
-        let pattern = Pattern::new("notify://acme/*/created");
+        let pattern = Pattern::new("notice://acme/*/created");
 
         // Act
-        let result = pattern.matches(&route("notify://acme/orders/update/created"));
+        let result = pattern.matches(&route("notice://acme/orders/update/created"));
 
         // Assert
         assert!(!result);
+    }
+
+    #[test]
+    fn should_not_match_different_scheme_with_same_path() {
+        let pattern = Pattern::new("notice://acme/orders/**");
+
+        assert!(!pattern.matches(&route("notify://acme/orders/create")));
+        assert!(!pattern.matches(&route("queue://acme/orders/create")));
+    }
+
+    #[test]
+    fn should_allow_scheme_agnostic_pattern_only_when_pattern_has_no_scheme() {
+        let pattern = Pattern::new("acme/orders/**");
+
+        assert!(pattern.matches(&route("notice://acme/orders/create")));
+        assert!(pattern.matches(&route("queue://acme/orders/create")));
     }
 }

@@ -16,7 +16,7 @@ This document defines what every Fitz client implementation MUST do to interoper
 9. [Routing](#routing)
 10. [HTTP-Like Design Principle](#http-like-design-principle)
 11. [Verbs](#verbs)
-12. [Server-Side Architecture](#server-side-architecture-client-non-concerns)
+12. [Client Server Boundary](#client-server-boundary)
 13. [Permissions](#permissions)
 14. [Transactions](#transactions)
 15. [Subscriptions](#subscriptions)
@@ -446,9 +446,8 @@ Use these exact terms. Other terms are forbidden.
 | **verb** | Operation name (e.g., `GET`, `PUT`, `PUBLISH`) | `operation`, `method` (ambiguous) |
 | **domain** | Service category (kv, queue, notice, stream, rpc, lease, schedule) | — |
 
-**Note on RouteFamily (Server-Side Only):**
+**Internal routing rule:** Clients send `CONNECT(jwt)` and opaque route strings only. Broker-internal partitioning, shard placement, and other session routing state are not part of the client contract.
 
-`RouteFamily` is a **server-internal sharding concept** determined from the JWT during session authentication. Clients MUST NOT send, store, or manage RouteFamily values. The server extracts RouteFamily from JWT claims to partition resources across shards. This is transparent to clients — routes are opaque strings.
 **Forbidden terminology in client code:**
 
 - NEVER use `tenant` — use `realm`
@@ -1602,51 +1601,21 @@ This section documents the **canonical operations** for each of the seven Fitz d
 
 ---
 
-## Server-Side Architecture (Client Non-Concerns)
+## Client Server Boundary
 
-This section documents broker-internal mechanisms that clients **MUST NOT** implement or interact with. These details are provided for completeness and to explain why certain client design decisions were made.
+The broker may validate JWT claims, attach internal session metadata, select storage or compute shards, and route requests to domain workers. Those mechanisms are server concerns, not client protocol features.
 
-### RouteFamily (Sharding Key)
+Clients MUST:
 
-**What It Is:**
+- send `CONNECT` with JWT only
+- send only the documented domain payload fields
+- treat routes as opaque strings
 
-`RouteFamily` is a **server-internal numeric identifier (u64)** used for resource partitioning and sharding across broker instances or threads. It determines which shard handles operations for a given route.
+Clients MUST NOT:
 
-**How Server Determines RouteFamily:**
-
-The broker extracts `RouteFamily` from the **JWT during session authentication**:
-
-1. Client sends CONNECT frame with JWT
-2. Broker parses JWT claims: `tenant_id`, `org_id`, `env`, etc.
-3. Broker calls control plane lookup: `RouteFamily::from_jwt(jwt)` (see `src/session/tenant.rs`)
-4. Resulting `RouteFamily` value is **stored in session state** and used for all subsequent operations
-5. Current implementation returns `RouteFamily::new(0)` as a stub (all realms map to family 0 until multi-tenant control plane is integrated)
-
-**Why Clients Don't Send RouteFamily:**
-
-- **Separation of Concerns**: RouteFamily is a server implementation detail for sharding and load distribution
-- **Security**: Allowing clients to specify RouteFamily would enable cross-tenant access and sharding bypass
-- **Simplicity**: Clients treat routes as opaque strings; server handles all partitioning logic
-- **Future-Proof**: Server can change sharding strategy without breaking client protocol
-
-**Client Requirements:**
-
-- Clients MUST NOT send `family_id` in any wire protocol message
-- Clients MUST NOT store or track RouteFamily values
-- Clients MUST treat all routes as opaque strings (no parsing realm/area to derive family)
-- Server determines RouteFamily from session JWT; clients have **zero visibility** into this value
-
-**Protocol Evolution:**
-
-In earlier protocol iterations, some domains required `[u64 BE] family_id` in wire formats. This was removed to enforce proper separation: clients send routes, servers extract RouteFamily from session. The current specification reflects this corrected design.
-
-**Implementation Reference:**
-
-See Fitz server code:
-
-- `src/session/tenant.rs:45-132` - RouteFamily extraction from JWT
-- `src/session/session.rs:97` - SessionInfo stores RouteFamily
-- `src/session/manager.rs:651` - Server passes RouteFamily to codec parsers (clients never send it)
+- send undocumented shard or routing metadata
+- derive dispatch behavior from JWT claims or route segments
+- expose broker-internal topology or partition state in public APIs
 
 ## Permissions
 
@@ -3503,7 +3472,7 @@ Response (error):
 **Recommended User-Facing API (see [Recommended Client API Design](#recommended-client-api-design)):**
 
 ```python
-# Connect with JWT (server extracts RouteFamily from JWT)
+# Connect with JWT
 client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
 
 # Begin transaction - returns Transaction object

@@ -164,10 +164,11 @@ async fn handle_tcp_connection(
     let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
     ));
-    let inbox_route = crate::runtime::routing::RouteAddress::new(
-        crate::runtime::routing::RouteFamily::new(1),
-        crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
-    );
+    let initial_family = ingress
+        .get_session_info(session_id)
+        .map(|session| session.route_family)
+        .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
+    let inbox_route = crate::runtime::routing::session_inbox_address(initial_family, session_id);
     tracing::debug!(
         session_id = session_id,
         inbox = %inbox_route,
@@ -175,7 +176,7 @@ async fn handle_tcp_connection(
     );
     runtime.router.register(
         inbox_route.clone(),
-        sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+        sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
     );
 
     // Spawn task to send outbound frames through TCP (owns the write half)
@@ -216,6 +217,8 @@ async fn handle_tcp_connection(
     // Spawn task to process frames from the channel
     let ingress_clone = ingress.clone();
     let config_clone = config.clone();
+    let runtime_for_frames = runtime.clone();
+    let outbound_sink = sink.clone();
     tokio::spawn(async move {
         // Create ONE session instance that persists for all frames on this connection
         let session_config = crate::session::NewSessionConfig::unauthenticated(
@@ -230,6 +233,8 @@ async fn handle_tcp_connection(
 
         let mut session = crate::session::Session::new(session_id, session_config);
         let mut frame_rx = frame_rx;
+        let mut registered_inbox =
+            crate::runtime::routing::session_inbox_address(initial_family, session_id);
 
         // Process frames as they arrive, maintaining the session buffer state
         while let Some((_sid, frame)) = frame_rx.recv().await {
@@ -243,6 +248,21 @@ async fn handle_tcp_connection(
                     )
                     .await;
                 break;
+            }
+
+            if let Some(updated) = ingress_clone.get_session_info(session_id) {
+                if updated.route_family != *registered_inbox.family() {
+                    runtime_for_frames.router.unregister(&registered_inbox);
+                    registered_inbox = crate::runtime::routing::session_inbox_address(
+                        updated.route_family,
+                        session_id,
+                    );
+                    runtime_for_frames.router.register(
+                        registered_inbox.clone(),
+                        outbound_sink.clone()
+                            as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+                    );
+                }
             }
         }
     });
@@ -426,10 +446,8 @@ where
     let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
     ));
-    let inbox_route = crate::runtime::routing::RouteAddress::new(
-        session.info().route_family,
-        crate::runtime::routing::Route::new(format!("inbox://session/{}", session_id)),
-    );
+    let mut inbox_route =
+        crate::runtime::routing::session_inbox_address(session.info().route_family, session_id);
     tracing::debug!(
         session_id = session_id,
         inbox = %inbox_route,
@@ -437,7 +455,7 @@ where
     );
     router.register(
         inbox_route.clone(),
-        sink as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+        sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
     );
 
     // Spawn task to send outbound frames
@@ -499,6 +517,19 @@ where
                         .on_close(session_id, CloseReason::Error(reason.clone()))
                         .await;
                     return Err(reason);
+                }
+                if let Some(updated) = ingress.get_session_info(session_id) {
+                    if updated.route_family != *inbox_route.family() {
+                        router.unregister(&inbox_route);
+                        inbox_route = crate::runtime::routing::session_inbox_address(
+                            updated.route_family,
+                            session_id,
+                        );
+                        router.register(
+                            inbox_route.clone(),
+                            sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+                        );
+                    }
                 }
                 tracing::trace!(
                     session_id = session_id,
