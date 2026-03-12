@@ -15,31 +15,34 @@
 # - TCP:          tcp://localhost:4091
 
 services:
-  fitz:
+  fitz-auth:
     build:
       context: ../fitz
       dockerfile: Dockerfile
-    container_name: node
+    container_name: fitz-auth
     ports:
       - "4090:4090" # HTTP/WebSocket (admin API + data plane)
       - "4091:4091" # TCP (binary protocol)
     environment:
-      # Auth configuration
-      FITZ_AUTH_REQUIRED: FALSE
-
-      # Storage configuration
-      FITZ_STORAGE_MODE: "memory" # local, memory, s3, gcs, azure
-      FITZ_STORAGE_PATH: "/data" # Storage directory
-
-      # Logging
+      FITZ_AUTH_REQUIRED: "true"
+      FITZ_JWT_HMAC_SECRET: "test-secret-key"
+      FITZ_JWT_AUDIENCE: "fitz"
+      FITZ_STORAGE_MODE: "memory"
+      FITZ_STORAGE_PATH: "/data"
       RUST_LOG: "debug"
+    restart: unless-stopped
 
-      # Optional: Cloud storage (uncomment for S3/GCS/Azure)
-      # FITZ_STORAGE_MODE: "s3"
-      # FITZ_STORAGE_PROVIDER: "s3"
-      # FITZ_STORAGE_BUCKET: "my-fitz-bucket"
-      # FITZ_STORAGE_PREFIX: "prod"
-      # AWS_ACCESS_KEY_ID: "..."
-      # AWS_SECRET_ACCESS_KEY: "..."
-
+  fitz-anon:
+    build:
+      context: ../fitz
+      dockerfile: Dockerfile
+    container_name: fitz-anon
+    ports:
+      - "4190:4090" # HTTP/WebSocket (admin API + data plane)
+      - "4191:4091" # TCP (binary protocol)
+    environment:
+      FITZ_AUTH_REQUIRED: "false"
+      FITZ_STORAGE_MODE: "memory"
+      FITZ_STORAGE_PATH: "/data"
+      RUST_LOG: "debug"
     restart: unless-stopped

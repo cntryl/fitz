@@ -50,6 +50,14 @@ pub(crate) fn not_found() -> Response<Body> {
         .unwrap()
 }
 
+/// Helper to create not implemented response
+pub(crate) fn not_implemented() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::NOT_IMPLEMENTED)
+        .body(Body::from(r#"{"error":"Not Implemented"}"#))
+        .unwrap()
+}
+
 /// Helper to create method not allowed response
 #[allow(dead_code)] // TODO: Use for POST/PUT/DELETE handling
 pub(crate) fn method_not_allowed() -> Response<Body> {

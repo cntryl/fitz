@@ -3,6 +3,7 @@
 use crate::api::ingress::IngressConfig;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
+use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
 
@@ -26,6 +27,8 @@ pub enum StorageMode {
         bucket: String,
         /// Optional path prefix within bucket
         prefix: Option<String>,
+        /// Local cache path used by the cloud-backed engine
+        local_cache_path: String,
     },
 }
 
@@ -64,26 +67,60 @@ impl StorageMode {
             "s3" | "gcs" | "azure" | "cloud" => {
                 let provider =
                     std::env::var("FITZ_STORAGE_PROVIDER").unwrap_or_else(|_| mode.clone());
-                let bucket = std::env::var("FITZ_STORAGE_BUCKET")
-                    .expect("FITZ_STORAGE_BUCKET required for cloud storage");
+                let bucket = std::env::var("FITZ_STORAGE_BUCKET").unwrap_or_default();
                 let prefix = std::env::var("FITZ_STORAGE_PREFIX").ok();
+                let local_cache_path = std::env::var("FITZ_STORAGE_PATH")
+                    .unwrap_or_else(|_| "./.fitz-cloud-cache".to_string());
 
                 tracing::info!(
-                    "Storage: CLOUD ({}) - bucket={} prefix={:?}",
+                    "Storage: CLOUD ({}) - bucket={} prefix={:?} cache={}",
                     provider,
                     bucket,
-                    prefix
+                    prefix,
+                    local_cache_path
                 );
 
                 Self::CloudBacked {
                     provider,
                     bucket,
                     prefix,
+                    local_cache_path,
                 }
             }
             _ => {
                 tracing::warn!("Unknown storage mode '{}', defaulting to local disk", mode);
                 Self::default()
+            }
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            StorageMode::Memory => Ok(()),
+            StorageMode::LocalDisk { db_path } => {
+                if db_path.trim().is_empty() {
+                    return Err("local disk storage requires a non-empty db_path".to_string());
+                }
+                Ok(())
+            }
+            StorageMode::CloudBacked {
+                provider,
+                bucket,
+                local_cache_path,
+                ..
+            } => {
+                if provider.trim().is_empty() {
+                    return Err("cloud storage requires a provider".to_string());
+                }
+                if bucket.trim().is_empty() {
+                    return Err("cloud storage requires a bucket".to_string());
+                }
+                if local_cache_path.trim().is_empty()
+                    || Path::new(local_cache_path).as_os_str().is_empty()
+                {
+                    return Err("cloud storage requires a valid local cache path".to_string());
+                }
+                Ok(())
             }
         }
     }
@@ -102,6 +139,8 @@ pub struct BootConfig {
     pub storage_mode: StorageMode,
     /// Whether authentication is required (default: true)
     pub auth_required: bool,
+    /// Explicit auth configuration for token verification
+    pub auth_config: crate::auth::AuthConfig,
     /// Maximum concurrent connections
     pub max_connections: usize,
     /// Frame size limit in bytes
@@ -116,16 +155,9 @@ impl BootConfig {
         match &self.storage_mode {
             StorageMode::LocalDisk { db_path } => db_path.clone(),
             StorageMode::Memory => ":memory:".to_string(),
-            StorageMode::CloudBacked { bucket, prefix, .. } => {
-                format!(
-                    "{}{}",
-                    bucket,
-                    prefix
-                        .as_ref()
-                        .map(|p| format!("/{}", p))
-                        .unwrap_or_default()
-                )
-            }
+            StorageMode::CloudBacked {
+                local_cache_path, ..
+            } => local_cache_path.clone(),
         }
     }
 }
@@ -144,6 +176,7 @@ impl Default for BootConfig {
             bind_addr: "0.0.0.0".to_string(),
             storage_mode: StorageMode::from_env(),
             auth_required,
+            auth_config: crate::auth::AuthConfig::from_env(auth_required),
             max_connections: 10_000,
             max_frame_size: 1024 * 1024, // 1 MB (production default; configurable via BootConfig)
             channel_capacity: 1000,
@@ -198,6 +231,23 @@ impl BootConfig {
         self.storage_mode = mode;
         self
     }
+
+    /// Set auth configuration
+    pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
+        self.auth_required = !matches!(auth_config, crate::auth::AuthConfig::Disabled);
+        self.auth_config = auth_config;
+        self
+    }
+
+    pub fn validate(&self) -> BootResult<()> {
+        self.storage_mode
+            .validate()
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        self.auth_config
+            .validate(self.auth_required)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        Ok(())
+    }
 }
 
 /// Type alias for the complex runtime initialization return type
@@ -222,12 +272,14 @@ pub fn init(
     store: &Arc<cntryl_midge::Engine>,
 ) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
+    config.validate()?;
 
     // Create runtime components
     let router = Arc::new(Router::new());
     // Attach router to ingress so frames can be dispatched into domains
     let ingress = Arc::new(
         RuntimeIngress::new(config.auth_required)
+            .with_auth_config(config.auth_config.clone())
             .with_router(router.clone())
             .with_store(store.clone()),
     );
@@ -243,6 +295,7 @@ pub fn init(
     // Create runtime stats tracker
     let runtime = crate::boot::Runtime::new(router.clone());
     runtime.attach_ingress(ingress.clone());
+    runtime.attach_auth_config(config.auth_config.clone());
 
     info!("Runtime initialized with {} worker threads", num_workers);
 

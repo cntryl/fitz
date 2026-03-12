@@ -48,6 +48,9 @@ pub struct Runtime {
 
     /// Domain sink handles for live admin stats
     pub(crate) domains: Arc<RwLock<Option<Arc<DomainHandles>>>>,
+
+    /// Auth configuration used by admin/auth surfaces
+    pub(crate) auth_config: Arc<RwLock<crate::auth::AuthConfig>>,
 }
 
 impl Runtime {
@@ -66,6 +69,7 @@ impl Runtime {
             messages_sent: Arc::new(AtomicU64::new(0)),
             ingress: Arc::new(RwLock::new(None)),
             domains: Arc::new(RwLock::new(None)),
+            auth_config: Arc::new(RwLock::new(crate::auth::AuthConfig::Disabled)),
         }
     }
 
@@ -75,6 +79,14 @@ impl Runtime {
 
     pub fn attach_domains(&self, domains: Arc<DomainHandles>) {
         *self.domains.write() = Some(domains);
+    }
+
+    pub fn attach_auth_config(&self, auth_config: crate::auth::AuthConfig) {
+        *self.auth_config.write() = auth_config;
+    }
+
+    pub fn auth_config(&self) -> crate::auth::AuthConfig {
+        self.auth_config.read().clone()
     }
 
     // Storage status
@@ -167,6 +179,24 @@ impl Runtime {
 
     pub fn increment_messages_sent(&self) {
         self.messages_sent.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn registered_route_count(&self) -> usize {
+        self.router.len()
+    }
+
+    pub fn authenticated_session_count(&self) -> usize {
+        self.ingress
+            .read()
+            .as_ref()
+            .map(|ingress| {
+                ingress
+                    .active_sessions()
+                    .into_iter()
+                    .filter(|session| session.authenticated)
+                    .count()
+            })
+            .unwrap_or(0)
     }
 
     // Active realms (derived from router state)

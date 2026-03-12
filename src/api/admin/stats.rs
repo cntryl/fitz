@@ -158,65 +158,38 @@ pub async fn handle_domain_stats(
 }
 
 async fn handle_kv_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = KvStats {
-        transactions_active: runtime.kv_transactions_active(),
-        keys_total: runtime.kv_keys_total(),
-        operations_per_second: runtime.kv_operations_per_second(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 async fn handle_stream_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = StreamStats {
-        streams_active: runtime.stream_active(),
-        events_total: runtime.stream_events_total(),
-        operations_per_second: runtime.stream_operations_per_second(),
-        subscriptions_active: runtime.stream_subscriptions_active(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 async fn handle_notice_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = NoticeStats {
-        subscriptions_active: runtime.notice_subscriptions_active(),
-        publishes_per_second: runtime.notice_publishes_per_second(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 async fn handle_queue_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = QueueStats {
-        messages_pending: runtime.queue_messages_pending(),
-        leases_active: runtime.queue_leases_active(),
-        operations_per_second: runtime.queue_operations_per_second(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 async fn handle_rpc_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = RpcStats {
-        workers_registered: runtime.rpc_workers_registered(),
-        requests_pending: runtime.rpc_requests_pending(),
-        operations_per_second: runtime.rpc_operations_per_second(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 async fn handle_lease_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = LeaseStats {
-        leases_active: runtime.lease_active(),
-        operations_per_second: runtime.lease_operations_per_second(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let stats = ScheduleStats {
-        schedules_active: runtime.schedule_active(),
-        executions_per_minute: runtime.schedule_executions_per_minute(),
-        subscriptions_active: runtime.schedule_subscriptions_active(),
-    };
-    crate::api::admin::json_response(stats)
+    let _ = runtime;
+    Ok(crate::api::admin::not_implemented())
 }
 
 /// Parse realm filter from query string

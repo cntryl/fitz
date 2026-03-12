@@ -27,7 +27,7 @@ pub async fn handle_request(
 
         // Metrics - requires auth
         (&Method::GET, "/metrics") => {
-            if !check_auth(&req).await {
+            if !check_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
             metrics::handle_metrics(runtime).await
@@ -35,7 +35,7 @@ pub async fn handle_request(
 
         // Admin API - requires auth + admin permission
         (&Method::GET, "/api/v1/admin/stats") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
             stats::handle_global_stats(runtime).await
@@ -43,7 +43,7 @@ pub async fn handle_request(
 
         // Domain-specific stats
         (&Method::GET, path) if path.starts_with("/api/v1/admin/") && path.ends_with("/stats") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
 
@@ -57,105 +57,84 @@ pub async fn handle_request(
 
         // List endpoints - KV domain
         (&Method::GET, "/api/v1/admin/kv/transactions") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_kv_transactions(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - Stream domain
         (&Method::GET, "/api/v1/admin/stream/streams") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_streams(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - Notice domain
         (&Method::GET, "/api/v1/admin/notice/subscriptions") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            let route_pattern = params.get("route_pattern").map(|s| s.as_str());
-            list::handle_list_notice_subscriptions(runtime, realm, route_pattern).await
+            Ok(super::not_implemented())
         }
 
         (&Method::GET, "/api/v1/admin/notice/routes") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_notice_routes(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - Queue domain
         (&Method::GET, "/api/v1/admin/queue/queues") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_queues(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         (&Method::GET, "/api/v1/admin/queue/leases") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_queue_leases(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - RPC domain
         (&Method::GET, "/api/v1/admin/rpc/workers") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_rpc_workers(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         (&Method::GET, "/api/v1/admin/rpc/pending") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_rpc_pending(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - Lease domain
         (&Method::GET, "/api/v1/admin/lease/leases") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_leases(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - Schedule domain
         (&Method::GET, "/api/v1/admin/schedule/schedules") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::handle_list_schedules(runtime, realm).await
+            Ok(super::not_implemented())
         }
 
         // List endpoints - Sessions
         (&Method::GET, "/api/v1/admin/sessions") => {
-            if !check_admin_auth(&req).await {
+            if !check_admin_auth(&req, runtime.as_ref()).await {
                 return Ok(super::unauthorized());
             }
             let params = list::parse_query_params(req.uri());
@@ -180,19 +159,22 @@ pub async fn handle_request(
 }
 
 /// Check if request has valid authentication
-async fn check_auth(req: &Request<Body>) -> bool {
-    authenticate_request(req).await.is_ok()
+async fn check_auth(req: &Request<Body>, runtime: &Runtime) -> bool {
+    authenticate_request(req, runtime).await.is_ok()
 }
 
 /// Check if request has valid admin authentication
-async fn check_admin_auth(req: &Request<Body>) -> bool {
-    authenticate_request(req)
+async fn check_admin_auth(req: &Request<Body>, runtime: &Runtime) -> bool {
+    authenticate_request(req, runtime)
         .await
         .map(|claims| has_admin_access(&claims))
         .unwrap_or(false)
 }
 
-async fn authenticate_request(req: &Request<Body>) -> Result<crate::auth::Claims, String> {
+async fn authenticate_request(
+    req: &Request<Body>,
+    runtime: &Runtime,
+) -> Result<crate::auth::Claims, String> {
     let auth_header = req
         .headers()
         .get("Authorization")
@@ -204,7 +186,12 @@ async fn authenticate_request(req: &Request<Body>) -> Result<crate::auth::Claims
         .strip_prefix("Bearer ")
         .ok_or_else(|| "expected Bearer token".to_string())?;
 
-    let (_permissions, claims) = crate::auth::permissions_from_verified_jwt(token).await?;
+    let auth_config = match runtime.auth_config() {
+        crate::auth::AuthConfig::Disabled => crate::auth::AuthConfig::from_env(true),
+        config => config,
+    };
+    let (_permissions, claims) =
+        crate::auth::permissions_from_verified_jwt(token, &auth_config).await?;
     Ok(claims)
 }
 

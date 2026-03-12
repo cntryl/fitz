@@ -212,7 +212,27 @@ async fn should_respond_to_domain_stats() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn should_return_not_implemented_for_unwired_admin_lists() {
+    let router = Arc::new(Router::new());
+    let runtime = Runtime::new(router);
+    let runtime = Arc::new(runtime);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/admin/kv/transactions")
+        .header("Authorization", format!("Bearer {}", admin_token(true)))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
 }
 
 #[tokio::test]

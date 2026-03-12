@@ -90,6 +90,8 @@ pub struct RuntimeIngress {
     store: Option<Arc<cntryl_midge::Engine>>,
     /// Whether authentication is required (if false, JWT is ignored and full access granted)
     auth_required: bool,
+    /// Explicit auth configuration used for CONNECT verification when present.
+    auth_config: Option<crate::auth::AuthConfig>,
 }
 
 impl RuntimeIngress {
@@ -103,6 +105,7 @@ impl RuntimeIngress {
             control_plane: Arc::new(crate::session::tenant::ControlPlaneStub::new()),
             store: None,
             auth_required,
+            auth_config: None,
         }
     }
 
@@ -126,6 +129,11 @@ impl RuntimeIngress {
     /// Attach storage for dynamic RouteFamily column-family creation.
     pub fn with_store(mut self, store: Arc<cntryl_midge::Engine>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
+        self.auth_config = Some(auth_config);
         self
     }
 
@@ -331,7 +339,12 @@ impl Ingress for RuntimeIngress {
                         "Ingress: verifying CONNECT JWT"
                     );
 
-                    match crate::auth::permissions_from_verified_jwt(compact).await {
+                    let auth_config = self
+                        .auth_config
+                        .clone()
+                        .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
+
+                    match crate::auth::permissions_from_verified_jwt(compact, &auth_config).await {
                         Ok((snapshot, claims)) => {
                             let route_family =
                                 match self.resolve_authenticated_route_family(compact) {
@@ -574,8 +587,29 @@ impl Ingress for RuntimeIngress {
                         source = ?envelope.source(),
                         "Ingress: routing envelope to domain"
                     );
-                    if let Err(e) = router.route(envelope) {
-                        error!(session_id = session_id, domain = domain, error = %e, "Ingress: router.route failed for domain dispatch");
+                    match router.route(envelope) {
+                        Ok(()) => {}
+                        Err(crate::runtime::router::RouteError::DeliveryFailed(
+                            _,
+                            crate::runtime::router::DeliveryError::MailboxFull { .. }
+                            | crate::runtime::router::DeliveryError::HighLaneFull { .. },
+                        )) => {
+                            warn!(
+                                session_id = session_id,
+                                domain = domain,
+                                "Ingress: domain dispatch backpressure"
+                            );
+                            return IngressDecision::Backpressure;
+                        }
+                        Err(e) => {
+                            error!(
+                                session_id = session_id,
+                                domain = domain,
+                                error = %e,
+                                "Ingress: router.route failed for domain dispatch"
+                            );
+                            return IngressDecision::Close(format!("route delivery failed: {}", e));
+                        }
                     }
                 }
             }
@@ -1339,7 +1373,13 @@ mod tests {
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
 
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_auth_config(crate::auth::AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![crate::auth::JwksIssuerConfig {
+                issuer: "https://idp.example".to_string(),
+                jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
+            }],
+        ));
         let session = make_session_info(80, TransportKind::Tcp);
 
         // Build a signed HS256 token and cache a matching oct key under the issuer's derived JWKS URL
@@ -1351,6 +1391,7 @@ mod tests {
             "aud": "fitz-broker",
             "sub": "user:80",
             "exp": 9999999999u64,
+            "tid": "acme-prod",
             "fitz": { "permissions": ["notice://prod/orders/**#write"] }
         });
 
@@ -1401,7 +1442,13 @@ mod tests {
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
 
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_auth_config(crate::auth::AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![crate::auth::JwksIssuerConfig {
+                issuer: "https://idp.example".to_string(),
+                jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
+            }],
+        ));
         let session = make_session_info(81, TransportKind::Tcp);
 
         let iss = "https://idp.example";
@@ -1413,6 +1460,7 @@ mod tests {
             "aud": "fitz-broker",
             "sub": "user:81",
             "exp": 9999999999u64,
+            "tid": "acme-prod",
             "fitz": { "permissions": ["notice://prod/orders/**#write"] }
         });
 
@@ -1641,6 +1689,51 @@ mod tests {
         assert!(res.is_ok());
         // No subscriptions yet, but publish succeeded (no panic)
         assert_eq!(actor.subscription_count(), 0);
+    }
+
+    #[test]
+    fn should_surface_router_backpressure_in_ingress_decision() {
+        use crate::runtime::envelope::Envelope;
+        use crate::runtime::router::{DeliveryError, MailboxSink};
+
+        struct BackpressuredSink;
+
+        impl MailboxSink for BackpressuredSink {
+            fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+                Err(DeliveryError::MailboxFull {
+                    capacity: 1,
+                    current_len: 1,
+                })
+            }
+
+            fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+                self.deliver(envelope)
+            }
+        }
+
+        let router = Arc::new(crate::runtime::Router::new());
+        router.register_domain_pattern("kv", Arc::new(BackpressuredSink));
+
+        let ingress = RuntimeIngress::new(false).with_router(router);
+        let session = make_session_info(90, TransportKind::Tcp);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            let frame = crate::benchkit::transport::build_kv_begin("kv://test/app/users", 1, 0);
+            let payload = Bytes::from(frame[3..].to_vec());
+
+            let decision = ingress
+                .on_frame(
+                    90,
+                    ChannelId::Pub,
+                    crate::protocol::tlv::MessageType::new(100),
+                    payload,
+                )
+                .await;
+
+            assert_eq!(decision, IngressDecision::Backpressure);
+        });
     }
 
     #[test]

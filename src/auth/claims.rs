@@ -60,14 +60,18 @@ pub struct RawClaims {
 impl RawClaims {
     /// Validate standard claims against issuer allowlist and audience, and time
     /// checks. `now` is the current unix epoch seconds.
-    pub fn validate(&self, allowlist: &[&str], audience: &str, now: u64) -> Result<(), String> {
+    pub fn validate(&self, allowlist: &[&str], audiences: &[&str], now: u64) -> Result<(), String> {
         // Issuer allowlist
-        if !allowlist.iter().any(|&a| a == self.iss) {
+        if allowlist.is_empty() {
+            if !self.iss.is_empty() {
+                return Err("issuer not allowed".to_string());
+            }
+        } else if !allowlist.iter().any(|&a| a == self.iss) {
             return Err("issuer not allowed".to_string());
         }
 
-        // Audience must match exactly
-        if self.aud != audience {
+        // Audience must match one configured value exactly
+        if audiences.is_empty() || !audiences.iter().any(|aud| *aud == self.aud) {
             return Err("audience mismatch".to_string());
         }
 
@@ -246,9 +250,14 @@ pub struct Claims {
 impl RawClaims {
     /// Validate and normalize into a `Claims` object. This performs the same
     /// validation as `RawClaims::validate` and resolves tenant + permissions.
-    pub fn normalize(self, allowlist: &[&str], audience: &str, now: u64) -> Result<Claims, String> {
+    pub fn normalize(
+        self,
+        allowlist: &[&str],
+        audiences: &[&str],
+        now: u64,
+    ) -> Result<Claims, String> {
         // Basic validation (issuer, audience, time checks, tenant resolution)
-        self.validate(allowlist, audience, now)?;
+        self.validate(allowlist, audiences, now)?;
 
         // Resolve tenant id (we already know validate ensured exactly one present)
         let tenant = if let Some(t) = &self.tid {
@@ -416,7 +425,7 @@ mod claims_tests {
         // Act
         let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
         let normalized = raw
-            .normalize(&["https://idp.example/"], "fitz-broker", 0)
+            .normalize(&["https://idp.example/"], &["fitz-broker"], 0)
             .expect("normalize");
 
         // Assert
@@ -448,7 +457,7 @@ mod claims_tests {
 
         // Act
         let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
-        let result = raw.normalize(&["https://idp.example/"], "fitz-broker", 9999999999);
+        let result = raw.normalize(&["https://idp.example/"], &["fitz-broker"], 9999999999);
 
         // Assert
         assert!(result.is_err());
@@ -470,7 +479,7 @@ mod claims_tests {
 
         // Act
         let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
-        let result = raw.normalize(&["https://idp.example/"], "fitz-broker", 0);
+        let result = raw.normalize(&["https://idp.example/"], &["fitz-broker"], 0);
 
         // Assert
         assert!(result.is_err());

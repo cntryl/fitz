@@ -1,7 +1,6 @@
 //! Storage initialization
 
 use crate::boot::runtime::{BootConfig, BootResult, StorageMode};
-use cntryl_midge::testkit::MidgeOptions;
 use std::sync::Arc;
 use tracing::info;
 
@@ -14,7 +13,17 @@ pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> 
             provider,
             bucket,
             prefix,
-        } => init_cloud(config, provider, bucket, prefix.as_deref()).await,
+            local_cache_path,
+        } => {
+            init_cloud(
+                config,
+                provider,
+                bucket,
+                prefix.as_deref(),
+                local_cache_path,
+            )
+            .await
+        }
     }
 }
 
@@ -60,7 +69,7 @@ pub fn ensure_route_family(
 async fn init_memory(_config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
-    let store = cntryl_midge::Engine::open_with_options(MidgeOptions::default())
+    let store = cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
         .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
 
     ensure_column_families(&store)?;
@@ -80,7 +89,7 @@ async fn init_local_disk(
         .await
         .map_err(|e| format!("Failed to create storage directory {}: {}", db_path, e))?;
 
-    let store = cntryl_midge::Engine::open_with_options(MidgeOptions::default())
+    let store = cntryl_midge::Engine::open(cntryl_midge::OpenOptions::local(db_path).build())
         .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
 
     ensure_column_families(&store)?;
@@ -95,10 +104,11 @@ async fn init_cloud(
     provider: &str,
     bucket: &str,
     prefix: Option<&str>,
+    local_cache_path: &str,
 ) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!(
-        "Initializing cloud storage: provider={} bucket={} prefix={:?}",
-        provider, bucket, prefix
+        "Initializing cloud storage: provider={} bucket={} prefix={:?} cache={}",
+        provider, bucket, prefix, local_cache_path
     );
 
     match provider {
@@ -126,14 +136,30 @@ async fn init_cloud(
         }
     }
 
-    let store = cntryl_midge::Engine::open_with_options(MidgeOptions::default())
-        .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
+    tokio::fs::create_dir_all(local_cache_path)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to create cloud cache directory {}: {}",
+                local_cache_path, e
+            )
+        })?;
+
+    let store = cntryl_midge::Engine::open(
+        cntryl_midge::OpenOptions::cloud(
+            local_cache_path,
+            bucket.to_string(),
+            prefix.unwrap_or_default().to_string(),
+        )
+        .build(),
+    )
+    .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
 
     ensure_column_families(&store)?;
 
     info!(
-        "Cloud storage ready: {} bucket={} prefix={:?}",
-        provider, bucket, prefix
+        "Cloud storage ready: {} bucket={} prefix={:?} cache={}",
+        provider, bucket, prefix, local_cache_path
     );
     Ok(Arc::new(store))
 }
@@ -141,6 +167,28 @@ async fn init_cloud(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cntryl_midge::{TransactionMode, WriteOptions};
+    use tempfile::TempDir;
+
+    fn write_marker(engine: &cntryl_midge::Engine, cf_id: u32, key: &[u8], value: &[u8]) {
+        let mut tx = engine
+            .begin_tx(cf_id, TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        tx.put(key.to_vec(), value.to_vec(), None)
+            .expect("write marker");
+        engine
+            .commit(tx, WriteOptions::buffered())
+            .expect("commit marker");
+    }
+
+    fn read_marker(engine: &cntryl_midge::Engine, cf_id: u32, key: &[u8]) -> Option<Vec<u8>> {
+        let tx = engine
+            .begin_tx(cf_id, TransactionMode::ReadOnly)
+            .expect("begin read tx");
+        tx.get(key)
+            .expect("read marker")
+            .map(|value| value.to_vec())
+    }
 
     #[test]
     fn should_create_boot_config_for_test_storage() {
@@ -193,6 +241,7 @@ mod tests {
                 provider: "s3".to_string(),
                 bucket: "fitz-data".to_string(),
                 prefix: Some("prod".to_string()),
+                local_cache_path: "./.fitz-cloud-cache".to_string(),
             },
         );
 
@@ -201,12 +250,50 @@ mod tests {
                 provider,
                 bucket,
                 prefix,
+                local_cache_path,
             } => {
                 assert_eq!(provider, "s3");
                 assert_eq!(bucket, "fitz-data");
                 assert_eq!(prefix, &Some("prod".to_string()));
+                assert_eq!(local_cache_path, "./.fitz-cloud-cache");
             }
             _ => panic!("Expected cloud storage mode"),
         }
+    }
+
+    #[tokio::test]
+    async fn should_persist_local_disk_storage_across_restarts() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let db_path = tempdir.path().join("fitz-local");
+        let config = BootConfig::with_local_storage(db_path.to_string_lossy().to_string());
+
+        let store = init(&config).await.expect("open first store");
+        let cf = store
+            .get_column_family("tenant_default")
+            .expect("tenant_default cf");
+        write_marker(store.as_ref(), cf.id(), b"marker", b"value");
+        drop(store);
+
+        let reopened = init(&config).await.expect("reopen store");
+        let reopened_cf = reopened
+            .get_column_family("tenant_default")
+            .expect("tenant_default cf after reopen");
+
+        assert_eq!(
+            read_marker(reopened.as_ref(), reopened_cf.id(), b"marker"),
+            Some(b"value".to_vec())
+        );
+    }
+
+    #[test]
+    fn should_reject_cloud_storage_without_bucket() {
+        let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked {
+            provider: "s3".to_string(),
+            bucket: String::new(),
+            prefix: Some("prod".to_string()),
+            local_cache_path: "./.fitz-cloud-cache".to_string(),
+        });
+
+        assert!(config.validate().is_err());
     }
 }

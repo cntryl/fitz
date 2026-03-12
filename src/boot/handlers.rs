@@ -146,12 +146,14 @@ async fn handle_tcp_connection(
     runtime: Arc<crate::boot::Runtime>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::api::tcp::create_session;
+    use parking_lot::Mutex;
     use tokio::io::AsyncWriteExt;
 
     // Create session and handler (stream is split into read/write halves)
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
     let (handler, write_half) =
-        create_session(ingress.clone(), config.clone(), stream, frame_tx).await?;
+        create_session(ingress.clone(), config.clone(), stream, frame_tx.clone()).await?;
+    runtime.increment_connections();
 
     // Get session_id from handler
     let session_id = handler.session_id;
@@ -169,6 +171,7 @@ async fn handle_tcp_connection(
         .map(|session| session.route_family)
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
     let inbox_route = crate::runtime::routing::session_inbox_address(initial_family, session_id);
+    let current_inbox = Arc::new(Mutex::new(inbox_route.clone()));
     tracing::debug!(
         session_id = session_id,
         inbox = %inbox_route,
@@ -181,6 +184,7 @@ async fn handle_tcp_connection(
 
     // Spawn task to send outbound frames through TCP (owns the write half)
     let tcp_session_id = session_id;
+    let runtime_for_writes = runtime.clone();
     let mut write_half = write_half;
     tokio::spawn(async move {
         tracing::debug!(
@@ -207,6 +211,7 @@ async fn handle_tcp_connection(
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound flush error");
                 break;
             }
+            runtime_for_writes.increment_messages_sent();
         }
         tracing::debug!(
             session_id = tcp_session_id,
@@ -219,6 +224,7 @@ async fn handle_tcp_connection(
     let config_clone = config.clone();
     let runtime_for_frames = runtime.clone();
     let outbound_sink = sink.clone();
+    let current_inbox_for_frames = current_inbox.clone();
     tokio::spawn(async move {
         // Create ONE session instance that persists for all frames on this connection
         let session_config = crate::session::NewSessionConfig::unauthenticated(
@@ -238,6 +244,7 @@ async fn handle_tcp_connection(
 
         // Process frames as they arrive, maintaining the session buffer state
         while let Some((_sid, frame)) = frame_rx.recv().await {
+            runtime_for_frames.increment_messages_received();
             // Process frame through session (decodes TLV and routes to ingress)
             if let Err(e) = session.on_frame(frame, ingress_clone.as_ref()).await {
                 tracing::error!(session_id = session_id, error = %e, "TCP frame processing error");
@@ -262,20 +269,31 @@ async fn handle_tcp_connection(
                         outbound_sink.clone()
                             as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
                     );
+                    *current_inbox_for_frames.lock() = registered_inbox.clone();
                 }
             }
         }
     });
 
     // Run TCP handler (reads frames and forwards to ingress) - this will block until client closes
-    handler.run().await?;
+    let run_result = handler.run().await;
+    drop(frame_tx);
+
+    let final_inbox = current_inbox.lock().clone();
+    runtime.router.unregister(&final_inbox);
+    if final_inbox != inbox_route {
+        runtime.router.unregister(&inbox_route);
+    }
 
     // Record connection closed counter
     if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
         collector.counter_inc(obs::METRIC_CONNECTIONS_CLOSED);
     }
+    runtime.decrement_connections();
 
-    Ok(())
+    run_result
+        .map_err(std::io::Error::other)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
 }
 
 /// Handle HTTP upgrade to WebSocket
@@ -369,8 +387,14 @@ async fn handle_websocket(
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");
-                        if let Err(e) =
-                            run_websocket_session(ws_stream, ingress, config, router_clone).await
+                        if let Err(e) = run_websocket_session(
+                            ws_stream,
+                            ingress,
+                            config,
+                            runtime_clone.clone(),
+                            router_clone,
+                        )
+                        .await
                         {
                             tracing::error!("WebSocket session error: {}", e);
                         }
@@ -403,6 +427,7 @@ async fn run_websocket_session<S>(
     ws_stream: hyper_tungstenite::WebSocketStream<S>,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
+    runtime: Arc<crate::boot::Runtime>,
     router: Arc<crate::runtime::Router>,
 ) -> Result<(), String>
 where
@@ -460,6 +485,7 @@ where
 
     // Spawn task to send outbound frames
     let ws_session_id = session_id;
+    let runtime_for_writes = runtime.clone();
     tokio::spawn(async move {
         tracing::debug!(
             session_id = ws_session_id,
@@ -475,22 +501,26 @@ where
                 tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
                 break;
             }
+            runtime_for_writes.increment_messages_sent();
         }
         tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
     });
 
-    // Process inbound frames
-    while let Some(msg_result) = ws_receiver.next().await {
+    let result = loop {
+        let Some(msg_result) = ws_receiver.next().await else {
+            break Ok(());
+        };
+
         match msg_result {
             Ok(Message::Binary(data)) => {
                 let frame = Bytes::from(data);
+                runtime.increment_messages_received();
                 tracing::debug!(
                     session_id = session_id,
                     frame_len = frame.len(),
                     "WS inbound: received binary frame"
                 );
 
-                // Check frame size
                 if frame.len() > config.max_frame_size {
                     let reason = format!(
                         "frame too large: {} > {}",
@@ -503,20 +533,13 @@ where
                         max = config.max_frame_size,
                         "WS frame too large"
                     );
-                    ingress
-                        .on_close(session_id, CloseReason::Error(reason.clone()))
-                        .await;
-                    return Err(reason);
+                    break Err(reason);
                 }
 
-                // Forward frame to session for processing (decoding + routing)
                 if let Err(e) = session.on_frame(frame, ingress.as_ref()).await {
                     let reason = format!("session frame error: {:?}", e);
                     tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
-                    ingress
-                        .on_close(session_id, CloseReason::Error(reason.clone()))
-                        .await;
-                    return Err(reason);
+                    break Err(reason);
                 }
                 if let Some(updated) = ingress.get_session_info(session_id) {
                     if updated.route_family != *inbox_route.family() {
@@ -538,33 +561,30 @@ where
             }
             Ok(Message::Close(_)) => {
                 tracing::debug!(session_id = session_id, "WS received Close frame");
-                ingress.on_close(session_id, CloseReason::ClientClose).await;
-                break;
+                break Ok(());
             }
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Text(_)) => {
                 tracing::trace!(
                     session_id = session_id,
                     "WS received non-binary frame (ignored)"
                 );
-                continue;
             }
-            Ok(_) => continue,
+            Ok(_) => {}
             Err(e) => {
-                let reason = format!("WebSocket error: {}", e);
-                ingress
-                    .on_close(session_id, CloseReason::Error(reason.clone()))
-                    .await;
-                return Err(reason);
+                break Err(format!("WebSocket error: {}", e));
             }
         }
-    }
+    };
 
-    // Clean shutdown
-    ingress.on_close(session_id, CloseReason::ClientClose).await;
-
-    // Unregister outbound sink
+    let close_reason = match &result {
+        Ok(()) => CloseReason::ClientClose,
+        Err(reason) => CloseReason::Error(reason.clone()),
+    };
+    ingress.on_close(session_id, close_reason).await;
     router.unregister(&inbox_route);
 
-    info!("WebSocket connection closed, session {}", session_id);
-    Ok(())
+    if result.is_ok() {
+        info!("WebSocket connection closed, session {}", session_id);
+    }
+    result
 }
