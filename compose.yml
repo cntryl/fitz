@@ -1,48 +1,49 @@
 # Fitz Message Broker - Docker Compose Configuration
 #
-# This runs a fully functional single-node Fitz broker with:
-# - HTTP/WebSocket on port 4090 (admin API + data plane)
-# - TCP on port 4091 (length-prefixed binary protocol)
-# - Persistent storage in Docker volume
-# - Health checks via Kubernetes probes
+# This runs two Fitz brokers:
+# - fitz-auth on 4090/4091 with JWT auth required
+# - fitz-anon on 4190/4191 with anonymous access enabled
 #
 # Access:
-# - SPA:          http://localhost:4090/
-# - Health:       http://localhost:4090/healthz
-# - Metrics:      http://localhost:4090/metrics
-# - Admin API:    http://localhost:4090/api/v1/admin/stats
-# - WebSocket:    http|ws://localhost:4090/ws
-# - TCP:          tcp://localhost:4091
+# - Auth HTTP:    http://localhost:4090/
+# - Auth WS:      ws://localhost:4090/ws
+# - Auth TCP:     tcp://localhost:4091
+# - Anon HTTP:    http://localhost:4190/
+# - Anon WS:      ws://localhost:4190/ws
+# - Anon TCP:     tcp://localhost:4191
 
 services:
   fitz-auth:
     build:
-      context: ../fitz
+      context: .
       dockerfile: Dockerfile
     container_name: fitz-auth
     ports:
-      - "4090:4090" # HTTP/WebSocket (admin API + data plane)
-      - "4091:4091" # TCP (binary protocol)
+      - "4090:4090"
+      - "4091:4091"
     environment:
       FITZ_AUTH_REQUIRED: "true"
       FITZ_JWT_HMAC_SECRET: "test-secret-key"
       FITZ_JWT_AUDIENCE: "fitz"
       FITZ_STORAGE_MODE: "memory"
       FITZ_STORAGE_PATH: "/data"
-      RUST_LOG: "debug"
+      RUST_LOG: "info,fitz=trace"
     restart: unless-stopped
-
+    healthcheck:
+      disable: true
   fitz-anon:
     build:
-      context: ../fitz
+      context: .
       dockerfile: Dockerfile
     container_name: fitz-anon
     ports:
-      - "4190:4090" # HTTP/WebSocket (admin API + data plane)
-      - "4191:4091" # TCP (binary protocol)
+      - "4190:4090"
+      - "4191:4091"
     environment:
       FITZ_AUTH_REQUIRED: "false"
       FITZ_STORAGE_MODE: "memory"
       FITZ_STORAGE_PATH: "/data"
-      RUST_LOG: "debug"
+      RUST_LOG: "info,fitz=trace"
     restart: unless-stopped
+    healthcheck:
+      disable: true
