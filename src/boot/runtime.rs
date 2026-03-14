@@ -225,8 +225,13 @@ pub fn init(
 
     // Create runtime components
     let router = Arc::new(Router::new());
+    let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
     // Attach router to ingress so frames can be dispatched into domains
-    let ingress = Arc::new(RuntimeIngress::new(config.auth_required).with_router(router.clone()));
+    let ingress = Arc::new(
+        RuntimeIngress::new(config.auth_required)
+            .with_router(router.clone())
+            .with_admin_read_model(admin_read_model.clone()),
+    );
 
     let ingress_config = IngressConfig::default()
         .with_frame_size(config.max_frame_size)
@@ -237,7 +242,7 @@ pub fn init(
     let scheduler = crate::runtime::Scheduler::new(num_workers);
 
     // Create runtime stats tracker
-    let runtime = crate::boot::Runtime::new(router.clone());
+    let runtime = crate::boot::Runtime::with_admin_read_model(router.clone(), admin_read_model);
 
     info!("Runtime initialized with {} worker threads", num_workers);
 

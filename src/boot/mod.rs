@@ -47,7 +47,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_storage_ready();
 
     // Step 3: Register domain actors
-    domains::setup(&router, &store)?;
+    domains::setup(&router, &store, &runtime.admin_read_model())?;
     tracing::info!("Domain actors registered");
 
     // Mark domains ready

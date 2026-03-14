@@ -103,7 +103,7 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        crate::boot::domains::setup(&router, &store)?;
+        crate::boot::domains::setup(&router, &store, &runtime.admin_read_model())?;
 
         // Mark domains ready
         runtime.mark_domains_ready();

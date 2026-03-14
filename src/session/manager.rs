@@ -81,6 +81,8 @@ pub struct RuntimeIngress {
     event_handler: Option<Arc<dyn Fn(SessionEvent) + Send + Sync>>,
     /// Whether authentication is required (if false, JWT is ignored and full access granted)
     auth_required: bool,
+    /// Passive admin snapshot mirror for session lifecycle
+    admin_read_model: Option<Arc<crate::api::admin::read_model::AdminReadModel>>,
 }
 
 impl RuntimeIngress {
@@ -92,6 +94,7 @@ impl RuntimeIngress {
             router: None,
             event_handler: None,
             auth_required,
+            admin_read_model: None,
         }
     }
 
@@ -109,6 +112,14 @@ impl RuntimeIngress {
     /// Attach a router reference for dispatching frames directly from ingress
     pub fn with_router(mut self, router: Arc<crate::runtime::Router>) -> Self {
         self.router = Some(router);
+        self
+    }
+
+    pub fn with_admin_read_model(
+        mut self,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
+        self.admin_read_model = Some(admin_read_model);
         self
     }
 
@@ -168,6 +179,9 @@ impl Ingress for RuntimeIngress {
         );
 
         self.sessions.insert(session_id, session.clone());
+        if let Some(admin_read_model) = &self.admin_read_model {
+            admin_read_model.record_session_open(&session);
+        }
 
         // Create a per-session SessionActor with permissions
         // When auth is not required, grant all permissions to unauthenticated sessions
@@ -803,6 +817,9 @@ impl Ingress for RuntimeIngress {
         // Remove session and associated actor
         self.sessions.remove(&session_id);
         self.session_actors.remove(&session_id);
+        if let Some(admin_read_model) = &self.admin_read_model {
+            admin_read_model.record_session_close(session_id);
+        }
 
         // Notify handler if present
         if let Some(handler) = &self.event_handler {

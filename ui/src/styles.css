@@ -1,143 +1,95 @@
 @import "@picocss/pico/css/pico.min.css";
 
-/* Custom overrides */
-header {
-  padding: 0;
-  margin-bottom: 2rem;
+:root {
+  --fitz-ink: #101820;
+  --fitz-accent: #0d7a5f;
+  --fitz-accent-soft: #d9f4ec;
+  --fitz-warm: #f6efe4;
 }
 
-/* Hero Section */
-.hero {
-  text-align: center;
-  padding: 3rem 1rem 4rem;
-  margin-bottom: 3rem;
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(13, 122, 95, 0.14),
+      transparent 28%
+    ),
+    linear-gradient(180deg, var(--fitz-warm) 0%, #ffffff 52%);
+  color: var(--fitz-ink);
 }
 
-.hero hgroup {
-  margin-bottom: 2rem;
+.shell-header {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(16, 24, 32, 0.08);
+  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.72);
 }
 
-.hero h1 {
-  font-size: 2.5rem;
-  font-weight: 800;
-  margin-bottom: 1rem;
-  line-height: 1.2;
+.shell-main {
+  padding-top: 3rem;
+  padding-bottom: 4rem;
 }
 
-.hero hgroup p {
-  font-size: 1.15rem;
-  color: var(--pico-muted-color);
-  max-width: 700px;
+.auth-card,
+.admin-panel {
+  max-width: 40rem;
   margin: 0 auto;
+  padding: 2rem;
+  border: 1px solid rgba(16, 24, 32, 0.08);
+  border-radius: 1.5rem;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 60px rgba(16, 24, 32, 0.08);
 }
 
-.hero-buttons {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  margin-bottom: 3rem;
-  flex-wrap: wrap;
+.auth-intro {
+  margin-bottom: 1.5rem;
 }
 
-.hero-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 2rem;
-  max-width: 600px;
-  margin: 0 auto;
-  text-align: center;
-}
-
-.hero-stats div {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.hero-stats strong {
-  font-size: 1.25rem;
-  color: var(--pico-primary);
-}
-
-.hero-stats small {
-  color: var(--pico-muted-color);
-}
-
-/* Counter Hero */
-.hero-counter {
-  text-align: center;
-  padding: 3rem 2rem;
-  margin-bottom: 3rem;
-  background: var(--pico-card-background-color);
-  border-radius: var(--pico-border-radius);
-  border: 1px solid var(--pico-muted-border-color);
-}
-
-.hero-counter h2 {
+.eyebrow {
   margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.8rem;
+  color: var(--fitz-accent);
 }
 
-.hero-counter .count-display {
-  font-size: 5rem;
-  font-weight: 800;
-  color: var(--pico-primary);
-  margin: 1.5rem 0;
-  line-height: 1;
-}
-
-.hero-counter .button-group {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  margin-top: 2rem;
-}
-
-/* Features Grid */
-.grid {
+.auth-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
+  gap: 1rem;
 }
 
-.grid article h3 {
-  font-size: 1.25rem;
-  margin-bottom: 0.75rem;
+.auth-error {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.85rem;
+  background: #fff0eb;
+  color: #9f2d20;
 }
 
-/* Code Blocks */
-pre {
-  background: var(--pico-code-background-color);
-  padding: 1.25rem;
-  border-radius: var(--pico-border-radius);
-  overflow-x: auto;
-  margin-bottom: 1rem;
+.admin-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
 }
 
-pre code {
-  background: none;
-  padding: 0;
-  font-size: 0.875rem;
-  line-height: 1.6;
+button,
+[role="button"] {
+  --pico-primary: var(--fitz-accent);
+  --pico-primary-hover: #0a614c;
+  --pico-primary-focus: rgba(13, 122, 95, 0.2);
+  --pico-primary-inverse: #ffffff;
 }
 
-article h4 {
-  margin-bottom: 1rem;
-  font-size: 1.1rem;
-}
-
-section {
-  margin-bottom: 2rem;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .hero h1 {
-    font-size: 2rem;
+@media (max-width: 720px) {
+  .auth-card,
+  .admin-panel {
+    padding: 1.35rem;
+    border-radius: 1rem;
   }
 
-  .hero-buttons {
-    flex-direction: column;
-    align-items: stretch;
+  .shell-main {
+    padding-top: 1.5rem;
   }
 }

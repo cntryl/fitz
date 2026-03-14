@@ -3,29 +3,24 @@ import { Link } from "@askrjs/askr/router";
 
 export default function App({ children }: { children?: unknown }) {
   return (
-    <div>
-      <header>
+    <div class="shell">
+      <header class="shell-header">
         <nav class="container">
           <ul>
             <li>
-              <Link href="/">
-                <strong>test-app</strong>
+              <Link href="/admin">
+                <strong>Fitz Admin</strong>
               </Link>
             </li>
           </ul>
           <ul>
             <li>
-              <Link href="/example">Example</Link>
-            </li>
-            <li>
-              <Link href="/about">About</Link>
+              <Link href="/admin/login">Login</Link>
             </li>
           </ul>
         </nav>
       </header>
-      <main class="container" id="app-routes">
-        {children}
-      </main>
+      <main class="container shell-main">{children}</main>
     </div>
   );
 }

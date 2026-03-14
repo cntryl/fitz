@@ -381,22 +381,18 @@ impl Actor for StreamActor {
                 expected_offset,
                 ingest_metadata,
                 ..
-            } => {
-                match self.handle_begin_session(expected_offset, ingest_metadata, ctx) {
-                    Ok(resp) => StreamResponse::BeginOk(resp),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
+            } => match self.handle_begin_session(expected_offset, ingest_metadata, ctx) {
+                Ok(resp) => StreamResponse::BeginOk(resp),
+                Err(err) => StreamResponse::Error(err),
+            },
             StreamMessage::Append {
                 session_id,
                 body,
                 metadata,
-            } => {
-                match self.handle_append_to_session(&session_id, body, metadata) {
-                    Ok(resp) => StreamResponse::AppendOk(resp),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
+            } => match self.handle_append_to_session(&session_id, body, metadata) {
+                Ok(resp) => StreamResponse::AppendOk(resp),
+                Err(err) => StreamResponse::Error(err),
+            },
             StreamMessage::Commit { session_id, mode } => {
                 match self.handle_commit_session(&session_id, mode, ctx) {
                     Ok(resp) => StreamResponse::CommitOk(resp),
@@ -423,24 +419,18 @@ impl Actor for StreamActor {
                 limit,
                 max_bytes,
                 ..
-            } => {
-                match self.handle_read(from_offset, limit, max_bytes) {
-                    Ok(resp) => StreamResponse::ReadOk(resp),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
-            StreamMessage::Last { .. } => {
-                match self.handle_last() {
-                    Ok(resp) => StreamResponse::LastOk(resp),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
-            StreamMessage::GetMetadata { .. } => {
-                match self.handle_get_metadata() {
-                    Ok(resp) => StreamResponse::MetadataOk(resp),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
+            } => match self.handle_read(from_offset, limit, max_bytes) {
+                Ok(resp) => StreamResponse::ReadOk(resp),
+                Err(err) => StreamResponse::Error(err),
+            },
+            StreamMessage::Last { .. } => match self.handle_last() {
+                Ok(resp) => StreamResponse::LastOk(resp),
+                Err(err) => StreamResponse::Error(err),
+            },
+            StreamMessage::GetMetadata { .. } => match self.handle_get_metadata() {
+                Ok(resp) => StreamResponse::MetadataOk(resp),
+                Err(err) => StreamResponse::Error(err),
+            },
             StreamMessage::LeaseGranted { grant } => {
                 // Update leases from AreaActor grant
                 self.update_area_lease(grant.clone());
@@ -448,7 +438,7 @@ impl Actor for StreamActor {
 
                 // Process any pending commits now that we have leases
                 self.process_pending_commits(ctx);
-                
+
                 // Internal message - no response needed
                 return;
             }

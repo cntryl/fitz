@@ -38,11 +38,24 @@ pub struct Runtime {
 
     /// Total messages sent
     pub(crate) messages_sent: Arc<AtomicU64>,
+
+    /// Admin auth configuration
+    pub(crate) admin_auth: Arc<crate::api::admin::auth::AdminAuth>,
+
+    /// Passive admin read model used by REST handlers
+    pub(crate) admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
 }
 
 impl Runtime {
     /// Create a new runtime statistics tracker
     pub fn new(router: Arc<Router>) -> Self {
+        Self::with_admin_read_model(router, crate::api::admin::read_model::AdminReadModel::new())
+    }
+
+    pub fn with_admin_read_model(
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         let now = Instant::now();
         Self {
             router,
@@ -54,7 +67,17 @@ impl Runtime {
             session_count: Arc::new(AtomicUsize::new(0)),
             messages_received: Arc::new(AtomicU64::new(0)),
             messages_sent: Arc::new(AtomicU64::new(0)),
+            admin_auth: Arc::new(crate::api::admin::auth::AdminAuth::from_env()),
+            admin_read_model,
         }
+    }
+
+    pub fn admin_auth(&self) -> Arc<crate::api::admin::auth::AdminAuth> {
+        self.admin_auth.clone()
+    }
+
+    pub fn admin_read_model(&self) -> Arc<crate::api::admin::read_model::AdminReadModel> {
+        self.admin_read_model.clone()
     }
 
     // Storage status
@@ -148,9 +171,11 @@ impl Runtime {
     // Active realms (derived from router state)
 
     pub fn active_realms(&self) -> Vec<String> {
-        // TODO: Query router for active route families/realms
-        // For now, return empty vec
-        vec![]
+        self.admin_read_model
+            .sessions(None)
+            .into_iter()
+            .map(|session| session.realm)
+            .collect()
     }
 
     // Messages per second (simple calculation)
@@ -167,8 +192,7 @@ impl Runtime {
     // Domain-specific stats (stubs - to be implemented by querying domain actors)
 
     pub fn kv_transactions_active(&self) -> usize {
-        // TODO: Query KV domain for active transactions
-        0
+        self.admin_read_model.kv_transactions(None).len()
     }
 
     pub fn kv_keys_total(&self) -> usize {
@@ -177,38 +201,35 @@ impl Runtime {
     }
 
     pub fn notice_subscriptions_active(&self) -> usize {
-        // TODO: Query Notice domain for active subscriptions
-        0
+        self.admin_read_model.notice_subscriptions(None, None).len()
     }
 
     pub fn queue_messages_pending(&self) -> usize {
-        // TODO: Query Queue domain for pending messages
-        0
+        self.admin_read_model
+            .queues(None)
+            .into_iter()
+            .map(|queue| queue.messages_ready)
+            .sum()
     }
 
     pub fn queue_leases_active(&self) -> usize {
-        // TODO: Query Queue domain for active leases
-        0
+        self.admin_read_model.queue_leases(None).len()
     }
 
     pub fn rpc_workers_registered(&self) -> usize {
-        // TODO: Query RPC domain for registered workers
-        0
+        self.admin_read_model.rpc_workers(None).len()
     }
 
     pub fn rpc_requests_pending(&self) -> usize {
-        // TODO: Query RPC domain for pending requests
-        0
+        self.admin_read_model.rpc_pending(None).len()
     }
 
     pub fn lease_active(&self) -> usize {
-        // TODO: Query Lease domain for active leases
-        0
+        self.admin_read_model.leases(None).len()
     }
 
     pub fn stream_active(&self) -> usize {
-        // TODO: Query Stream domain for active streams
-        0
+        self.admin_read_model.streams(None).len()
     }
 
     pub fn kv_operations_per_second(&self) -> f64 {
@@ -217,8 +238,11 @@ impl Runtime {
     }
 
     pub fn stream_events_total(&self) -> usize {
-        // TODO: Query Stream domain for total events
-        0
+        self.admin_read_model
+            .streams(None)
+            .into_iter()
+            .map(|stream| stream.offset as usize)
+            .sum()
     }
 
     pub fn stream_operations_per_second(&self) -> f64 {
@@ -227,8 +251,11 @@ impl Runtime {
     }
 
     pub fn stream_subscriptions_active(&self) -> usize {
-        // TODO: Query StreamDomainSink subscription_count() via router
-        0
+        self.admin_read_model
+            .streams(None)
+            .into_iter()
+            .map(|stream| stream.sessions_active)
+            .sum()
     }
 
     pub fn notice_publishes_per_second(&self) -> f64 {
@@ -252,8 +279,7 @@ impl Runtime {
     }
 
     pub fn schedule_active(&self) -> usize {
-        // TODO: Query Schedule domain for active schedules
-        0
+        self.admin_read_model.schedules(None).len()
     }
 
     pub fn schedule_executions_per_minute(&self) -> f64 {
@@ -262,7 +288,6 @@ impl Runtime {
     }
 
     pub fn schedule_subscriptions_active(&self) -> usize {
-        // TODO: Query ScheduleDomainSink subscription_count() via router
         0
     }
 
@@ -270,73 +295,63 @@ impl Runtime {
 
     pub fn kv_list_transactions(
         &self,
-        _realm: Option<&str>,
+        realm: Option<&str>,
     ) -> Vec<crate::api::admin::KvTransaction> {
-        // TODO: Query KV domain for active transactions
-        vec![]
+        self.admin_read_model.kv_transactions(realm)
     }
 
-    pub fn stream_list_streams(&self, _realm: Option<&str>) -> Vec<crate::api::admin::StreamInfo> {
-        // TODO: Query Stream domain for active streams
-        vec![]
+    pub fn stream_list_streams(&self, realm: Option<&str>) -> Vec<crate::api::admin::StreamInfo> {
+        self.admin_read_model.streams(realm)
     }
 
     pub fn notice_list_subscriptions(
         &self,
-        _realm: Option<&str>,
-        _route_pattern: Option<&str>,
+        realm: Option<&str>,
+        route_pattern: Option<&str>,
     ) -> Vec<crate::api::admin::NoticeSubscription> {
-        // TODO: Query Notice domain for subscriptions
-        vec![]
+        self.admin_read_model
+            .notice_subscriptions(realm, route_pattern)
     }
 
     pub fn notice_list_routes(
         &self,
-        _realm: Option<&str>,
+        realm: Option<&str>,
     ) -> Vec<crate::api::admin::NoticeRouteInfo> {
-        // TODO: Query Notice domain for routes with subscriber counts
-        vec![]
+        self.admin_read_model.notice_routes(realm)
     }
 
-    pub fn queue_list_queues(&self, _realm: Option<&str>) -> Vec<crate::api::admin::QueueInfo> {
-        // TODO: Query Queue domain for queue depths
-        vec![]
+    pub fn queue_list_queues(&self, realm: Option<&str>) -> Vec<crate::api::admin::QueueInfo> {
+        self.admin_read_model.queues(realm)
     }
 
-    pub fn queue_list_leases(&self, _realm: Option<&str>) -> Vec<crate::api::admin::QueueLease> {
-        // TODO: Query Queue domain for active leases
-        vec![]
+    pub fn queue_list_leases(&self, realm: Option<&str>) -> Vec<crate::api::admin::QueueLease> {
+        self.admin_read_model.queue_leases(realm)
     }
 
-    pub fn rpc_list_workers(&self, _realm: Option<&str>) -> Vec<crate::api::admin::RpcWorker> {
-        // TODO: Query RPC domain for registered workers
-        vec![]
+    pub fn rpc_list_workers(&self, realm: Option<&str>) -> Vec<crate::api::admin::RpcWorker> {
+        self.admin_read_model.rpc_workers(realm)
     }
 
     pub fn rpc_list_pending(
         &self,
-        _realm: Option<&str>,
+        realm: Option<&str>,
     ) -> Vec<crate::api::admin::RpcPendingRequest> {
-        // TODO: Query RPC domain for pending requests
-        vec![]
+        self.admin_read_model.rpc_pending(realm)
     }
 
-    pub fn lease_list_leases(&self, _realm: Option<&str>) -> Vec<crate::api::admin::LeaseInfo> {
-        // TODO: Query Lease domain for active leases
-        vec![]
+    pub fn lease_list_leases(&self, realm: Option<&str>) -> Vec<crate::api::admin::LeaseInfo> {
+        self.admin_read_model.leases(realm)
     }
 
     pub fn schedule_list_schedules(
         &self,
-        _realm: Option<&str>,
+        realm: Option<&str>,
     ) -> Vec<crate::api::admin::ScheduleInfo> {
-        // TODO: Query Schedule domain for schedules
-        vec![]
+        self.admin_read_model.schedules(realm)
     }
 
-    pub fn list_sessions(&self, _realm: Option<&str>) -> Vec<crate::api::admin::SessionInfo> {
-        // TODO: Query session manager for active sessions
-        vec![]
+    pub fn list_sessions(&self, realm: Option<&str>) -> Vec<crate::api::admin::SessionInfo> {
+        self.admin_read_model.sessions(realm)
     }
 }
 

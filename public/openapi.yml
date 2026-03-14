@@ -1,58 +1,36 @@
 openapi: 3.1.0
 info:
   title: Fitz Admin API
-  version: 1.0.0
+  version: 2.0.0
   description: |
-    REST API for observability, health checks, and operational control of the Fitz message broker.
+    REST API for the Fitz admin UI.
 
-    ## Features
-    - Kubernetes health probes (liveness, readiness, startup)
-    - Prometheus metrics export
-    - Real-time broker statistics
-    - Per-domain statistics (KV, Stream, Notice, Queue, RPC, Lease, Schedule)
-
-    ## Authentication
-    Most endpoints require Bearer token authentication:
-    ```
-    Authorization: Bearer <your-token>
-    ```
-
-    Health probes (`/healthz`, `/readyz`, `/startupz`) are public for load balancer access.
-  contact:
-    name: Fitz Team
-    url: https://github.com/cntryl/fitz
-  license:
-    name: MIT
-    url: https://github.com/cntryl/fitz/blob/main/LICENSE
+    The admin API uses cookie-backed session authentication. Most `/api/v1/**`
+    endpoints require a valid admin session cookie issued by `POST /api/v1/session`.
 
 servers:
   - url: http://localhost:4090
     description: Local development server
-  - url: https://fitz.example.com
-    description: Production server
 
 tags:
-  - name: Health Probes
-    description: Kubernetes liveness, readiness, and startup probes
+  - name: Auth
+  - name: Health
   - name: Metrics
-    description: Prometheus metrics endpoint
-  - name: Statistics
-    description: Broker and domain statistics
-
-security:
-  - bearerAuth: []
+  - name: Sessions
+  - name: KV
+  - name: Queue
+  - name: Stream
+  - name: Lease
+  - name: Schedule
+  - name: Notice
+  - name: RPC
 
 paths:
   /healthz:
     get:
-      tags:
-        - Health Probes
+      tags: [Health]
       summary: Liveness probe
-      description: |
-        Kubernetes liveness probe. Returns 200 OK if the application is alive.
-        Returns 503 only if deadlocked or panicked.
-      operationId: getLiveness
-      security: [] # Public endpoint
+      security: []
       responses:
         "200":
           description: Application is alive
@@ -60,89 +38,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
-              example:
-                status: ok
-        "503":
-          description: Application is deadlocked or unhealthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
-              example:
-                status: unhealthy
 
   /readyz:
     get:
-      tags:
-        - Health Probes
+      tags: [Health]
       summary: Readiness probe
-      description: |
-        Kubernetes readiness probe. Returns 200 OK if ready to accept traffic.
-        Checks storage and domain initialization status.
-      operationId: getReadiness
-      security: [] # Public endpoint
+      security: []
       responses:
         "200":
-          description: Application is ready to accept traffic
+          description: Application is ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadyStatus"
-              example:
-                status: ready
-                checks:
-                  storage: ok
-                  domains_initialized: ok
         "503":
           description: Application is not ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadyStatus"
-              example:
-                status: not_ready
-                checks:
-                  storage: ok
-                  domains_initialized: not_ready
 
   /startupz:
     get:
-      tags:
-        - Health Probes
+      tags: [Health]
       summary: Startup probe
-      description: |
-        Kubernetes startup probe. Returns 200 OK when startup is complete.
-        Prevents premature liveness checks during slow startup.
-      operationId: getStartup
-      security: [] # Public endpoint
+      security: []
       responses:
         "200":
-          description: Startup is complete
+          description: Startup complete
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StartupStatus"
-              example:
-                status: started
-                startup_time_seconds: 2.5
         "503":
-          description: Startup is in progress
+          description: Startup in progress
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StartupStatus"
-              example:
-                status: starting
-                startup_time_seconds: 1.2
 
   /health:
     get:
-      tags:
-        - Health Probes
-      summary: Legacy health check
-      description: Legacy health endpoint. Equivalent to /healthz.
-      operationId: getHealth
-      security: [] # Public endpoint
+      tags: [Health]
+      summary: Legacy health endpoint
+      security: []
       responses:
         "200":
           description: Application is healthy
@@ -150,547 +89,1187 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
-              example:
-                status: ok
 
   /metrics:
     get:
-      tags:
-        - Metrics
+      tags: [Metrics]
       summary: Prometheus metrics
-      description: |
-        Prometheus-compatible metrics endpoint.
-        Returns metrics in Prometheus text format.
-
-        **Requires authentication.**
-      operationId: getMetrics
       security:
-        - bearerAuth: []
+        - sessionCookie: []
       responses:
         "200":
-          description: Prometheus metrics in text format
+          description: Metrics in Prometheus text format
           content:
             text/plain; version=0.0.4:
               schema:
                 type: string
-              example: |
-                # HELP fitz_uptime_seconds Broker uptime in seconds
-                # TYPE fitz_uptime_seconds gauge
-                fitz_uptime_seconds 3600
-
-                # HELP fitz_connections_total Total number of active connections
-                # TYPE fitz_connections_total gauge
-                fitz_connections_total 42
-
-                # HELP fitz_sessions_total Total number of active sessions
-                # TYPE fitz_sessions_total gauge
-                fitz_sessions_total 38
-
-                # HELP fitz_messages_received_total Total messages received
-                # TYPE fitz_messages_received_total counter
-                fitz_messages_received_total 15234
-
-                # HELP fitz_messages_sent_total Total messages sent
-                # TYPE fitz_messages_sent_total counter
-                fitz_messages_sent_total 15198
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/admin/stats:
+  /api/v1/session:
+    post:
+      tags: [Auth]
+      summary: Create admin session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "204":
+          description: Session created and cookie set
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     get:
-      tags:
-        - Statistics
-      summary: Global broker statistics
-      description: |
-        Returns comprehensive statistics for the entire broker,
-        including broker-level metrics and all domain statistics.
-
-        **Requires authentication with admin scope.**
-      operationId: getGlobalStats
+      tags: [Auth]
+      summary: Get current admin session
       security:
-        - bearerAuth: []
+        - sessionCookie: []
       responses:
         "200":
-          description: Global broker statistics
+          description: Current session
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GlobalStats"
+                $ref: "#/components/schemas/SessionState"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Auth]
+      summary: Delete admin session
+      security: []
+      responses:
+        "204":
+          description: Session cleared and cookie removed
 
-  /api/v1/admin/kv/stats:
+  /api/v1/sessions:
     get:
-      tags:
-        - Statistics
-      summary: KV domain statistics
-      description: |
-        Returns statistics specific to the Key-Value (KV) domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getKvStats
+      tags: [Sessions]
+      summary: List active sessions
       security:
-        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/RealmQuery"
       responses:
         "200":
-          description: KV domain statistics
+          description: Active sessions
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/KvStats"
-              example:
-                transactions_active: 5
-                keys_total: 1234
-                operations_per_second: 45.2
+                $ref: "#/components/schemas/SessionsList"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/admin/stream/stats:
+  /api/v1/kv/realms:
     get:
-      tags:
-        - Statistics
-      summary: Stream domain statistics
-      description: |
-        Returns statistics specific to the Stream domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getStreamStats
-      security:
-        - bearerAuth: []
+      tags: [KV]
+      summary: List KV realms
+      security: [{ sessionCookie: [] }]
       responses:
         "200":
-          description: Stream domain statistics
+          description: KV realms
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StreamStats"
-              example:
-                streams_active: 12
-                events_total: 98765
-                operations_per_second: 123.4
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/admin/notice/stats:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/kv/realms/{realm}:
     get:
-      tags:
-        - Statistics
-      summary: Notice domain statistics
-      description: |
-        Returns statistics specific to the Notice (pub/sub) domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getNoticeStats
-      security:
-        - bearerAuth: []
+      tags: [KV]
+      summary: Get KV realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
       responses:
         "200":
-          description: Notice domain statistics
+          description: KV realm
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NoticeStats"
-              example:
-                subscriptions_active: 28
-                publishes_per_second: 67.8
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/admin/queue/stats:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/kv/realms/{realm}/areas:
     get:
-      tags:
-        - Statistics
-      summary: Queue domain statistics
-      description: |
-        Returns statistics specific to the Queue domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getQueueStats
-      security:
-        - bearerAuth: []
+      tags: [KV]
+      summary: List KV areas in a realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
       responses:
         "200":
-          description: Queue domain statistics
+          description: KV areas
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/QueueStats"
-              example:
-                messages_pending: 156
-                leases_active: 8
-                operations_per_second: 34.2
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/admin/rpc/stats:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/kv/realms/{realm}/areas/{area}:
     get:
-      tags:
-        - Statistics
-      summary: RPC domain statistics
-      description: |
-        Returns statistics specific to the RPC domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getRpcStats
-      security:
-        - bearerAuth: []
+      tags: [KV]
+      summary: Get KV area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
       responses:
         "200":
-          description: RPC domain statistics
+          description: KV area
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RpcStats"
-              example:
-                workers_registered: 4
-                requests_pending: 12
-                operations_per_second: 89.3
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/admin/lease/stats:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/kv/realms/{realm}/areas/{area}/resources:
     get:
-      tags:
-        - Statistics
-      summary: Lease domain statistics
-      description: |
-        Returns statistics specific to the Lease domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getLeaseStats
-      security:
-        - bearerAuth: []
+      tags: [KV]
+      summary: List KV resources in an area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
       responses:
         "200":
-          description: Lease domain statistics
+          description: KV resources
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LeaseStats"
-              example:
-                leases_active: 6
-                operations_per_second: 2.1
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/admin/schedule/stats:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}:
     get:
-      tags:
-        - Statistics
-      summary: Schedule domain statistics
-      description: |
-        Returns statistics specific to the Schedule domain.
-
-        **Requires authentication with admin scope.**
-      operationId: getScheduleStats
-      security:
-        - bearerAuth: []
+      tags: [KV]
+      summary: Get KV resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
       responses:
         "200":
-          description: Schedule domain statistics
+          description: KV resource
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ScheduleStats"
-              example:
-                schedules_active: 3
-                executions_per_minute: 5.2
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+                $ref: "#/components/schemas/KvResourceDetail"
+  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions:
+    get:
+      tags: [KV]
+      summary: List KV transactions for a resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: KV transactions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KvTransactionsList"
+
+  /api/v1/queue/realms:
+    get:
+      tags: [Queue]
+      summary: List queue realms
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Queue realms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/queue/realms/{realm}:
+    get:
+      tags: [Queue]
+      summary: Get queue realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Queue realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/queue/realms/{realm}/areas:
+    get:
+      tags: [Queue]
+      summary: List queue areas
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Queue areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/queue/realms/{realm}/areas/{area}:
+    get:
+      tags: [Queue]
+      summary: Get queue area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Queue area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/queue/realms/{realm}/areas/{area}/resources:
+    get:
+      tags: [Queue]
+      summary: List queues in an area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Queues
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}:
+    get:
+      tags: [Queue]
+      summary: Get queue resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Queue resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueResourceDetail"
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases:
+    get:
+      tags: [Queue]
+      summary: List queue leases for a resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Queue leases
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueLeasesList"
+
+  /api/v1/stream/realms:
+    get:
+      tags: [Stream]
+      summary: List stream realms
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Stream realms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/stream/realms/{realm}:
+    get:
+      tags: [Stream]
+      summary: Get stream realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Stream realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/stream/realms/{realm}/areas:
+    get:
+      tags: [Stream]
+      summary: List stream areas
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Stream areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/stream/realms/{realm}/areas/{area}:
+    get:
+      tags: [Stream]
+      summary: Get stream area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Stream area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/stream/realms/{realm}/areas/{area}/resources:
+    get:
+      tags: [Stream]
+      summary: List streams in an area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Streams
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}:
+    get:
+      tags: [Stream]
+      summary: Get stream resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Stream resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamResourceDetail"
+
+  /api/v1/lease/realms:
+    get:
+      tags: [Lease]
+      summary: List lease realms
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Lease realms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/lease/realms/{realm}:
+    get:
+      tags: [Lease]
+      summary: Get lease realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Lease realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/lease/realms/{realm}/areas:
+    get:
+      tags: [Lease]
+      summary: List lease areas
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Lease areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/lease/realms/{realm}/areas/{area}:
+    get:
+      tags: [Lease]
+      summary: Get lease area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Lease area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/lease/realms/{realm}/areas/{area}/resources:
+    get:
+      tags: [Lease]
+      summary: List lease resources
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Lease resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}:
+    get:
+      tags: [Lease]
+      summary: Get lease resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Lease resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseResourceDetail"
+
+  /api/v1/schedule/realms:
+    get:
+      tags: [Schedule]
+      summary: List schedule realms
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Schedule realms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/schedule/realms/{realm}:
+    get:
+      tags: [Schedule]
+      summary: Get schedule realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Schedule realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/schedule/realms/{realm}/areas:
+    get:
+      tags: [Schedule]
+      summary: List schedule areas
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Schedule areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/schedule/realms/{realm}/areas/{area}:
+    get:
+      tags: [Schedule]
+      summary: Get schedule area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Schedule area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/schedule/realms/{realm}/areas/{area}/resources:
+    get:
+      tags: [Schedule]
+      summary: List schedule resources
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Schedule resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}:
+    get:
+      tags: [Schedule]
+      summary: Get schedule resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Schedule resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResourceDetail"
+
+  /api/v1/notice/realms:
+    get:
+      tags: [Notice]
+      summary: List notice realms
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Notice realms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/notice/realms/{realm}:
+    get:
+      tags: [Notice]
+      summary: Get notice realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Notice realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/notice/realms/{realm}/areas:
+    get:
+      tags: [Notice]
+      summary: List notice areas
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: Notice areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/notice/realms/{realm}/areas/{area}:
+    get:
+      tags: [Notice]
+      summary: Get notice area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Notice area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/notice/realms/{realm}/areas/{area}/resources:
+    get:
+      tags: [Notice]
+      summary: List notice resources
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: Notice resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}:
+    get:
+      tags: [Notice]
+      summary: Get notice resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Notice resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeResourceDetail"
+  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/subscriptions:
+    get:
+      tags: [Notice]
+      summary: List notice subscriptions for a resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: Notice subscriptions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeSubscriptionsList"
+
+  /api/v1/rpc/realms:
+    get:
+      tags: [RPC]
+      summary: List RPC realms
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: RPC realms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmCollection"
+  /api/v1/rpc/realms/{realm}:
+    get:
+      tags: [RPC]
+      summary: Get RPC realm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: RPC realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealmDetail"
+  /api/v1/rpc/realms/{realm}/areas:
+    get:
+      tags: [RPC]
+      summary: List RPC areas
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+      responses:
+        "200":
+          description: RPC areas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaCollection"
+  /api/v1/rpc/realms/{realm}/areas/{area}:
+    get:
+      tags: [RPC]
+      summary: Get RPC area
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: RPC area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaDetail"
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources:
+    get:
+      tags: [RPC]
+      summary: List RPC resources
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+      responses:
+        "200":
+          description: RPC resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollection"
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}:
+    get:
+      tags: [RPC]
+      summary: Get RPC resource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: RPC resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationCollection"
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations:
+    get:
+      tags: [RPC]
+      summary: List RPC operations
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+      responses:
+        "200":
+          description: RPC operations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationCollection"
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}:
+    get:
+      tags: [RPC]
+      summary: Get RPC operation
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+        - $ref: "#/components/parameters/OperationPath"
+      responses:
+        "200":
+          description: RPC operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RpcOperationDetail"
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers:
+    get:
+      tags: [RPC]
+      summary: List RPC workers for an operation
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+        - $ref: "#/components/parameters/OperationPath"
+      responses:
+        "200":
+          description: RPC workers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RpcWorkersList"
+  /api/v1/rpc/pending:
+    get:
+      tags: [RPC]
+      summary: List pending RPC requests
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmQuery"
+      responses:
+        "200":
+          description: Pending RPC requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RpcPendingList"
 
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: |
-        JWT Bearer token for authentication.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: fitz_admin_session
+      description: Admin session JWT cookie issued by `POST /api/v1/session`.
 
-        Example:
-        ```
-        Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-        ```
+  parameters:
+    RealmPath:
+      name: realm
+      in: path
+      required: true
+      schema:
+        type: string
+    AreaPath:
+      name: area
+      in: path
+      required: true
+      schema:
+        type: string
+    ResourcePath:
+      name: resource
+      in: path
+      required: true
+      schema:
+        type: string
+    OperationPath:
+      name: operation
+      in: path
+      required: true
+      schema:
+        type: string
+    RealmQuery:
+      name: realm
+      in: query
+      required: false
+      schema:
+        type: string
 
   schemas:
     HealthStatus:
       type: object
-      required:
-        - status
       properties:
         status:
           type: string
-          enum: [ok, unhealthy]
-          description: Health status of the application
-          example: ok
+      required: [status]
 
     ReadyStatus:
       type: object
-      required:
-        - status
-        - checks
       properties:
         status:
           type: string
-          enum: [ready, not_ready]
-          description: Overall readiness status
-          example: ready
         checks:
-          $ref: "#/components/schemas/CheckResults"
-
-    CheckResults:
-      type: object
-      required:
-        - storage
-        - domains_initialized
-      properties:
-        storage:
-          type: string
-          enum: [ok, not_ready]
-          description: Storage initialization status
-          example: ok
-        domains_initialized:
-          type: string
-          enum: [ok, not_ready]
-          description: Domain actor initialization status
-          example: ok
+          type: object
+          additionalProperties:
+            type: string
+      required: [status, checks]
 
     StartupStatus:
       type: object
-      required:
-        - status
-        - startup_time_seconds
       properties:
         status:
           type: string
-          enum: [started, starting]
-          description: Startup completion status
-          example: started
         startup_time_seconds:
           type: number
-          format: double
-          description: Time elapsed since startup began (in seconds)
-          example: 2.5
+      required: [status, startup_time_seconds]
 
-    GlobalStats:
+    LoginRequest:
       type: object
-      required:
-        - broker
-        - domains
+      required: [username, password]
       properties:
-        broker:
-          $ref: "#/components/schemas/BrokerStats"
-        domains:
-          $ref: "#/components/schemas/DomainStats"
+        username:
+          type: string
+        password:
+          type: string
 
-    BrokerStats:
+    SessionState:
       type: object
-      required:
-        - uptime_seconds
-        - connections
-        - sessions
-        - realms
-        - messages_per_second
+      required: [authenticated, username]
       properties:
-        uptime_seconds:
-          type: integer
-          format: uint64
-          description: Broker uptime in seconds
-          example: 3600
-        connections:
-          type: integer
-          description: Number of active connections
-          example: 42
-        sessions:
-          type: integer
-          description: Number of active sessions
-          example: 38
+        authenticated:
+          type: boolean
+        username:
+          type: string
+
+    RealmEntry:
+      type: object
+      required: [realm]
+      properties:
+        realm:
+          type: string
+    RealmCollection:
+      type: object
+      required: [realms]
+      properties:
         realms:
           type: array
           items:
-            type: string
-          description: List of active realm identifiers
-          example: ["acme", "tenant-123", "prod"]
-        messages_per_second:
-          type: number
-          format: double
-          description: Average messages per second (sent + received)
-          example: 123.45
+            $ref: "#/components/schemas/RealmEntry"
+    RealmDetail:
+      type: object
+      required: [realm]
+      properties:
+        realm:
+          type: string
 
-    DomainStats:
+    AreaEntry:
+      type: object
+      required: [area]
+      properties:
+        area:
+          type: string
+    AreaCollection:
+      type: object
+      required: [realm, areas]
+      properties:
+        realm:
+          type: string
+        areas:
+          type: array
+          items:
+            $ref: "#/components/schemas/AreaEntry"
+    AreaDetail:
+      type: object
+      required: [realm, area]
+      properties:
+        realm:
+          type: string
+        area:
+          type: string
+
+    ResourceEntry:
+      type: object
+      required: [resource]
+      properties:
+        resource:
+          type: string
+    ResourceCollection:
+      type: object
+      required: [realm, area, resources]
+      properties:
+        realm:
+          type: string
+        area:
+          type: string
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceEntry"
+
+    KvResourceDetail:
+      type: object
+      required: [realm, area, resource, transactions_active]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        transactions_active: { type: integer }
+
+    QueueResourceDetail:
       type: object
       required:
-        - kv
-        - stream
-        - notice
-        - queue
-        - rpc
-        - lease
-        - schedule
+        [realm, area, resource, messages_ready, messages_leased, messages_total, oldest_message_age_seconds]
       properties:
-        kv:
-          $ref: "#/components/schemas/KvStats"
-        stream:
-          $ref: "#/components/schemas/StreamStats"
-        notice:
-          $ref: "#/components/schemas/NoticeStats"
-        queue:
-          $ref: "#/components/schemas/QueueStats"
-        rpc:
-          $ref: "#/components/schemas/RpcStats"
-        lease:
-          $ref: "#/components/schemas/LeaseStats"
-        schedule:
-          $ref: "#/components/schemas/ScheduleStats"
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        messages_ready: { type: integer }
+        messages_leased: { type: integer }
+        messages_total: { type: integer }
+        oldest_message_age_seconds: { type: integer }
 
-    KvStats:
+    StreamResourceDetail:
       type: object
-      required:
-        - transactions_active
-        - keys_total
-        - operations_per_second
+      required: [realm, area, resource, offset, watermark, size_bytes, sessions_active]
       properties:
-        transactions_active:
-          type: integer
-          description: Number of active KV transactions
-          example: 5
-        keys_total:
-          type: integer
-          description: Total number of keys in storage
-          example: 1234
-        operations_per_second:
-          type: number
-          format: double
-          description: KV operations per second
-          example: 45.2
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        offset: { type: integer }
+        watermark: { type: integer }
+        size_bytes: { type: integer }
+        sessions_active: { type: integer }
 
-    StreamStats:
+    LeaseResourceDetail:
       type: object
-      required:
-        - streams_active
-        - events_total
-        - operations_per_second
+      required: [realm, area, resource, active_leases]
       properties:
-        streams_active:
-          type: integer
-          description: Number of active streams
-          example: 12
-        events_total:
-          type: integer
-          description: Total number of events across all streams
-          example: 98765
-        operations_per_second:
-          type: number
-          format: double
-          description: Stream operations per second
-          example: 123.4
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        active_leases: { type: integer }
 
-    NoticeStats:
+    ScheduleResourceDetail:
       type: object
-      required:
-        - subscriptions_active
-        - publishes_per_second
+      required: [realm, area, resource, enabled, executions_total]
       properties:
-        subscriptions_active:
-          type: integer
-          description: Number of active subscriptions
-          example: 28
-        publishes_per_second:
-          type: number
-          format: double
-          description: Publish operations per second
-          example: 67.8
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        enabled: { type: boolean }
+        cron:
+          type: [string, "null"]
+        next_run:
+          type: [string, "null"]
+        executions_total: { type: integer }
 
-    QueueStats:
+    NoticeResourceDetail:
       type: object
-      required:
-        - messages_pending
-        - leases_active
-        - operations_per_second
+      required: [realm, area, resource, subscriptions_active]
       properties:
-        messages_pending:
-          type: integer
-          description: Number of messages pending in queues
-          example: 156
-        leases_active:
-          type: integer
-          description: Number of active queue message leases
-          example: 8
-        operations_per_second:
-          type: number
-          format: double
-          description: Queue operations per second
-          example: 34.2
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        subscriptions_active: { type: integer }
 
-    RpcStats:
+    OperationEntry:
       type: object
-      required:
-        - workers_registered
-        - requests_pending
-        - operations_per_second
+      required: [operation]
       properties:
-        workers_registered:
-          type: integer
-          description: Number of registered RPC workers
-          example: 4
-        requests_pending:
-          type: integer
-          description: Number of pending RPC requests
-          example: 12
-        operations_per_second:
-          type: number
-          format: double
-          description: RPC operations per second
-          example: 89.3
+        operation:
+          type: string
+    OperationCollection:
+      type: object
+      required: [realm, area, resource, operations]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationEntry"
 
-    LeaseStats:
+    RpcOperationDetail:
       type: object
-      required:
-        - leases_active
-        - operations_per_second
+      required: [realm, area, resource, operation, workers_registered, requests_pending]
       properties:
-        leases_active:
-          type: integer
-          description: Number of active leases
-          example: 6
-        operations_per_second:
-          type: number
-          format: double
-          description: Lease operations per second
-          example: 2.1
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        operation: { type: string }
+        workers_registered: { type: integer }
+        requests_pending: { type: integer }
 
-    ScheduleStats:
+    KvTransaction:
       type: object
-      required:
-        - schedules_active
-        - executions_per_minute
       properties:
-        schedules_active:
-          type: integer
-          description: Number of active schedules
-          example: 3
-        executions_per_minute:
-          type: number
-          format: double
-          description: Schedule executions per minute
-          example: 5.2
+        tx_id: { type: integer }
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        mode: { type: string }
+        started_at: { type: string }
+        operations_count: { type: integer }
+        idle_seconds: { type: integer }
+    KvTransactionsList:
+      type: object
+      required: [transactions]
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/KvTransaction"
+
+    QueueLease:
+      type: object
+      properties:
+        message_id: { type: integer }
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        lease_token: { type: string }
+        session_id: { type: string }
+        expires_at: { type: string }
+        attempts: { type: integer }
+    QueueLeasesList:
+      type: object
+      required: [leases]
+      properties:
+        leases:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueLease"
+
+    NoticeSubscription:
+      type: object
+      properties:
+        subscription_id: { type: integer }
+        session_id: { type: string }
+        realm: { type: string }
+        pattern: { type: string }
+        created_at: { type: string }
+        notifications_received: { type: integer }
+    NoticeSubscriptionsList:
+      type: object
+      required: [subscriptions]
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/NoticeSubscription"
+
+    RpcWorker:
+      type: object
+      properties:
+        session_id: { type: string }
+        realm: { type: string }
+        route: { type: string }
+        registered_at: { type: string }
+        requests_handled: { type: integer }
+        average_latency_ms: { type: number }
+    RpcWorkersList:
+      type: object
+      required: [workers]
+      properties:
+        workers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RpcWorker"
+
+    RpcPendingRequest:
+      type: object
+      properties:
+        correlation_id: { type: string }
+        route: { type: string }
+        submitted_at: { type: string }
+        age_seconds: { type: integer }
+        worker_session_id:
+          type: [string, "null"]
+    RpcPendingList:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RpcPendingRequest"
+
+    SessionInfo:
+      type: object
+      properties:
+        session_id: { type: string }
+        realm: { type: string }
+        connected_at: { type: string }
+        idle_seconds: { type: integer }
+        messages_received: { type: integer }
+        messages_sent: { type: integer }
+        transport: { type: string }
+        remote_addr: { type: string }
+    SessionsList:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionInfo"
 
     Error:
       type: object
-      required:
-        - error
+      required: [error]
       properties:
         error:
           type: string
-          description: Error message
-          example: Unauthorized
 
   responses:
     Unauthorized:
-      description: Authentication required or invalid token
+      description: Authentication required or session invalid
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-          example:
-            error: Unauthorized
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

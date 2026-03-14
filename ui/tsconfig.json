@@ -12,10 +12,18 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "jsxImportSource": "@askrjs/askr",
-    "types": ["vitest/globals", "@askrjs/askr"]
+    "types": ["vitest/globals"],
+    "paths": {
+      "@askrjs/askr/jsx-runtime": [
+        "./node_modules/@askrjs/askr/dist/jsx/jsx-runtime.d.ts"
+      ],
+      "@askrjs/askr/jsx-dev-runtime": [
+        "./node_modules/@askrjs/askr/dist/jsx/jsx-dev-runtime.d.ts"
+      ]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "tests"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

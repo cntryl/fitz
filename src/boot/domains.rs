@@ -3,6 +3,7 @@
 use crate::boot::runtime::BootResult;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -11,6 +12,33 @@ use std::sync::Arc as StdArc;
 
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+
+fn parse_route_triplet(route: &str) -> Option<(String, String, String)> {
+    let path = route.split("://").nth(1).unwrap_or(route);
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    Some((
+        parts[0].to_string(),
+        parts[1].to_string(),
+        parts[2].to_string(),
+    ))
+}
+
+fn parse_route_quad(route: &str) -> Option<(String, String, String, String)> {
+    let path = route.split("://").nth(1).unwrap_or(route);
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    Some((
+        parts[0].to_string(),
+        parts[1].to_string(),
+        parts[2].to_string(),
+        parts[3].to_string(),
+    ))
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GENERIC DOMAIN SINK (FALLBACK)
@@ -89,23 +117,51 @@ pub struct KvDomainSink {
     tx_to_resource: Mutex<HashMap<(u64, u64), KvResourceLockKey>>,
     /// Router for routing response envelopes back
     router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
 }
 
 impl KvDomainSink {
-    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
+    pub fn new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             store,
             actors: Arc::new(Mutex::new(HashMap::new())),
             resource_locks: Mutex::new(HashMap::new()),
             tx_to_resource: Mutex::new(HashMap::new()),
             router,
+            admin_read_model,
             active: AtomicBool::new(true),
         }
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let transactions = self
+            .tx_to_resource
+            .lock()
+            .iter()
+            .map(|((session_id, tx_id), (_family_id, resource_key))| {
+                let mut parts = resource_key.split('/');
+                crate::api::admin::KvTransaction {
+                    tx_id: *tx_id,
+                    realm: parts.next().unwrap_or_default().to_string(),
+                    area: parts.next().unwrap_or_default().to_string(),
+                    resource: parts.next().unwrap_or_default().to_string(),
+                    mode: format!("session:{session_id}:readwrite"),
+                    started_at: Utc::now().to_rfc3339(),
+                    operations_count: 0,
+                    idle_seconds: 0,
+                }
+            })
+            .collect();
+        self.admin_read_model.replace_kv_transactions(transactions);
     }
 
     /// Remove actor and release all resource locks for a session (called on disconnect cleanup).
@@ -126,6 +182,7 @@ impl KvDomainSink {
             session = session_id,
             "All KV transactions and resource locks released for session (disconnect cleanup)"
         );
+        self.sync_admin_snapshot();
     }
 }
 
@@ -376,6 +433,7 @@ impl MailboxSink for KvDomainSink {
                 actor.handle(kv_message)
             }
         };
+        self.sync_admin_snapshot();
 
         tracing::debug!(
             domain = "kv",
@@ -474,15 +532,20 @@ pub struct NoticeDomainSink {
     next_sub_id: AtomicU64,
     /// Router for routing notification envelopes
     router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
 }
 
 impl NoticeDomainSink {
-    pub fn new(router: Arc<Router>) -> Self {
+    pub fn new(
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             router,
+            admin_read_model,
             active: AtomicBool::new(true),
         }
     }
@@ -493,6 +556,42 @@ impl NoticeDomainSink {
 }
 
 impl NoticeDomainSink {
+    fn sync_admin_snapshot(&self) {
+        let families = self.families.lock();
+        let mut subscriptions = Vec::new();
+        let mut routes: HashMap<String, usize> = HashMap::new();
+        for state in families.values() {
+            for subscription in &state.subscriptions {
+                let pattern = subscription.pattern.route().to_string();
+                if let Some((realm, _area, _resource)) = parse_route_triplet(&pattern) {
+                    subscriptions.push(crate::api::admin::NoticeSubscription {
+                        subscription_id: subscription.subscription_id,
+                        session_id: subscription.session_id.to_string(),
+                        realm,
+                        pattern: pattern.clone(),
+                        created_at: Utc::now().to_rfc3339(),
+                        notifications_received: 0,
+                    });
+                    *routes.entry(pattern).or_insert(0) += 1;
+                }
+            }
+        }
+        drop(families);
+        self.admin_read_model
+            .replace_notice_subscriptions(subscriptions);
+        self.admin_read_model.replace_notice_routes(
+            routes
+                .into_iter()
+                .map(|(route, subscribers)| crate::api::admin::NoticeRouteInfo {
+                    route,
+                    subscribers,
+                    publishes_total: 0,
+                    publishes_per_minute: 0.0,
+                })
+                .collect(),
+        );
+    }
+
     /// Handle a DomainPublishEvent from another domain (e.g. Schedule target_resource execution).
     /// Matches the event route against notice subscription patterns and fans out
     /// NOTICE NOTIFY (504) frames to matching subscribers.
@@ -538,6 +637,8 @@ impl NoticeDomainSink {
             session = session_id,
             "All notice subscriptions removed for session (disconnect cleanup)"
         );
+        drop(families);
+        self.sync_admin_snapshot();
     }
 }
 
@@ -744,6 +845,7 @@ impl MailboxSink for NoticeDomainSink {
                 })
             }
         };
+        self.sync_admin_snapshot();
 
         // Only send response if one was generated (PUBLISH returns None for fire-and-forget)
         if let Some(response) = response_opt {
@@ -799,11 +901,15 @@ struct RpcState {
 pub struct RpcDomainSink {
     state: Mutex<RpcState>,
     router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
 }
 
 impl RpcDomainSink {
-    pub fn new(router: Arc<Router>) -> Self {
+    pub fn new(
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             state: Mutex::new(RpcState {
                 workers: HashMap::new(),
@@ -811,12 +917,51 @@ impl RpcDomainSink {
                 pending: HashMap::new(),
             }),
             router,
+            admin_read_model,
             active: AtomicBool::new(true),
         }
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let state = self.state.lock();
+        let workers = state
+            .workers
+            .iter()
+            .flat_map(|(route, workers)| {
+                workers.iter().filter_map(|worker| {
+                    parse_route_quad(route).map(|(realm, _area, _resource, _operation)| {
+                        crate::api::admin::RpcWorker {
+                            session_id: worker.session_id.to_string(),
+                            realm,
+                            route: route.clone(),
+                            registered_at: Utc::now().to_rfc3339(),
+                            requests_handled: 0,
+                            average_latency_ms: 0.0,
+                        }
+                    })
+                })
+            })
+            .collect();
+        let pending = state
+            .pending
+            .iter()
+            .map(
+                |(correlation_id, (session_id, _family))| crate::api::admin::RpcPendingRequest {
+                    correlation_id: correlation_id.to_string(),
+                    route: format!("rpc://pending/session/{session_id}"),
+                    submitted_at: Utc::now().to_rfc3339(),
+                    age_seconds: 0,
+                    worker_session_id: None,
+                },
+            )
+            .collect();
+        drop(state);
+        self.admin_read_model.replace_rpc_workers(workers);
+        self.admin_read_model.replace_rpc_pending(pending);
     }
 }
 
@@ -1060,6 +1205,7 @@ impl MailboxSink for RpcDomainSink {
                 ))
             }
         };
+        self.sync_admin_snapshot();
 
         if let Some(response) = response {
             // Encode and route response back
@@ -1125,23 +1271,47 @@ pub struct QueueDomainSink {
     next_sub_id: AtomicU64,
     /// Router for routing response envelopes back
     router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
 }
 
 impl QueueDomainSink {
-    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
+    pub fn new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             store,
             actors: Mutex::new(HashMap::new()),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             router,
+            admin_read_model,
             active: AtomicBool::new(true),
         }
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let queues = self
+            .actors
+            .lock()
+            .keys()
+            .map(|key| crate::api::admin::QueueInfo {
+                realm: key.realm.clone(),
+                area: key.area.clone(),
+                resource: key.resource.clone(),
+                messages_ready: 0,
+                messages_leased: 0,
+                messages_total: 0,
+                oldest_message_age_seconds: 0,
+            })
+            .collect();
+        self.admin_read_model.replace_queues(queues);
     }
 
     /// Handle a DomainPublishEvent from queue actors.
@@ -1233,6 +1403,8 @@ impl QueueDomainSink {
             session = session_id,
             "All queue subscriptions removed for session"
         );
+        drop(families);
+        self.sync_admin_snapshot();
     }
 
     /// Get the total number of active queue subscriptions (for stats).
@@ -1615,6 +1787,7 @@ impl MailboxSink for QueueDomainSink {
                 }
             }
         };
+        self.sync_admin_snapshot();
 
         // If we just did a Send that transitioned empty->non-empty, fan out QUEUE_NOTIFY (209) to subscribers
         if let Some(notify_route) = availability_notify_route {
@@ -1718,11 +1891,16 @@ pub struct StreamDomainSink {
     next_sub_id: AtomicU64,
     /// Router for routing response envelopes back
     router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
 }
 
 impl StreamDomainSink {
-    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
+    pub fn new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             store,
             next_session_id: AtomicU64::new(1),
@@ -1733,12 +1911,40 @@ impl StreamDomainSink {
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             router,
+            admin_read_model,
             active: AtomicBool::new(true),
         }
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let state = self.write_state.lock();
+        let mut sessions_by_route: HashMap<String, usize> = HashMap::new();
+        for route in state.session_to_route.values() {
+            *sessions_by_route.entry(route.clone()).or_insert(0) += 1;
+        }
+        let streams = state
+            .next_offset_by_route
+            .iter()
+            .filter_map(|(route, next_offset)| {
+                parse_route_triplet(route).map(|(realm, area, resource)| {
+                    crate::api::admin::StreamInfo {
+                        realm,
+                        area,
+                        resource,
+                        offset: next_offset.saturating_sub(1),
+                        watermark: *next_offset,
+                        size_bytes: 0,
+                        sessions_active: sessions_by_route.get(route).copied().unwrap_or(0),
+                    }
+                })
+            })
+            .collect();
+        drop(state);
+        self.admin_read_model.replace_streams(streams);
     }
 
     /// Handle a DomainPublishEvent from stream actors.
@@ -1839,6 +2045,8 @@ impl StreamDomainSink {
             session = session_id,
             "All stream subscriptions removed for session"
         );
+        drop(families);
+        self.sync_admin_snapshot();
     }
 
     /// Get the total number of active stream subscriptions (for stats).
@@ -2115,6 +2323,7 @@ impl MailboxSink for StreamDomainSink {
                 None,
             ),
         };
+        self.sync_admin_snapshot();
 
         // If we just committed a stream session, fan out STREAM_NOTIFY (609) to matching subscribers
         if let Some(route) = commit_notify_route {
@@ -2184,6 +2393,7 @@ pub struct LeaseDomainSink {
     families: Mutex<HashMap<u64, LeaseFamilyState>>,
     /// Next subscription ID
     next_sub_id: AtomicU64,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
 }
 
 /// Lease subscription to availability notifications
@@ -2209,7 +2419,10 @@ struct LeaseFamilyState {
 }
 
 impl LeaseDomainSink {
-    pub fn new(router: Arc<Router>) -> Self {
+    pub fn new(
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             leases: Mutex::new(HashMap::new()),
             next_token: AtomicU64::new(1),
@@ -2217,11 +2430,37 @@ impl LeaseDomainSink {
             active: AtomicBool::new(true),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
+            admin_read_model,
         }
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let now = std::time::Instant::now();
+        let leases = self
+            .leases
+            .lock()
+            .iter()
+            .map(|(key, state)| crate::api::admin::LeaseInfo {
+                realm: key.realm.clone(),
+                area: key.area.clone(),
+                resource: key.resource.clone(),
+                owner_session_id: state.owner_id.clone(),
+                acquired_at: Utc::now().to_rfc3339(),
+                expires_at: Utc::now()
+                    .checked_add_signed(chrono::TimeDelta::seconds(
+                        state.expiry.saturating_duration_since(now).as_secs() as i64,
+                    ))
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339(),
+                renewals: 0,
+                fencing_token: state.fencing_token,
+            })
+            .collect();
+        self.admin_read_model.replace_leases(leases);
     }
 
     /// Release all leases held by owner matching the given prefix (called on disconnect cleanup).
@@ -2243,6 +2482,8 @@ impl LeaseDomainSink {
 
         // Also remove all subscriptions for this session
         self.unsubscribe_all(session_id);
+        drop(leases);
+        self.sync_admin_snapshot();
     }
 
     /// Handle domain publish event (availability notifications)
@@ -2767,23 +3008,53 @@ pub struct ScheduleDomainSink {
     next_sub_id: AtomicU64,
     /// Router for routing response envelopes back
     router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
 }
 
 impl ScheduleDomainSink {
-    pub fn new(store: Arc<cntryl_midge::Engine>, router: Arc<Router>) -> Self {
+    pub fn new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             store,
             actors: Mutex::new(HashMap::new()),
             sub_families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             router,
+            admin_read_model,
             active: AtomicBool::new(true),
         }
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let schedules = self
+            .actors
+            .lock()
+            .values()
+            .flat_map(|actor| actor.list_defs().into_iter())
+            .filter_map(|(route, cron, _payload)| {
+                parse_route_triplet(&route).map(|(realm, area, resource)| {
+                    crate::api::admin::ScheduleInfo {
+                        realm,
+                        area,
+                        resource,
+                        cron,
+                        next_run: Utc::now().to_rfc3339(),
+                        last_run: None,
+                        executions_total: 0,
+                        enabled: true,
+                    }
+                })
+            })
+            .collect();
+        self.admin_read_model.replace_schedules(schedules);
     }
 
     /// Handle a DomainPublishEvent from schedule actors.
@@ -2828,6 +3099,8 @@ impl ScheduleDomainSink {
             session = session_id,
             "All schedule subscriptions removed for session"
         );
+        drop(families);
+        self.sync_admin_snapshot();
     }
 
     /// Get the total number of active schedule subscriptions (for stats).
@@ -3039,6 +3312,7 @@ impl MailboxSink for ScheduleDomainSink {
                 }
             }
         };
+        self.sync_admin_snapshot();
 
         // Encode and route response back
         let response_bytes = crate::protocol::schedule_codec::encode_response(&response);
@@ -3098,42 +3372,68 @@ impl MailboxSink for ScheduleDomainSink {
 /// - Dynamically allocated by the control plane per realm
 /// - Passed in client requests (part of the RouteAddress)
 /// - Enforced by the storage layer (aligned with Midge ColumnFamilyId)
-pub fn setup(router: &StdArc<Router>, store: &StdArc<cntryl_midge::Engine>) -> BootResult<()> {
+pub fn setup(
+    router: &StdArc<Router>,
+    store: &StdArc<cntryl_midge::Engine>,
+    admin_read_model: &Arc<crate::api::admin::read_model::AdminReadModel>,
+) -> BootResult<()> {
     // Register domain handlers globally using wildcard route family (matches all)
     // Each domain matches its route scheme pattern across ALL route families
 
     // KV domain: Handles all "kv://*" routes across all families
-    let kv_sink = Arc::new(KvDomainSink::new(store.clone(), router.clone()));
+    let kv_sink = Arc::new(KvDomainSink::new(
+        store.clone(),
+        router.clone(),
+        admin_read_model.clone(),
+    ));
     router.register_domain_pattern("kv", kv_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered KV domain (handles kv://* across all route families)");
 
     // Queue domain: Handles all "queue://*" routes across all families
-    let queue_sink = Arc::new(QueueDomainSink::new(store.clone(), router.clone()));
+    let queue_sink = Arc::new(QueueDomainSink::new(
+        store.clone(),
+        router.clone(),
+        admin_read_model.clone(),
+    ));
     router.register_domain_pattern("queue", queue_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
     // Notice domain: Handles all "notice://*" routes across all families
-    let notice_sink = Arc::new(NoticeDomainSink::new(router.clone()));
+    let notice_sink = Arc::new(NoticeDomainSink::new(
+        router.clone(),
+        admin_read_model.clone(),
+    ));
     router.register_domain_pattern("notice", notice_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     // Stream domain: Handles all "stream://*" routes across all families
-    let stream_sink = Arc::new(StreamDomainSink::new(store.clone(), router.clone()));
+    let stream_sink = Arc::new(StreamDomainSink::new(
+        store.clone(),
+        router.clone(),
+        admin_read_model.clone(),
+    ));
     router.register_domain_pattern("stream", stream_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     // RPC domain: Handles all "rpc://*" routes across all families
-    let rpc_sink = Arc::new(RpcDomainSink::new(router.clone()));
+    let rpc_sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
     router.register_domain_pattern("rpc", rpc_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
     // Lease domain: Handles all "lease://*" routes across all families
-    let lease_sink = Arc::new(LeaseDomainSink::new(router.clone()));
+    let lease_sink = Arc::new(LeaseDomainSink::new(
+        router.clone(),
+        admin_read_model.clone(),
+    ));
     router.register_domain_pattern("lease", lease_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Lease domain (handles lease://* across all route families)");
 
     // Schedule domain: Handles all "schedule://*" routes across all families
-    let schedule_sink = Arc::new(ScheduleDomainSink::new(store.clone(), router.clone()));
+    let schedule_sink = Arc::new(ScheduleDomainSink::new(
+        store.clone(),
+        router.clone(),
+        admin_read_model.clone(),
+    ));
     router.register_domain_pattern("schedule", schedule_sink as Arc<dyn MailboxSink>);
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
@@ -3170,9 +3470,10 @@ mod tests {
         // Arrange
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let kv_sink = KvDomainSink::new(store, router);
+        let kv_sink = KvDomainSink::new(store, router, admin_read_model);
 
         // Assert
         assert!(kv_sink.active.load(Ordering::Relaxed));
@@ -3227,9 +3528,10 @@ mod tests {
         // Arrange - Create test engine with all 7 domain column families
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let result = setup(&router, &store);
+        let result = setup(&router, &store, &admin_read_model);
 
         // Assert
         assert!(result.is_ok());
@@ -3239,9 +3541,10 @@ mod tests {
     fn should_create_notice_domain_sink() {
         // Arrange
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = NoticeDomainSink::new(router);
+        let sink = NoticeDomainSink::new(router, admin_read_model);
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
@@ -3251,9 +3554,10 @@ mod tests {
     fn should_create_rpc_domain_sink() {
         // Arrange
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = RpcDomainSink::new(router);
+        let sink = RpcDomainSink::new(router, admin_read_model);
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
@@ -3263,9 +3567,10 @@ mod tests {
     fn should_create_lease_domain_sink() {
         // Arrange
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = LeaseDomainSink::new(router);
+        let sink = LeaseDomainSink::new(router, admin_read_model);
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
@@ -3276,9 +3581,10 @@ mod tests {
         // Arrange
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = StreamDomainSink::new(store, router);
+        let sink = StreamDomainSink::new(store, router, admin_read_model);
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
@@ -3289,9 +3595,10 @@ mod tests {
         // Arrange
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = ScheduleDomainSink::new(store, router);
+        let sink = ScheduleDomainSink::new(store, router, admin_read_model);
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
@@ -3302,9 +3609,10 @@ mod tests {
         // Arrange
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = QueueDomainSink::new(store, router);
+        let sink = QueueDomainSink::new(store, router, admin_read_model);
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
@@ -3322,7 +3630,12 @@ mod tests {
 
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
-        let queue_sink = Arc::new(QueueDomainSink::new(store.clone(), router.clone()));
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let queue_sink = Arc::new(QueueDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model,
+        ));
 
         // Capture sink: records msg_type of each FrameContext delivered to inbox
         let received: Arc<Mutex<Vec<u16>>> = Arc::new(Mutex::new(Vec::new()));

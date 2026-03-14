@@ -14,22 +14,22 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.21",
+    "@askrjs/askr": "^0.0.28",
     "@picocss/pico": "^2.1.1",
-    "@fgrzl/fetch": "^1.4.0"
+    "@fgrzl/fetch": "^1.4.2"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.2",
-    "@types/node": "^25.1.0",
-    "@typescript-eslint/eslint-plugin": "^8.54.0",
-    "@typescript-eslint/parser": "^8.54.0",
-    "@vitest/ui": "^4.0.18",
-    "eslint": "^9.39.2",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "@vitest/ui": "^4.1.0",
+    "eslint": "^10.0.3",
     "jiti": "^2.6.1",
-    "jsdom": "^27.4.0",
+    "jsdom": "^28.1.0",
     "prettier": "^3.8.1",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1",
-    "vitest": "^4.0.18"
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
   }
 }
