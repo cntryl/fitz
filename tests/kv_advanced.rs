@@ -147,7 +147,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
         cntryl_midge::Engine::open(
             cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build(),
         )
-            .expect("reopen engine"),
+        .expect("reopen engine"),
     );
 
     let mut actor2 = KvActor::new(reopened);
