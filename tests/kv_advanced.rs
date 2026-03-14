@@ -143,17 +143,12 @@ fn should_restore_committed_kv_value_on_engine_restart() {
     drop(store);
 
     // Keep temp_dir alive during reopen to prevent directory deletion
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&temp_path).unwrap();
     let reopened = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build(),
+        )
             .expect("reopen engine"),
     );
-
-    // Restore original directory with fallback to workspace root on Windows
-    if std::env::set_current_dir(&original_dir).is_err() {
-        let _ = std::env::set_current_dir(env!("CARGO_MANIFEST_DIR"));
-    }
 
     let mut actor2 = KvActor::new(reopened);
     let b2 = actor2.handle(KvMessage::Begin {

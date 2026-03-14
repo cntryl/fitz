@@ -1,86 +1,81 @@
-//! Tenant → Route Family resolution
+//! Tenant to RouteFamily resolution.
 //!
-//! Route family assignment is managed by the control plane, NOT by Fitz.
-//! This module provides the lookup mechanism to resolve JWT → route_family.
-//!
-//! # Control Plane Integration
-//!
-//! The control plane receives the full JWT and makes routing decisions based on:
-//! - `iss` (issuer): Which identity provider issued the token
-//! - `aud` (audience): Which API/service the token is for
-//! - Custom claims: `org_id`, `tenant_id`, `env`, `product_tier`, etc.
-//! - Signature verification context
-//!
-//! This allows flexible multi-tenancy models:
-//! - **Org-based**: Route by `organization_id` claim
-//! - **Environment-based**: Route by `env` claim (prod/staging/dev)
-//! - **Hybrid**: Route by `(org, env)` tuple
-//! - **Provider-specific**: Different routing for Auth0 vs Okta vs custom
-//!
-//! # Stub Implementation
-//!
-//! For now, we stub the control plane and return RouteFamily(1) for all JWTs.
+//! Route family assignment is owned by the control plane. The in-process stub
+//! used in tests and local development still has to preserve the runtime's
+//! isolation contract, so it allocates distinct RouteFamily values per tenant.
 
 use crate::runtime::routing::RouteFamily;
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-/// Control plane client for tenant route family lookups
+#[derive(Debug, Clone, Copy)]
+pub struct RouteFamilyAssignment {
+    pub family: RouteFamily,
+    pub created: bool,
+}
+
+/// Control plane client for tenant route family lookups.
 ///
-/// # Design
-///
-/// - **Control plane owns assignments**: Route families are allocated by the control plane
-/// - **Fitz queries only**: Fitz looks up but never creates route family assignments
-/// - **Stub implementation**: Returns RouteFamily(1) until control plane integration is built
-///
-/// # Future Implementation
-///
-/// When integrating with the control plane:
-/// 1. Add HTTP/gRPC client to query control plane API
-/// 2. Implement caching with TTL for performance
-/// 3. Handle control plane unavailability gracefully
-/// 4. Support tenant onboarding/offboarding events
+/// The production implementation should delegate this to a real control plane.
+/// The development stub allocates stable in-process families per tenant:
+/// - unauthenticated / unparsable JWTs use family 1
+/// - authenticated tenants get sequential families starting at 2
 pub struct ControlPlaneStub {
-    // Future: Add HTTP client, cache, etc.
+    assignments: Mutex<HashMap<String, RouteFamily>>,
+    next_family: AtomicU32,
 }
 
 impl ControlPlaneStub {
-    /// Create a new control plane stub
+    /// Create a new control plane stub.
     pub fn new() -> Self {
-        Self {}
+        Self {
+            assignments: Mutex::new(HashMap::new()),
+            next_family: AtomicU32::new(2),
+        }
     }
 
-    /// Look up route family for a JWT from control plane
-    ///
-    /// # Parameters
-    ///
-    /// - `jwt`: The full JWT string (not just tenant_id)
-    ///
-    /// # Design Rationale
-    ///
-    /// The control plane needs the full JWT to make routing decisions:
-    /// - `iss` (issuer): Which identity provider issued the token
-    /// - `aud` (audience): Which API/service the token is for
-    /// - Custom claims: Organization, environment, product tier, etc.
-    /// - Signature verification: Control plane validates against appropriate keys
-    ///
-    /// This allows flexible multi-tenancy models:
-    /// - Org-based: Route by organization_id claim
-    /// - Environment-based: Route by env claim (prod/staging/dev)
-    /// - Hybrid: Route by (org, env) tuple
-    /// - Provider-specific: Different routing for different issuers
-    ///
-    /// # Stub Behavior
-    ///
-    /// Currently returns `RouteFamily(1)` for all JWTs.
-    /// This allows single-tenant development mode until control plane is integrated.
-    pub fn lookup_route_family(&self, _jwt: &str) -> RouteFamily {
-        // Stub: Always return family 1 until control plane is integrated
-        // Family 0 is reserved (maps to default column family).
-        // Control plane will parse JWT and make routing decision based on:
-        // - iss, aud, custom claims
-        // - signature verification
-        // - tenant/org/env routing policies
-        RouteFamily::new(1)
+    fn tenant_from_jwt(jwt: &str) -> Option<String> {
+        let raw = crate::auth::parse_jwt_noverify(jwt).ok()?;
+        raw.tid
+            .or(raw.tenant_id)
+            .or(raw.org_id)
+            .filter(|tenant| !tenant.is_empty())
+    }
+
+    fn assignment_for_tenant(&self, tenant: Option<&str>) -> RouteFamilyAssignment {
+        let Some(tenant) = tenant.filter(|tenant| !tenant.is_empty()) else {
+            return RouteFamilyAssignment {
+                family: RouteFamily::new(1),
+                created: false,
+            };
+        };
+
+        let mut assignments = self.assignments.lock();
+        if let Some(existing) = assignments.get(tenant).copied() {
+            return RouteFamilyAssignment {
+                family: existing,
+                created: false,
+            };
+        }
+
+        let family = RouteFamily::from_u32(self.next_family.fetch_add(1, Ordering::SeqCst));
+        assignments.insert(tenant.to_string(), family);
+        RouteFamilyAssignment {
+            family,
+            created: true,
+        }
+    }
+
+    /// Look up route family for a JWT from the control plane.
+    pub fn lookup_route_family(&self, jwt: &str) -> RouteFamily {
+        self.assign_route_family(jwt).family
+    }
+
+    /// Assign a route family for a JWT and report whether it was newly created.
+    pub fn assign_route_family(&self, jwt: &str) -> RouteFamilyAssignment {
+        self.assignment_for_tenant(Self::tenant_from_jwt(jwt).as_deref())
     }
 }
 
@@ -90,39 +85,20 @@ impl Default for ControlPlaneStub {
     }
 }
 
-/// Resolve route family for a session based on auth status
-///
-/// # Rules
-///
-/// - **No auth**: Returns `RouteFamily(1)` (single-tenant dev mode)
-/// - **Authenticated**: Looks up JWT's route family from control plane
-///
-/// # Control Plane Integration
-///
-/// When a session authenticates, we pass the full JWT to the control plane.
-/// The control plane parses claims (iss, aud, custom claims) and returns the
-/// appropriate route family based on its routing policies.
-///
-/// # Parameters
-///
-/// - `jwt`: The full JWT string (not parsed, not just tenant_id)
-/// - `control_plane`: Control plane client for lookups
+/// Resolve route family for a session based on auth status.
 pub fn resolve_route_family(
     jwt: Option<&str>,
     control_plane: Option<&Arc<ControlPlaneStub>>,
 ) -> RouteFamily {
     match (jwt, control_plane) {
-        // Auth enabled: lookup from control plane
         (Some(jwt_str), Some(cp)) => {
             let family = cp.lookup_route_family(jwt_str);
             tracing::debug!(
                 route_family = family.id(),
-                "Resolved route family from control plane (JWT-based lookup)"
+                "Resolved route family from control plane"
             );
             family
         }
-
-        // No auth or no control plane: use family 1 (default dev tenant)
         _ => RouteFamily::new(1),
     }
 }
@@ -130,63 +106,71 @@ pub fn resolve_route_family(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+
+    fn jwt_with_tenant(claim_name: &str, tenant: &str) -> String {
+        let payload = serde_json::json!({
+            "iss": "",
+            "aud": "fitz",
+            "sub": "user:test",
+            "exp": 9999999999u64,
+            claim_name: tenant,
+        });
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("{}");
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        format!("{}.{}.sig", header, payload)
+    }
 
     #[test]
-    fn should_return_family_one_from_stub() {
-        // Arrange
+    fn should_assign_new_family_for_first_tenant() {
         let control_plane = ControlPlaneStub::new();
-        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let jwt = jwt_with_tenant("tid", "acme");
 
-        // Act
-        let family = control_plane.lookup_route_family(jwt);
+        let family = control_plane.lookup_route_family(&jwt);
 
-        // Assert - Stub always returns 1 (default dev tenant)
-        assert_eq!(family.id(), 1);
+        assert_eq!(family.id(), 2);
     }
 
     #[test]
     fn should_resolve_family_one_for_no_auth() {
-        // Arrange
-
-        // Act
         let family = resolve_route_family(None, None);
 
-        // Assert - Default dev tenant is family 1
         assert_eq!(family.id(), 1);
     }
 
     #[test]
     fn should_resolve_family_from_control_plane_for_authenticated() {
-        // Arrange
         let control_plane = Arc::new(ControlPlaneStub::new());
-        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let jwt = jwt_with_tenant("tid", "acme");
 
-        // Act
-        let family = resolve_route_family(Some(jwt), Some(&control_plane));
+        let family = resolve_route_family(Some(&jwt), Some(&control_plane));
 
-        // Assert - Stub returns 1, but this tests the lookup path
-        assert_eq!(family.id(), 1);
+        assert_eq!(family.id(), 2);
     }
 
     #[test]
-    fn should_accept_jwt_with_different_issuers() {
-        // Arrange
+    fn should_allocate_distinct_families_for_distinct_tenants() {
         let control_plane = ControlPlaneStub::new();
+        let jwt_a = jwt_with_tenant("tid", "acme");
+        let jwt_b = jwt_with_tenant("tid", "beta");
 
-        // Different JWT structures - control plane decides routing based on claims
-        let jwt_auth0 = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgwLmNvbSIsInN1YiI6ImFjbWUiLCJhdWQiOiJmaXR6In0.signature";
-        let jwt_okta = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL29rdGEuY29tIiwic3ViIjoiYWNtZSIsImF1ZCI6ImZpdHoifQ.signature";
-        let jwt_custom = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2N1c3RvbS5jb20iLCJvcmdfaWQiOiJhY21lIiwiZW52IjoicHJvZCJ9.signature";
+        let family_a = control_plane.lookup_route_family(&jwt_a);
+        let family_b = control_plane.lookup_route_family(&jwt_b);
 
-        // Act - Control plane receives full JWT and makes routing decision
-        let family1 = control_plane.lookup_route_family(jwt_auth0);
-        let family2 = control_plane.lookup_route_family(jwt_okta);
-        let family3 = control_plane.lookup_route_family(jwt_custom);
+        assert_ne!(family_a, family_b);
+        assert_eq!(family_a.id(), 2);
+        assert_eq!(family_b.id(), 3);
+    }
 
-        // Assert - Stub returns 1, but in production each could route differently
-        // based on iss, custom claims (org_id, env), etc.
-        assert_eq!(family1.id(), 1);
-        assert_eq!(family2.id(), 1);
-        assert_eq!(family3.id(), 1);
+    #[test]
+    fn should_reuse_existing_assignment_for_same_tenant() {
+        let control_plane = ControlPlaneStub::new();
+        let jwt_a = jwt_with_tenant("tid", "acme");
+        let jwt_b = jwt_with_tenant("tenant_id", "acme");
+
+        let family1 = control_plane.lookup_route_family(&jwt_a);
+        let family2 = control_plane.lookup_route_family(&jwt_b);
+
+        assert_eq!(family1, family2);
     }
 }

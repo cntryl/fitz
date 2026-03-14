@@ -29,16 +29,6 @@ fn test_server_semaphore() -> &'static Arc<tokio::sync::Semaphore> {
     TEST_SERVER_SEMAPHORE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
 }
 
-/// Wait for auth processing to settle before sending authenticated requests.
-pub async fn wait_for_auth_ready() {
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-}
-
-/// Wait for session cleanup after a client disconnect.
-pub async fn wait_for_disconnect_cleanup() {
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-}
-
 /// Test server that starts Fitz on random available ports (TCP + WebSocket)
 pub struct TestServer {
     pub tcp_addr: SocketAddr,
@@ -87,6 +77,11 @@ impl TestServer {
             http_port: ws_addr.port(), // Use discovered WS port
             storage_mode: crate::boot::runtime::StorageMode::Memory,
             auth_required,
+            auth_config: if auth_required {
+                crate::auth::AuthConfig::hmac("test-secret-key", "fitz")
+            } else {
+                crate::auth::AuthConfig::Disabled
+            },
             max_connections: 1000,
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
@@ -103,7 +98,8 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        crate::boot::domains::setup(&router, &store, &runtime.admin_read_model())?;
+        let domains = crate::boot::domains::setup(&router, &store, &runtime.admin_read_model())?;
+        runtime.attach_domains(Arc::new(domains));
 
         // Mark domains ready
         runtime.mark_domains_ready();
@@ -165,6 +161,61 @@ impl TestServer {
     pub async fn connect_ws(&self) -> Result<TestWebSocketClient, Box<dyn std::error::Error>> {
         let url = format!("ws://{}/", self.ws_addr);
         TestWebSocketClient::connect(&url).await
+    }
+
+    async fn wait_for_condition<F>(
+        &self,
+        description: &str,
+        mut predicate: F,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: FnMut(&crate::boot::Runtime) -> bool,
+    {
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if predicate(self.runtime.as_ref()) {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("timed out waiting for {}", description),
+            )) as Box<dyn std::error::Error>
+        })
+    }
+
+    pub async fn wait_for_authenticated_sessions(
+        &self,
+        expected_at_least: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.wait_for_condition("authenticated sessions", |runtime| {
+            runtime.authenticated_session_count() >= expected_at_least
+        })
+        .await
+    }
+
+    pub async fn wait_for_session_count(
+        &self,
+        expected: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.wait_for_condition("session count", |runtime| {
+            runtime.session_count() == expected
+        })
+        .await
+    }
+
+    pub async fn wait_for_route_count(
+        &self,
+        expected: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.wait_for_condition("registered route count", |runtime| {
+            runtime.registered_route_count() == expected
+        })
+        .await
     }
 }
 

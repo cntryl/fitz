@@ -70,13 +70,13 @@ tx.put("user:123", b"alice")
 
 **Bad API:**
 ```go
-// ❌ Exposing protocol types
-func (c *Client) GetRouteFamily() uint64
+// ❌ Exposing broker internals
+func (c *Client) CurrentShard() uint64
 ```
 
 **Good API:**
 ```go
-// ✅ RouteFamily is internal, users don't see it
+// ✅ Broker routing stays internal
 func (c *Client) Connect(jwt string) error
 ```
 

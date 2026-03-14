@@ -376,6 +376,15 @@ impl RouteAddress {
     }
 }
 
+/// Build the canonical inbox address for a session within a route family.
+#[inline]
+pub fn session_inbox_address(family: RouteFamily, session_id: u64) -> RouteAddress {
+    RouteAddress::new(
+        family,
+        Route::new(format!("inbox://session/{}", session_id)),
+    )
+}
+
 impl fmt::Debug for RouteAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "RouteAddress({}/{})", self.family, self.route)

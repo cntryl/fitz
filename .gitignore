@@ -22,3 +22,5 @@ target
 inventory.md
 
 *.exe
+
+.fitz/

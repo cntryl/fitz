@@ -56,7 +56,10 @@ where
         .await
         .expect("CONNECT send failed");
 
-    fitz::testkit::transport::wait_for_auth_ready().await;
+    server
+        .wait_for_authenticated_sessions(1)
+        .await
+        .expect("auth readiness");
 
     // Act
     let begin_frame = build_kv_begin("kv://test-realm/app/users", 1, 0);
@@ -123,7 +126,10 @@ where
         .await
         .expect("CONNECT send failed");
 
-    fitz::testkit::transport::wait_for_auth_ready().await;
+    server
+        .wait_for_authenticated_sessions(1)
+        .await
+        .expect("auth readiness");
 
     let begin_frame = build_kv_begin("kv://corp/app/users", 1, 0);
     let result = client.request(&begin_frame, 1000).await;
@@ -150,7 +156,10 @@ where
     client1.send_frame(&connect_frame).await.expect("CONNECT 1");
     client2.send_frame(&connect_frame).await.expect("CONNECT 2");
 
-    fitz::testkit::transport::wait_for_auth_ready().await;
+    server
+        .wait_for_authenticated_sessions(2)
+        .await
+        .expect("auth readiness");
 
     let begin_frame1 = build_kv_begin("kv://test-realm/app/users", 1, 0);
     let begin_frame2 = build_kv_begin("kv://test-realm/app/posts", 1, 0);
@@ -432,7 +441,10 @@ where
     client.request(&begin_frame, 2000).await.expect("BEGIN");
 
     drop(client);
-    fitz::testkit::transport::wait_for_disconnect_cleanup().await;
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("disconnect cleanup");
 
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let begin_frame2 = build_kv_begin(route, 1, 0);
@@ -927,6 +939,35 @@ async fn should_handle_connection_drop_during_transaction_tcp() {
 }
 
 #[tokio::test]
+async fn should_unregister_tcp_inbox_route_on_disconnect() {
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+    let baseline_routes = server.runtime.registered_route_count();
+
+    let client = server.connect().await.expect("failed to connect");
+    server
+        .wait_for_session_count(1)
+        .await
+        .expect("session open");
+    server
+        .wait_for_route_count(baseline_routes + 1)
+        .await
+        .expect("route registration");
+
+    drop(client);
+
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("session cleanup");
+    server
+        .wait_for_route_count(baseline_routes)
+        .await
+        .expect("route cleanup");
+}
+
+#[tokio::test]
 async fn should_put_and_get_same_key_in_transaction_tcp() {
     // Arrange
     let server = TestServer::start()
@@ -1150,4 +1191,33 @@ async fn should_handle_large_batch_writes_in_transaction_ws() {
 
     // Assert
     // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_unregister_websocket_inbox_route_on_disconnect() {
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+    let baseline_routes = server.runtime.registered_route_count();
+
+    let socket = server.connect_ws().await.expect("failed to connect ws");
+    server
+        .wait_for_session_count(1)
+        .await
+        .expect("session open");
+    server
+        .wait_for_route_count(baseline_routes + 1)
+        .await
+        .expect("route registration");
+
+    drop(socket);
+
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("session cleanup");
+    server
+        .wait_for_route_count(baseline_routes)
+        .await
+        .expect("route cleanup");
 }

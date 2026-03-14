@@ -1,6 +1,10 @@
 //! Runtime statistics and observability
 
+use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
+use crate::session::manager::RuntimeIngress;
+use parking_lot::RwLock;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -44,6 +48,15 @@ pub struct Runtime {
 
     /// Passive admin read model used by REST handlers
     pub(crate) admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+
+    /// Live ingress handle for session visibility
+    pub(crate) ingress: Arc<RwLock<Option<Arc<RuntimeIngress>>>>,
+
+    /// Domain sink handles for live admin stats
+    pub(crate) domains: Arc<RwLock<Option<Arc<DomainHandles>>>>,
+
+    /// Auth configuration used by admin/auth surfaces
+    pub(crate) auth_config: Arc<RwLock<crate::auth::AuthConfig>>,
 }
 
 impl Runtime {
@@ -69,6 +82,9 @@ impl Runtime {
             messages_sent: Arc::new(AtomicU64::new(0)),
             admin_auth: Arc::new(crate::api::admin::auth::AdminAuth::from_env()),
             admin_read_model,
+            ingress: Arc::new(RwLock::new(None)),
+            domains: Arc::new(RwLock::new(None)),
+            auth_config: Arc::new(RwLock::new(crate::auth::AuthConfig::Disabled)),
         }
     }
 
@@ -78,6 +94,22 @@ impl Runtime {
 
     pub fn admin_read_model(&self) -> Arc<crate::api::admin::read_model::AdminReadModel> {
         self.admin_read_model.clone()
+    }
+
+    pub fn attach_ingress(&self, ingress: Arc<RuntimeIngress>) {
+        *self.ingress.write() = Some(ingress);
+    }
+
+    pub fn attach_domains(&self, domains: Arc<DomainHandles>) {
+        *self.domains.write() = Some(domains);
+    }
+
+    pub fn attach_auth_config(&self, auth_config: crate::auth::AuthConfig) {
+        *self.auth_config.write() = auth_config;
+    }
+
+    pub fn auth_config(&self) -> crate::auth::AuthConfig {
+        self.auth_config.read().clone()
     }
 
     // Storage status
@@ -139,7 +171,11 @@ impl Runtime {
     }
 
     pub fn session_count(&self) -> usize {
-        self.session_count.load(Ordering::Relaxed)
+        self.ingress
+            .read()
+            .as_ref()
+            .map(|ingress| ingress.session_count())
+            .unwrap_or_else(|| self.session_count.load(Ordering::Relaxed))
     }
 
     pub fn increment_sessions(&self) {
@@ -168,14 +204,41 @@ impl Runtime {
         self.messages_sent.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn registered_route_count(&self) -> usize {
+        self.router.len()
+    }
+
+    pub fn authenticated_session_count(&self) -> usize {
+        self.ingress
+            .read()
+            .as_ref()
+            .map(|ingress| {
+                ingress
+                    .active_sessions()
+                    .into_iter()
+                    .filter(|session| session.authenticated)
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
     // Active realms (derived from router state)
 
     pub fn active_realms(&self) -> Vec<String> {
-        self.admin_read_model
-            .sessions(None)
-            .into_iter()
-            .map(|session| session.realm)
-            .collect()
+        let Some(ingress) = self.ingress.read().clone() else {
+            return vec![];
+        };
+
+        let mut realms = BTreeSet::new();
+        for session in ingress.active_sessions() {
+            if let Some(claims) = &session.claims {
+                if !claims.tenant.is_empty() {
+                    realms.insert(claims.tenant.clone());
+                }
+            }
+        }
+
+        realms.into_iter().collect()
     }
 
     // Messages per second (simple calculation)
@@ -192,7 +255,11 @@ impl Runtime {
     // Domain-specific stats (stubs - to be implemented by querying domain actors)
 
     pub fn kv_transactions_active(&self) -> usize {
-        self.admin_read_model.kv_transactions(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.kv.active_transaction_count())
+            .unwrap_or_else(|| self.admin_read_model.kv_transactions(None).len())
     }
 
     pub fn kv_keys_total(&self) -> usize {
@@ -201,35 +268,65 @@ impl Runtime {
     }
 
     pub fn notice_subscriptions_active(&self) -> usize {
-        self.admin_read_model.notice_subscriptions(None, None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.notice.subscription_count())
+            .unwrap_or_else(|| self.admin_read_model.notice_subscriptions(None, None).len())
     }
 
     pub fn queue_messages_pending(&self) -> usize {
-        self.admin_read_model
-            .queues(None)
-            .into_iter()
-            .map(|queue| queue.messages_ready)
-            .sum()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.pending_message_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .queues(None)
+                    .into_iter()
+                    .map(|queue| queue.messages_ready)
+                    .sum()
+            })
     }
 
     pub fn queue_leases_active(&self) -> usize {
-        self.admin_read_model.queue_leases(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.active_lease_count())
+            .unwrap_or_else(|| self.admin_read_model.queue_leases(None).len())
     }
 
     pub fn rpc_workers_registered(&self) -> usize {
-        self.admin_read_model.rpc_workers(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.worker_count())
+            .unwrap_or_else(|| self.admin_read_model.rpc_workers(None).len())
     }
 
     pub fn rpc_requests_pending(&self) -> usize {
-        self.admin_read_model.rpc_pending(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.pending_request_count())
+            .unwrap_or_else(|| self.admin_read_model.rpc_pending(None).len())
     }
 
     pub fn lease_active(&self) -> usize {
-        self.admin_read_model.leases(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.lease.lease_count())
+            .unwrap_or_else(|| self.admin_read_model.leases(None).len())
     }
 
     pub fn stream_active(&self) -> usize {
-        self.admin_read_model.streams(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.stream_count())
+            .unwrap_or_else(|| self.admin_read_model.streams(None).len())
     }
 
     pub fn kv_operations_per_second(&self) -> f64 {
@@ -251,11 +348,17 @@ impl Runtime {
     }
 
     pub fn stream_subscriptions_active(&self) -> usize {
-        self.admin_read_model
-            .streams(None)
-            .into_iter()
-            .map(|stream| stream.sessions_active)
-            .sum()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.subscription_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .streams(None)
+                    .into_iter()
+                    .map(|stream| stream.sessions_active)
+                    .sum()
+            })
     }
 
     pub fn notice_publishes_per_second(&self) -> f64 {
@@ -279,7 +382,11 @@ impl Runtime {
     }
 
     pub fn schedule_active(&self) -> usize {
-        self.admin_read_model.schedules(None).len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.schedule_count())
+            .unwrap_or_else(|| self.admin_read_model.schedules(None).len())
     }
 
     pub fn schedule_executions_per_minute(&self) -> f64 {
@@ -288,7 +395,11 @@ impl Runtime {
     }
 
     pub fn schedule_subscriptions_active(&self) -> usize {
-        0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.subscription_count())
+            .unwrap_or(0)
     }
 
     // List methods for admin API
@@ -351,7 +462,39 @@ impl Runtime {
     }
 
     pub fn list_sessions(&self, realm: Option<&str>) -> Vec<crate::api::admin::SessionInfo> {
-        self.admin_read_model.sessions(realm)
+        let Some(ingress) = self.ingress.read().clone() else {
+            return self.admin_read_model.sessions(realm);
+        };
+
+        ingress
+            .active_sessions()
+            .into_iter()
+            .filter(|session| match realm {
+                Some(realm) => session
+                    .claims
+                    .as_ref()
+                    .map(|claims| claims.tenant == realm)
+                    .unwrap_or(false),
+                None => true,
+            })
+            .map(|session| crate::api::admin::SessionInfo {
+                session_id: session.session_id.to_string(),
+                realm: session
+                    .claims
+                    .as_ref()
+                    .map(|claims| claims.tenant.clone())
+                    .unwrap_or_default(),
+                connected_at: String::new(),
+                idle_seconds: 0,
+                messages_received: 0,
+                messages_sent: 0,
+                transport: session.transport_kind.to_string(),
+                remote_addr: session
+                    .peer_addr
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_default(),
+            })
+            .collect()
     }
 }
 

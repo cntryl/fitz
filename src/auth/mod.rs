@@ -31,6 +31,7 @@ pub use realm::{realm_matches, validate_realm_format, RealmError};
 pub use token::{verify_jwt_with_hmac_secret, verify_jwt_with_rsa_pem};
 
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Access level attached to a permission fragment.
 /// Used in permission strings like "notice://realm/area#read"
@@ -82,6 +83,175 @@ impl Permission {
 
         Ok(Self { raw, access })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthConfig {
+    Disabled,
+    Hmac(HmacAuthConfig),
+    Jwks(JwksAuthConfig),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HmacAuthConfig {
+    pub secret: String,
+    pub audiences: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JwksAuthConfig {
+    pub audiences: Vec<String>,
+    pub issuers: Vec<JwksIssuerConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JwksIssuerConfig {
+    pub issuer: String,
+    pub jwks_url: String,
+}
+
+impl AuthConfig {
+    pub fn disabled() -> Self {
+        Self::Disabled
+    }
+
+    pub fn hmac(secret: impl Into<String>, audience: impl Into<String>) -> Self {
+        Self::hmac_with_audiences(secret, vec![audience.into()])
+    }
+
+    pub fn hmac_with_audiences(secret: impl Into<String>, audiences: Vec<String>) -> Self {
+        Self::Hmac(HmacAuthConfig {
+            secret: secret.into(),
+            audiences,
+        })
+    }
+
+    pub fn jwks(audiences: Vec<String>, issuers: Vec<JwksIssuerConfig>) -> Self {
+        Self::Jwks(JwksAuthConfig { audiences, issuers })
+    }
+
+    pub fn from_env(auth_required: bool) -> Self {
+        if !auth_required {
+            return Self::Disabled;
+        }
+
+        if let Ok(secret) = std::env::var("FITZ_JWT_HMAC_SECRET") {
+            return Self::hmac_with_audiences(secret, audiences_from_env());
+        }
+
+        if let Ok(raw_map) = std::env::var("FITZ_JWT_JWKS_MAP") {
+            let issuers = raw_map
+                .split(',')
+                .filter_map(|entry| {
+                    let (issuer, jwks_url) = entry.split_once('=')?;
+                    Some(JwksIssuerConfig {
+                        issuer: issuer.trim().to_string(),
+                        jwks_url: jwks_url.trim().to_string(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !issuers.is_empty() {
+                return Self::jwks(audiences_from_env(), issuers);
+            }
+        }
+
+        Self::Disabled
+    }
+
+    pub fn validate(&self, auth_required: bool) -> Result<(), String> {
+        match self {
+            AuthConfig::Disabled => {
+                if auth_required {
+                    Err(
+                        "authentication is required but no valid AuthConfig was provided"
+                            .to_string(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            AuthConfig::Hmac(config) => {
+                if config.secret.trim().is_empty() {
+                    return Err("HMAC auth requires a non-empty secret".to_string());
+                }
+                if config.audiences.is_empty() {
+                    return Err("HMAC auth requires at least one audience".to_string());
+                }
+                Ok(())
+            }
+            AuthConfig::Jwks(config) => {
+                if config.audiences.is_empty() {
+                    return Err("JWKS auth requires at least one audience".to_string());
+                }
+                if config.issuers.is_empty() {
+                    return Err("JWKS auth requires at least one configured issuer".to_string());
+                }
+                for issuer in &config.issuers {
+                    if issuer.issuer.trim().is_empty() {
+                        return Err(
+                            "JWKS auth issuer allowlist entries must not be empty".to_string()
+                        );
+                    }
+                    url::Url::parse(&issuer.jwks_url).map_err(|e| {
+                        format!("invalid JWKS URL for issuer {}: {}", issuer.issuer, e)
+                    })?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn find_issuer(&self, issuer: &str) -> Option<&JwksIssuerConfig> {
+        match self {
+            AuthConfig::Jwks(config) => config.issuers.iter().find(|entry| entry.issuer == issuer),
+            _ => None,
+        }
+    }
+
+    fn audiences(&self) -> &[String] {
+        match self {
+            AuthConfig::Disabled => &[],
+            AuthConfig::Hmac(config) => &config.audiences,
+            AuthConfig::Jwks(config) => &config.audiences,
+        }
+    }
+}
+
+fn audiences_from_env() -> Vec<String> {
+    let raw = std::env::var("FITZ_JWT_AUDIENCES")
+        .or_else(|_| std::env::var("FITZ_JWT_AUDIENCE"))
+        .unwrap_or_else(|_| "fitz,fitz-broker".to_string());
+    raw.split(',')
+        .map(str::trim)
+        .filter(|aud| !aud.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn now_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn normalized_session_claims(
+    raw_claims: RawClaims,
+    allowlist: &[&str],
+    audiences: &[String],
+) -> Result<
+    (
+        crate::session::permissions::SessionPermissions,
+        crate::auth::Claims,
+    ),
+    String,
+> {
+    let audience_refs = audiences.iter().map(String::as_str).collect::<Vec<_>>();
+    let claims = raw_claims.normalize(allowlist, &audience_refs, now_epoch_secs())?;
+    let session_perms = crate::session::permissions::SessionPermissions::from_permissions(
+        claims.permissions.clone(),
+    );
+    Ok((session_perms, claims))
 }
 
 /// Map coarse scope strings like `notice.read` into Fitz permission strings.
@@ -231,7 +401,8 @@ pub fn permissions_from_hmac_jwt(
 
 pub async fn permissions_from_jwt_using_jwks(
     compact: &str,
-    jwks_url: &str,
+    issuer: &JwksIssuerConfig,
+    audiences: &[String],
 ) -> Result<
     (
         crate::session::permissions::SessionPermissions,
@@ -240,7 +411,7 @@ pub async fn permissions_from_jwt_using_jwks(
     String,
 > {
     // Ensure jwks present or fetched
-    crate::auth::jwks::ensure_jwks_cached(jwks_url)
+    crate::auth::jwks::ensure_jwks_cached(&issuer.jwks_url)
         .await
         .map_err(|e| format!("failed to ensure jwks: {}", e))?;
     // Parse header to get kid and alg
@@ -249,14 +420,14 @@ pub async fn permissions_from_jwt_using_jwks(
     let kid = header.kid.as_deref().unwrap_or("");
 
     // Try to get decoding key from cache; if missing, fetch and cache, then retry
-    if jwks::get_decoding_key_from_cache(jwks_url, kid).is_none() {
+    if jwks::get_decoding_key_from_cache(&issuer.jwks_url, kid).is_none() {
         // Attempt network fetch & cache
-        jwks::fetch_and_cache_jwks(jwks_url)
+        jwks::fetch_and_cache_jwks(&issuer.jwks_url)
             .await
             .map_err(|e| format!("failed to fetch jwks: {}", e))?;
     }
 
-    let dk = jwks::get_decoding_key_from_cache(jwks_url, kid)
+    let dk = jwks::get_decoding_key_from_cache(&issuer.jwks_url, kid)
         .ok_or_else(|| "no matching key in jwks".to_string())?;
 
     // Determine alg for validation
@@ -267,37 +438,50 @@ pub async fn permissions_from_jwt_using_jwks(
     let token_data = jsonwebtoken::decode::<serde_json::Value>(compact, &dk, &validation)
         .map_err(|e| format!("signature verification failed: {}", e))?;
 
-    // Deserialize into RawClaims to extract all needed fields
     let raw_claims: RawClaims = serde_json::from_value(token_data.claims)
         .map_err(|e| format!("json parse error: {}", e))?;
 
-    // Resolve tenant (prefer tid > tenant_id > org_id, fallback to empty)
-    let tenant = if let Some(t) = &raw_claims.tid {
-        t.clone()
-    } else if let Some(t) = &raw_claims.tenant_id {
-        t.clone()
-    } else if let Some(t) = &raw_claims.org_id {
-        t.clone()
-    } else {
-        String::new()
-    };
+    normalized_session_claims(raw_claims, &[issuer.issuer.as_str()], audiences)
+}
 
-    // Extract permissions directly from the claim value
-    let perms = raw_claims.normalized_permissions()?;
+/// Verify a JWT using the configured verification path.
+///
+/// Rules:
+/// - Tokens with `iss` must verify against issuer-derived JWKS.
+/// - Tokens without `iss` must verify with `FITZ_JWT_HMAC_SECRET`.
+/// - There is no permissive no-verify fallback.
+pub async fn permissions_from_verified_jwt(
+    compact: &str,
+    auth_config: &AuthConfig,
+) -> Result<
+    (
+        crate::session::permissions::SessionPermissions,
+        crate::auth::Claims,
+    ),
+    String,
+> {
+    let raw_claims = parse_jwt_noverify(compact)?;
 
-    // Build Claims object with expiration time
-    let claims = crate::auth::Claims {
-        sub: raw_claims.sub.clone(),
-        tenant,
-        roles: raw_claims.roles.clone().unwrap_or_default(),
-        permissions: perms.clone(),
-        exp: raw_claims.exp,
-    };
+    match auth_config {
+        AuthConfig::Disabled => Err("authentication is disabled".to_string()),
+        AuthConfig::Hmac(config) => {
+            if !raw_claims.iss.trim().is_empty() {
+                return Err("issuer-based tokens are not allowed in HMAC mode".to_string());
+            }
 
-    Ok((
-        crate::session::permissions::SessionPermissions::from_permissions(perms),
-        claims,
-    ))
+            let claims_value =
+                token::verify_jwt_with_hmac_secret(compact, config.secret.as_bytes())?;
+            let verified_raw: RawClaims = serde_json::from_value(claims_value)
+                .map_err(|e| format!("json parse error: {}", e))?;
+            normalized_session_claims(verified_raw, &[], auth_config.audiences())
+        }
+        AuthConfig::Jwks(_) => {
+            let issuer = auth_config
+                .find_issuer(&raw_claims.iss)
+                .ok_or_else(|| "issuer not allowed".to_string())?;
+            permissions_from_jwt_using_jwks(compact, issuer, auth_config.audiences()).await
+        }
+    }
 }
 
 /// Create default anonymous permissions with full access across all domains.
@@ -369,13 +553,126 @@ mod auth_tests {
             jsonwebtoken::encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
 
         // Act
-        let (perms, _claims) = permissions_from_jwt_using_jwks(&token, "inline://local")
-            .await
-            .unwrap();
+        let issuer = JwksIssuerConfig {
+            issuer: "https://idp.example/".to_string(),
+            jwks_url: "inline://local".to_string(),
+        };
+        let (perms, _claims) =
+            permissions_from_jwt_using_jwks(&token, &issuer, &["fitz-broker".to_string()])
+                .await
+                .unwrap();
 
         // Assert
         let route =
             crate::runtime::routing::Route::new("stream://realm1/area1/orders/1".to_string());
         assert!(perms.allows(&route, Access::Write));
+    }
+
+    #[tokio::test]
+    async fn should_reject_unallowlisted_issuer_even_with_signed_token() {
+        let secret = b"test_secret";
+        let claims = json!({
+            "iss": "https://attacker.example/",
+            "aud": "fitz-broker",
+            "sub": "user:1",
+            "exp": 9_999_999_999u64,
+            "tid": "realm1",
+            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+        });
+
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap();
+
+        let config = AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![JwksIssuerConfig {
+                issuer: "https://idp.example/".to_string(),
+                jwks_url: "inline://local".to_string(),
+            }],
+        );
+
+        let result = permissions_from_verified_jwt(&token, &config).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("issuer not allowed"));
+    }
+
+    #[tokio::test]
+    async fn should_reject_wrong_audience_for_hmac_tokens() {
+        let claims = json!({
+            "iss": "",
+            "aud": "wrong-audience",
+            "sub": "user:1",
+            "exp": 9_999_999_999u64,
+            "tid": "realm1",
+            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
+        let result = permissions_from_verified_jwt(&token, &config).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("audience mismatch"));
+    }
+
+    #[tokio::test]
+    async fn should_reject_tokens_that_are_not_yet_valid() {
+        let now = now_epoch_secs();
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:1",
+            "exp": now + 300,
+            "nbf": now + 120,
+            "tid": "realm1",
+            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
+        let result = permissions_from_verified_jwt(&token, &config).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not yet valid"));
+    }
+
+    #[tokio::test]
+    async fn should_reject_tokens_with_ambiguous_tenant_claims() {
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:1",
+            "exp": 9_999_999_999u64,
+            "tid": "realm1",
+            "tenant_id": "realm2",
+            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
+        let result = permissions_from_verified_jwt(&token, &config).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exactly one tenant id"));
     }
 }
