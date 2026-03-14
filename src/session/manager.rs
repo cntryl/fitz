@@ -135,6 +135,8 @@ impl RuntimeIngress {
         admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     ) -> Self {
         self.admin_read_model = Some(admin_read_model);
+        self
+    }
 
     /// Attach storage for dynamic RouteFamily column-family creation.
     pub fn with_store(mut self, store: Arc<cntryl_midge::Engine>) -> Self {

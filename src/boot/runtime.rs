@@ -281,7 +281,7 @@ pub fn init(
     let ingress = Arc::new(
         RuntimeIngress::new(config.auth_required)
             .with_router(router.clone())
-            .with_admin_read_model(admin_read_model.clone()),
+            .with_admin_read_model(admin_read_model.clone())
             .with_auth_config(config.auth_config.clone())
             .with_store(store.clone()),
     );
