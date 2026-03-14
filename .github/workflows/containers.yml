@@ -2,18 +2,18 @@ name: Containers
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    tags:
-      - "v*"
-    paths:
-      - ".github/workflows/containers.yml"
-      - "Dockerfile"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "src/**"
-      - "public/**"
-      - "ui/**"
+  # push:
+  #   branches: [main]
+  #   tags:
+  #     - "v*"
+  #   paths:
+  #     - ".github/workflows/containers.yml"
+  #     - "Dockerfile"
+  #     - "Cargo.toml"
+  #     - "Cargo.lock"
+  #     - "src/**"
+  #     - "public/**"
+  #     - "ui/**"
 
 env:
   REGISTRY: ghcr.io
