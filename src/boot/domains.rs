@@ -169,13 +169,17 @@ impl KvDomainSink {
         // Remove the actor for this session
         self.actors.lock().remove(&session_id);
 
-        // Release all resource locks held by this session
-        let mut locks = self.resource_locks.lock();
-        locks.retain(|_key, holder_id| *holder_id != session_id);
+        {
+            // Release all resource locks held by this session.
+            let mut locks = self.resource_locks.lock();
+            locks.retain(|_key, holder_id| *holder_id != session_id);
+        }
 
-        // Clean up tx_to_resource mappings for this session
-        let mut tx_map = self.tx_to_resource.lock();
-        tx_map.retain(|(sid, _tx_id), _key| *sid != session_id);
+        {
+            // Clean up tx_to_resource mappings for this session.
+            let mut tx_map = self.tx_to_resource.lock();
+            tx_map.retain(|(sid, _tx_id), _key| *sid != session_id);
+        }
 
         tracing::debug!(
             domain = "kv",

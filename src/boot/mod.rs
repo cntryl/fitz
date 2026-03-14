@@ -55,20 +55,29 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_domains_ready();
 
     // Step 4: Start transport listeners
-    let tcp_ready = handlers::spawn_tcp_listener(
+    let tcp_listener = handlers::spawn_tcp_listener(
         &config,
         ingress.clone(),
         ingress_config.clone(),
         runtime.clone(),
     )
     .await?;
-    let ws_ready = handlers::spawn_http_listener(
+    let ws_listener = handlers::spawn_http_listener(
         &config,
         ingress.clone(),
         ingress_config.clone(),
         runtime.clone(),
     )
     .await?;
+
+    let crate::boot::handlers::ListenerHandle {
+        ready: tcp_ready,
+        shutdown: tcp_shutdown,
+    } = tcp_listener;
+    let crate::boot::handlers::ListenerHandle {
+        ready: ws_ready,
+        shutdown: ws_shutdown,
+    } = ws_listener;
 
     // Wait for listeners to be ready before accepting traffic
     tcp_ready.await.map_err(|e| {
@@ -94,6 +103,9 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 5: Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutting down Fitz broker");
+
+    let _ = tcp_shutdown.send(());
+    let _ = ws_shutdown.send(());
 
     Ok(())
 }

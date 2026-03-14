@@ -23,6 +23,56 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
 
+fn dispatch_session_cleanup(
+    router: &crate::runtime::Router,
+    route_family: crate::runtime::routing::RouteFamily,
+    session_id: u64,
+) {
+    let cleanup = crate::runtime::SessionCleanup { session_id };
+
+    let kv_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("kv://cleanup"),
+    );
+    let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
+    let _ = router.route(kv_envelope);
+
+    let notice_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("notice://cleanup"),
+    );
+    let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
+    let _ = router.route(notice_envelope);
+
+    let stream_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("stream://cleanup"),
+    );
+    let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
+    let _ = router.route(stream_envelope);
+
+    let schedule_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("schedule://cleanup"),
+    );
+    let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
+    let _ = router.route(schedule_envelope);
+
+    let lease_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("lease://cleanup"),
+    );
+    let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
+    let _ = router.route(lease_envelope);
+
+    let queue_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("queue://cleanup"),
+    );
+    let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
+    let _ = router.route(queue_envelope);
+}
+
 /// Outcome from the runtime for a single protocol message
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngressDecision {
@@ -661,76 +711,50 @@ impl Ingress for RuntimeIngress {
 
         info!(session_id = session_id, reason = %reason, "Ingress: session closing");
 
-        // Dispatch cleanup to all subscribable domains BEFORE removing session state.
-        // This ensures subscriptions are cleaned up for Notice, Stream, and Schedule.
-        // Also cleans up KV transactions and resource locks.
-        if let Some(router) = &self.router {
-            let cleanup = crate::runtime::SessionCleanup { session_id };
+        let route_family = self.sessions.get(&session_id).map(|s| s.route_family);
 
-            let route_family = self.sessions.get(&session_id).map(|s| s.route_family);
-
-            if let Some(route_family) = route_family {
-                let kv_addr = crate::runtime::routing::RouteAddress::new(
-                    route_family,
-                    crate::runtime::routing::Route::new("kv://cleanup"),
-                );
-                let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
-                let _ = router.route(kv_envelope);
-
-                let notice_addr = crate::runtime::routing::RouteAddress::new(
-                    route_family,
-                    crate::runtime::routing::Route::new("notice://cleanup"),
-                );
-                let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
-                let _ = router.route(notice_envelope);
-
-                let stream_addr = crate::runtime::routing::RouteAddress::new(
-                    route_family,
-                    crate::runtime::routing::Route::new("stream://cleanup"),
-                );
-                let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
-                let _ = router.route(stream_envelope);
-
-                let schedule_addr = crate::runtime::routing::RouteAddress::new(
-                    route_family,
-                    crate::runtime::routing::Route::new("schedule://cleanup"),
-                );
-                let schedule_envelope =
-                    crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
-                let _ = router.route(schedule_envelope);
-
-                let lease_addr = crate::runtime::routing::RouteAddress::new(
-                    route_family,
-                    crate::runtime::routing::Route::new("lease://cleanup"),
-                );
-                let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
-                let _ = router.route(lease_envelope);
-
-                let queue_addr = crate::runtime::routing::RouteAddress::new(
-                    route_family,
-                    crate::runtime::routing::Route::new("queue://cleanup"),
-                );
-                let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
-                let _ = router.route(queue_envelope);
-
-                tracing::debug!(
-                    session_id = session_id,
-                    route_family = route_family.id(),
-                    "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
-                );
-            } else {
-                tracing::debug!(
-                    session_id = session_id,
-                    "Ingress: session already removed before cleanup routing"
-                );
-            }
-        }
-
-        // Remove session and associated actor
+        // Remove session state first so waiters observing session_count can progress
+        // even if downstream domain cleanup is slow.
         self.sessions.remove(&session_id);
         self.session_actors.remove(&session_id);
         if let Some(admin_read_model) = &self.admin_read_model {
             admin_read_model.record_session_close(session_id);
+        }
+
+        // Dispatch cleanup to all subscribable domains BEFORE removing session state.
+        // This ensures subscriptions are cleaned up for Notice, Stream, and Schedule.
+        // Also cleans up KV transactions and resource locks.
+        if let (Some(router), Some(route_family)) = (&self.router, route_family) {
+            let router = router.clone();
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                tokio::task::spawn_blocking(move || {
+                    dispatch_session_cleanup(router.as_ref(), route_family, session_id)
+                }),
+            )
+            .await
+            {
+                Ok(Ok(())) => {
+                    tracing::debug!(
+                        session_id = session_id,
+                        route_family = route_family.id(),
+                        "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
+                    );
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        session_id = session_id,
+                        error = %e,
+                        "Ingress: cleanup worker task failed"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        session_id = session_id,
+                        "Ingress: cleanup dispatch timed out"
+                    );
+                }
+            }
         }
 
         // Notify handler if present

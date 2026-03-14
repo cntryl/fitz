@@ -34,7 +34,8 @@ pub struct TestServer {
     pub tcp_addr: SocketAddr,
     pub ws_addr: SocketAddr,
     pub runtime: Arc<crate::boot::Runtime>,
-    _shutdown: tokio::sync::oneshot::Sender<()>,
+    _tcp_shutdown: tokio::sync::oneshot::Sender<()>,
+    _ws_shutdown: tokio::sync::oneshot::Sender<()>,
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl TestServer {
@@ -60,11 +61,11 @@ impl TestServer {
         }
 
         // Find available ports and keep listeners bound to prevent reallocation race
-        let tcp_listener = TcpListener::bind("127.0.0.1:0").await?;
-        let tcp_addr = tcp_listener.local_addr()?;
+        let tcp_socket = TcpListener::bind("127.0.0.1:0").await?;
+        let tcp_addr = tcp_socket.local_addr()?;
 
-        let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
-        let ws_addr = ws_listener.local_addr()?;
+        let ws_socket = TcpListener::bind("127.0.0.1:0").await?;
+        let ws_addr = ws_socket.local_addr()?;
 
         // Keep listeners alive - will be passed to spawn functions
         // This prevents the port reallocation race condition where parallel tests
@@ -105,20 +106,29 @@ impl TestServer {
         runtime.mark_domains_ready();
 
         // Step 4: Start TCP listener with pre-bound socket (eliminates port race)
-        let tcp_ready_rx = crate::boot::handlers::spawn_tcp_listener_with_bound_socket(
-            tcp_listener,
+        let tcp_handle = crate::boot::handlers::spawn_tcp_listener_with_bound_socket(
+            tcp_socket,
             ingress.clone(),
             ingress_config.clone(),
             runtime.clone(),
         )?;
 
         // Step 5: Start HTTP/WebSocket listener with pre-bound socket
-        let ws_ready_rx = crate::boot::handlers::spawn_http_listener_with_bound_socket(
-            ws_listener,
+        let ws_handle = crate::boot::handlers::spawn_http_listener_with_bound_socket(
+            ws_socket,
             ingress.clone(),
             ingress_config.clone(),
             runtime.clone(),
         )?;
+
+        let crate::boot::handlers::ListenerHandle {
+            ready: tcp_ready_rx,
+            shutdown: tcp_shutdown,
+        } = tcp_handle;
+        let crate::boot::handlers::ListenerHandle {
+            ready: ws_ready_rx,
+            shutdown: ws_shutdown,
+        } = ws_handle;
 
         // Wait for both listeners to be ready before returning
         // This ensures tests don't connect before accept loops are ready
@@ -140,13 +150,13 @@ impl TestServer {
 
         // Return the runtime wrapped in Arc
         let runtime_arc = Arc::new(runtime);
-        let (_shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel();
 
         Ok(TestServer {
             tcp_addr,
             ws_addr,
             runtime: runtime_arc,
-            _shutdown: _shutdown_tx,
+            _tcp_shutdown: tcp_shutdown,
+            _ws_shutdown: ws_shutdown,
             _permit: permit,
         })
     }

@@ -12,13 +12,18 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
 
+pub struct ListenerHandle {
+    pub ready: tokio::sync::oneshot::Receiver<()>,
+    pub shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
 /// Spawn TCP listener on configured port (binds internally)
 pub async fn spawn_tcp_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
-) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
+) -> BootResult<ListenerHandle> {
     let tcp_addr = format!("{}:{}", config.bind_addr, config.tcp_port);
     let tcp_listener = TcpListener::bind(&tcp_addr).await?;
     info!("TCP endpoint listening on {}", tcp_addr);
@@ -32,45 +37,57 @@ pub fn spawn_tcp_listener_with_bound_socket(
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
-) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
+) -> BootResult<ListenerHandle> {
     let tcp_config = ingress_config.clone();
     let runtime = Arc::new(runtime);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
         // Signal readiness before accepting connections
         let _ = ready_tx.send(());
 
         loop {
-            match tcp_listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    // Record connection opened counter
-                    if let Ok(collector) =
-                        std::panic::catch_unwind(crate::boot::observability::metrics)
-                    {
-                        collector.counter_inc(obs::METRIC_CONNECTIONS_OPENED);
-                    }
-
-                    info!("TCP connection from {}", peer_addr);
-                    let ingress = ingress.clone();
-                    let config = tcp_config.clone();
-                    let runtime = runtime.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            handle_tcp_connection(stream, ingress, config, runtime).await
-                        {
-                            tracing::error!("TCP handler error: {}", e);
-                        }
-                    });
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    tracing::info!("TCP listener shutdown requested");
+                    break;
                 }
-                Err(e) => {
-                    tracing::error!("TCP accept error: {}", e);
+                accept_result = tcp_listener.accept() => {
+                    match accept_result {
+                        Ok((stream, peer_addr)) => {
+                            // Record connection opened counter
+                            if let Ok(collector) =
+                                std::panic::catch_unwind(crate::boot::observability::metrics)
+                            {
+                                collector.counter_inc(obs::METRIC_CONNECTIONS_OPENED);
+                            }
+
+                            info!("TCP connection from {}", peer_addr);
+                            let ingress = ingress.clone();
+                            let config = tcp_config.clone();
+                            let runtime = runtime.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) =
+                                    handle_tcp_connection(stream, ingress, config, runtime).await
+                                {
+                                    tracing::error!("TCP handler error: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!("TCP accept error: {}", e);
+                        }
+                    }
                 }
             }
         }
     });
 
-    Ok(ready_rx)
+    Ok(ListenerHandle {
+        ready: ready_rx,
+        shutdown: shutdown_tx,
+    })
 }
 
 /// Spawn HTTP/WebSocket listener on configured port (binds internally)
@@ -79,7 +96,7 @@ pub async fn spawn_http_listener(
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
-) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
+) -> BootResult<ListenerHandle> {
     let http_addr = format!("{}:{}", config.bind_addr, config.http_port);
     let http_listener = TcpListener::bind(&http_addr).await?;
     info!("HTTP/WebSocket endpoint listening on {}", http_addr);
@@ -93,44 +110,56 @@ pub fn spawn_http_listener_with_bound_socket(
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
-) -> BootResult<tokio::sync::oneshot::Receiver<()>> {
+) -> BootResult<ListenerHandle> {
     let http_config = ingress_config.clone();
     let runtime = Arc::new(runtime);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
         // Signal readiness before accepting connections
         let _ = ready_tx.send(());
 
         loop {
-            match http_listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    // Record connection opened counter
-                    if let Ok(collector) =
-                        std::panic::catch_unwind(crate::boot::observability::metrics)
-                    {
-                        collector.counter_inc(obs::METRIC_CONNECTIONS_OPENED);
-                    }
-
-                    info!("HTTP connection from {}", peer_addr);
-                    let ingress = ingress.clone();
-                    let config = http_config.clone();
-                    let runtime = runtime.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime).await
-                        {
-                            tracing::error!("HTTP handler error: {}", e);
-                        }
-                    });
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    tracing::info!("HTTP listener shutdown requested");
+                    break;
                 }
-                Err(e) => {
-                    tracing::error!("HTTP accept error: {}", e);
+                accept_result = http_listener.accept() => {
+                    match accept_result {
+                        Ok((stream, peer_addr)) => {
+                            // Record connection opened counter
+                            if let Ok(collector) =
+                                std::panic::catch_unwind(crate::boot::observability::metrics)
+                            {
+                                collector.counter_inc(obs::METRIC_CONNECTIONS_OPENED);
+                            }
+
+                            info!("HTTP connection from {}", peer_addr);
+                            let ingress = ingress.clone();
+                            let config = http_config.clone();
+                            let runtime = runtime.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime).await
+                                {
+                                    tracing::error!("HTTP handler error: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!("HTTP accept error: {}", e);
+                        }
+                    }
                 }
             }
         }
     });
 
-    Ok(ready_rx)
+    Ok(ListenerHandle {
+        ready: ready_rx,
+        shutdown: shutdown_tx,
+    })
 }
 
 /// Handle an incoming TCP connection with outbound response support
@@ -172,6 +201,7 @@ async fn handle_tcp_connection(
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
     let inbox_route = crate::runtime::routing::session_inbox_address(initial_family, session_id);
     let current_inbox = Arc::new(Mutex::new(inbox_route.clone()));
+    let registered_inboxes = Arc::new(Mutex::new(vec![inbox_route.clone()]));
     tracing::debug!(
         session_id = session_id,
         inbox = %inbox_route,
@@ -186,7 +216,7 @@ async fn handle_tcp_connection(
     let tcp_session_id = session_id;
     let runtime_for_writes = runtime.clone();
     let mut write_half = write_half;
-    tokio::spawn(async move {
+    let writer_handle = tokio::spawn(async move {
         tracing::debug!(
             session_id = tcp_session_id,
             "TCP outbound writer task started"
@@ -225,7 +255,8 @@ async fn handle_tcp_connection(
     let runtime_for_frames = runtime.clone();
     let outbound_sink = sink.clone();
     let current_inbox_for_frames = current_inbox.clone();
-    tokio::spawn(async move {
+    let registered_inboxes_for_frames = registered_inboxes.clone();
+    let frame_handle = tokio::spawn(async move {
         // Create ONE session instance that persists for all frames on this connection
         let session_config = crate::session::NewSessionConfig::unauthenticated(
             crate::session::TransportKind::Tcp,
@@ -270,6 +301,10 @@ async fn handle_tcp_connection(
                             as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
                     );
                     *current_inbox_for_frames.lock() = registered_inbox.clone();
+                    let mut inboxes = registered_inboxes_for_frames.lock();
+                    if !inboxes.contains(&registered_inbox) {
+                        inboxes.push(registered_inbox.clone());
+                    }
                 }
             }
         }
@@ -279,10 +314,21 @@ async fn handle_tcp_connection(
     let run_result = handler.run().await;
     drop(frame_tx);
 
-    let final_inbox = current_inbox.lock().clone();
-    runtime.router.unregister(&final_inbox);
-    if final_inbox != inbox_route {
-        runtime.router.unregister(&inbox_route);
+    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), frame_handle).await {
+        tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
+    }
+
+    let inboxes = registered_inboxes.lock().clone();
+    for inbox in &inboxes {
+        runtime.router.unregister(inbox);
+    }
+
+    drop(current_inbox);
+    drop(sink);
+    drop(outbound_tx);
+
+    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), writer_handle).await {
+        tracing::warn!(session_id = session_id, error = %e, "TCP writer task did not terminate in time");
     }
 
     // Record connection closed counter
