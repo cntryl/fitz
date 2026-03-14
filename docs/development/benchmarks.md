@@ -261,11 +261,11 @@ For CI, you can reduce total time by setting `BENCH_RUNS=3` (or lower) when runn
 
 ### Stress benchmark contract (Tier 3/4)
 
-Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: rules for what goes inside vs outside `ctx.measure`, how to implement direct/encoded/tcp/websocket/multiclient layers, use of `shared_bench_runtime()`, and real actor logic (no fake work). See **[Stress benchmark contract](stress_bench_contract.md)** for the full contract and reference examples.
+Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: rules for what goes inside vs outside `ctx.measure`, how to implement direct/encoded/tcp/websocket/multiclient layers, use of `shared_bench_runtime()`, and real actor logic (no fake work). See **[Stress benchmark contract](stress-bench-contract.md)** for the full contract and reference examples.
 
 ### Performance targets
 
-Numerical, testable performance targets (single-node, best-in-class) and the benchmark scenarios that verify them are defined in **[Performance targets](bench_targets.md)**. Each target has a threshold, conditions (payload size, concurrency, transport), and a mapping to an existing stress scenario or a "new scenario required" spec. Use that doc for optimization goals and to prove competitive positioning vs SQS/RabbitMQ, Kafka, and NATS. For tier4 TCP/WS latency (RPC, Notice), see the **Tier4 transport optimization** section in that doc.
+Numerical, testable performance targets (single-node, best-in-class) and the benchmark scenarios that verify them are defined in **[Performance targets](bench-targets.md)**. Each target has a threshold, conditions (payload size, concurrency, transport), and a mapping to an existing stress scenario or a "new scenario required" spec. Use that doc for optimization goals and to prove competitive positioning vs SQS/RabbitMQ, Kafka, and NATS. For tier4 TCP/WS latency (RPC, Notice), see the **Tier4 transport optimization** section in that doc.
 
 ## Best Practices
 

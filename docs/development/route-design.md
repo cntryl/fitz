@@ -114,7 +114,7 @@ kv://                      # Missing realm/area/resource
 
 #### Parsing Logic
 
-Location: [src/protocol/kv_codec.rs](../src/protocol/kv_codec.rs)
+Location: [src/protocol/kv_codec.rs](../../src/protocol/kv_codec.rs)
 
 ```rust
 // Route parsed into (realm, area, resource) triplet
@@ -191,7 +191,7 @@ queue://                    # Missing realm/area/resource
 
 #### Parsing Logic
 
-Location: [src/domains/queue/protocol.rs](../src/domains/queue/protocol.rs)
+Location: [src/domains/queue/protocol.rs](../../src/domains/queue/protocol.rs)
 
 ```rust
 pub struct QueueKey {
@@ -284,7 +284,7 @@ All routes are valid as long as they're non-empty strings.
 
 #### Parsing Logic
 
-Location: [src/domains/rpc/protocol.rs](../src/domains/rpc/protocol.rs)
+Location: [src/domains/rpc/protocol.rs](../../src/domains/rpc/protocol.rs)
 
 ```rust
 // Routes stored as opaque strings - no parsing
@@ -362,7 +362,7 @@ lease://                        # Missing realm/area/resource
 
 #### Parsing Logic
 
-Location: [src/domains/lease/protocol.rs](../src/domains/lease/protocol.rs)
+Location: [src/domains/lease/protocol.rs](../../src/domains/lease/protocol.rs)
 
 ```rust
 pub struct LeaseKey {
@@ -475,7 +475,7 @@ notice://acme/events/*/created      # Cannot publish with wildcards
 
 #### Parsing Logic
 
-Location: [src/domains/notice/protocol.rs](../src/domains/notice/protocol.rs)
+Location: [src/domains/notice/protocol.rs](../../src/domains/notice/protocol.rs)
 
 ```rust
 // Routes stored as opaque strings
@@ -575,7 +575,7 @@ stream://acme/*/checkout               # Wildcard in append (not supported)
 
 #### Parsing Logic
 
-Location: [src/domains/stream/protocol.rs](../src/domains/stream/protocol.rs)
+Location: [src/domains/stream/protocol.rs](../../src/domains/stream/protocol.rs)
 
 ```rust
 // Parsed into hierarchy
@@ -662,7 +662,7 @@ schedule://prod/jobs/cleanup        # Missing operation
 
 #### Parsing Logic
 
-Location: [src/domains/schedule/protocol.rs](../src/domains/schedule/protocol.rs)
+Location: [src/domains/schedule/protocol.rs](../../src/domains/schedule/protocol.rs)
 
 ```rust
 // Parsed into (realm, area, resource, operation)
@@ -837,13 +837,13 @@ rpc://tenant-a/**#write   # RPC request access
 
 | Domain | Protocol | Actor | Codec | Session |
 |--------|----------|-------|-------|---------|
-| KV | [domains/kv/protocol.rs](../src/domains/kv/protocol.rs) | [domains/kv/actor.rs](../src/domains/kv/actor.rs) | [protocol/kv_codec.rs](../src/protocol/kv_codec.rs) | [domains/kv/session.rs](../src/domains/kv/session.rs) |
-| Queue | [domains/queue/protocol.rs](../src/domains/queue/protocol.rs) | [domains/queue/queue_actor.rs](../src/domains/queue/queue_actor.rs) | [protocol/queue_codec.rs](../src/protocol/queue_codec.rs) | [domains/queue/session.rs](../src/domains/queue/session.rs) |
-| RPC | [domains/rpc/protocol.rs](../src/domains/rpc/protocol.rs) | [domains/rpc/rpc_route_actor.rs](../src/domains/rpc/rpc_route_actor.rs) | [protocol/rpc_codec.rs](../src/protocol/rpc_codec.rs) | [domains/rpc/session.rs](../src/domains/rpc/session.rs) |
-| Lease | [domains/lease/protocol.rs](../src/domains/lease/protocol.rs) | [domains/lease/lease_actor.rs](../src/domains/lease/lease_actor.rs) | [protocol/lease_codec.rs](../src/protocol/lease_codec.rs) | [domains/lease/session.rs](../src/domains/lease/session.rs) |
-| Notice | [domains/notice/protocol.rs](../src/domains/notice/protocol.rs) | [domains/notice/route_actor.rs](../src/domains/notice/route_actor.rs) | [protocol/notice_codec.rs](../src/protocol/notice_codec.rs) | [domains/notice/session.rs](../src/domains/notice/session.rs) |
-| Stream | [domains/stream/protocol.rs](../src/domains/stream/protocol.rs) | [domains/stream/stream_actor.rs](../src/domains/stream/stream_actor.rs) | [protocol/stream_codec.rs](../src/protocol/stream_codec.rs) | [domains/stream/session.rs](../src/domains/stream/session.rs) |
-| Schedule | [domains/schedule/protocol.rs](../src/domains/schedule/protocol.rs) | [domains/schedule/actor.rs](../src/domains/schedule/actor.rs) | [protocol/schedule_codec.rs](../src/protocol/schedule_codec.rs) | [domains/schedule/session.rs](../src/domains/schedule/session.rs) |
+| KV | [domains/kv/protocol.rs](../../src/domains/kv/protocol.rs) | [domains/kv/actor.rs](../../src/domains/kv/actor.rs) | [protocol/kv_codec.rs](../../src/protocol/kv_codec.rs) | [domains/kv/session.rs](../../src/domains/kv/session.rs) |
+| Queue | [domains/queue/protocol.rs](../../src/domains/queue/protocol.rs) | [domains/queue/actor.rs](../../src/domains/queue/actor.rs) | [protocol/queue_codec.rs](../../src/protocol/queue_codec.rs) | [domains/queue/session.rs](../../src/domains/queue/session.rs) |
+| RPC | [domains/rpc/protocol.rs](../../src/domains/rpc/protocol.rs) | [domains/rpc/actor.rs](../../src/domains/rpc/actor.rs) | [protocol/rpc_codec.rs](../../src/protocol/rpc_codec.rs) | [domains/rpc/session.rs](../../src/domains/rpc/session.rs) |
+| Lease | [domains/lease/protocol.rs](../../src/domains/lease/protocol.rs) | [domains/lease/actor.rs](../../src/domains/lease/actor.rs) | [protocol/lease_codec.rs](../../src/protocol/lease_codec.rs) | [domains/lease/session.rs](../../src/domains/lease/session.rs) |
+| Notice | [domains/notice/protocol.rs](../../src/domains/notice/protocol.rs) | [domains/notice/actor.rs](../../src/domains/notice/actor.rs) | [protocol/notice_codec.rs](../../src/protocol/notice_codec.rs) | [domains/notice/session.rs](../../src/domains/notice/session.rs) |
+| Stream | [domains/stream/protocol.rs](../../src/domains/stream/protocol.rs) | [domains/stream/actor.rs](../../src/domains/stream/actor.rs) | [protocol/stream_codec.rs](../../src/protocol/stream_codec.rs) | [domains/stream/session.rs](../../src/domains/stream/session.rs) |
+| Schedule | [domains/schedule/protocol.rs](../../src/domains/schedule/protocol.rs) | [domains/schedule/actor.rs](../../src/domains/schedule/actor.rs) | [protocol/schedule_codec.rs](../../src/protocol/schedule_codec.rs) | [domains/schedule/session.rs](../../src/domains/schedule/session.rs) |
 
 ---
 
@@ -865,6 +865,6 @@ When implementing or modifying route handling:
 ---
 
 **See Also**:
-- [Fitz Architecture](./SERVER.md)
-- [Transport Layer](./transport_tests_implementation_summary.md)
-- [Copilot Instructions](../.github/copilot-instructions.md)
+- [Fitz Architecture](./architecture.md)
+- [Connection Flow](../clients/CONNECTION_FLOW.md)
+- [Copilot Instructions](../../.github/copilot-instructions.md)

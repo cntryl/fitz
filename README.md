@@ -1,25 +1,105 @@
 # fitz
 
-A high-performance, multi-scheme message broker built on a synchronous actor runtime with a clean durability boundary (Midge for durable domains, memory for ephemeral domains).
+Fitz is a broker project for teams that need one place to handle common application messaging patterns.
 
-Status: early prototype. For the v2 architecture, see the specs under [wip/](wip/).
+## What Problem Fitz Solves
 
-## quick start
+Many systems end up running separate tools for:
 
-- Requirements: Rust stable, cargo
-- Run tests: `cargo test`
-- Lint: `cargo fmt --all -- --check` and `cargo clippy -D warnings`
+- request response traffic
+- queue workloads
+- event fanout
+- stream style delivery
+- key value coordination data
 
-## architecture
+That increases operational overhead, client complexity, and integration drift across services.
 
-- High-level architecture: [wip/ARCHITECTURE.md](wip/ARCHITECTURE.md)
-- Domain model (stream/queue/kv/notice/rpc/lease): [wip/DOMAIN_MODEL.md](wip/DOMAIN_MODEL.md)
-- Routing hierarchy (Route Family vs realm): [wip/ROUTING_ARCHITECTURE.md](wip/ROUTING_ARCHITECTURE.md)
-- Implementation plan: [wip/ROADMAP.md](wip/ROADMAP.md)
+Fitz is intended to provide a single broker surface for these patterns so teams can start with one deployment model and one client contract.
 
-## legacy docs
+## What Fitz Should Be
 
-- Roadmap: `todo.md`
-- Design: `docs/design_doc.md`
-- Specs: `docs/notice_spec.md`, `docs/stream_spec.md`, `docs/queue_spec.md`, `docs/rpc_spec.md`
+Fitz should be:
+
+- simple to start locally and in containers
+- explicit about durability and failure behavior
+- predictable to operate with health probes and metrics
+- practical to adopt from multiple client languages
+
+It currently exposes HTTP and WebSocket on 4090, TCP framed traffic on 4091, and domain surfaces for KV, queue, notice, RPC, lease, stream, and schedule.
+
+Current status: early prototype.
+
+## Quick Start
+
+### Option 1: Docker Run
+
+1. Start Fitz from GHCR with auth disabled for local onboarding:
+
+		docker run --rm -p 4090:4090 -p 4091:4091 -e FITZ_AUTH_REQUIRED=false -e RUST_LOG=info,fitz=trace ghcr.io/cntryl/fitz:latest
+
+2. Verify basic health from another terminal:
+
+		curl http://localhost:4090/healthz
+
+Expected result: HTTP 200 with a small JSON status response.
+
+### Option 2: Docker Compose
+
+The repository includes [compose.yml](compose.yml) with two services:
+
+- fitz-auth: auth required on 4090 and 4091
+- fitz-anon: auth disabled on 4190 and 4191
+
+Run both:
+
+		docker compose up --build
+
+If you want to use published images only, use a compose file that sets `image: ghcr.io/cntryl/fitz:latest` and removes `build`.
+
+Quick checks:
+
+		curl http://localhost:4090/healthz
+		curl http://localhost:4190/healthz
+
+Stop:
+
+		docker compose down
+
+### Minimal Compose Example
+
+If you want a single local service, this is the smallest useful compose file:
+
+		services:
+			fitz:
+				image: ghcr.io/cntryl/fitz:latest
+				ports:
+					- "4090:4090"
+					- "4091:4091"
+				environment:
+					FITZ_AUTH_REQUIRED: "false"
+					FITZ_STORAGE_MODE: "memory"
+					FITZ_STORAGE_PATH: "/data"
+					RUST_LOG: "info,fitz=trace"
+
+## Endpoints
+
+- HTTP root and static UI: http://localhost:4090/
+- WebSocket endpoint: ws://localhost:4090/ws
+- TCP endpoint: localhost:4091
+- Health probes: /healthz, /readyz, /startupz
+- Metrics: /metrics
+
+## Configuration Notes
+
+- FITZ_AUTH_REQUIRED defaults to true.
+- FITZ_STORAGE_MODE can be set to memory, local, s3, gcs, or azure.
+- FITZ_STORAGE_PATH defaults to ./.fitz for local-backed storage modes.
+
+## Documentation
+
+- Full docs index: [docs/README.md](docs/README.md)
+- Client protocol spec: [docs/clients/CLIENT_SPEC.md](docs/clients/CLIENT_SPEC.md)
+- User onboarding guides: [docs/user-guides](docs/user-guides)
+- Operations guides: [docs/operations](docs/operations)
+
 
