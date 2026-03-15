@@ -713,48 +713,38 @@ impl Ingress for RuntimeIngress {
 
         let route_family = self.sessions.get(&session_id).map(|s| s.route_family);
 
-        // Remove session state first so waiters observing session_count can progress
-        // even if downstream domain cleanup is slow.
-        self.sessions.remove(&session_id);
-        self.session_actors.remove(&session_id);
-        if let Some(admin_read_model) = &self.admin_read_model {
-            admin_read_model.record_session_close(session_id);
-        }
-
-        // Dispatch cleanup to all subscribable domains BEFORE removing session state.
-        // This ensures subscriptions are cleaned up for Notice, Stream, and Schedule.
-        // Also cleans up KV transactions and resource locks.
+        // Dispatch cleanup to all subscribable domains before removing session state.
+        // This ensures lock/subscription cleanup has completed before tests or callers
+        // observe a decreased session count.
         if let (Some(router), Some(route_family)) = (&self.router, route_family) {
             let router = router.clone();
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(200),
-                tokio::task::spawn_blocking(move || {
-                    dispatch_session_cleanup(router.as_ref(), route_family, session_id)
-                }),
-            )
+            match tokio::task::spawn_blocking(move || {
+                dispatch_session_cleanup(router.as_ref(), route_family, session_id)
+            })
             .await
             {
-                Ok(Ok(())) => {
+                Ok(()) => {
                     tracing::debug!(
                         session_id = session_id,
                         route_family = route_family.id(),
                         "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
                     );
                 }
-                Ok(Err(e)) => {
+                Err(e) => {
                     tracing::warn!(
                         session_id = session_id,
                         error = %e,
                         "Ingress: cleanup worker task failed"
                     );
                 }
-                Err(_) => {
-                    tracing::warn!(
-                        session_id = session_id,
-                        "Ingress: cleanup dispatch timed out"
-                    );
-                }
             }
+        }
+
+        // Remove session state after domain cleanup completes.
+        self.sessions.remove(&session_id);
+        self.session_actors.remove(&session_id);
+        if let Some(admin_read_model) = &self.admin_read_model {
+            admin_read_model.record_session_close(session_id);
         }
 
         // Notify handler if present
