@@ -24,3 +24,4 @@ inventory.md
 *.exe
 
 .fitz/
+**.log

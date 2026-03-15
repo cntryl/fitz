@@ -13,11 +13,13 @@ use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
 /// Global metrics collector (initialized once during boot)
 static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
 
-/// Get the global metrics collector (panics if not initialized)
+/// Get the global metrics collector.
+///
+/// If observability has not been initialized yet, this lazily creates
+/// a default collector so metrics recording never panics.
 pub fn metrics() -> Arc<MetricsCollector> {
     METRICS_COLLECTOR
-        .get()
-        .expect("MetricsCollector not initialized; call init_observability first")
+    .get_or_init(|| Arc::new(MetricsCollector::new()))
         .clone()
 }
 
@@ -72,7 +74,7 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
     match log_format.as_str() {
         "json" => {
             // JSON structured logging (better for log aggregation)
-            tracing_subscriber::registry()
+            let _ = tracing_subscriber::registry()
                 .with(env_filter)
                 .with(
                     fmt::layer()
@@ -81,11 +83,11 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
                         .with_target(true)
                         .with_level(true),
                 )
-                .init();
+                .try_init();
         }
         _ => {
             // Text formatting (default, human-readable)
-            tracing_subscriber::registry()
+            let _ = tracing_subscriber::registry()
                 .with(env_filter)
                 .with(
                     fmt::layer()
@@ -98,17 +100,14 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
                         .with_file(false)
                         .with_line_number(false),
                 )
-                .init();
+                .try_init();
         }
     }
 
-    // Create metrics collector
-    let metrics_collector = Arc::new(MetricsCollector::new());
-
-    // Store in global cell
-    METRICS_COLLECTOR
-        .set(metrics_collector.clone())
-        .map_err(|_| "MetricsCollector already initialized".to_string())?;
+    // Create metrics collector if not already created.
+    let metrics_collector = METRICS_COLLECTOR
+        .get_or_init(|| Arc::new(MetricsCollector::new()))
+        .clone();
 
     // Environment variables for OTEL
     let otel_enabled = std::env::var("OTEL_ENABLED")
