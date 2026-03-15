@@ -164,6 +164,7 @@ impl TestServer {
     /// Connect to the test server via TCP
     pub async fn connect(&self) -> Result<TestClient, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(self.tcp_addr).await?;
+        stream.set_nodelay(true)?;
         Ok(TestClient { stream })
     }
 
@@ -238,6 +239,7 @@ impl TestClient {
     /// Create a client by connecting to an address
     pub async fn new(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(addr).await?;
+        stream.set_nodelay(true)?;
         Ok(Self { stream })
     }
 
@@ -368,6 +370,12 @@ impl TestWebSocketClient {
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.send_frame(frame).await?;
         self.recv_frame(timeout_ms).await
+    }
+
+    /// Gracefully close the websocket client connection.
+    pub async fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.ws.close(None).await?;
+        Ok(())
     }
 }
 

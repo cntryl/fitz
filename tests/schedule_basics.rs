@@ -281,6 +281,45 @@ fn should_upsert_schedule_by_route() {
     }
 }
 
+#[test]
+fn should_keep_single_schedule_given_identical_create_upsert() {
+    // Arrange
+    let mut actor = make_schedule_actor();
+    let route = "schedule://acme/jobs/backup".to_string();
+    let cron = "0 2 * * *".to_string();
+    let payload = Bytes::from("config-v1");
+
+    actor.handle(ScheduleMessage::Create {
+        route: route.clone(),
+        cron: cron.clone(),
+        payload: payload.clone(),
+    });
+
+    // Act
+    let response = actor.handle(ScheduleMessage::Create {
+        route: route.clone(),
+        cron,
+        payload: payload.clone(),
+    });
+
+    // Assert
+    assert!(matches!(response, ScheduleResponse::Ok));
+
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
+    match list_response {
+        ScheduleResponse::ListDefs { entries, .. } => {
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].route, route);
+            assert_eq!(entries[0].cron, "0 2 * * *");
+            assert_eq!(entries[0].payload, payload);
+        }
+        _ => panic!("Expected ListDefs response"),
+    }
+}
+
 // ========== CANCEL Operation Tests ==========
 
 #[test]

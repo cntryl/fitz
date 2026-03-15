@@ -214,6 +214,10 @@ pub async fn create_session(
     stream: TcpStream,
     tx: mpsc::Sender<(u64, Bytes)>,
 ) -> Result<(TcpHandler, OwnedWriteHalf), String> {
+    stream
+        .set_nodelay(true)
+        .map_err(|e| format!("failed to enable TCP_NODELAY: {}", e))?;
+
     // Extract peer address before splitting
     let peer_addr = stream.peer_addr().ok();
     debug!(peer_addr = ?peer_addr, "Creating TCP session");

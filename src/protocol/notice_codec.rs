@@ -55,6 +55,12 @@ pub fn parse_request(
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_response_into(response, &mut enc)
+}
+
+/// Encode domain response using a reusable payload encoder.
+pub fn encode_response_into(response: &NoticeResponse, enc: &mut PayloadEncoder) -> Vec<u8> {
+    enc.clear();
 
     match response {
         NoticeResponse::Ok { subscription_id } => {
@@ -155,6 +161,17 @@ fn parse_unsubscribe_all(
 /// The route and payload carry the actual delivery content.
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_notify_into(subscription_id, route, payload, &mut enc)
+}
+
+/// Encode NOTICE DELIVER payload using a reusable payload encoder.
+pub fn encode_notify_into(
+    subscription_id: u64,
+    route: &Route,
+    payload: &[u8],
+    enc: &mut PayloadEncoder,
+) -> Vec<u8> {
+    enc.clear();
     enc.put_u64(subscription_id);
     enc.put_string(route.as_str());
     enc.put_bytes(payload);

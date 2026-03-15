@@ -45,6 +45,12 @@ pub fn parse_request(
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_response_into(response, &mut enc)
+}
+
+/// Encode domain response into a reusable payload encoder.
+pub fn encode_response_into(response: &RpcResponseMsg, enc: &mut PayloadEncoder) -> Vec<u8> {
+    enc.clear();
 
     match response {
         RpcResponseMsg::Ok { data } => {
@@ -173,6 +179,15 @@ fn parse_ack(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
 /// This encodes the RpcWorkItem to be sent from route actor to worker session actor.
 pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWorkItem) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_request_delivery_into(work_item, &mut enc)
+}
+
+/// Encode RPC REQUEST delivery using a reusable payload encoder.
+pub fn encode_request_delivery_into(
+    work_item: &crate::domains::rpc::protocol::RpcWorkItem,
+    enc: &mut PayloadEncoder,
+) -> Vec<u8> {
+    enc.clear();
     enc.put_bytes(work_item.correlation_id.as_bytes());
     enc.put_string(work_item.route.as_str());
     enc.put_string(work_item.reply_route.as_str());
@@ -185,6 +200,12 @@ pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWor
 /// Wire format: `[bytes correlation_id][u64 seq][bytes body][u8 stream_end]`
 pub fn encode_response_message(response: &RpcResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_response_message_into(response, &mut enc)
+}
+
+/// Encode RPC RESPONSE from worker to route using a reusable payload encoder.
+pub fn encode_response_message_into(response: &RpcResponse, enc: &mut PayloadEncoder) -> Vec<u8> {
+    enc.clear();
     enc.put_bytes(response.correlation_id.as_bytes());
     enc.put_u64(response.seq);
     enc.put_bytes(&response.body);
@@ -200,6 +221,12 @@ pub fn encode_response_message(response: &RpcResponse) -> Vec<u8> {
 /// This unblocks the worker so they can send additional responses.
 pub fn encode_ack(correlation_id: &Uuid) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_ack_into(correlation_id, &mut enc)
+}
+
+/// Encode RPC ACK using a reusable payload encoder.
+pub fn encode_ack_into(correlation_id: &Uuid, enc: &mut PayloadEncoder) -> Vec<u8> {
+    enc.clear();
     enc.put_bytes(correlation_id.as_bytes());
     enc.finish()
 }

@@ -56,9 +56,17 @@ pub fn parse_request(
 /// - QUERY success (held): status=0, has_holder=1, owner_id, ttl_remaining_secs, pending_waiters
 /// - All errors: status=1, error_len, error_msg
 pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    encode_domain_response_into(&mut enc, response)
+}
+
+pub fn encode_domain_response_into(
+    enc: &mut PayloadEncoder,
+    response: &DomainLeaseResponse,
+) -> Vec<u8> {
     use acquire_response_type::{ACQUIRED, ALREADY_HELD, ALREADY_QUEUED, QUEUED};
 
-    let mut enc = PayloadEncoder::new();
+    enc.clear();
 
     match response {
         DomainLeaseResponse::Acquired { fencing_token } => {
@@ -113,18 +121,18 @@ pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
             enc.put_u32(0); // pending_waiters
             enc.finish()
         }
-        DomainLeaseResponse::Timeout => encode_error("Timeout"),
+        DomainLeaseResponse::Timeout => encode_error_into(enc, "Timeout"),
         DomainLeaseResponse::QueueFull { pending_count } => {
-            encode_error(&format!("QueueFull: {} pending", pending_count))
+            encode_error_into(enc, &format!("QueueFull: {} pending", pending_count))
         }
         DomainLeaseResponse::HeldByOther { current_owner } => {
-            encode_error(&format!("HeldByOther: {}", current_owner))
+            encode_error_into(enc, &format!("HeldByOther: {}", current_owner))
         }
-        DomainLeaseResponse::NotHeld => encode_error("NotHeld"),
+        DomainLeaseResponse::NotHeld => encode_error_into(enc, "NotHeld"),
         DomainLeaseResponse::Fenced { current_token } => {
-            encode_error(&format!("Fenced: current_token={}", current_token))
+            encode_error_into(enc, &format!("Fenced: current_token={}", current_token))
         }
-        DomainLeaseResponse::Expired => encode_error("Expired"),
+        DomainLeaseResponse::Expired => encode_error_into(enc, "Expired"),
         DomainLeaseResponse::SubscribeOk { subscription_id } => {
             enc.put_u8(0);
             enc.put_u64(*subscription_id);
@@ -137,8 +145,8 @@ pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
     }
 }
 
-fn encode_error(msg: &str) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
+fn encode_error_into(enc: &mut PayloadEncoder, msg: &str) -> Vec<u8> {
+    enc.clear();
     enc.put_u8(1);
     enc.put_string(msg);
     enc.finish()
@@ -277,6 +285,16 @@ fn parse_unsubscribe(
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
 pub fn encode_notify(subscription_id: u64, route: &str, _payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_notify_into(&mut enc, subscription_id, route, _payload)
+}
+
+pub fn encode_notify_into(
+    enc: &mut PayloadEncoder,
+    subscription_id: u64,
+    route: &str,
+    _payload: &[u8],
+) -> Vec<u8> {
+    enc.clear();
     enc.put_u64(subscription_id);
     enc.put_string(route);
     // Minimal payload for leases (just signal the change)

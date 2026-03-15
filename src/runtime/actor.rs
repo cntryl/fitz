@@ -185,6 +185,17 @@ impl<A: Actor + ?Sized> Context<A> {
         &self.address
     }
 
+    /// Resolve a mailbox sink for an exact route address.
+    ///
+    /// Useful for optimized fanout paths that want to cache sinks and avoid
+    /// repeated route registry lookups.
+    pub fn resolve_sink(
+        &self,
+        dest: &RouteAddress,
+    ) -> Option<std::sync::Arc<dyn crate::runtime::router::MailboxSink>> {
+        self.router.resolve_sink(dest)
+    }
+
     /// Send a message to another actor
     ///
     /// This is the preferred way for actors to send messages. The context:

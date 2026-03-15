@@ -10,16 +10,11 @@ const GRACE_PERIOD_SECS: u64 = 3600; // 1 hour
 
 pub struct ScheduleStore {
     db: Arc<cntryl_midge::Engine>,
-    /// Cached reference time (UNIX_EPOCH) for monotonic timestamp generation
-    epoch: Instant,
 }
 
 impl ScheduleStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
-        Self {
-            db,
-            epoch: Instant::now(),
-        }
+        Self { db }
     }
 
     /// Index key for O(1) delete by route: `sched:idx:{route}` -> main key bytes
@@ -127,21 +122,24 @@ impl ScheduleStore {
         Ok((cron, payload))
     }
 
-    /// Convert Instant to milliseconds since UNIX_EPOCH.
-    /// Uses the cached epoch for consistent, monotonic time tracking.
+    /// Convert a target `Instant` into an approximate UNIX epoch timestamp (ms).
+    ///
+    /// `Instant` is monotonic and not directly epoch-based, so we anchor to
+    /// current wall-clock time and adjust by monotonic delta.
     fn instant_to_ms(&self, instant: Instant) -> u64 {
-        let elapsed = instant.duration_since(self.epoch);
-
-        // Get UNIX_EPOCH as reference
+        let now_instant = Instant::now();
         let now_sys = SystemTime::now();
-        if let Ok(sys_elapsed) = now_sys.duration_since(UNIX_EPOCH) {
-            let sys_ms = sys_elapsed.as_secs() * 1000 + sys_elapsed.subsec_millis() as u64;
-            let monotonic_delta = elapsed.as_millis() as u64;
 
-            // Assume epoch started near now; calculate offset
-            sys_ms.saturating_sub(monotonic_delta)
+        let now_ms = if let Ok(sys_elapsed) = now_sys.duration_since(UNIX_EPOCH) {
+            sys_elapsed.as_secs() * 1000 + sys_elapsed.subsec_millis() as u64
         } else {
-            0
+            return 0;
+        };
+
+        if instant >= now_instant {
+            now_ms.saturating_add(instant.duration_since(now_instant).as_millis() as u64)
+        } else {
+            now_ms.saturating_sub(now_instant.duration_since(instant).as_millis() as u64)
         }
     }
 

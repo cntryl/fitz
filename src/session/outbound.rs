@@ -27,10 +27,8 @@ impl MailboxSink for SessionOutboundSink {
                 payload_len = ctx.payload.len(),
                 "Outbound sink: encoding TLV response for session"
             );
-            // TLV-encode a single record: [msg_type][len][value]
-            let mut enc = crate::protocol::tlv::TlvEncoder::new();
-            enc.encode(ctx.msg_type, &ctx.payload);
-            let bytes = enc.finish().to_vec();
+            // TLV-encode a single record directly into an exact-sized buffer.
+            let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
 
             trace!(
                 session_id = ctx.session_id,
@@ -80,4 +78,29 @@ impl MailboxSink for SessionOutboundSink {
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver(envelope)
     }
+}
+
+fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload: &[u8]) -> Vec<u8> {
+    if payload.len() > u16::MAX as usize {
+        panic!(
+            "TLV value too large: {} bytes (max {})",
+            payload.len(),
+            u16::MAX
+        );
+    }
+
+    let header_len = msg_type.encoded_type_len() + 2;
+    let mut out = Vec::with_capacity(header_len + payload.len());
+
+    if msg_type.is_single_byte() {
+        out.push(msg_type.as_u16() as u8);
+    } else {
+        out.push(crate::protocol::tlv::MessageType::ESCAPE_MARKER);
+        out.extend_from_slice(&msg_type.as_u16().to_be_bytes());
+    }
+
+    let payload_len = payload.len() as u16;
+    out.extend_from_slice(&payload_len.to_be_bytes());
+    out.extend_from_slice(payload);
+    out
 }

@@ -35,6 +35,11 @@ pub fn parse_request(
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_response_into(&mut enc, response)
+}
+
+pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleResponse) -> Vec<u8> {
+    enc.clear();
 
     match response {
         ScheduleResponse::Ok => {
@@ -161,6 +166,11 @@ fn parse_unsubscribe(
 /// Payload is what was stored with the schedule (fanout data)
 pub fn encode_notify(payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_notify_into(&mut enc, payload)
+}
+
+pub fn encode_notify_into(enc: &mut PayloadEncoder, payload: &[u8]) -> Vec<u8> {
+    enc.clear();
     enc.put_bytes(payload);
     enc.finish()
 }

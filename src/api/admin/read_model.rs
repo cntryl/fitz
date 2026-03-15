@@ -166,6 +166,65 @@ impl AdminReadModel {
         *self.schedules.write() = schedules;
     }
 
+    pub fn upsert_schedule(&self, schedule: ScheduleInfo) {
+        let mut schedules = self.schedules.write();
+        if let Some(existing) = schedules.iter_mut().find(|item| {
+            item.realm == schedule.realm
+                && item.area == schedule.area
+                && item.resource == schedule.resource
+        }) {
+            // Fast path for idempotent create/upsert calls: avoid rewriting
+            // the admin model when durable schedule identity is unchanged.
+            if existing.cron == schedule.cron && existing.enabled == schedule.enabled {
+                return;
+            }
+            *existing = schedule;
+        } else {
+            schedules.push(schedule);
+        }
+    }
+
+    pub fn upsert_schedule_fields(
+        &self,
+        realm: String,
+        area: String,
+        resource: String,
+        cron: String,
+    ) {
+        let mut schedules = self.schedules.write();
+        if let Some(existing) = schedules
+            .iter_mut()
+            .find(|item| item.realm == realm && item.area == area && item.resource == resource)
+        {
+            if existing.cron == cron && existing.enabled {
+                return;
+            }
+            existing.cron = cron;
+            existing.enabled = true;
+            existing.next_run = Utc::now().to_rfc3339();
+            existing.last_run = None;
+            existing.executions_total = 0;
+        } else {
+            schedules.push(ScheduleInfo {
+                realm,
+                area,
+                resource,
+                cron,
+                next_run: Utc::now().to_rfc3339(),
+                last_run: None,
+                executions_total: 0,
+                enabled: true,
+            });
+        }
+    }
+
+    pub fn remove_schedule(&self, realm: &str, area: &str, resource: &str) {
+        let mut schedules = self.schedules.write();
+        schedules.retain(|item| {
+            !(item.realm == realm && item.area == area && item.resource == resource)
+        });
+    }
+
     pub fn schedules(&self, realm: Option<&str>) -> Vec<ScheduleInfo> {
         self.schedules
             .read()

@@ -92,36 +92,45 @@ impl ScheduleActor {
         cron: String,
         payload: Bytes,
     ) -> Result<(), String> {
+        let now = Instant::now();
+
+        if let Some(existing) = self.schedules.get(&route) {
+            if existing.cron == cron && existing.payload == payload && existing.next_fire_time > now
+            {
+                return Ok(());
+            }
+        }
+
         // Validate cron expression
         let cron_obj = CronSchedule::parse(&cron)?;
 
         // Calculate next fire time
-        let next_fire = cron_obj.next_fire_time(Instant::now());
+        let next_fire = cron_obj.next_fire_time(now);
+        let next_fire_ms = Self::instant_to_ms(next_fire);
+
+        // Persist first, then move payload into the in-memory definition.
+        self.store.insert(
+            self.family.as_u64(),
+            &route,
+            &cron,
+            &payload,
+            next_fire,
+            self.write_options,
+        )?;
 
         // Create in-memory definition with cached parsed cron
         let def = ScheduleDef {
             route: route.clone(),
             cron,
             parsed_cron: cron_obj,
-            payload: payload.clone(),
+            payload,
             next_fire_time: next_fire,
         };
-
-        // Persist to storage
-        self.store.insert(
-            self.family.as_u64(),
-            &route,
-            &def.cron,
-            &payload,
-            next_fire,
-            self.write_options,
-        )?;
 
         // Update in-memory cache
         self.schedules.insert(route.clone(), def);
 
         // Add to ready heap for efficient scanning
-        let next_fire_ms = Self::instant_to_ms(next_fire);
         self.ready_heap.push((Reverse(next_fire_ms), route.clone()));
 
         info!(
@@ -244,13 +253,24 @@ impl ScheduleActor {
         fired
     }
 
-    /// Convert Instant to milliseconds since UNIX_EPOCH
-    fn instant_to_ms(_instant: Instant) -> u64 {
+    /// Convert a target `Instant` into an approximate UNIX epoch timestamp (ms).
+    ///
+    /// `Instant` is monotonic and not directly epoch-based, so we anchor to "now"
+    /// and add/subtract the monotonic delta.
+    fn instant_to_ms(instant: Instant) -> u64 {
+        let now_instant = Instant::now();
         let now_sys = std::time::SystemTime::now();
-        if let Ok(elapsed) = now_sys.duration_since(std::time::UNIX_EPOCH) {
+
+        let now_ms = if let Ok(elapsed) = now_sys.duration_since(std::time::UNIX_EPOCH) {
             (elapsed.as_secs() * 1000) + (elapsed.subsec_millis() as u64)
         } else {
-            0
+            return 0;
+        };
+
+        if instant >= now_instant {
+            now_ms.saturating_add(instant.duration_since(now_instant).as_millis() as u64)
+        } else {
+            now_ms.saturating_sub(now_instant.duration_since(instant).as_millis() as u64)
         }
     }
 

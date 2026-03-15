@@ -54,6 +54,11 @@ pub fn parse_request(
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &StreamResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_response_into(&mut enc, response)
+}
+
+pub fn encode_response_into(enc: &mut PayloadEncoder, response: &StreamResponse) -> Vec<u8> {
+    enc.clear();
 
     match response {
         StreamResponse::Ok { session_id, data } => {
@@ -250,6 +255,16 @@ fn parse_unsubscribe(
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
+    encode_notify_into(&mut enc, subscription_id, route, payload)
+}
+
+pub fn encode_notify_into(
+    enc: &mut PayloadEncoder,
+    subscription_id: u64,
+    route: &Route,
+    payload: &[u8],
+) -> Vec<u8> {
+    enc.clear();
     enc.put_u64(subscription_id);
     enc.put_string(route.as_str());
     enc.put_bytes(payload);

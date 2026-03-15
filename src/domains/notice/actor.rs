@@ -16,10 +16,13 @@ use crate::domains::notice::protocol::{
     UnsubscribeMessage,
 };
 use crate::runtime::actor::{Actor, Context};
+use crate::runtime::envelope::Envelope;
+use crate::runtime::router::MailboxSink;
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 use crate::session::session::SessionId;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Maps subscription ID to (session_id, subscriber_address, pattern)
 /// Pattern is stored so we can remove the subscription from the index on unsubscribe
@@ -29,6 +32,7 @@ type SubscriptionMap = HashMap<
         SessionId,
         crate::runtime::routing::RouteAddress,
         crate::runtime::routing::Route,
+        Option<Arc<dyn MailboxSink>>,
     ),
 >;
 
@@ -70,11 +74,14 @@ impl NoticeRouteActor {
     }
 
     /// Subscribe to a pattern (SessionActor has already verified authorization)
-    fn handle_subscribe(&mut self, msg: SubscribeMessage, _ctx: &mut Context<Self>) {
+    fn handle_subscribe(&mut self, msg: SubscribeMessage, ctx: &mut Context<Self>) {
         // Deduplicate identical subscriptions (session_id, subscriber, pattern)
-        let already_exists = self.subscriptions.values().any(|(sess_id, addr, pattern)| {
-            *sess_id == msg.session_id && addr == &msg.subscriber && pattern == &msg.pattern
-        });
+        let already_exists = self
+            .subscriptions
+            .values()
+            .any(|(sess_id, addr, pattern, _)| {
+                *sess_id == msg.session_id && addr == &msg.subscriber && pattern == &msg.pattern
+            });
         if already_exists {
             // Idempotent subscribe: no-op
             return;
@@ -86,10 +93,12 @@ impl NoticeRouteActor {
         self.index
             .insert(self.family_id, &msg.pattern, subscription_id);
 
+        let sink = ctx.resolve_sink(&msg.subscriber);
+
         // Store metadata: session_id, subscriber address and pattern
         self.subscriptions.insert(
             subscription_id,
-            (msg.session_id, msg.subscriber, msg.pattern),
+            (msg.session_id, msg.subscriber, msg.pattern, sink),
         );
     }
 
@@ -99,7 +108,7 @@ impl NoticeRouteActor {
         let to_remove: Vec<SubscriptionId> = self
             .subscriptions
             .iter()
-            .filter(|(_, (sess_id, addr, pattern))| {
+            .filter(|(_, (sess_id, addr, pattern, _))| {
                 *sess_id == msg.session_id && addr == &msg.subscriber && pattern == &msg.pattern
             })
             .map(|(&id, _)| id)
@@ -118,8 +127,8 @@ impl NoticeRouteActor {
         let to_remove: Vec<(SubscriptionId, crate::runtime::routing::Route)> = self
             .subscriptions
             .iter()
-            .filter(|(_, (_, addr, _))| addr == &msg.subscriber)
-            .map(|(&id, (_, _, pattern))| (id, pattern.clone()))
+            .filter(|(_, (_, addr, _, _))| addr == &msg.subscriber)
+            .map(|(&id, (_, _, pattern, _))| (id, pattern.clone()))
             .collect();
 
         for (id, pattern) in to_remove {
@@ -140,23 +149,45 @@ impl NoticeRouteActor {
             return; // Silently drop misrouted messages
         }
 
-        // Find all subscription IDs that match this published route (pre-alloc to reduce realloc in trie walk)
-        let matching_ids = self
-            .index
-            .match_all_with_capacity(self.family_id, &msg.route, 10_000);
+        // Find all subscription IDs that match this published route.
+        // Capacity tracks active subscriptions to avoid large fixed allocations.
+        let match_capacity = self.subscriptions.len().max(1);
+        let matching_ids =
+            self.index
+                .match_all_with_capacity(self.family_id, &msg.route, match_capacity);
 
         // Share route and payload via Arc for zero-allocation fanout
-        let route = std::sync::Arc::new(msg.route);
-        let payload = std::sync::Arc::new(msg.payload);
+        let route = Arc::new(msg.route);
+        let payload = Arc::new(msg.payload);
 
         // Fan-out to each matching subscriber (only atomic increments, no clones)
         for subscription_id in matching_ids {
-            if let Some((_, subscriber, _)) = self.subscriptions.get(&subscription_id) {
-                let deliver = DeliverMessage::new_shared(
-                    std::sync::Arc::clone(&route),
-                    std::sync::Arc::clone(&payload),
-                );
-                let _ = ctx.send(subscriber.clone(), NotificationMessage::Deliver(deliver));
+            if let Some((_, subscriber, _pattern, sink)) =
+                self.subscriptions.get_mut(&subscription_id)
+            {
+                let deliver = DeliverMessage::new_shared(Arc::clone(&route), Arc::clone(&payload));
+
+                let mut delivered = false;
+                if let Some(cached_sink) = sink.as_ref() {
+                    let envelope = Envelope::from_route(
+                        ctx.address().clone(),
+                        subscriber.clone(),
+                        NotificationMessage::Deliver(deliver.clone()),
+                    );
+                    if cached_sink.deliver(envelope).is_ok() {
+                        delivered = true;
+                    } else {
+                        // Invalidate stale or backpressured sink and fallback to ctx.send path.
+                        *sink = None;
+                    }
+                }
+
+                if !delivered {
+                    if sink.is_none() {
+                        *sink = ctx.resolve_sink(subscriber);
+                    }
+                    let _ = ctx.send(subscriber.clone(), NotificationMessage::Deliver(deliver));
+                }
             }
         }
     }
@@ -249,6 +280,7 @@ mod tests {
                 test_session_id(1),
                 test_address("session1"),
                 pattern.clone(),
+                None,
             ),
         );
 
@@ -273,11 +305,21 @@ mod tests {
             .insert(test_family(), &pattern, SubscriptionId(2));
         actor.subscriptions.insert(
             SubscriptionId(1),
-            (test_session_id(1), subscriber.clone(), pattern.clone()),
+            (
+                test_session_id(1),
+                subscriber.clone(),
+                pattern.clone(),
+                None,
+            ),
         );
         actor.subscriptions.insert(
             SubscriptionId(2),
-            (test_session_id(1), subscriber.clone(), pattern.clone()),
+            (
+                test_session_id(1),
+                subscriber.clone(),
+                pattern.clone(),
+                None,
+            ),
         );
 
         assert_eq!(actor.subscriptions.len(), 2);
@@ -310,11 +352,11 @@ mod tests {
             .insert(test_family(), &pattern2, SubscriptionId(2));
         actor.subscriptions.insert(
             SubscriptionId(1),
-            (test_session_id(1), sub1.clone(), pattern1),
+            (test_session_id(1), sub1.clone(), pattern1, None),
         );
         actor.subscriptions.insert(
             SubscriptionId(2),
-            (test_session_id(2), sub2.clone(), pattern2),
+            (test_session_id(2), sub2.clone(), pattern2, None),
         );
 
         // Act
@@ -340,7 +382,12 @@ mod tests {
             .insert(test_family(), &pattern, SubscriptionId(1));
         actor.subscriptions.insert(
             SubscriptionId(1),
-            (test_session_id(1), subscriber.clone(), pattern.clone()),
+            (
+                test_session_id(1),
+                subscriber.clone(),
+                pattern.clone(),
+                None,
+            ),
         );
 
         // Act

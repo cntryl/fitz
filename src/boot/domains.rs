@@ -608,14 +608,17 @@ impl NoticeDomainSink {
         event: &crate::runtime::DomainPublishEvent,
     ) -> Result<(), DeliveryError> {
         let family_id = event.family_id.as_u64();
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
-                    let notify_payload = crate::protocol::notice_codec::encode_notify(
+                    let notify_payload = crate::protocol::notice_codec::encode_notify_into(
                         sub.subscription_id,
                         &event.route,
                         &event.payload,
+                        &mut payload_encoder,
                     );
                     let notify_ctx = FrameContext::new(
                         sub.session_id,
@@ -727,6 +730,8 @@ impl MailboxSink for NoticeDomainSink {
 
         use crate::domains::notice::protocol::NotificationMessage;
         use crate::protocol::notice_codec::NoticeResponse;
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         let response_opt = match notice_msg {
             NotificationMessage::Publish(pub_msg) => {
@@ -738,10 +743,11 @@ impl MailboxSink for NoticeDomainSink {
 
                     for sub in &state.subscriptions {
                         if sub.pattern.matches(&route) {
-                            let notify_payload = crate::protocol::notice_codec::encode_notify(
+                            let notify_payload = crate::protocol::notice_codec::encode_notify_into(
                                 sub.subscription_id,
                                 &route,
                                 &pub_msg.payload,
+                                &mut payload_encoder,
                             );
                             let notify_ctx = FrameContext::new(
                                 sub.session_id,
@@ -865,7 +871,10 @@ impl MailboxSink for NoticeDomainSink {
 
         // Only send response if one was generated (PUBLISH returns None for fire-and-forget)
         if let Some(response) = response_opt {
-            let response_bytes = crate::protocol::notice_codec::encode_response(&response);
+            let response_bytes = crate::protocol::notice_codec::encode_response_into(
+                &response,
+                &mut payload_encoder,
+            );
             let response_ctx = FrameContext::new(
                 frame_ctx.session_id,
                 frame_ctx.channel_id,
@@ -1033,6 +1042,8 @@ impl MailboxSink for RpcDomainSink {
 
         use crate::domains::rpc::protocol::RpcMessage;
         use crate::protocol::rpc_codec::RpcResponseMsg;
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         // Only emit operation responses for subscribe/unsubscribe or explicit errors.
         let response = match rpc_msg {
@@ -1109,8 +1120,10 @@ impl MailboxSink for RpcDomainSink {
 
                     // Encode REQUEST delivery for worker (similar to Notice NOTIFY encoding)
                     let work_item = crate::domains::rpc::protocol::RpcWorkItem::from_request(&req);
-                    let request_payload =
-                        crate::protocol::rpc_codec::encode_request_delivery(&work_item);
+                    let request_payload = crate::protocol::rpc_codec::encode_request_delivery_into(
+                        &work_item,
+                        &mut payload_encoder,
+                    );
 
                     // Forward request to worker's session inbox (avoids RPC domain re-entry / stack overflow)
                     let forward_ctx = FrameContext::new(
@@ -1148,8 +1161,10 @@ impl MailboxSink for RpcDomainSink {
                     drop(state);
 
                     // Forward raw RPC RESPONSE payload so clients receive [correlation_id][seq][body][stream_end] per CLIENT_SPEC.
-                    let encoded_response =
-                        crate::protocol::rpc_codec::encode_response_message(&resp);
+                    let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
+                        &resp,
+                        &mut payload_encoder,
+                    );
 
                     // Forward response to caller's session inbox (avoids RPC domain re-entry)
                     let caller_inbox_addr = crate::runtime::routing::RouteAddress::new(
@@ -1170,7 +1185,10 @@ impl MailboxSink for RpcDomainSink {
                     let _ = self.router.route(forward_envelope);
 
                     // Send ACK back to worker to unblock their SendRequest
-                    let ack_payload = crate::protocol::rpc_codec::encode_ack(&resp.correlation_id);
+                    let ack_payload = crate::protocol::rpc_codec::encode_ack_into(
+                        &resp.correlation_id,
+                        &mut payload_encoder,
+                    );
                     let ack_ctx = FrameContext::new(
                         frame_ctx.session_id,
                         frame_ctx.channel_id,
@@ -1234,7 +1252,8 @@ impl MailboxSink for RpcDomainSink {
 
         if let Some(response) = response {
             // Encode and route response back
-            let response_bytes = crate::protocol::rpc_codec::encode_response(&response);
+            let response_bytes =
+                crate::protocol::rpc_codec::encode_response_into(&response, &mut payload_encoder);
             let response_ctx = FrameContext::new(
                 frame_ctx.session_id,
                 frame_ctx.channel_id,
@@ -1990,6 +2009,8 @@ impl StreamDomainSink {
         );
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
+            let mut payload_encoder =
+                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
             tracing::info!(
                 domain = "stream",
                 family_id = family_id,
@@ -2000,7 +2021,8 @@ impl StreamDomainSink {
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
                     matched += 1;
-                    let notify_payload = crate::protocol::stream_codec::encode_notify(
+                    let notify_payload = crate::protocol::stream_codec::encode_notify_into(
+                        &mut payload_encoder,
                         sub.subscription_id,
                         &event.route,
                         &event.payload,
@@ -2119,6 +2141,8 @@ impl MailboxSink for StreamDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         let stream_msg = match crate::protocol::stream_codec::parse_request(
             &frame_ctx,
@@ -2174,7 +2198,8 @@ impl MailboxSink for StreamDomainSink {
                 if expected_offset != *next {
                     return {
                         drop(state);
-                        let response_bytes = crate::protocol::stream_codec::encode_response(
+                        let response_bytes = crate::protocol::stream_codec::encode_response_into(
+                            &mut payload_encoder,
                             &StreamResponse::Error("concurrency conflict".to_string()),
                         );
                         let response_ctx = FrameContext::new(
@@ -2375,7 +2400,8 @@ impl MailboxSink for StreamDomainSink {
         }
 
         // Encode and route response back
-        let response_bytes = crate::protocol::stream_codec::encode_response(&response);
+        let response_bytes =
+            crate::protocol::stream_codec::encode_response_into(&mut payload_encoder, &response);
         let response_ctx = FrameContext::new(
             frame_ctx.session_id,
             frame_ctx.channel_id,
@@ -2538,10 +2564,13 @@ impl LeaseDomainSink {
         let families = self.families.lock();
 
         if let Some(family_state) = families.get(&family_id) {
+            let mut payload_encoder =
+                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
             for sub in &family_state.subscriptions {
                 if sub.pattern.matches(&event.route) {
                     // Encode notification frame using lease codec (409=NOTIFY)
-                    let notify_payload = crate::protocol::lease_codec::encode_notify(
+                    let notify_payload = crate::protocol::lease_codec::encode_notify_into(
+                        &mut payload_encoder,
                         sub.subscription_id,
                         event.route.as_str(),
                         &event.payload,
@@ -2764,6 +2793,8 @@ impl MailboxSink for LeaseDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         let lease_msg = match crate::protocol::lease_codec::parse_request(
             &frame_ctx,
@@ -2909,7 +2940,8 @@ impl MailboxSink for LeaseDomainSink {
                     .find(|s| s.session_id == frame_ctx.session_id && s.pattern_str == pattern)
                 {
                     // Idempotent: return existing subscription_id
-                    let response_bytes = crate::protocol::lease_codec::encode_domain_response(
+                    let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
+                        &mut payload_encoder,
                         &LeaseResponse::SubscribeOk {
                             subscription_id: existing.subscription_id,
                         },
@@ -2936,7 +2968,8 @@ impl MailboxSink for LeaseDomainSink {
                     subscription_id,
                 });
 
-                let response_bytes = crate::protocol::lease_codec::encode_domain_response(
+                let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
+                    &mut payload_encoder,
                     &LeaseResponse::SubscribeOk { subscription_id },
                 );
                 let response_ctx = FrameContext::new(
@@ -2962,7 +2995,8 @@ impl MailboxSink for LeaseDomainSink {
                     });
                 }
 
-                let response_bytes = crate::protocol::lease_codec::encode_domain_response(
+                let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
+                    &mut payload_encoder,
                     &LeaseResponse::UnsubscribeOk,
                 );
                 let response_ctx = FrameContext::new(
@@ -2979,7 +3013,8 @@ impl MailboxSink for LeaseDomainSink {
             }
             LeaseMessage::UnsubscribeAll => {
                 // Handled by cleanup_session, just return UnsubscribeOk
-                let response_bytes = crate::protocol::lease_codec::encode_domain_response(
+                let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
+                    &mut payload_encoder,
                     &LeaseResponse::UnsubscribeOk,
                 );
                 let response_ctx = FrameContext::new(
@@ -2996,7 +3031,10 @@ impl MailboxSink for LeaseDomainSink {
             }
         };
 
-        let response_bytes = crate::protocol::lease_codec::encode_domain_response(&domain_response);
+        let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
+            &mut payload_encoder,
+            &domain_response,
+        );
         let response_ctx = FrameContext::new(
             frame_ctx.session_id,
             frame_ctx.channel_id,
@@ -3110,10 +3148,14 @@ impl ScheduleDomainSink {
         let family_id = event.family_id.as_u64();
         let families = self.sub_families.lock();
         if let Some(state) = families.get(&family_id) {
+            let mut payload_encoder =
+                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
             for sub in &state.subscriptions {
                 if sub.pattern.matches(&event.route) {
-                    let notify_payload =
-                        crate::protocol::schedule_codec::encode_notify(&event.payload);
+                    let notify_payload = crate::protocol::schedule_codec::encode_notify_into(
+                        &mut payload_encoder,
+                        &event.payload,
+                    );
                     let notify_ctx = FrameContext::new(
                         sub.session_id,
                         crate::protocol::frame::ChannelId::Sub, // notification channel
@@ -3190,6 +3232,8 @@ impl MailboxSink for ScheduleDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         let schedule_msg = match crate::protocol::schedule_codec::parse_request(
             &frame_ctx,
@@ -3225,6 +3269,21 @@ impl MailboxSink for ScheduleDomainSink {
         let route_family = *route_addr.family();
 
         use crate::domains::schedule::{ScheduleListEntry, ScheduleMessage, ScheduleResponse};
+        enum ScheduleAdminUpdate {
+            Upsert {
+                realm: String,
+                area: String,
+                resource: String,
+                cron: String,
+            },
+            Remove {
+                realm: String,
+                area: String,
+                resource: String,
+            },
+        }
+
+        let mut admin_update: Option<ScheduleAdminUpdate> = None;
 
         let response = {
             let store = self.store.clone();
@@ -3242,14 +3301,44 @@ impl MailboxSink for ScheduleDomainSink {
                     route,
                     cron,
                     payload,
-                } => match actor.create_schedule(route, cron, payload) {
-                    Ok(()) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(e),
-                },
-                ScheduleMessage::Cancel { route } => match actor.delete_schedule(route) {
-                    Ok(()) => ScheduleResponse::Ok,
-                    Err(e) => ScheduleResponse::Error(e),
-                },
+                } => {
+                    let route_for_admin = route.clone();
+                    let cron_for_admin = cron.clone();
+                    match actor.create_schedule(route, cron, payload) {
+                        Ok(()) => {
+                            if let Some((realm, area, resource)) =
+                                parse_route_triplet(&route_for_admin)
+                            {
+                                admin_update = Some(ScheduleAdminUpdate::Upsert {
+                                    realm,
+                                    area,
+                                    resource,
+                                    cron: cron_for_admin,
+                                });
+                            }
+                            ScheduleResponse::Ok
+                        }
+                        Err(e) => ScheduleResponse::Error(e),
+                    }
+                }
+                ScheduleMessage::Cancel { route } => {
+                    let route_for_admin = route.clone();
+                    match actor.delete_schedule(route) {
+                        Ok(()) => {
+                            if let Some((realm, area, resource)) =
+                                parse_route_triplet(&route_for_admin)
+                            {
+                                admin_update = Some(ScheduleAdminUpdate::Remove {
+                                    realm,
+                                    area,
+                                    resource,
+                                });
+                            }
+                            ScheduleResponse::Ok
+                        }
+                        Err(e) => ScheduleResponse::Error(e),
+                    }
+                }
                 ScheduleMessage::List { offset, limit } => {
                     let mut all_defs = actor.list_defs();
                     let total_count = all_defs.len() as u64;
@@ -3360,10 +3449,32 @@ impl MailboxSink for ScheduleDomainSink {
                 }
             }
         };
-        self.sync_admin_snapshot();
+
+        if let Some(update) = admin_update {
+            match update {
+                ScheduleAdminUpdate::Upsert {
+                    realm,
+                    area,
+                    resource,
+                    cron,
+                } => {
+                    self.admin_read_model
+                        .upsert_schedule_fields(realm, area, resource, cron);
+                }
+                ScheduleAdminUpdate::Remove {
+                    realm,
+                    area,
+                    resource,
+                } => {
+                    self.admin_read_model
+                        .remove_schedule(&realm, &area, &resource);
+                }
+            }
+        }
 
         // Encode and route response back
-        let response_bytes = crate::protocol::schedule_codec::encode_response(&response);
+        let response_bytes =
+            crate::protocol::schedule_codec::encode_response_into(&mut payload_encoder, &response);
         let response_ctx = FrameContext::new(
             frame_ctx.session_id,
             frame_ctx.channel_id,

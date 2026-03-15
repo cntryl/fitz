@@ -19,7 +19,7 @@ static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
 /// a default collector so metrics recording never panics.
 pub fn metrics() -> Arc<MetricsCollector> {
     METRICS_COLLECTOR
-    .get_or_init(|| Arc::new(MetricsCollector::new()))
+        .get_or_init(|| Arc::new(MetricsCollector::new()))
         .clone()
 }
 

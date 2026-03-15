@@ -314,6 +314,10 @@ pub struct TlvEncoder {
 }
 
 impl TlvEncoder {
+    /// Create a new encoder with a default buffer capacity.
+    ///
+    /// PERF: In hot paths, prefer reusing a single encoder via `clear()`
+    /// instead of constructing a new encoder for every frame.
     pub fn new() -> Self {
         Self {
             buffer: BytesMut::with_capacity(512),

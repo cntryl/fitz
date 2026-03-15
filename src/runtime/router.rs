@@ -250,6 +250,14 @@ impl Router {
         self.registry.register(address, sink);
     }
 
+    /// Resolve a sink for an exact route address.
+    ///
+    /// This is intended for domain-local fast paths that can safely bypass
+    /// an extra registry lookup in `route()` while preserving delivery behavior.
+    pub fn resolve_sink(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
+        self.registry.get(address)
+    }
+
     /// Register a domain pattern (e.g., "kv", "queue", "notice")
     ///
     /// Domain patterns are used as a fallback when exact RouteAddress lookup fails.

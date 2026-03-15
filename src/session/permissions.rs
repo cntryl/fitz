@@ -42,17 +42,40 @@ impl SessionPermissions {
     pub fn from_permissions(perms: Vec<Permission>) -> Self {
         // Compile auth::Permission.raw into runtime Pattern objects here so that
         // auth remains runtime-agnostic.
-        let compiled: Vec<CompiledPermission> = perms
-            .into_iter()
-            .map(|p| {
-                // Remove any fragment ("#access") before compiling into a route pattern
-                let route_part = p.raw.split('#').next().unwrap_or("");
-                CompiledPermission {
-                    pattern: crate::runtime::matcher::Pattern::new(route_part),
-                    access: p.access,
-                }
-            })
-            .collect();
+        let compiled = if perms.len() <= 8 {
+            perms
+                .into_iter()
+                .map(|p| {
+                    let route_part = p.raw.split('#').next().unwrap_or("");
+                    CompiledPermission {
+                        pattern: crate::runtime::matcher::Pattern::new(route_part),
+                        access: p.access,
+                    }
+                })
+                .collect()
+        } else {
+            let mut pattern_cache: HashMap<String, crate::runtime::matcher::Pattern> =
+                HashMap::with_capacity(perms.len());
+            perms
+                .into_iter()
+                .map(|p| {
+                    // Remove any fragment ("#access") before compiling into a route pattern
+                    let route_part = p.raw.split('#').next().unwrap_or("");
+                    let pattern = if let Some(cached) = pattern_cache.get(route_part) {
+                        cached.clone()
+                    } else {
+                        let compiled = crate::runtime::matcher::Pattern::new(route_part);
+                        pattern_cache.insert(route_part.to_string(), compiled.clone());
+                        compiled
+                    };
+
+                    CompiledPermission {
+                        pattern,
+                        access: p.access,
+                    }
+                })
+                .collect()
+        };
 
         Self {
             inner: Arc::new(HashMap::new()),

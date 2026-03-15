@@ -43,6 +43,16 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     );
     let mut actor_ctx = make_schedule_ctx();
 
+    // Warmup direct actor path outside measurement.
+    actor.receive(
+        ScheduleMessage::Create {
+            route: "schedule://tier4/job1".to_string(),
+            cron: "0 * * * *".to_string(),
+            payload: Bytes::from_static(b"payload"),
+        },
+        &mut actor_ctx,
+    );
+
     ctx.measure(|| {
         actor.receive(
             ScheduleMessage::Create {
@@ -69,6 +79,12 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
+    // Warmup one request to reduce transport/session cold-start variance.
+    let warmup = runtime
+        .block_on(client.request(&create_frame, 2000))
+        .expect("warmup create response");
+    let _ = parse_schedule_response(&warmup);
+
     ctx.measure(|| {
         let response = runtime
             .block_on(client.request(&create_frame, 2000))
@@ -94,12 +110,22 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
+    // Warmup one request to reduce transport/session cold-start variance.
+    let warmup = runtime
+        .block_on(client.request(&create_frame, 2000))
+        .expect("warmup create response");
+    let _ = parse_schedule_response(&warmup);
+
     ctx.measure(|| {
         let response = runtime
             .block_on(client.request(&create_frame, 2000))
             .expect("create response");
         let (_msg_type, _status, _data) = parse_schedule_response(&response);
     });
+
+    runtime
+        .block_on(client.close())
+        .expect("close ws client gracefully");
 }
 
 #[stress_test]
@@ -124,6 +150,17 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
         })
         .collect();
 
+    // Warmup each client once outside measurement to reduce connection/setup skew.
+    let _warmup: Vec<_> = runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+        let arc = arc.clone();
+        let frame = create_frame.clone();
+        async move {
+            let mut c = arc.lock().await;
+            let response = c.request(&frame, 2000).await.expect("warmup create");
+            let _ = parse_schedule_response(&response);
+        }
+    })));
+
     ctx.measure(|| {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
@@ -136,6 +173,14 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
                 }
             })));
     });
+
+    let _closed: Vec<_> = runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+        let arc = arc.clone();
+        async move {
+            let mut c = arc.lock().await;
+            c.close().await.expect("close ws client gracefully");
+        }
+    })));
 }
 
 stress_main!();
