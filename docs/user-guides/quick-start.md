@@ -1,24 +1,24 @@
 # Quick Start
 
-This page gives the shortest path to first successful Fitz traffic.
+This guide provides the fastest path to a successful first Fitz request.
 
 ## 1. Start Fitz
 
 Use the repository compose or local runtime command and confirm readiness via `/readyz`.
 
-## 2. Connect A Client
+## 2. Connect a Client
 
-Use any client that follows [clients/CLIENT_SPEC.md](../clients/CLIENT_SPEC.md).
+Use any client that follows [clients/client-spec.md](../clients/client-spec.md).
 
 ## 3. Authenticate
 
 Send CONNECT with valid JWT claims for realm and scopes.
 
-## 4. Execute A Simple Operation
+## 4. Execute a Simple Operation
 
 1. Choose a route and route family.
-2. Send one operation (for example, KV get or put).
-3. Confirm response and latency metrics.
+2. Send a single operation, such as KV get or put.
+3. Confirm both the response and latency metrics.
 
 ## 5. Continue
 

@@ -22,7 +22,7 @@ This guide defines a baseline cloud setup for Fitz.
 - `/metrics` for Prometheus
 - `/ws` for WebSocket data plane
 
-Details are in [admin/ADMIN_API.md](../admin/ADMIN_API.md) and [operations/observability.md](observability.md).
+Details are in [admin/admin-api.md](../admin/admin-api.md) and [operations/observability.md](observability.md).
 
 ## Production Baseline Checklist
 

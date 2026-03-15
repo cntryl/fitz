@@ -767,7 +767,7 @@ Some operations use **correlation IDs** (RPC):
 - Broker tracks to prevent duplicates
 - Allows safe replay
 ## References
-- Protocol specification: [CLIENT_SPEC.md](../clients/CLIENT_SPEC.md)
+- Protocol specification: [client-spec.md](../clients/client-spec.md)
 - Transport implementation: `src/api/`
 - Domain implementations: `src/domains/`
 - Routing: `src/runtime/router.rs`

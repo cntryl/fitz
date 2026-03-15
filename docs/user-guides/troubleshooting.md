@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Use this page for common Fitz failure modes.
+Use this guide to diagnose common Fitz failure modes.
 
 ## Connection Fails
 
@@ -18,7 +18,7 @@ Use this page for common Fitz failure modes.
 
 1. Check mailbox depth and route mismatch rates.
 2. Compare latency histograms before and after recent changes.
-3. Apply steps from [../operations/performance-tuning.md](../operations/performance-tuning.md).
+3. Apply the tuning guidance in [../operations/performance-tuning.md](../operations/performance-tuning.md).
 
 ## Data Consistency Questions
 

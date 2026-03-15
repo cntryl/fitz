@@ -27,15 +27,26 @@ For a short durability contract page, read [user-guides/transaction-durability-c
 
 ### Evaluating Fitz
 
-`storage-invariants -> architecture -> durability -> recovery -> testing`
+1. [development/storage-invariants.md](development/storage-invariants.md)
+2. [development/architecture.md](development/architecture.md)
+3. [user-guides/durability.md](user-guides/durability.md)
+4. [development/recovery-internals.md](development/recovery-internals.md)
+5. [development/testing.md](development/testing.md)
 
 ### Contributing To Runtime Correctness
 
-`architecture -> route-design -> storage-invariants -> recovery -> testing`
+1. [development/architecture.md](development/architecture.md)
+2. [development/route-design.md](development/route-design.md)
+3. [development/storage-invariants.md](development/storage-invariants.md)
+4. [development/recovery-internals.md](development/recovery-internals.md)
+5. [development/testing.md](development/testing.md)
 
 ### General Usage
 
-`overview -> quick-start -> api-guide -> troubleshooting`
+1. [user-guides/overview.md](user-guides/overview.md)
+2. [user-guides/quick-start.md](user-guides/quick-start.md)
+3. [user-guides/api-guide.md](user-guides/api-guide.md)
+4. [user-guides/troubleshooting.md](user-guides/troubleshooting.md)
 
 ## Important Positioning
 
@@ -58,8 +69,8 @@ See [development/stability-policy.md](development/stability-policy.md) for pre-1
 
 ## Fitz-Specific Companion Docs
 
-- [clients/CLIENT_SPEC.md](clients/CLIENT_SPEC.md)
-- [clients/CLIENT_IMPLEMENTATION_GUIDE.md](clients/CLIENT_IMPLEMENTATION_GUIDE.md)
-- [clients/CLIENT_ACCEPTANCE_CRITERIA.md](clients/CLIENT_ACCEPTANCE_CRITERIA.md)
-- [clients/CONNECTION_FLOW.md](clients/CONNECTION_FLOW.md)
-- [admin/ADMIN_API.md](admin/ADMIN_API.md)
+- [clients/client-spec.md](clients/client-spec.md)
+- [clients/client-implementation-guide.md](clients/client-implementation-guide.md)
+- [clients/client-acceptance-criteria.md](clients/client-acceptance-criteria.md)
+- [clients/connection-flow.md](clients/connection-flow.md)
+- [admin/admin-api.md](admin/admin-api.md)

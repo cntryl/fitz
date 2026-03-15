@@ -27,18 +27,18 @@
 
 ## Overview
 
-This guide complements the **CLIENT_SPEC.md** (wire protocol) and **CLIENT_ACCEPTANCE_CRITERIA.md** (test requirements) by showing you **how to build production-ready clients** that feel natural in your target language.
+This guide complements **client-spec.md** (wire protocol) and **client-acceptance-criteria.md** (test requirements) by showing you how to build production-ready clients that feel natural in your target language.
 
 ### Document Relationship
 
 ```
-CLIENT_SPEC.md
+client-spec.md
 └─ Defines: Wire format, TLV encoding, domain operations
    │
-   ├─> CLIENT_ACCEPTANCE_CRITERIA.md
+    ├─> client-acceptance-criteria.md
    │   └─ Defines: Testable requirements (Given-When-Then)
    │
-   └─> CLIENT_IMPLEMENTATION_GUIDE.md (this doc)
+    └─> client-implementation-guide.md (this doc)
        └─ Shows: Idiomatic patterns, best practices, examples
 ```
 
@@ -1256,7 +1256,7 @@ KvClient
   7002: Invalid cron → Retryable: No
   7009: Unauthorized → Retryable: No
 
-See CLIENT_ACCEPTANCE_CRITERIA.md Appendix for complete error code reference.
+See the client-acceptance-criteria.md appendix for the complete error code reference.
 ```
 
 ---
@@ -1371,7 +1371,7 @@ def test_encode_put_request():
 
 ### Integration Tests (Against Real Broker)
 
-Use CLIENT_ACCEPTANCE_CRITERIA.md as test template:
+Use client-acceptance-criteria.md as the test template:
 
 ```python
 async def test_kv_transaction_lifecycle():
@@ -1627,8 +1627,8 @@ async for notice in sub:
 
 ## Next Steps
 
-1. **Read CLIENT_SPEC.md** for wire protocol details
-2. **Read CLIENT_ACCEPTANCE_CRITERIA.md** for test requirements
+1. **Read client-spec.md** for wire protocol details
+2. **Read client-acceptance-criteria.md** for test requirements
 3. **Choose your language** and start with Connection + TLV
 4. **Implement KV domain first** (most complex, good learning)
 5. **Write tests** as you go (one AC at a time)

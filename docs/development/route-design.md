@@ -866,5 +866,5 @@ When implementing or modifying route handling:
 
 **See Also**:
 - [Fitz Architecture](./architecture.md)
-- [Connection Flow](../clients/CONNECTION_FLOW.md)
+- [Connection Flow](../clients/connection-flow.md)
 - [Copilot Instructions](../../.github/copilot-instructions.md)

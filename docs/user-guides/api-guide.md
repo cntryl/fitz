@@ -1,6 +1,6 @@
 # API Guide
 
-This guide maps user intent to Fitz domain APIs.
+This guide maps common user intent to Fitz domain APIs.
 
 ## Domain Surfaces
 
@@ -12,12 +12,12 @@ This guide maps user intent to Fitz domain APIs.
 - Lease: acquire, extend, release
 - Schedule: delayed and recurring execution
 
-## Route And Dispatch Model
+## Route and Dispatch Model
 
-Routes describe logical target paths while message types determine domain dispatch. See [development/route-design.md](../development/route-design.md).
+Routes describe logical target paths, while message types determine domain dispatch. See [development/route-design.md](../development/route-design.md).
 
 ## Protocol References
 
-- [clients/CLIENT_SPEC.md](../clients/CLIENT_SPEC.md)
-- [clients/CONNECTION_FLOW.md](../clients/CONNECTION_FLOW.md)
-- [admin/ADMIN_API.md](../admin/ADMIN_API.md)
+- [clients/client-spec.md](../clients/client-spec.md)
+- [clients/connection-flow.md](../clients/connection-flow.md)
+- [admin/admin-api.md](../admin/admin-api.md)
