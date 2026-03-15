@@ -205,10 +205,17 @@ mod tests {
 
     #[test]
     fn should_not_authorize_same_path_on_different_scheme() {
+        // Arrange
         let p = Permission::parse("notice://prod/orders/**#write").unwrap();
         let perms = SessionPermissions::from_permissions(vec![p]);
 
-        assert!(!perms.allows(&Route::new("notify://prod/orders/create"), Access::Write));
-        assert!(!perms.allows(&Route::new("queue://prod/orders/create"), Access::Write));
+        // Act
+        let notify_allowed =
+            perms.allows(&Route::new("notify://prod/orders/create"), Access::Write);
+        let queue_allowed = perms.allows(&Route::new("queue://prod/orders/create"), Access::Write);
+
+        // Assert
+        assert!(!notify_allowed);
+        assert!(!queue_allowed);
     }
 }

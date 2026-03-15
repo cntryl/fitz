@@ -123,11 +123,14 @@ mod tests {
 
     #[test]
     fn should_assign_new_family_for_first_tenant() {
+        // Arrange
         let control_plane = ControlPlaneStub::new();
         let jwt = jwt_with_tenant("tid", "acme");
 
+        // Act
         let family = control_plane.lookup_route_family(&jwt);
 
+        // Assert
         assert_eq!(family.id(), 2);
     }
 
@@ -140,23 +143,29 @@ mod tests {
 
     #[test]
     fn should_resolve_family_from_control_plane_for_authenticated() {
+        // Arrange
         let control_plane = Arc::new(ControlPlaneStub::new());
         let jwt = jwt_with_tenant("tid", "acme");
 
+        // Act
         let family = resolve_route_family(Some(&jwt), Some(&control_plane));
 
+        // Assert
         assert_eq!(family.id(), 2);
     }
 
     #[test]
     fn should_allocate_distinct_families_for_distinct_tenants() {
+        // Arrange
         let control_plane = ControlPlaneStub::new();
         let jwt_a = jwt_with_tenant("tid", "acme");
         let jwt_b = jwt_with_tenant("tid", "beta");
 
+        // Act
         let family_a = control_plane.lookup_route_family(&jwt_a);
         let family_b = control_plane.lookup_route_family(&jwt_b);
 
+        // Assert
         assert_ne!(family_a, family_b);
         assert_eq!(family_a.id(), 2);
         assert_eq!(family_b.id(), 3);
@@ -164,13 +173,16 @@ mod tests {
 
     #[test]
     fn should_reuse_existing_assignment_for_same_tenant() {
+        // Arrange
         let control_plane = ControlPlaneStub::new();
         let jwt_a = jwt_with_tenant("tid", "acme");
         let jwt_b = jwt_with_tenant("tenant_id", "acme");
 
+        // Act
         let family1 = control_plane.lookup_route_family(&jwt_a);
         let family2 = control_plane.lookup_route_family(&jwt_b);
 
+        // Assert
         assert_eq!(family1, family2);
     }
 }

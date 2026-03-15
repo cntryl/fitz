@@ -1279,6 +1279,7 @@ mod tests {
 
     #[test]
     fn should_assign_distinct_route_families_per_tenant() {
+        // Arrange
         let ingress = RuntimeIngress::new(true);
         let session_a = make_session_info(52, TransportKind::Tcp);
         let session_b = make_session_info(53, TransportKind::Tcp);
@@ -1300,6 +1301,7 @@ mod tests {
             "fitz": { "permissions": ["notice://tenant-b/**#read"] }
         }));
 
+        // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             ingress.on_open(session_a).await.unwrap();
@@ -1329,6 +1331,7 @@ mod tests {
             );
         });
 
+        // Assert
         let session_a = ingress.get_session(52).unwrap();
         let session_b = ingress.get_session(53).unwrap();
         assert_ne!(session_a.route_family, session_b.route_family);
@@ -1372,6 +1375,7 @@ mod tests {
 
     #[test]
     fn should_reject_connect_when_issuer_cannot_derive_jwks() {
+        // Arrange
         let ingress = RuntimeIngress::new(true);
         let session = make_session_info(54, TransportKind::Tcp);
         let jwt = signed_hmac_jwt(serde_json::json!({
@@ -1383,6 +1387,7 @@ mod tests {
             "fitz": { "permissions": ["notice://prod/orders/**#read"] }
         }));
 
+        // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             ingress.on_open(session).await.unwrap();
@@ -1395,6 +1400,7 @@ mod tests {
                 )
                 .await;
 
+            // Assert
             assert!(matches!(decision, IngressDecision::Close(_)));
         });
     }
@@ -1725,6 +1731,7 @@ mod tests {
 
     #[test]
     fn should_surface_router_backpressure_in_ingress_decision() {
+        // Arrange
         use crate::runtime::envelope::Envelope;
         use crate::runtime::router::{DeliveryError, MailboxSink};
 
@@ -1749,6 +1756,7 @@ mod tests {
         let ingress = RuntimeIngress::new(false).with_router(router);
         let session = make_session_info(90, TransportKind::Tcp);
 
+        // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             ingress.on_open(session).await.unwrap();
@@ -1764,6 +1772,7 @@ mod tests {
                 )
                 .await;
 
+            // Assert
             assert_eq!(decision, IngressDecision::Backpressure);
         });
     }
@@ -1825,30 +1834,31 @@ mod tests {
 
     #[test]
     fn should_canonicalize_scheme_less_domain_routes_for_authorization() {
-        assert_eq!(
-            RuntimeIngress::canonicalize_domain_route("queue", Route::new("tasks")).as_str(),
-            "queue://tasks"
+        // Arrange
+        // Act
+        let queue_route = RuntimeIngress::canonicalize_domain_route("queue", Route::new("tasks"));
+        let notice_route =
+            RuntimeIngress::canonicalize_domain_route("notice", Route::new("patterns/*"));
+        let stream_route =
+            RuntimeIngress::canonicalize_domain_route("stream", Route::new("stream-data"));
+        let existing_notice_route = RuntimeIngress::canonicalize_domain_route(
+            "notice",
+            Route::new("notice://test/notifications/**"),
         );
+
+        // Assert
+        assert_eq!(queue_route.as_str(), "queue://tasks");
+        assert_eq!(notice_route.as_str(), "notice://patterns/*");
+        assert_eq!(stream_route.as_str(), "stream://stream-data");
         assert_eq!(
-            RuntimeIngress::canonicalize_domain_route("notice", Route::new("patterns/*")).as_str(),
-            "notice://patterns/*"
-        );
-        assert_eq!(
-            RuntimeIngress::canonicalize_domain_route("stream", Route::new("stream-data")).as_str(),
-            "stream://stream-data"
-        );
-        assert_eq!(
-            RuntimeIngress::canonicalize_domain_route(
-                "notice",
-                Route::new("notice://test/notifications/**"),
-            )
-            .as_str(),
+            existing_notice_route.as_str(),
             "notice://test/notifications/**"
         );
     }
 
     #[test]
     fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
+        // Arrange
         let ingress = RuntimeIngress::new(false);
         let mut session = make_session_info(91, TransportKind::Tcp);
         session.route_family = crate::runtime::routing::RouteFamily::new(1);
@@ -1859,6 +1869,8 @@ mod tests {
         queue_payload.extend_from_slice(&(1_u32).to_be_bytes());
         queue_payload.extend_from_slice(b"x");
         queue_payload.push(0);
+
+        // Act
         let queue_route = ingress
             .derive_route_for_frame(
                 &session,
@@ -1867,7 +1879,6 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(queue_route.as_str(), "queue://tasks");
 
         let pattern = b"patterns/*";
         let mut notice_payload = Vec::new();
@@ -1881,6 +1892,9 @@ mod tests {
             )
             .unwrap()
             .unwrap();
+
+        // Assert
+        assert_eq!(queue_route.as_str(), "queue://tasks");
         assert_eq!(notice_route.as_str(), "notice://patterns/*");
 
         let stream_name = b"stream-data";

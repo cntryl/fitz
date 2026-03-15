@@ -544,17 +544,29 @@ mod tests {
 
     #[test]
     fn should_not_match_different_scheme_with_same_path() {
+        // Arrange
         let pattern = Pattern::new("notice://acme/orders/**");
 
-        assert!(!pattern.matches(&route("notify://acme/orders/create")));
-        assert!(!pattern.matches(&route("queue://acme/orders/create")));
+        // Act
+        let notify_match = pattern.matches(&route("notify://acme/orders/create"));
+        let queue_match = pattern.matches(&route("queue://acme/orders/create"));
+
+        // Assert
+        assert!(!notify_match);
+        assert!(!queue_match);
     }
 
     #[test]
     fn should_allow_scheme_agnostic_pattern_only_when_pattern_has_no_scheme() {
+        // Arrange
         let pattern = Pattern::new("acme/orders/**");
 
-        assert!(pattern.matches(&route("notice://acme/orders/create")));
-        assert!(pattern.matches(&route("queue://acme/orders/create")));
+        // Act
+        let notice_match = pattern.matches(&route("notice://acme/orders/create"));
+        let queue_match = pattern.matches(&route("queue://acme/orders/create"));
+
+        // Assert
+        assert!(notice_match);
+        assert!(queue_match);
     }
 }

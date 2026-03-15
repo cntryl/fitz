@@ -288,6 +288,7 @@ mod tests {
 
     #[test]
     fn should_authenticate_with_valid_credentials() {
+        // Arrange
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var(
             "FITZ_ADMIN_PASSWORD_HASH",
@@ -295,14 +296,17 @@ mod tests {
         );
         std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
 
+        // Act
         let auth = AdminAuth::from_env();
         let principal = auth.authenticate_credentials("admin", "secret-password");
 
+        // Assert
         assert!(principal.is_ok());
     }
 
     #[test]
     fn should_extract_principal_from_cookie() {
+        // Arrange
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var(
             "FITZ_ADMIN_PASSWORD_HASH",
@@ -322,7 +326,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
+        // Act
         let extracted = auth.principal_from_request(&req).unwrap();
+
+        // Assert
         assert_eq!(extracted.username, "admin");
     }
 }
