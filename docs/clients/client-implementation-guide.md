@@ -23,6 +23,13 @@
 - [Performance Optimization](#performance-optimization)
 - [Common Pitfalls](#common-pitfalls)
 
+## Cross-Language Conformance Suite
+
+Use these companion artifacts when implementing or reviewing multiple SDKs:
+
+- `cross-language-conformance-suite.yaml`: canonical scenario definitions and pass/fail policy
+- `cross-language-conformance-runner.md`: harness input/output contract and CI matrix guidance
+
 ---
 
 ## Overview

@@ -5,6 +5,11 @@
 **Purpose:** Explicit acceptance criteria for client implementations to verify conformance with Fitz protocol
 This document defines testable acceptance criteria for each Fitz domain. Client implementations MUST pass all criteria marked as **MUST**. Criteria marked as **SHOULD** are strongly recommended for production-grade clients.
 
+For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run these companion artifacts:
+
+- `cross-language-conformance-suite.yaml`
+- `cross-language-conformance-runner.md`
+
 ## Table of Contents
 
 - [Connection & Authentication](#connection--authentication)

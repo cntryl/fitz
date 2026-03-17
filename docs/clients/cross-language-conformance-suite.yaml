@@ -1,0 +1,235 @@
+version: "1.0"
+name: "fitz-cross-language-client-conformance"
+status: "draft"
+updated: "2026-03-17"
+owners:
+  - "fitz server"
+  - "fitz-go"
+  - "fitz-ts"
+  - "fitz-py"
+
+policy:
+  strict_reconnect_parity: true
+  behavioral_equivalence_over_naming: true
+  undocumented_divergence_is_defect: true
+  first_class_semantics:
+    - timeout
+    - cancellation
+    - cleanup
+    - streaming
+
+contract:
+  required_domains:
+    - kv
+    - queue
+    - rpc
+    - lease
+    - notice
+    - stream
+    - schedule
+  required_transports:
+    - websocket
+    - tcp
+  auth_modes:
+    - anonymous
+    - valid_jwt
+    - invalid_jwt
+  reconnect_contract:
+    required: true
+    expectations:
+      - "client detects disconnection"
+      - "client reconnects using configured backoff"
+      - "client sends CONNECT first on new transport"
+      - "client rebuilds connection-scoped subscriptions/workers"
+      - "client treats in-flight domain work as interrupted unless domain contract states otherwise"
+
+result_schema:
+  verdict: ["pass", "partial", "fail", "not_implemented", "unclear"]
+  required_fields:
+    - scenario_id
+    - client
+    - transport
+    - auth_mode
+    - verdict
+    - evidence
+    - latency_ms
+
+scenarios:
+  - id: "CS-001"
+    title: "connect success"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "connect returns success"
+      - "client state becomes authenticated"
+      - "first user domain request succeeds"
+    required_evidence:
+      - "connection state transition logs"
+      - "first successful domain response"
+
+  - id: "CS-002"
+    title: "auth failure"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["invalid_jwt"]
+    expected:
+      - "connect fails"
+      - "failure is surfaced as authentication error"
+      - "client does not silently continue as authenticated"
+    required_evidence:
+      - "transport close or auth failure exception"
+
+  - id: "CS-003"
+    title: "request success"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "kv transaction begin/put/commit succeeds"
+      - "read-after-commit returns written value"
+
+  - id: "CS-004"
+    title: "unknown route"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "operation targeting unknown route returns domain error"
+      - "error remains typed/mappable by client"
+
+  - id: "CS-005"
+    title: "invalid payload"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "malformed operation request returns protocol/domain error"
+      - "client remains usable after error"
+
+  - id: "CS-006"
+    title: "server error mapping"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "known server error code maps to client domain error"
+      - "retryable vs terminal classification is available"
+
+  - id: "CS-007"
+    title: "timeout handling"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "long-running call times out using client timeout control"
+      - "timeout error is distinguishable from cancellation"
+      - "connection stays healthy after timeout"
+
+  - id: "CS-008"
+    title: "caller cancellation"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "in-flight request can be cancelled by caller primitive"
+      - "cancellation is surfaced as cancellation (not timeout)"
+      - "subsequent requests succeed"
+
+  - id: "CS-009"
+    title: "disconnect during request"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "in-flight request fails promptly"
+      - "failure type indicates disconnect/interruption"
+      - "client transitions to reconnect flow when configured"
+
+  - id: "CS-010"
+    title: "reconnect and retry behavior"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "client performs configured reconnect backoff"
+      - "subscriptions/workers are restored"
+      - "new requests succeed post reconnect"
+
+  - id: "CS-011"
+    title: "stream receive sequence"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "stream records are received in offset order"
+      - "no duplicate or skipped offsets in normal path"
+
+  - id: "CS-012"
+    title: "stream completion"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "stream completion/end is observable in client API"
+      - "iterator/subscription closes cleanly"
+
+  - id: "CS-013"
+    title: "stream error mid-flight"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "streaming API surfaces mid-flight server error"
+      - "cleanup occurs without leaking resources"
+
+  - id: "CS-014"
+    title: "concurrent in-flight requests"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "cross-domain in-flight requests can proceed concurrently"
+      - "within-domain ordering follows protocol constraints"
+      - "responses correlate correctly to request context"
+
+  - id: "CS-015"
+    title: "shutdown during active work"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "closing client during active requests/streams terminates gracefully"
+      - "active operations fail predictably"
+      - "double-close is safe"
+
+scoring:
+  fail_on:
+    - "any P0 scenario verdict != pass"
+  warn_on:
+    - "any P1 scenario verdict in [partial, fail, not_implemented, unclear]"
+
+reporting:
+  output_format: "json"
+  aggregate_fields:
+    - "client"
+    - "transport"
+    - "auth_mode"
+    - "p0_pass_rate"
+    - "p1_pass_rate"
+    - "overall_status"
