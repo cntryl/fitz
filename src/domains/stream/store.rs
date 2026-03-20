@@ -1,14 +1,14 @@
 //! Stream storage layer - STORAGE ONLY, NO SEQUENCING
 
 use bytes::Bytes;
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
 use super::storage::{
-    decode_area_offset_from_key, decode_realm_offset_from_key, decode_staging_value,
-    encode_area_key, encode_realm_key, encode_resource_key, encode_staging_key,
-    encode_staging_value, encode_watermark_key, AreaValue, RealmValue, ResourceValue,
+    decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_key, encode_realm_key,
+    encode_resource_key, encode_watermark_key, AreaValue, RealmValue, ResourceValue,
     WatermarkValue,
 };
 
@@ -18,13 +18,12 @@ pub struct EventPayload {
     pub metadata: Option<Bytes>,
 }
 
-/// Session using KvTransaction for O(1) memory streaming
+/// Active append session buffered until commit.
 struct AppendSession {
     realm: String,
     area: String,
     resource: String,
-    session_id: u64,
-    txn: cntryl_midge::Transaction,
+    staged_events: Vec<EventPayload>,
     event_count: usize,
     total_bytes: usize,
     ingest_metadata: Option<IngestMetadata>,
@@ -127,25 +126,20 @@ impl StreamStore {
             .next_session_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Create transaction for staging (O(1) memory)
-        // Use RouteFamily id as column family id to provide family isolation
-        let txn = self
-            .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("failed to begin transaction: {:?}", e))?;
+        let initial_capacity = self.limits.max_batch_events.min(128);
 
         let session = AppendSession {
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
-            session_id,
-            txn,
+            staged_events: Vec::with_capacity(initial_capacity),
             event_count: 0,
             total_bytes: 0,
             ingest_metadata,
         };
 
-        self.sessions.lock().unwrap().insert(session_id, session);
+        let _ = family;
+        self.sessions.lock().insert(session_id, session);
         Ok(session_id)
     }
 
@@ -155,10 +149,18 @@ impl StreamStore {
         session_id: &SessionId,
         event: EventPayload,
     ) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock();
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+
+        if session.event_count + 1 > self.limits.max_batch_events {
+            return Err(format!(
+                "ERR_BATCH_TOO_LARGE: event count {} exceeds max_batch_events {}",
+                session.event_count + 1,
+                self.limits.max_batch_events
+            ));
+        }
 
         let event_bytes = event.body.len() + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
         if session.total_bytes + event_bytes > self.limits.max_batch_bytes {
@@ -168,15 +170,7 @@ impl StreamStore {
             ));
         }
 
-        // Write to staging transaction (O(1) memory - no heap buffer)
-        let staging_key = encode_staging_key(session.session_id, session.event_count);
-        let staging_value = encode_staging_value(&event);
-
-        session
-            .txn
-            .put(staging_key, staging_value, None)
-            .map_err(|e| format!("staging write failed: {:?}", e))?;
-
+        session.staged_events.push(event);
         session.total_bytes += event_bytes;
         session.event_count += 1;
 
@@ -202,7 +196,6 @@ impl StreamStore {
         let session = self
             .sessions
             .lock()
-            .unwrap()
             .remove(session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
 
@@ -211,6 +204,14 @@ impl StreamStore {
         }
 
         let batch_size = session.event_count;
+        let AppendSession {
+            realm,
+            area,
+            resource,
+            staged_events,
+            ingest_metadata,
+            ..
+        } = session;
 
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -222,26 +223,12 @@ impl StreamStore {
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        // Read events from staging transaction and add to transaction
-        for i in 0..batch_size {
-            let staging_key = encode_staging_key(session.session_id, i);
-            let staging_value = session
-                .txn
-                .get(&staging_key)
-                .map_err(|e| format!("staging read failed: {:?}", e))?
-                .ok_or_else(|| format!("staging key {} not found", i))?;
-
-            let event = decode_staging_value(&staging_value)?;
+        for (i, event) in staged_events.into_iter().enumerate() {
             let resource_offset = first_resource_offset + i as u64;
             let area_offset = first_area_offset + i as u64;
             let realm_offset = first_realm_offset + i as u64;
 
-            let resource_key = encode_resource_key(
-                &session.realm,
-                &session.area,
-                &session.resource,
-                resource_offset,
-            );
+            let resource_key = encode_resource_key(&realm, &area, &resource, resource_offset);
             let resource_value = ResourceValue {
                 resource_offset,
                 area_offset: Some(area_offset),
@@ -254,11 +241,11 @@ impl StreamStore {
             txn.put(resource_key, resource_value.encode(), ttl_opt)
                 .map_err(|e| format!("txn put failed: {:?}", e))?;
 
-            let area_key = encode_area_key(&session.realm, &session.area, area_offset);
+            let area_key = encode_area_key(&realm, &area, area_offset);
             let area_value = AreaValue {
-                realm: session.realm.clone(),
-                area: session.area.clone(),
-                resource: session.resource.clone(),
+                realm: realm.clone(),
+                area: area.clone(),
+                resource: resource.clone(),
                 resource_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
@@ -267,15 +254,15 @@ impl StreamStore {
             txn.put(area_key, area_value.encode(), ttl_opt)
                 .map_err(|e| format!("txn put failed: {:?}", e))?;
 
-            let realm_key = encode_realm_key(&session.realm, realm_offset);
+            let realm_key = encode_realm_key(&realm, realm_offset);
             let realm_value = RealmValue {
-                resource: session.resource.clone(),
+                resource: resource.clone(),
                 resource_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
                 created_at,
-                realm: session.realm.clone(),
-                area: session.area.clone(),
+                realm: realm.clone(),
+                area: area.clone(),
                 area_offset,
             };
             txn.put(realm_key, realm_value.encode(), ttl_opt)
@@ -285,11 +272,8 @@ impl StreamStore {
         // **CRITICAL**: Persist offset counter metadata (no TTL!)
         // This ensures next_resource_offset survives TTL expiry and restarts
         let next_offset = first_resource_offset + batch_size as u64;
-        let counter_key = crate::domains::stream::storage::encode_offset_counter_key(
-            &session.realm,
-            &session.area,
-            &session.resource,
-        );
+        let counter_key =
+            crate::domains::stream::storage::encode_offset_counter_key(&realm, &area, &resource);
         let counter_value = crate::domains::stream::storage::OffsetCounterValue { next_offset };
 
         txn.put(counter_key, counter_value.encode(), None)
@@ -311,25 +295,20 @@ impl StreamStore {
             first_realm_offset,
             last_realm_offset: first_realm_offset + batch_size as u64 - 1,
             batch_size,
-            ingest_metadata: session.ingest_metadata,
+            ingest_metadata,
         })
     }
 
     pub fn abort_session(&self, session_id: &SessionId) -> Result<(), String> {
         self.sessions
             .lock()
-            .unwrap()
             .remove(session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
         Ok(())
     }
 
     pub fn session_event_count(&self, session_id: &SessionId) -> Option<usize> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .map(|s| s.event_count)
+        self.sessions.lock().get(session_id).map(|s| s.event_count)
     }
 
     /// Peek at the last committed record in a resource stream (tail operation)
@@ -343,20 +322,64 @@ impl StreamStore {
         area: &str,
         resource: &str,
     ) -> Result<Option<StreamRecord>, String> {
-        // Use offset counter to find last committed offset (no tail scan)
-        let next_offset = self.get_next_resource_offset(family, realm, area, resource)?;
-        if next_offset == 0 {
-            return Ok(None); // Stream empty
-        }
-
-        let last_offset = next_offset - 1;
-        let key = encode_resource_key(realm, area, resource, last_offset);
-
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let value_bytes = match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
+
+        // Use offset counter to find last committed offset without opening a second transaction.
+        let counter_key =
+            crate::domains::stream::storage::encode_offset_counter_key(realm, area, resource);
+        let next_offset = match txn
+            .get(&counter_key)
+            .map_err(|e| format!("get error: {:?}", e))?
+        {
+            Some(value_bytes) => {
+                crate::domains::stream::storage::OffsetCounterValue::decode(&value_bytes)
+                    .next_offset
+            }
+            None => return Ok(None),
+        };
+        if next_offset == 0 {
+            return Ok(None);
+        }
+
+        let last_offset = next_offset - 1;
+
+        // Use an inline buffer to avoid heap allocation on the tail-read hot path.
+        let mut key_buf = [0u8; 256];
+        let key_len = {
+            let mut pos = 0;
+            key_buf[pos] = crate::domains::stream::storage::KeyPrefix::Resource as u8;
+            pos += 1;
+
+            let realm_bytes = realm.as_bytes();
+            key_buf[pos..pos + realm_bytes.len()].copy_from_slice(realm_bytes);
+            pos += realm_bytes.len();
+            key_buf[pos] = 0;
+            pos += 1;
+
+            let area_bytes = area.as_bytes();
+            key_buf[pos..pos + area_bytes.len()].copy_from_slice(area_bytes);
+            pos += area_bytes.len();
+            key_buf[pos] = 0;
+            pos += 1;
+
+            let resource_bytes = resource.as_bytes();
+            key_buf[pos..pos + resource_bytes.len()].copy_from_slice(resource_bytes);
+            pos += resource_bytes.len();
+            key_buf[pos] = 0;
+            pos += 1;
+
+            let offset_bytes = last_offset.to_be_bytes();
+            key_buf[pos..pos + 8].copy_from_slice(&offset_bytes);
+            pos + 8
+        };
+
+        let value_bytes = match txn
+            .get(&key_buf[..key_len])
+            .map_err(|e| format!("get error: {:?}", e))?
+        {
             Some(bytes) => bytes.to_vec(),
             None => return Ok(None), // Record expired or deleted
         };

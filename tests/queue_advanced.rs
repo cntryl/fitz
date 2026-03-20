@@ -112,6 +112,7 @@ fn should_redelivery_messages_after_crash() {
 
     // Pre-populate with messages
     let mut original_ids = Vec::new();
+    let mut original_bodies = Vec::new();
     {
         let mut actor = QueueActor::new(
             RouteFamily::new(0),
@@ -122,8 +123,9 @@ fn should_redelivery_messages_after_crash() {
         );
 
         for i in 0..10 {
-            let body = Bytes::from(format!("task {}", i));
-            match actor.handle_send(body, None) {
+            let body = format!("task {}", i);
+            original_bodies.push(body.clone());
+            match actor.handle_send(Bytes::from(body), None) {
                 QueueResponse::Sent { id } => original_ids.push(id),
                 _ => panic!("Expected Enqueued"),
             }
@@ -167,6 +169,7 @@ fn should_redelivery_messages_after_crash() {
 
     // Verify recovery can deliver all original messages
     let mut recovered_count = 0;
+    let mut recovered_bodies = Vec::new();
     loop {
         match actor.handle_receive(30, Some(5)) {
             QueueResponse::Received { messages } => {
@@ -174,6 +177,9 @@ fn should_redelivery_messages_after_crash() {
                     break;
                 }
                 recovered_count += messages.len();
+                recovered_bodies.extend(messages.into_iter().map(|message| {
+                    String::from_utf8(message.body.to_vec()).expect("queue body should be utf-8")
+                }));
             }
             QueueResponse::NotFound => {
                 break;
@@ -182,6 +188,12 @@ fn should_redelivery_messages_after_crash() {
         }
     }
     assert_eq!(recovered_count, 10, "Should recover all 10 messages");
+    original_bodies.sort();
+    recovered_bodies.sort();
+    assert_eq!(
+        recovered_bodies, original_bodies,
+        "Recovered messages should retain their original bodies"
+    );
 }
 
 /// Test delayed message visibility survives crash (V-002: time semantics fix)
@@ -293,9 +305,12 @@ fn should_prevent_id_collisions_across_crash() {
             }
         }
 
-        // Verify no ID collisions
-        assert_eq!(second_batch_ids[0], 11);
-        assert_eq!(second_batch_ids[9], 20);
+        // Verify crash-safe monotonic allocation: no reuse, gaps allowed.
+        assert!(second_batch_ids[0] > 10);
+        assert_eq!(second_batch_ids.len(), 10);
+        assert!(second_batch_ids
+            .windows(2)
+            .all(|pair| pair[1] == pair[0] + 1));
     }
 
     // Assert

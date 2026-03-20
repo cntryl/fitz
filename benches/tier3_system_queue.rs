@@ -3,7 +3,7 @@ use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::create_bench_queue_actor;
 use fitz::domains::queue::{QueueActor, QueueKey};
 use fitz::runtime::routing::RouteFamily;
-use std::sync::Arc;
+use fitz::testkit::create_test_engine_with_cfs;
 
 // Queue domain tier 3 system benchmarks using stress
 //
@@ -82,10 +82,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
         resource: "queue".to_string(),
     };
 
-    let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
-            .expect("Failed to open in-memory store"),
-    );
+    let store = create_test_engine_with_cfs(vec![1]);
 
     // Pre-populate with 100 messages
     let mut pre_actor = QueueActor::new(

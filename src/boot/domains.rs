@@ -103,8 +103,24 @@ impl MailboxSink for DomainSink {
 /// - Dispatches to actor
 /// - Returns responses
 ///
-/// Key for pessimistic resource lock: (route_family_id, resource_key)
-type KvResourceLockKey = (u64, String);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct KvResourceLockKey {
+    family_id: u64,
+    realm: String,
+    area: String,
+    resource: String,
+}
+
+impl KvResourceLockKey {
+    fn new(family_id: u64, realm: &str, area: &str, resource: &str) -> Self {
+        Self {
+            family_id,
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+        }
+    }
+}
 
 pub struct KvDomainSink {
     /// Midge storage engine
@@ -147,19 +163,18 @@ impl KvDomainSink {
             .tx_to_resource
             .lock()
             .iter()
-            .map(|((session_id, tx_id), (_family_id, resource_key))| {
-                let mut parts = resource_key.split('/');
-                crate::api::admin::KvTransaction {
+            .map(
+                |((session_id, tx_id), resource_key)| crate::api::admin::KvTransaction {
                     tx_id: *tx_id,
-                    realm: parts.next().unwrap_or_default().to_string(),
-                    area: parts.next().unwrap_or_default().to_string(),
-                    resource: parts.next().unwrap_or_default().to_string(),
+                    realm: resource_key.realm.clone(),
+                    area: resource_key.area.clone(),
+                    resource: resource_key.resource.clone(),
                     mode: format!("session:{session_id}:readwrite"),
                     started_at: Utc::now().to_rfc3339(),
                     operations_count: 0,
                     idle_seconds: 0,
-                }
-            })
+                },
+            )
             .collect();
         self.admin_read_model.replace_kv_transactions(transactions);
     }
@@ -283,7 +298,7 @@ impl MailboxSink for KvDomainSink {
             "KV deliver: getting or creating actor for session"
         );
 
-        let response = match &kv_message {
+        let (response, should_sync_admin_snapshot) = match &kv_message {
             KvMessage::Begin {
                 route_family,
                 realm,
@@ -292,18 +307,20 @@ impl MailboxSink for KvDomainSink {
                 mode,
                 ..
             } if *mode == TxMode::ReadWrite => {
-                let resource_key = format!("{}/{}/{}", realm, area, resource);
-                let lock_key: KvResourceLockKey = (route_family.as_u64(), resource_key.clone());
+                let lock_key = KvResourceLockKey::new(route_family.as_u64(), realm, area, resource);
                 {
                     let locks = self.resource_locks.lock();
                     if let Some(&holder) = locks.get(&lock_key) {
                         if holder != session_id {
                             drop(locks);
-                            KvResponse::Error {
-                                error: KvError::Conflict(
-                                    "resource locked by another session".to_string(),
-                                ),
-                            }
+                            (
+                                KvResponse::Error {
+                                    error: KvError::Conflict(
+                                        "resource locked by another session".to_string(),
+                                    ),
+                                },
+                                false,
+                            )
                         } else {
                             drop(locks);
                             let mut actors = self.actors.lock();
@@ -334,8 +351,10 @@ impl MailboxSink for KvDomainSink {
                                 self.tx_to_resource
                                     .lock()
                                     .insert((session_id, tx_id), lock_key);
+                                (resp, true)
+                            } else {
+                                (resp, false)
                             }
-                            resp
                         }
                     } else {
                         drop(locks);
@@ -367,8 +386,10 @@ impl MailboxSink for KvDomainSink {
                             self.tx_to_resource
                                 .lock()
                                 .insert((session_id, tx_id), lock_key);
+                            (resp, true)
+                        } else {
+                            (resp, false)
                         }
-                        resp
                     }
                 }
             }
@@ -394,8 +415,10 @@ impl MailboxSink for KvDomainSink {
                     if let Some(k) = lock_key {
                         self.resource_locks.lock().remove(&k);
                     }
+                    (resp, true)
+                } else {
+                    (resp, false)
                 }
-                resp
             }
             KvMessage::Rollback { tx_id } => {
                 let mut actors = self.actors.lock();
@@ -419,8 +442,10 @@ impl MailboxSink for KvDomainSink {
                     if let Some(k) = lock_key {
                         self.resource_locks.lock().remove(&k);
                     }
+                    (resp, true)
+                } else {
+                    (resp, false)
                 }
-                resp
             }
             _ => {
                 let mut actors = self.actors.lock();
@@ -438,10 +463,12 @@ impl MailboxSink for KvDomainSink {
                     msg_type = frame_ctx.msg_type.as_u16(),
                     "Calling actor.handle() for operation"
                 );
-                actor.handle(kv_message)
+                (actor.handle(kv_message), false)
             }
         };
-        self.sync_admin_snapshot();
+        if should_sync_admin_snapshot {
+            self.sync_admin_snapshot();
+        }
 
         tracing::debug!(
             domain = "kv",
@@ -648,8 +675,6 @@ impl NoticeDomainSink {
             session = session_id,
             "All notice subscriptions removed for session (disconnect cleanup)"
         );
-        drop(families);
-        self.sync_admin_snapshot();
     }
 
     pub fn subscription_count(&self) -> usize {
@@ -733,7 +758,7 @@ impl MailboxSink for NoticeDomainSink {
         let mut payload_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
-        let response_opt = match notice_msg {
+        let (response_opt, should_sync_admin_snapshot) = match notice_msg {
             NotificationMessage::Publish(pub_msg) => {
                 // Publish responds with OK after fanout to keep request/response symmetry in tests.
                 let family_id = pub_msg.family_id.as_u64();
@@ -763,9 +788,12 @@ impl MailboxSink for NoticeDomainSink {
                         }
                     }
                 }
-                Some(NoticeResponse::Ok {
-                    subscription_id: None,
-                })
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    false,
+                )
             }
             NotificationMessage::Subscribe(sub_msg) => {
                 let family_id = sub_msg.family_id.as_u64();
@@ -794,7 +822,10 @@ impl MailboxSink for NoticeDomainSink {
                         session = sub_msg.session_id.0,
                         "Rejected empty subscription pattern"
                     );
-                    Some(NoticeResponse::Error("empty pattern".to_string()))
+                    (
+                        Some(NoticeResponse::Error("empty pattern".to_string())),
+                        false,
+                    )
                 } else {
                     let sub_id = if let Some(id) = existing_sub_id {
                         tracing::debug!(
@@ -827,9 +858,12 @@ impl MailboxSink for NoticeDomainSink {
                         new_id
                     };
 
-                    Some(NoticeResponse::Ok {
-                        subscription_id: Some(sub_id),
-                    })
+                    (
+                        Some(NoticeResponse::Ok {
+                            subscription_id: Some(sub_id),
+                        }),
+                        true,
+                    )
                 }
             }
             NotificationMessage::Unsubscribe(unsub_msg) => {
@@ -841,9 +875,12 @@ impl MailboxSink for NoticeDomainSink {
                             && s.pattern.route() == unsub_msg.pattern.as_str())
                     });
                 }
-                Some(NoticeResponse::Ok {
-                    subscription_id: None,
-                })
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    true,
+                )
             }
             NotificationMessage::UnsubscribeAll(unsub_all) => {
                 let session_id = unsub_all.session_id.0;
@@ -856,18 +893,26 @@ impl MailboxSink for NoticeDomainSink {
                     session = session_id,
                     "All subscriptions removed for session"
                 );
-                Some(NoticeResponse::Ok {
-                    subscription_id: None,
-                })
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    true,
+                )
             }
             NotificationMessage::Deliver(_) => {
                 // Deliver is internal delivery, no response needed
-                Some(NoticeResponse::Ok {
-                    subscription_id: None,
-                })
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    false,
+                )
             }
         };
-        self.sync_admin_snapshot();
+        if should_sync_admin_snapshot {
+            self.sync_admin_snapshot();
+        }
 
         // Only send response if one was generated (PUBLISH returns None for fire-and-forget)
         if let Some(response) = response_opt {
@@ -1046,7 +1091,7 @@ impl MailboxSink for RpcDomainSink {
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         // Only emit operation responses for subscribe/unsubscribe or explicit errors.
-        let response = match rpc_msg {
+        let (response, should_sync_admin_snapshot) = match rpc_msg {
             RpcMessage::Subscribe { worker_addr } => {
                 let route_key = worker_addr.route().as_str().to_string();
                 let mut state = self.state.lock();
@@ -1062,7 +1107,7 @@ impl MailboxSink for RpcDomainSink {
                     session = frame_ctx.session_id,
                     "Worker registered"
                 );
-                Some(RpcResponseMsg::Ok { data: vec![] })
+                (Some(RpcResponseMsg::Ok { data: vec![] }), true)
             }
             RpcMessage::Unsubscribe { worker_addr } => {
                 let route_key = worker_addr.route().as_str().to_string();
@@ -1076,7 +1121,7 @@ impl MailboxSink for RpcDomainSink {
                     worker = worker_addr.route().as_str(),
                     "Worker unregistered"
                 );
-                Some(RpcResponseMsg::Ok { data: vec![] })
+                (Some(RpcResponseMsg::Ok { data: vec![] }), true)
             }
             RpcMessage::Request(req) => {
                 let route_key = req.route.as_str().to_string();
@@ -1143,20 +1188,25 @@ impl MailboxSink for RpcDomainSink {
                         "Request forwarded to worker"
                     );
                     // Ack dispatch so caller's SendRequest(302) unblocks; actual response comes via 303.
-                    Some(RpcResponseMsg::Ok { data: vec![] })
+                    (Some(RpcResponseMsg::Ok { data: vec![] }), true)
                 } else {
-                    Some(RpcResponseMsg::Error(
-                        "No workers registered for route".to_string(),
-                    ))
+                    (
+                        Some(RpcResponseMsg::Error(
+                            "No workers registered for route".to_string(),
+                        )),
+                        false,
+                    )
                 }
             }
             RpcMessage::Response(resp) => {
                 let mut state = self.state.lock();
                 // Keep pending until stream_end so streaming responses (multiple 303 chunks) all get forwarded.
                 let caller_info = state.pending.get(&resp.correlation_id).copied();
+                let mut state_changed = false;
                 if let Some((caller_session_id, caller_family_id)) = caller_info {
                     if resp.stream_end {
                         state.pending.remove(&resp.correlation_id);
+                        state_changed = true;
                     }
                     drop(state);
 
@@ -1228,27 +1278,32 @@ impl MailboxSink for RpcDomainSink {
                         "No pending request for response"
                     );
                 }
-                None
+                (None, state_changed)
             }
             RpcMessage::Ack { correlation_id } => {
                 let mut state = self.state.lock();
-                state.pending.remove(&correlation_id);
+                let removed = state.pending.remove(&correlation_id).is_some();
                 tracing::debug!(
                     domain = "rpc",
                     correlation_id = %correlation_id,
                     "Request acknowledged and cleaned up"
                 );
-                None
+                (None, removed)
             }
             RpcMessage::Deliver(_) => {
                 // Deliver should only be sent TO workers by route actors,
                 // not received from clients. Ignore or error.
-                Some(RpcResponseMsg::Error(
-                    "Deliver not valid client message".to_string(),
-                ))
+                (
+                    Some(RpcResponseMsg::Error(
+                        "Deliver not valid client message".to_string(),
+                    )),
+                    false,
+                )
             }
         };
-        self.sync_admin_snapshot();
+        if should_sync_admin_snapshot {
+            self.sync_admin_snapshot();
+        }
 
         if let Some(response) = response {
             // Encode and route response back
@@ -1447,8 +1502,6 @@ impl QueueDomainSink {
             session = session_id,
             "All queue subscriptions removed for session"
         );
-        drop(families);
-        self.sync_admin_snapshot();
     }
 
     /// Get the total number of active queue subscriptions (for stats).
@@ -1612,7 +1665,9 @@ impl MailboxSink for QueueDomainSink {
         // Dispatch to per-queue actor or handle subscription
         use crate::domains::queue::protocol::{QueueKey, QueueMessage};
 
-        let (response, availability_notify_route) = {
+        let (response, availability_notify_route, should_sync_admin_snapshot) = {
+            use std::collections::hash_map::Entry;
+
             let mut actors = self.actors.lock();
 
             match queue_msg {
@@ -1629,15 +1684,19 @@ impl MailboxSink for QueueDomainSink {
                         resource: "default".to_string(),
                     });
                     let store = self.store.clone();
-                    let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(
-                            family_id,
-                            key.clone(),
-                            store,
-                            None,
-                            crate::utils::idempotency::global_dedup_store(),
-                        )
-                    });
+                    let (actor, created_actor) = match actors.entry(key.clone()) {
+                        Entry::Occupied(entry) => (entry.into_mut(), false),
+                        Entry::Vacant(entry) => (
+                            entry.insert(crate::domains::queue::QueueActor::new(
+                                family_id,
+                                key.clone(),
+                                store,
+                                None,
+                                crate::utils::idempotency::global_dedup_store(),
+                            )),
+                            true,
+                        ),
+                    };
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
                     let resp = actor.handle_send(body, delay_seconds);
@@ -1653,7 +1712,7 @@ impl MailboxSink for QueueDomainSink {
                     } else {
                         None
                     };
-                    (resp, notify_route)
+                    (resp, notify_route, created_actor)
                 }
                 QueueMessage::Receive {
                     family_id,
@@ -1669,18 +1728,26 @@ impl MailboxSink for QueueDomainSink {
                         resource: "default".to_string(),
                     });
                     let store = self.store.clone();
-                    let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(
-                            family_id,
-                            key.clone(),
-                            store,
-                            None,
-                            crate::utils::idempotency::global_dedup_store(),
-                        )
-                    });
+                    let (actor, created_actor) = match actors.entry(key.clone()) {
+                        Entry::Occupied(entry) => (entry.into_mut(), false),
+                        Entry::Vacant(entry) => (
+                            entry.insert(crate::domains::queue::QueueActor::new(
+                                family_id,
+                                key.clone(),
+                                store,
+                                None,
+                                crate::utils::idempotency::global_dedup_store(),
+                            )),
+                            true,
+                        ),
+                    };
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (actor.handle_receive(lease_seconds, batch_size), None)
+                    (
+                        actor.handle_receive(lease_seconds, batch_size),
+                        None,
+                        created_actor,
+                    )
                 }
                 QueueMessage::Extend {
                     family_id,
@@ -1696,18 +1763,26 @@ impl MailboxSink for QueueDomainSink {
                         resource: "default".to_string(),
                     });
                     let store = self.store.clone();
-                    let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(
-                            family_id,
-                            key.clone(),
-                            store,
-                            None,
-                            crate::utils::idempotency::global_dedup_store(),
-                        )
-                    });
+                    let (actor, created_actor) = match actors.entry(key.clone()) {
+                        Entry::Occupied(entry) => (entry.into_mut(), false),
+                        Entry::Vacant(entry) => (
+                            entry.insert(crate::domains::queue::QueueActor::new(
+                                family_id,
+                                key.clone(),
+                                store,
+                                None,
+                                crate::utils::idempotency::global_dedup_store(),
+                            )),
+                            true,
+                        ),
+                    };
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (actor.handle_extend(id, token, lease_seconds), None)
+                    (
+                        actor.handle_extend(id, token, lease_seconds),
+                        None,
+                        created_actor,
+                    )
                 }
                 QueueMessage::Ack {
                     family_id,
@@ -1722,18 +1797,22 @@ impl MailboxSink for QueueDomainSink {
                         resource: "default".to_string(),
                     });
                     let store = self.store.clone();
-                    let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        crate::domains::queue::QueueActor::new(
-                            family_id,
-                            key.clone(),
-                            store,
-                            None,
-                            crate::utils::idempotency::global_dedup_store(),
-                        )
-                    });
+                    let (actor, created_actor) = match actors.entry(key.clone()) {
+                        Entry::Occupied(entry) => (entry.into_mut(), false),
+                        Entry::Vacant(entry) => (
+                            entry.insert(crate::domains::queue::QueueActor::new(
+                                family_id,
+                                key.clone(),
+                                store,
+                                None,
+                                crate::utils::idempotency::global_dedup_store(),
+                            )),
+                            true,
+                        ),
+                    };
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (actor.handle_ack(id, token), None)
+                    (actor.handle_ack(id, token), None, created_actor)
                 }
                 QueueMessage::LeaseExpired { .. } => {
                     // Internal message, not dispatched via sink
@@ -1742,6 +1821,7 @@ impl MailboxSink for QueueDomainSink {
                             message: "LeaseExpired is an internal message".to_string(),
                         },
                         None,
+                        false,
                     )
                 }
 
@@ -1802,6 +1882,7 @@ impl MailboxSink for QueueDomainSink {
                             subscription_id: sub_id,
                         },
                         None,
+                        false,
                     )
                 }
                 QueueMessage::Unsubscribe {
@@ -1825,15 +1906,25 @@ impl MailboxSink for QueueDomainSink {
                         "Queue subscription removed"
                     );
 
-                    (crate::domains::queue::QueueResponse::UnsubscribeOk, None)
+                    (
+                        crate::domains::queue::QueueResponse::UnsubscribeOk,
+                        None,
+                        false,
+                    )
                 }
                 QueueMessage::UnsubscribeAll { session_id, .. } => {
                     self.unsubscribe_all(session_id);
-                    (crate::domains::queue::QueueResponse::UnsubscribeOk, None)
+                    (
+                        crate::domains::queue::QueueResponse::UnsubscribeOk,
+                        None,
+                        false,
+                    )
                 }
             }
         };
-        self.sync_admin_snapshot();
+        if should_sync_admin_snapshot {
+            self.sync_admin_snapshot();
+        }
 
         // If we just did a Send that transitioned empty->non-empty, fan out QUEUE_NOTIFY (209) to subscribers
         if let Some(notify_route) = availability_notify_route {
@@ -2167,8 +2258,6 @@ impl StreamDomainSink {
             session = session_id,
             "All stream subscriptions removed for session"
         );
-        drop(families);
-        self.sync_admin_snapshot();
     }
 
     /// Get the total number of active stream subscriptions (for stats).
@@ -2256,7 +2345,7 @@ impl MailboxSink for StreamDomainSink {
 
         // Enforce expected_offset at Begin; persist committed records in-memory for READ/LAST/METADATA.
         // If Commit advances a route, emit STREAM_NOTIFY (609) with batch offset metadata.
-        let (response, commit_notify) = match stream_msg {
+        let (response, commit_notify, should_sync_admin_snapshot) = match stream_msg {
             StreamMessage::Begin {
                 route,
                 expected_offset,
@@ -2304,6 +2393,7 @@ impl MailboxSink for StreamDomainSink {
                         data: vec![],
                     },
                     None,
+                    true,
                 )
             }
             StreamMessage::Append {
@@ -2314,7 +2404,11 @@ impl MailboxSink for StreamDomainSink {
                 let mut state = self.write_state.lock();
                 let route_key = state.session_to_route.get(&session_id).cloned();
                 let maybe_offset = route_key.and_then(|route_key| {
-                    let next_offset = state.next_offset_by_route.get(&route_key).copied().unwrap_or(0);
+                    let next_offset = state
+                        .next_offset_by_route
+                        .get(&route_key)
+                        .copied()
+                        .unwrap_or(0);
                     state.sessions.get_mut(&session_id).map(|session| {
                         let assigned_offset = next_offset + session.records.len() as u64;
                         session.records.push(PendingStreamRecord { body });
@@ -2336,6 +2430,7 @@ impl MailboxSink for StreamDomainSink {
                         data,
                     },
                     None,
+                    false,
                 )
             }
             StreamMessage::Commit { session_id, .. } => {
@@ -2380,6 +2475,7 @@ impl MailboxSink for StreamDomainSink {
                         data: vec![],
                     },
                     commit_notify,
+                    true,
                 )
             }
             StreamMessage::Rollback { session_id, .. } => {
@@ -2392,6 +2488,7 @@ impl MailboxSink for StreamDomainSink {
                         data: vec![],
                     },
                     None,
+                    true,
                 )
             }
             StreamMessage::Read {
@@ -2415,6 +2512,7 @@ impl MailboxSink for StreamDomainSink {
                         data,
                     },
                     None,
+                    false,
                 )
             }
             StreamMessage::Last { route, .. } => {
@@ -2431,6 +2529,7 @@ impl MailboxSink for StreamDomainSink {
                         data,
                     },
                     None,
+                    false,
                 )
             }
             StreamMessage::GetMetadata { route, .. } => {
@@ -2446,6 +2545,7 @@ impl MailboxSink for StreamDomainSink {
                         data,
                     },
                     None,
+                    false,
                 )
             }
             StreamMessage::Subscribe {
@@ -2504,6 +2604,7 @@ impl MailboxSink for StreamDomainSink {
                         data: vec![],
                     },
                     None,
+                    false,
                 )
             }
             StreamMessage::Unsubscribe {
@@ -2525,6 +2626,7 @@ impl MailboxSink for StreamDomainSink {
                         data: vec![],
                     },
                     None,
+                    false,
                 )
             }
             StreamMessage::UnsubscribeAll { session_id, .. } => {
@@ -2535,6 +2637,7 @@ impl MailboxSink for StreamDomainSink {
                         data: vec![],
                     },
                     None,
+                    false,
                 )
             }
             _ => (
@@ -2544,9 +2647,12 @@ impl MailboxSink for StreamDomainSink {
                     data: vec![],
                 },
                 None,
+                false,
             ),
         };
-        self.sync_admin_snapshot();
+        if should_sync_admin_snapshot {
+            self.sync_admin_snapshot();
+        }
 
         // If we just committed a stream session, fan out STREAM_NOTIFY (609) to matching subscribers
         if let Some((route, payload)) = commit_notify {
@@ -2986,11 +3092,22 @@ impl MailboxSink for LeaseDomainSink {
 
         // Always prefix owner_id with session scope to ensure cleanup works on disconnect
         // Format: "session:{session_id}:{custom_owner}" or "session:{session_id}" if empty
+        let session_prefix = frame_ctx.session_id.to_string();
         let effective_owner = |owner_id: String| {
             if owner_id.is_empty() {
-                format!("session:{}", frame_ctx.session_id)
+                let mut scoped = String::with_capacity("session:".len() + session_prefix.len());
+                scoped.push_str("session:");
+                scoped.push_str(&session_prefix);
+                scoped
             } else {
-                format!("session:{}:{}", frame_ctx.session_id, owner_id)
+                let mut scoped = String::with_capacity(
+                    "session::".len() + session_prefix.len() + owner_id.len(),
+                );
+                scoped.push_str("session:");
+                scoped.push_str(&session_prefix);
+                scoped.push(':');
+                scoped.push_str(&owner_id);
+                scoped
             }
         };
 
@@ -3280,30 +3397,6 @@ impl ScheduleDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
-    fn sync_admin_snapshot(&self) {
-        let schedules = self
-            .actors
-            .lock()
-            .values()
-            .flat_map(|actor| actor.list_defs().into_iter())
-            .filter_map(|(route, cron, _payload)| {
-                parse_route_triplet(&route).map(|(realm, area, resource)| {
-                    crate::api::admin::ScheduleInfo {
-                        realm,
-                        area,
-                        resource,
-                        cron,
-                        next_run: Utc::now().to_rfc3339(),
-                        last_run: None,
-                        executions_total: 0,
-                        enabled: true,
-                    }
-                })
-            })
-            .collect();
-        self.admin_read_model.replace_schedules(schedules);
-    }
-
     /// Handle a DomainPublishEvent from schedule actors.
     /// Matches the event route against subscription patterns and fans out
     /// SCHEDULE_NOTIFY (705) frames to matching subscribers.
@@ -3350,8 +3443,6 @@ impl ScheduleDomainSink {
             session = session_id,
             "All schedule subscriptions removed for session"
         );
-        drop(families);
-        self.sync_admin_snapshot();
     }
 
     /// Get the total number of active schedule subscriptions (for stats).
@@ -3362,7 +3453,7 @@ impl ScheduleDomainSink {
 
     pub fn schedule_count(&self) -> usize {
         let actors = self.actors.lock();
-        actors.values().map(|actor| actor.list_defs().len()).sum()
+        actors.values().map(|actor| actor.schedule_count()).sum()
     }
 }
 
@@ -3434,7 +3525,7 @@ impl MailboxSink for ScheduleDomainSink {
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
 
-        use crate::domains::schedule::{ScheduleListEntry, ScheduleMessage, ScheduleResponse};
+        use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
         enum ScheduleAdminUpdate {
             Upsert {
                 realm: String,
@@ -3471,16 +3562,18 @@ impl MailboxSink for ScheduleDomainSink {
                     let route_for_admin = route.clone();
                     let cron_for_admin = cron.clone();
                     match actor.create_schedule(route, cron, payload) {
-                        Ok(()) => {
-                            if let Some((realm, area, resource)) =
-                                parse_route_triplet(&route_for_admin)
-                            {
-                                admin_update = Some(ScheduleAdminUpdate::Upsert {
-                                    realm,
-                                    area,
-                                    resource,
-                                    cron: cron_for_admin,
-                                });
+                        Ok(changed) => {
+                            if changed {
+                                if let Some((realm, area, resource)) =
+                                    parse_route_triplet(&route_for_admin)
+                                {
+                                    admin_update = Some(ScheduleAdminUpdate::Upsert {
+                                        realm,
+                                        area,
+                                        resource,
+                                        cron: cron_for_admin,
+                                    });
+                                }
                             }
                             ScheduleResponse::Ok
                         }
@@ -3490,15 +3583,17 @@ impl MailboxSink for ScheduleDomainSink {
                 ScheduleMessage::Cancel { route } => {
                     let route_for_admin = route.clone();
                     match actor.delete_schedule(route) {
-                        Ok(()) => {
-                            if let Some((realm, area, resource)) =
-                                parse_route_triplet(&route_for_admin)
-                            {
-                                admin_update = Some(ScheduleAdminUpdate::Remove {
-                                    realm,
-                                    area,
-                                    resource,
-                                });
+                        Ok(removed) => {
+                            if removed {
+                                if let Some((realm, area, resource)) =
+                                    parse_route_triplet(&route_for_admin)
+                                {
+                                    admin_update = Some(ScheduleAdminUpdate::Remove {
+                                        realm,
+                                        area,
+                                        resource,
+                                    });
+                                }
                             }
                             ScheduleResponse::Ok
                         }
@@ -3506,32 +3601,7 @@ impl MailboxSink for ScheduleDomainSink {
                     }
                 }
                 ScheduleMessage::List { offset, limit } => {
-                    let mut all_defs = actor.list_defs();
-                    let total_count = all_defs.len() as u64;
-
-                    // Apply pagination
-                    let start = offset as usize;
-                    let end = if limit == 0 {
-                        all_defs.len()
-                    } else {
-                        std::cmp::min(start + (limit as usize), all_defs.len())
-                    };
-
-                    // Take the requested slice
-                    let page_defs: Vec<_> = if start < all_defs.len() {
-                        all_defs.drain(start..end).collect()
-                    } else {
-                        vec![]
-                    };
-
-                    let entries = page_defs
-                        .into_iter()
-                        .map(|(route, cron, payload)| ScheduleListEntry {
-                            route,
-                            cron,
-                            payload,
-                        })
-                        .collect();
+                    let (entries, total_count) = actor.list_entries(offset, limit);
 
                     ScheduleResponse::ListDefs {
                         entries,

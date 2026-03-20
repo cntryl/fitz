@@ -71,18 +71,18 @@ impl QueueKey {
             path
         };
 
-        let parts: Vec<&str> = path_without_scheme
-            .trim_start_matches('/')
-            .split('/')
-            .collect();
+        let mut parts = path_without_scheme.trim_start_matches('/').split('/');
+        let realm = parts.next()?;
+        let area = parts.next()?;
+        let resource = parts.next()?;
 
         // Accept both 3-segment (realm/area/resource) and 4+ segment (realm/area/resource/...) for queue identity
-        if parts.len() >= 3 {
+        if !realm.is_empty() && !area.is_empty() && !resource.is_empty() {
             Some(QueueKey {
                 family,
-                realm: parts[0].to_string(),
-                area: parts[1].to_string(),
-                resource: parts[2].to_string(),
+                realm: realm.to_string(),
+                area: area.to_string(),
+                resource: resource.to_string(),
             })
         } else {
             None

@@ -51,6 +51,60 @@ pub fn parse_request(
     }
 }
 
+/// Extract the stream route or pattern needed for authorization.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match msg_type {
+        600 => {
+            let route = dec.get_string_ref()?;
+            dec.get_u64()?;
+            dec.skip_optional_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        601 => {
+            dec.get_u64()?;
+            dec.skip_bytes()?;
+            dec.skip_optional_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(None)
+        }
+        602 | 603 => {
+            dec.get_u64()?;
+            if msg_type == 602 {
+                dec.get_u8()?;
+            }
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(None)
+        }
+        604 => {
+            let route = dec.get_string_ref()?;
+            dec.get_u64()?;
+            dec.get_u64()?;
+            dec.get_optional_u64()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        605 | 606 | 607 | 608 => {
+            let route = dec.get_string_ref()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        _ => Err(format!("Unknown operation: {}", msg_type)),
+    }
+}
+
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &StreamResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();

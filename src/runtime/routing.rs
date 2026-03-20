@@ -141,6 +141,7 @@
 use std::fmt;
 #[allow(unused_imports)]
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// An opaque route family identifier
 ///
@@ -286,7 +287,7 @@ impl fmt::Display for RouteFamily {
 /// - Same realm value can appear in different RouteFamilies
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Route {
-    path: String,
+    path: Arc<str>,
 }
 
 impl Route {
@@ -304,7 +305,9 @@ impl Route {
     /// ```
     #[inline]
     pub fn new(path: impl Into<String>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: Arc::from(path.into()),
+        }
     }
 
     /// Get the route path as a string slice

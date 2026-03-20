@@ -42,6 +42,33 @@ pub fn parse_request(
     }
 }
 
+/// Extract the request route or worker address needed for authorization.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match msg_type {
+        300 | 301 => {
+            let route = dec.get_string_ref()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        302 => {
+            dec.skip_bytes()?;
+            let route = dec.get_string_ref()?;
+            dec.get_string_ref()?;
+            dec.skip_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        303 | 304 => Ok(None),
+        _ => Err(format!("Unknown operation: {}", msg_type)),
+    }
+}
+
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();

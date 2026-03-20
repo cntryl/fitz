@@ -111,6 +111,10 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
 /// Expected format: "queue://realm/area/resource" or just "realm/area/resource"  
 /// Returns full route string without decomposition
 fn parse_route_string(payload: &[u8], offset: &mut usize) -> Result<String, String> {
+    parse_route_str_ref(payload, offset).map(str::to_string)
+}
+
+fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a str, String> {
     // Read route length (u32)
     if *offset + 4 > payload.len() {
         return Err("Route length overflow".to_string());
@@ -127,11 +131,27 @@ fn parse_route_string(payload: &[u8], offset: &mut usize) -> Result<String, Stri
     if *offset + route_len > payload.len() {
         return Err("Route string overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[*offset..*offset + route_len].to_vec())
+    let route_str = std::str::from_utf8(&payload[*offset..*offset + route_len])
         .map_err(|_| "Invalid UTF-8 in route".to_string())?;
     *offset += route_len;
 
     Ok(route_str)
+}
+
+/// Extract the queue route or pattern used for authorization without constructing a full message.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    match msg_type {
+        msg_type::ENQUEUE
+        | msg_type::RESERVE
+        | msg_type::EXTEND
+        | msg_type::COMPLETE
+        | msg_type::SUBSCRIBE
+        | msg_type::UNSUBSCRIBE => {
+            let mut offset = 0;
+            parse_route_str_ref(payload, &mut offset).map(Some)
+        }
+        _ => Ok(None),
+    }
 }
 
 fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
@@ -187,7 +207,7 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     Ok(QueueMessage::Send {
         family_id,
-        route: Route::new(&route_str),
+        route: Route::new(route_str),
         body,
         delay_seconds,
     })
@@ -264,7 +284,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     Ok(QueueMessage::Receive {
         family_id,
-        route: Route::new(&route_str),
+        route: Route::new(route_str),
         lease_seconds,
         batch_size,
         wait_seconds,
@@ -327,7 +347,7 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
 
     Ok(QueueMessage::Extend {
         family_id,
-        route: Route::new(&route_str),
+        route: Route::new(route_str),
         id,
         token,
         lease_seconds,
@@ -374,7 +394,7 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
 
     Ok(QueueMessage::Ack {
         family_id,
-        route: Route::new(&route_str),
+        route: Route::new(route_str),
         id,
         token,
     })

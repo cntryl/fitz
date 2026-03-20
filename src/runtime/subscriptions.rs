@@ -38,6 +38,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubscriptionId(pub u64);
 
+/// Common match result buffer for subscription lookups.
+pub type SubscriptionMatches = SmallVec<[SubscriptionId; 8]>;
+
 /// A node in the route pattern trie
 struct TrieNode {
     /// Children for literal segment matches
@@ -138,15 +141,15 @@ impl SubscriptionIndex {
     ///
     /// # Returns
     /// Vector of matching subscription IDs (may contain duplicates if pattern/subscriber pair added multiple times)
-    pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> Vec<SubscriptionId> {
+    pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> SubscriptionMatches {
         let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
         let root = match roots.get(&family_id) {
             Some(r) => r,
-            None => return Vec::new(),
+            None => return SubscriptionMatches::new(),
         };
 
-        let mut results = Vec::new();
+        let mut results = SubscriptionMatches::new();
         collect_matches_borrowed(root, &route_segments, 0, &mut results);
         results
     }
@@ -159,15 +162,15 @@ impl SubscriptionIndex {
         family_id: RouteFamily,
         route: &Route,
         capacity: usize,
-    ) -> Vec<SubscriptionId> {
+    ) -> SubscriptionMatches {
         let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
         let root = match roots.get(&family_id) {
             Some(r) => r,
-            None => return Vec::new(),
+            None => return SubscriptionMatches::new(),
         };
 
-        let mut results = Vec::with_capacity(capacity);
+        let mut results = SubscriptionMatches::with_capacity(capacity);
         collect_matches_borrowed(root, &route_segments, 0, &mut results);
         results
     }
@@ -361,7 +364,7 @@ fn collect_matches_borrowed(
     node: &TrieNode,
     route_segments: &[&str],
     seg_idx: usize,
-    results: &mut Vec<SubscriptionId>,
+    results: &mut SubscriptionMatches,
 ) {
     // Collect terminal matches only if we've consumed all route segments
     if seg_idx >= route_segments.len() {
@@ -473,7 +476,7 @@ mod tests {
         let matches = index.match_all(f, &pattern);
 
         // Assert
-        assert_eq!(matches, vec![sub_id(1)]);
+        assert_eq!(matches.as_slice(), &[sub_id(1)]);
     }
 
     #[test]
@@ -501,7 +504,7 @@ mod tests {
         let matches_create = index.match_all(f, &route("notify://realm/orders/create"));
 
         // Assert
-        assert_eq!(matches_create, vec![sub_id(1)]);
+        assert_eq!(matches_create.as_slice(), &[sub_id(1)]);
     }
 
     #[test]
@@ -529,7 +532,7 @@ mod tests {
         let matches = index.match_all(f, &route("notify://realm"));
 
         // Assert
-        assert_eq!(matches, vec![sub_id(1)]);
+        assert_eq!(matches.as_slice(), &[sub_id(1)]);
     }
 
     #[test]
@@ -543,7 +546,7 @@ mod tests {
         let matches = index.match_all(f, &route("notify://realm/orders"));
 
         // Assert
-        assert_eq!(matches, vec![sub_id(1)]);
+        assert_eq!(matches.as_slice(), &[sub_id(1)]);
     }
 
     #[test]
@@ -557,7 +560,7 @@ mod tests {
         let matches = index.match_all(f, &route("notify://realm/created"));
 
         // Assert
-        assert_eq!(matches, vec![sub_id(1)]);
+        assert_eq!(matches.as_slice(), &[sub_id(1)]);
     }
 
     #[test]
@@ -587,7 +590,7 @@ mod tests {
         let f1_matches = index.match_all(f1, &route("notify://realm/orders/create"));
 
         // Assert
-        assert_eq!(f1_matches, vec![sub_id(1)]);
+        assert_eq!(f1_matches.as_slice(), &[sub_id(1)]);
     }
 
     #[test]
@@ -603,7 +606,7 @@ mod tests {
         let f2_matches = index.match_all(f2, &route("notify://realm/orders/create"));
 
         // Assert
-        assert_eq!(f2_matches, vec![sub_id(2)]);
+        assert_eq!(f2_matches.as_slice(), &[sub_id(2)]);
     }
 
     #[test]
@@ -620,7 +623,7 @@ mod tests {
         matches.sort_by_key(|id| id.0);
 
         // Assert
-        assert_eq!(matches, vec![sub_id(1), sub_id(2)]);
+        assert_eq!(matches.as_slice(), &[sub_id(1), sub_id(2)]);
     }
 
     #[test]
@@ -653,6 +656,6 @@ mod tests {
         matches.sort_by_key(|id| id.0);
 
         // Assert
-        assert_eq!(matches, vec![sub_id(1), sub_id(2), sub_id(3)]);
+        assert_eq!(matches.as_slice(), &[sub_id(1), sub_id(2), sub_id(3)]);
     }
 }

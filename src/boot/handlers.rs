@@ -196,8 +196,7 @@ async fn handle_tcp_connection(
         outbound_tx.clone(),
     ));
     let initial_family = ingress
-        .get_session_info(session_id)
-        .map(|session| session.route_family)
+        .get_route_family(session_id)
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
     let inbox_route = crate::runtime::routing::session_inbox_address(initial_family, session_id);
     let current_inbox = Arc::new(Mutex::new(inbox_route.clone()));
@@ -288,11 +287,11 @@ async fn handle_tcp_connection(
                 break;
             }
 
-            if let Some(updated) = ingress_clone.get_session_info(session_id) {
-                if updated.route_family != *registered_inbox.family() {
+            if let Some(updated_route_family) = ingress_clone.get_route_family(session_id) {
+                if updated_route_family != *registered_inbox.family() {
                     runtime_for_frames.router.unregister(&registered_inbox);
                     registered_inbox = crate::runtime::routing::session_inbox_address(
-                        updated.route_family,
+                        updated_route_family,
                         session_id,
                     );
                     runtime_for_frames.router.register(
@@ -587,11 +586,11 @@ where
                     tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
                 }
-                if let Some(updated) = ingress.get_session_info(session_id) {
-                    if updated.route_family != *inbox_route.family() {
+                if let Some(updated_route_family) = ingress.get_route_family(session_id) {
+                    if updated_route_family != *inbox_route.family() {
                         router.unregister(&inbox_route);
                         inbox_route = crate::runtime::routing::session_inbox_address(
-                            updated.route_family,
+                            updated_route_family,
                             session_id,
                         );
                         router.register(

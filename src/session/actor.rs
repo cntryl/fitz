@@ -78,11 +78,16 @@ impl SessionActor {
     /// **Security:** This check includes token expiration validation.
     /// Expired tokens are automatically rejected.
     pub fn authorize(&self, route: &Route, access: Access) -> bool {
+        self.authorize_route(route.as_str(), access)
+    }
+
+    /// String-based authorization variant for hot paths that already have a borrowed route.
+    pub fn authorize_route(&self, route: &str, access: Access) -> bool {
         // Reject if token is expired
         if self.is_token_expired() {
             return false;
         }
-        self.permissions.allows(route, access)
+        self.permissions.allows_route(route, access)
     }
 
     /// Batch authorization check (useful for multi-operation requests)

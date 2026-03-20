@@ -6,11 +6,14 @@ use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
+use fxhash::FxBuildHasher;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
+
+type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
 /// Schedule actor: manages time-based triggers with route-based identity
 ///
@@ -22,7 +25,14 @@ pub struct ScheduleActor {
     /// Persistent storage
     store: ScheduleStore,
     /// In-memory schedule cache: route -> ScheduleDef
-    schedules: HashMap<String, ScheduleDef>,
+    schedules: FastMap<String, ScheduleDef>,
+    /// Parsed cron expressions reused across repeated creates/upserts.
+    cron_cache: FastMap<String, CronSchedule>,
+    /// Canonical mutable LIST backing store.
+    list_entries: Vec<Arc<ScheduleListEntry>>,
+    /// Cached full LIST snapshot reused by the common `offset=0, limit=0` path.
+    /// Mutations invalidate this cache instead of cloning it via `Arc::make_mut`.
+    list_cache: Option<Arc<Vec<Arc<ScheduleListEntry>>>>,
     /// Write options for persistence
     write_options: cntryl_midge::WriteOptions,
     /// Last scan time to deduplicate rapid scans
@@ -45,7 +55,10 @@ impl ScheduleActor {
         let mut actor = Self {
             family,
             store,
-            schedules: HashMap::new(),
+            schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
+            cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher::default()),
+            list_entries: Vec::new(),
+            list_cache: None,
             write_options,
             last_scan_time: Instant::now(),
             scan_dedup_window: std::time::Duration::from_millis(10),
@@ -54,17 +67,22 @@ impl ScheduleActor {
 
         // Load persisted schedules on startup
         if let Ok(entries) = actor.store.load_all(family.as_u64()) {
-            for (route, cron_str, payload) in entries {
+            for (route, cron_str, payload, next_fire_ms) in entries {
                 match CronSchedule::parse(&cron_str) {
                     Ok(cron) => {
-                        let next_fire = cron.next_fire_time(Instant::now());
-                        let next_fire_ms = Self::instant_to_ms(next_fire);
+                        actor.cron_cache.insert(cron_str.clone(), cron.clone());
+                        let next_fire = Self::ms_to_instant(next_fire_ms);
+                        let list_index =
+                            actor.push_list_entry(route.as_str(), cron_str.as_str(), &payload);
                         let def = ScheduleDef {
                             route: route.clone(),
                             cron: cron_str,
                             parsed_cron: cron,
                             payload,
                             next_fire_time: next_fire,
+                            next_fire_ms,
+                            storage_key: ScheduleStore::encode_key(next_fire_ms, &route),
+                            list_index,
                         };
                         actor.schedules.insert(route.clone(), def);
                         // Add to ready heap for efficient scanning
@@ -83,40 +101,60 @@ impl ScheduleActor {
         actor
     }
 
+    fn parsed_cron_for(&mut self, cron: &str) -> Result<CronSchedule, String> {
+        if let Some(parsed) = self.cron_cache.get(cron) {
+            return Ok(parsed.clone());
+        }
+
+        let parsed = CronSchedule::parse(cron)?;
+        self.cron_cache.insert(cron.to_string(), parsed.clone());
+        Ok(parsed)
+    }
+
     /// Create or update a schedule (upsert by route)
     ///
-    /// Returns Ok(()) on successful create/update, Err(msg) if cron is invalid.
+    /// Returns Ok(true) if the schedule was created or updated.
+    /// Returns Ok(false) for an idempotent no-op upsert.
     pub fn create_schedule(
         &mut self,
         route: String,
         cron: String,
         payload: Bytes,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let now = Instant::now();
+        let (previous_next_fire_ms, previous_list_index) = self
+            .schedules
+            .get(&route)
+            .map(|existing| (Some(existing.next_fire_ms), Some(existing.list_index)))
+            .unwrap_or((None, None));
 
         if let Some(existing) = self.schedules.get(&route) {
             if existing.cron == cron && existing.payload == payload && existing.next_fire_time > now
             {
-                return Ok(());
+                return Ok(false);
             }
         }
 
-        // Validate cron expression
-        let cron_obj = CronSchedule::parse(&cron)?;
+        // Reuse parsed schedules for repeated cron strings on the hot create path.
+        let cron_obj = self.parsed_cron_for(&cron)?;
 
         // Calculate next fire time
         let next_fire = cron_obj.next_fire_time(now);
         let next_fire_ms = Self::instant_to_ms(next_fire);
 
         // Persist first, then move payload into the in-memory definition.
-        self.store.insert(
+        let storage_key = self.store.insert(
             self.family.as_u64(),
             &route,
             &cron,
             &payload,
             next_fire,
+            next_fire_ms,
+            previous_next_fire_ms,
             self.write_options,
         )?;
+
+        let list_index = self.upsert_list_entry(previous_list_index, &route, &cron, &payload);
 
         // Create in-memory definition with cached parsed cron
         let def = ScheduleDef {
@@ -125,36 +163,173 @@ impl ScheduleActor {
             parsed_cron: cron_obj,
             payload,
             next_fire_time: next_fire,
+            next_fire_ms,
+            storage_key,
+            list_index,
         };
 
-        // Update in-memory cache
         self.schedules.insert(route.clone(), def);
 
         // Add to ready heap for efficient scanning
         self.ready_heap.push((Reverse(next_fire_ms), route.clone()));
 
-        info!(
-            "Schedule upserted for route: {} (family: {})",
-            route,
-            self.family.as_u64()
-        );
-
-        Ok(())
+        Ok(true)
     }
 
     /// Delete a schedule by route
-    pub fn delete_schedule(&mut self, route: String) -> Result<(), String> {
-        self.schedules.remove(&route);
+    pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
+        let Some(removed_def) = self.schedules.remove(&route) else {
+            return Ok(false);
+        };
+        self.remove_list_entry(removed_def.list_index);
+
         self.store
-            .delete(self.family.as_u64(), &route, self.write_options)
+            .delete_prepared(
+                self.family.as_u64(),
+                removed_def.storage_key,
+                self.write_options,
+            )
+            .map(|()| true)
+    }
+
+    pub fn schedule_count(&self) -> usize {
+        self.schedules.len()
     }
 
     /// List all schedules as (route, cron, payload) tuples
     pub fn list_defs(&self) -> Vec<(String, String, Bytes)> {
-        self.schedules
-            .values()
-            .map(|def| (def.route.clone(), def.cron.clone(), def.payload.clone()))
+        self.list_entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.route.clone(),
+                    entry.cron.clone(),
+                    entry.payload.clone(),
+                )
+            })
             .collect()
+    }
+
+    fn push_list_entry(&mut self, route: &str, cron: &str, payload: &Bytes) -> usize {
+        let entry = Arc::new(ScheduleListEntry {
+            route: route.to_string(),
+            cron: cron.to_string(),
+            payload: payload.clone(),
+        });
+        let index = self.list_entries.len();
+        self.list_entries.push(entry);
+        index
+    }
+
+    fn sync_cached_upsert(&mut self, current_index: Option<usize>, entry: Arc<ScheduleListEntry>) {
+        let invalidate_cache = self
+            .list_cache
+            .as_ref()
+            .is_some_and(|cache| Arc::strong_count(cache) > 1);
+        if invalidate_cache {
+            self.list_cache = None;
+            return;
+        }
+
+        let Some(cache) = self.list_cache.as_mut() else {
+            return;
+        };
+        let cache_entries = Arc::get_mut(cache).expect("schedule list cache must be exclusive");
+        if let Some(index) = current_index {
+            cache_entries[index] = entry;
+        } else {
+            cache_entries.push(entry);
+        }
+    }
+
+    fn sync_cached_remove(&mut self, index: usize) {
+        let invalidate_cache = self
+            .list_cache
+            .as_ref()
+            .is_some_and(|cache| Arc::strong_count(cache) > 1);
+        if invalidate_cache {
+            self.list_cache = None;
+            return;
+        }
+
+        let Some(cache) = self.list_cache.as_mut() else {
+            return;
+        };
+        let cache_entries = Arc::get_mut(cache).expect("schedule list cache must be exclusive");
+        if index < cache_entries.len() {
+            cache_entries.swap_remove(index);
+        }
+    }
+
+    fn upsert_list_entry(
+        &mut self,
+        current_index: Option<usize>,
+        route: &str,
+        cron: &str,
+        payload: &Bytes,
+    ) -> usize {
+        let entry = Arc::new(ScheduleListEntry {
+            route: route.to_string(),
+            cron: cron.to_string(),
+            payload: payload.clone(),
+        });
+        if let Some(index) = current_index {
+            self.list_entries[index] = entry.clone();
+            self.sync_cached_upsert(Some(index), entry);
+            index
+        } else {
+            let index = self.list_entries.len();
+            self.list_entries.push(entry.clone());
+            self.sync_cached_upsert(None, entry);
+            index
+        }
+    }
+
+    fn remove_list_entry(&mut self, index: usize) {
+        if index >= self.list_entries.len() {
+            return;
+        }
+
+        self.list_entries.swap_remove(index);
+        self.sync_cached_remove(index);
+        if let Some(swapped_entry) = self.list_entries.get(index) {
+            if let Some(swapped_def) = self.schedules.get_mut(&swapped_entry.route) {
+                swapped_def.list_index = index;
+            }
+        }
+    }
+
+    pub fn list_entries(
+        &mut self,
+        offset: u64,
+        limit: u64,
+    ) -> (Arc<Vec<Arc<ScheduleListEntry>>>, u64) {
+        let total_count = self.schedules.len() as u64;
+        let start = offset as usize;
+        if start >= self.list_entries.len() {
+            return (Arc::new(Vec::new()), total_count);
+        }
+
+        let remaining = self.list_entries.len() - start;
+        let take = if limit == 0 {
+            remaining
+        } else {
+            remaining.min(limit as usize)
+        };
+
+        if start == 0 && take == self.list_entries.len() {
+            if let Some(cache) = &self.list_cache {
+                return (cache.clone(), total_count);
+            }
+            let cache = Arc::new(self.list_entries.clone());
+            self.list_cache = Some(cache.clone());
+            return (cache, total_count);
+        }
+
+        (
+            Arc::new(self.list_entries[start..start + take].to_vec()),
+            total_count,
+        )
     }
 
     /// Scan for schedules ready to fire and trigger them
@@ -175,8 +350,8 @@ impl ScheduleActor {
         self.last_scan_time = now;
         let now_ms = Self::instant_to_ms(now);
         let mut fired = Vec::new();
-        // Reuse single vec for persistence: (route, cron, payload, next_fire) matches store API
-        let mut to_reschedule: Vec<(String, String, Bytes, Instant)> = Vec::new();
+        // Reuse single vec for persistence: (route, cron, payload, next_fire, next_fire_ms, previous_fire_ms)
+        let mut to_reschedule: Vec<(String, String, Bytes, Instant, u64, u64)> = Vec::new();
         let mut heap_popped = Vec::new();
 
         // Peek the heap for schedules ready to fire (fire_ms <= now_ms)
@@ -192,17 +367,22 @@ impl ScheduleActor {
         }
 
         // Process fired schedules: build to_reschedule in store API shape (no extra batch clone)
-        for (_fire_ms, route) in heap_popped {
+        for (fire_ms, route) in heap_popped {
             if let Some(def) = self.schedules.get_mut(&route) {
                 // Use cached parsed cron instead of reparsing
                 let next_fire = def.parsed_cron.next_fire_time(now);
+                let next_fire_ms = Self::instant_to_ms(next_fire);
                 def.next_fire_time = next_fire;
+                def.next_fire_ms = next_fire_ms;
+                def.storage_key = ScheduleStore::encode_key(next_fire_ms, &route);
 
                 to_reschedule.push((
                     route.clone(),
                     def.cron.clone(),
                     def.payload.clone(),
                     next_fire,
+                    next_fire_ms,
+                    fire_ms,
                 ));
                 fired.push((route.clone(), def.payload.clone()));
                 info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
@@ -213,9 +393,8 @@ impl ScheduleActor {
         let _ = self
             .store
             .insert_batch(self.family.as_u64(), &to_reschedule, self.write_options);
-        for (route, _cron, _payload, next_fire) in to_reschedule {
-            self.ready_heap
-                .push((Reverse(Self::instant_to_ms(next_fire)), route));
+        for (route, _cron, _payload, _next_fire, next_fire_ms, _previous_fire_ms) in to_reschedule {
+            self.ready_heap.push((Reverse(next_fire_ms), route));
         }
 
         fired
@@ -274,6 +453,25 @@ impl ScheduleActor {
         }
     }
 
+    fn ms_to_instant(timestamp_ms: u64) -> Instant {
+        let now_instant = Instant::now();
+        let now_ms = if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            (elapsed.as_secs() * 1000) + (elapsed.subsec_millis() as u64)
+        } else {
+            return now_instant;
+        };
+
+        if timestamp_ms >= now_ms {
+            now_instant
+                .checked_add(Duration::from_millis(timestamp_ms - now_ms))
+                .unwrap_or(now_instant)
+        } else {
+            now_instant
+                .checked_sub(Duration::from_millis(now_ms - timestamp_ms))
+                .unwrap_or(now_instant)
+        }
+    }
+
     /// Handle schedule message (synchronous)
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
         match msg {
@@ -282,41 +480,15 @@ impl ScheduleActor {
                 cron,
                 payload,
             } => match self.create_schedule(route, cron, payload) {
-                Ok(()) => ScheduleResponse::Ok,
+                Ok(_) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },
             ScheduleMessage::Cancel { route } => match self.delete_schedule(route) {
-                Ok(()) => ScheduleResponse::Ok,
+                Ok(_) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },
             ScheduleMessage::List { offset, limit } => {
-                let mut all_defs = self.list_defs();
-                let total_count = all_defs.len() as u64;
-
-                // Apply pagination
-                let start = offset as usize;
-                let end = if limit == 0 {
-                    all_defs.len()
-                } else {
-                    std::cmp::min(start + (limit as usize), all_defs.len())
-                };
-
-                // Take the requested slice
-                let page_defs: Vec<_> = if start < all_defs.len() {
-                    all_defs.drain(start..end).collect()
-                } else {
-                    vec![]
-                };
-
-                let entries = page_defs
-                    .into_iter()
-                    .map(|(route, cron, payload)| ScheduleListEntry {
-                        route,
-                        cron,
-                        payload,
-                    })
-                    .collect();
-
+                let (entries, total_count) = self.list_entries(offset, limit);
                 ScheduleResponse::ListDefs {
                     entries,
                     total_count,

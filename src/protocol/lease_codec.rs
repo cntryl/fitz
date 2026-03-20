@@ -47,6 +47,54 @@ pub fn parse_request(
     }
 }
 
+/// Extract the lease route or pattern needed for authorization.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match msg_type {
+        400 => {
+            let route = dec.get_string_ref()?;
+            dec.get_string_ref()?;
+            dec.get_u64()?;
+            if !dec.is_complete() {
+                dec.get_u32()?;
+            }
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        401 => {
+            let route = dec.get_string_ref()?;
+            dec.get_string_ref()?;
+            dec.get_u64()?;
+            dec.get_u64()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        402 => {
+            let route = dec.get_string_ref()?;
+            dec.get_string_ref()?;
+            dec.get_u64()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        403 | 407 | 408 => {
+            let route = dec.get_string_ref()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        409 => Ok(None),
+        _ => Err(format!("Unknown operation: {}", msg_type)),
+    }
+}
+
 /// Encode domain LeaseResponse to wire bytes (CLIENT_SPEC).
 ///
 /// - ACQUIRE success: status=0, response_type (0–3), fencing_token

@@ -31,9 +31,10 @@ fn setup_queue_actor(
     fitz::domains::queue::QueueActor,
     Context<fitz::domains::queue::QueueActor>,
 ) {
+    let family = RouteFamily::new(1);
     let (actor, _temp_dir) = create_local_bench_queue_actor("tier4", "queue", "main", None);
     let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(RouteFamily::new(0), Route::new(route.to_string()));
+    let addr = RouteAddress::new(family, Route::new(route.to_string()));
     let ctx = Context::new(addr, router);
     (actor, ctx)
 }
@@ -45,12 +46,13 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     ctx.tag("scenario", "enqueue");
 
     let route = "queue://tier4/queue/main/enqueue";
+    let family = RouteFamily::new(1);
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
 
     ctx.measure(|| {
         actor.receive(
             QueueMessage::Send {
-                family_id: RouteFamily::new(0),
+                family_id: family,
                 route: Route::new(route.to_string()),
                 body: Bytes::from_static(b"msg"),
                 delay_seconds: None,
@@ -69,7 +71,7 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let route = "queue://tier4/queue/main/enqueue";
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
     let enqueue_frame = build_queue_enqueue(route, b"msg");
-    let family = RouteFamily::new(0);
+    let family = RouteFamily::new(1);
 
     ctx.measure(|| {
         let mut parser = TlvFrameParser::new(enqueue_frame.clone());

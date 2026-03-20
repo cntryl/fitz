@@ -20,19 +20,17 @@ pub fn create_bench_queue_actor(
     resource: &str,
     max_attempts: Option<u32>,
 ) -> QueueActor {
+    let family = RouteFamily::new(1);
     let queue_key = QueueKey {
-        // TODO: Use CF=1 once Midge supports explicit CF creation in in-memory mode
-        // For now, use CF=0 (default) as a workaround for Midge test limitation
-        family: RouteFamily::new(0),
+        family,
         realm: realm.to_string(),
         area: area.to_string(),
         resource: resource.to_string(),
     };
 
     let store = create_bench_store();
-    // TODO: Use CF=1 once Midge supports explicit CF creation in in-memory mode
     QueueActor::new(
-        RouteFamily::new(0),
+        family,
         queue_key,
         store,
         max_attempts,
@@ -61,8 +59,9 @@ pub fn create_local_bench_queue_actor(
     resource: &str,
     max_attempts: Option<u32>,
 ) -> (QueueActor, tempfile::TempDir) {
+    let family = RouteFamily::new(1);
     let queue_key = QueueKey {
-        family: RouteFamily::new(0),
+        family,
         realm: realm.to_string(),
         area: area.to_string(),
         resource: resource.to_string(),
@@ -70,7 +69,7 @@ pub fn create_local_bench_queue_actor(
 
     let (store, temp_dir) = create_local_bench_store();
     let actor = QueueActor::new(
-        RouteFamily::new(0),
+        family,
         queue_key,
         store,
         max_attempts,

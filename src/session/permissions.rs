@@ -109,8 +109,14 @@ impl SessionPermissions {
     /// Check whether the permission set allows the given access to the route
     #[inline]
     pub fn allows(&self, route: &crate::runtime::routing::Route, access: Access) -> bool {
+        self.allows_route(route.as_str(), access)
+    }
+
+    /// Check whether the permission set allows the given access to a raw route string.
+    #[inline]
+    pub fn allows_route(&self, route: &str, access: Access) -> bool {
         // Create cache key from route and access
-        let route_hash = route_to_hash(route.as_str());
+        let route_hash = route_to_hash(route);
         let access_bits = access_to_bits(access);
         let cache_key = (route_hash, access_bits);
 
@@ -125,7 +131,7 @@ impl SessionPermissions {
         // Slow path: evaluate permissions
         let mut allowed = false;
         for p in self.compiled.iter() {
-            if !p.pattern.matches(route) {
+            if !p.pattern.matches_str(route) {
                 continue;
             }
 

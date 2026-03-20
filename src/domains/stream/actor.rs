@@ -300,6 +300,18 @@ impl StreamActor {
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<ReadResponse, StreamError> {
+        if limit == 0 || from_offset >= self.next_resource_offset {
+            return Ok(ReadResponse {
+                records: Vec::new(),
+                cursor: super::protocol::ReadCursor {
+                    last_resource_offset: from_offset,
+                    last_area_offset: None,
+                    last_realm_offset: None,
+                    has_more: false,
+                },
+            });
+        }
+
         // Read from Midge storage (NOT from memory!) with cursor
         let params = crate::domains::stream::store::ReadResourceParams {
             family: self.family_id.as_u64(),
@@ -319,6 +331,10 @@ impl StreamActor {
     }
 
     fn handle_last(&self) -> Result<PeekResponse, StreamError> {
+        if self.next_resource_offset == 0 {
+            return Ok(PeekResponse { record: None });
+        }
+
         // Get the last visible entry in the stream (tail operation)
         let record = self
             .store

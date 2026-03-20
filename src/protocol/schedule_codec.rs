@@ -32,6 +32,39 @@ pub fn parse_request(
     }
 }
 
+/// Extract the schedule route or pattern needed for authorization.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match msg_type {
+        700 => {
+            let route = dec.get_string_ref()?;
+            dec.get_string_ref()?;
+            dec.skip_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        701 | 703 | 704 => {
+            let route = dec.get_string_ref()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        702 => {
+            dec.get_optional_u64()?;
+            dec.get_optional_u64()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(None)
+        }
+        _ => Err(format!("Unknown operation: {}", msg_type)),
+    }
+}
+
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
@@ -51,7 +84,7 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
         } => {
             enc.put_u8(0); // success flag
             enc.put_u64(*total_count); // total count of all schedules
-            for entry in entries {
+            for entry in entries.iter() {
                 enc.put_u8(1); // has_entry
                 enc.put_string(&entry.route);
                 enc.put_string(&entry.cron);

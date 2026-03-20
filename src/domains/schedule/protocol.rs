@@ -1,5 +1,6 @@
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Schedule operation messages
@@ -48,7 +49,7 @@ pub enum ScheduleResponse {
     Ok,
     /// LIST operation: returns paginated schedules with total count
     ListDefs {
-        entries: Vec<ScheduleListEntry>,
+        entries: Arc<Vec<Arc<ScheduleListEntry>>>,
         total_count: u64,
     },
     /// Operation failed with error message
@@ -76,6 +77,12 @@ pub struct ScheduleDef {
     pub payload: Bytes,
     /// Next fire time calculated from cron + current time
     pub next_fire_time: Instant,
+    /// Exact next-fire timestamp used in the persisted storage key
+    pub next_fire_ms: u64,
+    /// Cached main storage key for the current next-fire timestamp.
+    pub storage_key: Vec<u8>,
+    /// Current index in the actor's mutable LIST backing store.
+    pub list_index: usize,
 }
 
 /// Parses and validates cron expressions
@@ -377,6 +384,9 @@ mod tests {
             parsed_cron,
             payload,
             next_fire_time: Instant::now(),
+            next_fire_ms: 0,
+            storage_key: Vec::new(),
+            list_index: 0,
         };
 
         // Assert

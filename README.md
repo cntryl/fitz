@@ -101,5 +101,5 @@ If you want a single local service, this is the smallest useful compose file:
 - Client protocol spec: [docs/clients/client-spec.md](docs/clients/client-spec.md)
 - User onboarding guides: [docs/user-guides](docs/user-guides)
 - Operations guides: [docs/operations](docs/operations)
-
+- Local perf loop runner: [docs/development/perf-loop.md](docs/development/perf-loop.md)
 

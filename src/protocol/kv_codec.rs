@@ -108,26 +108,122 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 
 /// Parse route string into realm, area, resource components
 /// Expected format: "kv://realm/area/resource" or just "realm/area/resource"
-fn parse_route(route_str: &str) -> Result<(String, String, String), String> {
-    // Strip scheme if present
+fn split_route(route_str: &str) -> Option<(&str, &str, &str)> {
     let path = if let Some(pos) = route_str.find("://") {
         &route_str[pos + 3..]
     } else {
         route_str
     };
 
-    let parts: Vec<&str> = path.splitn(3, '/').collect();
-    if parts.len() == 3 {
-        Ok((
-            parts[0].to_string(),
-            parts[1].to_string(),
-            parts[2].to_string(),
-        ))
+    let mut parts = path.splitn(3, '/');
+    let realm = parts.next()?;
+    let area = parts.next()?;
+    let resource = parts.next()?;
+
+    if realm.is_empty() || area.is_empty() || resource.is_empty() {
+        return None;
+    }
+
+    Some((realm, area, resource))
+}
+
+fn decode_route_str<'a>(route_bytes: &'a [u8], op_name: &str) -> Result<&'a str, String> {
+    std::str::from_utf8(route_bytes).map_err(|_| format!("Invalid UTF-8 in {op_name} route"))
+}
+
+fn read_route_str<'a>(
+    payload: &'a [u8],
+    offset: &mut usize,
+    op_name: &str,
+) -> Result<&'a str, String> {
+    if *offset + 4 > payload.len() {
+        return Err(format!("{op_name} route length overflow"));
+    }
+    let route_len = u32::from_be_bytes([
+        payload[*offset],
+        payload[*offset + 1],
+        payload[*offset + 2],
+        payload[*offset + 3],
+    ]) as usize;
+    *offset += 4;
+
+    if *offset + route_len > payload.len() {
+        return Err(format!("{op_name} route overflow"));
+    }
+    let route_str = decode_route_str(&payload[*offset..*offset + route_len], op_name)?;
+    *offset += route_len;
+    Ok(route_str)
+}
+
+fn parse_route(route_str: &str) -> Result<(String, String, String), String> {
+    match split_route(route_str) {
+        Some((realm, area, resource)) => {
+            Ok((realm.to_string(), area.to_string(), resource.to_string()))
+        }
+        None => Err(format!(
+            "Route must be realm/area/resource, got '{}'",
+            route_str
+        )),
+    }
+}
+
+fn parse_route_resource(route_str: &str) -> Result<String, String> {
+    match split_route(route_str) {
+        Some((_realm, _area, resource)) => Ok(resource.to_string()),
+        None => Err(format!(
+            "Route must be realm/area/resource, got '{}'",
+            route_str
+        )),
+    }
+}
+
+fn validate_route(route_str: &str) -> Result<(), String> {
+    if split_route(route_str).is_some() {
+        Ok(())
     } else {
         Err(format!(
             "Route must be realm/area/resource, got '{}'",
             route_str
         ))
+    }
+}
+
+/// Extract the KV route needed for authorization without constructing a full request message.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    match msg_type {
+        msg_type::BEGIN => {
+            if payload.len() < 6 {
+                return Err("BEGIN payload too short".to_string());
+            }
+
+            let mut offset = 0;
+            let route_str = read_route_str(payload, &mut offset, "BEGIN")?;
+            validate_route(route_str)?;
+
+            if offset + 2 > payload.len() {
+                return Err("BEGIN mode byte missing".to_string());
+            }
+
+            Ok(Some(route_str))
+        }
+        msg_type::COMMIT
+        | msg_type::ROLLBACK
+        | msg_type::GET
+        | msg_type::PUT
+        | msg_type::INSERT
+        | msg_type::DELETE
+        | msg_type::DELETE_RANGE
+        | msg_type::SCAN => {
+            if payload.len() < 12 {
+                return Err(format!("{} payload too short", msg_type));
+            }
+
+            let mut offset = 8;
+            let route_str = read_route_str(payload, &mut offset, "KV")?;
+            validate_route(route_str)?;
+            Ok(None)
+        }
+        _ => Err(format!("Unknown KV message type: {}", msg_type)),
     }
 }
 
@@ -168,11 +264,10 @@ fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
     if offset + route_len > payload.len() {
         return Err("COMMIT route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in COMMIT route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "COMMIT")?;
 
     // Parse route into realm/area/resource (not used in Commit, but validates wire format)
-    let (_realm, _area, _resource) = parse_route(&route_str)?;
+    validate_route(route_str)?;
 
     Ok(KvMessage::Commit { tx_id })
 }
@@ -214,11 +309,10 @@ fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
     if offset + route_len > payload.len() {
         return Err("ROLLBACK route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in ROLLBACK route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "ROLLBACK")?;
 
     // Parse route into realm/area/resource (not used in Rollback, but validates wire format)
-    let (_realm, _area, _resource) = parse_route(&route_str)?;
+    validate_route(route_str)?;
 
     Ok(KvMessage::Rollback { tx_id })
 }
@@ -244,8 +338,7 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     if offset + route_len > payload.len() {
         return Err("BEGIN route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in BEGIN route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "BEGIN")?;
     offset += route_len;
 
     // Parse route into realm/area/resource
@@ -319,12 +412,11 @@ fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     if offset + route_len > payload.len() {
         return Err("GET route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in GET route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "GET")?;
     offset += route_len;
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
-    let (_realm, _area, resource) = parse_route(&route_str)?;
+    let resource = parse_route_resource(route_str)?;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -389,12 +481,11 @@ fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, Str
     if offset + route_len > payload.len() {
         return Err("PUT route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in PUT route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "PUT")?;
     offset += route_len;
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
-    let (_realm, _area, resource) = parse_route(&route_str)?;
+    let resource = parse_route_resource(route_str)?;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -479,12 +570,11 @@ fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     if offset + route_len > payload.len() {
         return Err("INSERT route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in INSERT route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "INSERT")?;
     offset += route_len;
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
-    let (_realm, _area, resource) = parse_route(&route_str)?;
+    let resource = parse_route_resource(route_str)?;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -569,12 +659,11 @@ fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, 
     if offset + route_len > payload.len() {
         return Err("DELETE route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in DELETE route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "DELETE")?;
     offset += route_len;
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
-    let (_realm, _area, resource) = parse_route(&route_str)?;
+    let resource = parse_route_resource(route_str)?;
 
     // Read key length (u32)
     if offset + 4 > payload.len() {
@@ -639,12 +728,11 @@ fn parse_delete_range(route_family: RouteFamily, payload: &[u8]) -> Result<KvMes
     if offset + route_len > payload.len() {
         return Err("DELETE_RANGE route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in DELETE_RANGE route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "DELETE_RANGE")?;
     offset += route_len;
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
-    let (_realm, _area, resource) = parse_route(&route_str)?;
+    let resource = parse_route_resource(route_str)?;
 
     // Read start key length (u32)
     if offset + 4 > payload.len() {
@@ -729,12 +817,11 @@ fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, St
     if offset + route_len > payload.len() {
         return Err("SCAN route overflow".to_string());
     }
-    let route_str = String::from_utf8(payload[offset..offset + route_len].to_vec())
-        .map_err(|_| "Invalid UTF-8 in SCAN route".to_string())?;
+    let route_str = decode_route_str(&payload[offset..offset + route_len], "SCAN")?;
     offset += route_len;
 
     // Parse route into realm/area/resource (only resource used in KvMessage)
-    let (_realm, _area, resource) = parse_route(&route_str)?;
+    let resource = parse_route_resource(route_str)?;
 
     // Read start key option (u8): 0=None, 1=Some
     if offset >= payload.len() {

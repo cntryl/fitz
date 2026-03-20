@@ -19,6 +19,7 @@ use crate::protocol::frame::ChannelId;
 use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
@@ -99,6 +100,12 @@ pub trait Ingress: Send + Sync {
     /// Get current session info for transports that need to observe auth-driven updates.
     fn get_session_info(&self, _session_id: u64) -> Option<SessionInfo> {
         None
+    }
+
+    /// Get the current route family for a session without cloning full session metadata.
+    fn get_route_family(&self, session_id: u64) -> Option<crate::runtime::routing::RouteFamily> {
+        self.get_session_info(session_id)
+            .map(|session| session.route_family)
     }
 
     /// Called when the transport closes the connection
@@ -281,6 +288,7 @@ impl RuntimeIngress {
         self.session_actors.insert(session_id, actor);
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn canonicalize_domain_route(
         domain: &str,
         route: crate::runtime::routing::Route,
@@ -291,6 +299,86 @@ impl RuntimeIngress {
         }
 
         crate::runtime::routing::Route::new(format!("{domain}://{}", path.trim_start_matches('/')))
+    }
+
+    fn canonicalize_domain_route_str<'a>(domain: &str, route: &'a str) -> Cow<'a, str> {
+        if route.contains("://") {
+            return Cow::Borrowed(route);
+        }
+
+        let trimmed = route.trim_start_matches('/');
+        let mut canonical = String::with_capacity(domain.len() + 3 + trimmed.len());
+        canonical.push_str(domain);
+        canonical.push_str("://");
+        canonical.push_str(trimmed);
+        Cow::Owned(canonical)
+    }
+
+    fn wildcard_route_for_domain(domain: &str) -> &'static str {
+        match domain {
+            "kv" => "kv://**",
+            "queue" => "queue://**",
+            "rpc" => "rpc://**",
+            "lease" => "lease://**",
+            "notice" => "notice://**",
+            "stream" => "stream://**",
+            "schedule" => "schedule://**",
+            _ => "**",
+        }
+    }
+
+    fn inbound_route_for_domain(domain: &str) -> &'static str {
+        match domain {
+            "kv" => "kv://inbound",
+            "queue" => "queue://inbound",
+            "rpc" => "rpc://inbound",
+            "lease" => "lease://inbound",
+            "notice" => "notice://inbound",
+            "stream" => "stream://inbound",
+            "schedule" => "schedule://inbound",
+            _ => "inbox://inbound",
+        }
+    }
+
+    fn derive_auth_route_for_frame<'a>(
+        &self,
+        msg_type: crate::protocol::tlv::MessageType,
+        payload: &'a [u8],
+    ) -> Result<Option<Cow<'a, str>>, String> {
+        let mt = msg_type.as_u16();
+
+        match mt {
+            100..=108 => crate::protocol::kv_codec::extract_auth_route(mt, payload)
+                .map(|route| route.map(|route| Self::canonicalize_domain_route_str("kv", route))),
+            200..=299 => {
+                crate::protocol::queue_codec::extract_auth_route(mt, payload).map(|route| {
+                    route.map(|route| Self::canonicalize_domain_route_str("queue", route))
+                })
+            }
+            300..=399 => crate::protocol::rpc_codec::extract_auth_route(mt, payload)
+                .map(|route| route.map(|route| Self::canonicalize_domain_route_str("rpc", route))),
+            400..=499 => {
+                crate::protocol::lease_codec::extract_auth_route(mt, payload).map(|route| {
+                    route.map(|route| Self::canonicalize_domain_route_str("lease", route))
+                })
+            }
+            500..=599 => {
+                crate::protocol::notice_codec::extract_auth_route(mt, payload).map(|route| {
+                    route.map(|route| Self::canonicalize_domain_route_str("notice", route))
+                })
+            }
+            600..=699 => {
+                crate::protocol::stream_codec::extract_auth_route(mt, payload).map(|route| {
+                    route.map(|route| Self::canonicalize_domain_route_str("stream", route))
+                })
+            }
+            700..=799 => {
+                crate::protocol::schedule_codec::extract_auth_route(mt, payload).map(|route| {
+                    route.map(|route| Self::canonicalize_domain_route_str("schedule", route))
+                })
+            }
+            _ => Ok(None),
+        }
     }
 }
 
@@ -505,7 +593,8 @@ impl Ingress for RuntimeIngress {
                     domain = domain,
                     "Ingress: resolved domain for msg_type"
                 );
-                if let Some(session_info) = self.get_session(session_id) {
+                if let Some(session_info) = self.sessions.get(&session_id) {
+                    let route_family = session_info.route_family;
                     // Authorization: determine required access for this msg type
                     let access = match msg_type.as_u16() {
                         // KV
@@ -550,13 +639,11 @@ impl Ingress for RuntimeIngress {
                     };
 
                     // Attempt to derive a fine-grained route from the payload for better authorization.
-                    let auth_route = match self.derive_route_for_frame(
-                        &session_info,
-                        msg_type,
-                        &message_payload,
-                    ) {
+                    let auth_route = match self
+                        .derive_auth_route_for_frame(msg_type, &message_payload)
+                    {
                         Ok(Some(r)) => r,
-                        Ok(None) => crate::runtime::routing::Route::new(format!("{}://**", domain)),
+                        Ok(None) => Cow::Borrowed(Self::wildcard_route_for_domain(domain)),
                         Err(e) => {
                             warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive route for authorization");
                             return IngressDecision::Close(format!(
@@ -567,18 +654,20 @@ impl Ingress for RuntimeIngress {
                     };
 
                     // Check session actor's authorization
-                    if let Some(actor_ref) = self.get_session_actor(session_id) {
+                    if let Some(actor_ref) = self.session_actors.get(&session_id) {
                         // 100% sample: authorization is critical path
                         let _span = tracing::debug_span!(
                             obs::SPAN_PERMISSION_CHECK,
                             session_id = session_id,
-                            route = %auth_route.as_str(),
+                            route = %auth_route.as_ref(),
                             access = ?access,
                         );
                         let _guard = _span.enter();
                         let start = Instant::now();
 
-                        let authorized = actor_ref.authorize(&auth_route, access);
+                        let authorized = actor_ref
+                            .value()
+                            .authorize_route(auth_route.as_ref(), access);
 
                         // Record latency
                         if let Ok(collector) =
@@ -595,7 +684,7 @@ impl Ingress for RuntimeIngress {
                             warn!(
                                 session_id = session_id,
                                 msg_type = msg_type.as_u16(),
-                                route = auth_route.as_str(),
+                                route = auth_route.as_ref(),
                                 access = ?access,
                                 "Ingress: authorization DENIED"
                             );
@@ -622,21 +711,18 @@ impl Ingress for RuntimeIngress {
                     }
 
                     let route =
-                        crate::runtime::routing::Route::new(format!("{}://inbound", domain));
-                    let addr = crate::runtime::routing::RouteAddress::new(
-                        session_info.route_family,
-                        route,
-                    );
+                        crate::runtime::routing::Route::new(Self::inbound_route_for_domain(domain));
+                    let addr = crate::runtime::routing::RouteAddress::new(route_family, route);
                     let ctx = crate::protocol::frame_context::FrameContext::new(
                         session_id,
                         crate::protocol::frame::ChannelId::Pub,
                         msg_type,
                         message_payload.clone(),
-                        session_info.route_family,
+                        route_family,
                     );
                     // Set source to the session's inbox so domain sinks can route responses back
                     let source = crate::runtime::routing::RouteAddress::new(
-                        session_info.route_family,
+                        route_family,
                         crate::runtime::routing::Route::new(format!(
                             "inbox://session/{}",
                             session_id
@@ -703,6 +789,12 @@ impl Ingress for RuntimeIngress {
         self.get_session(session_id)
     }
 
+    fn get_route_family(&self, session_id: u64) -> Option<crate::runtime::routing::RouteFamily> {
+        self.sessions
+            .get(&session_id)
+            .map(|session| session.route_family)
+    }
+
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
         // Record session closed counter
         if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
@@ -756,6 +848,7 @@ impl Ingress for RuntimeIngress {
 
 impl RuntimeIngress {
     /// Try to derive a precise Route from the frame payload for authorization
+    #[cfg_attr(not(test), allow(dead_code))]
     fn derive_route_for_frame(
         &self,
         session_info: &SessionInfo,

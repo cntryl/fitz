@@ -215,7 +215,39 @@ impl<A: Actor + ?Sized> Context<A> {
     where
         M: Send + Sync + 'static,
     {
-        let mut envelope = Envelope::from_route(self.address.clone(), dest.clone(), msg);
+        if self.current_metadata.is_none() {
+            return self
+                .router
+                .route(Envelope::from_route(self.address.clone(), dest, msg))
+                .map_err(|e| match e {
+                    RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
+                    RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
+                        crate::runtime::router::DeliveryError::MailboxFull {
+                            capacity,
+                            current_len,
+                        } => SendError::MailboxFull {
+                            target,
+                            occupancy: current_len as f64 / capacity as f64,
+                        },
+                        crate::runtime::router::DeliveryError::HighLaneFull {
+                            capacity,
+                            current_len,
+                        } => {
+                            // High-priority lane should never be used by user code
+                            // Treat as normal mailbox full for error reporting
+                            SendError::MailboxFull {
+                                target,
+                                occupancy: current_len as f64 / capacity as f64,
+                            }
+                        }
+                        crate::runtime::router::DeliveryError::ActorStopped => {
+                            SendError::ActorStopped { target }
+                        }
+                    },
+                });
+        }
+
+        let mut envelope = Envelope::from_route(self.address.clone(), dest, msg);
 
         // Set causation from current envelope metadata
         if let Some(metadata) = &self.current_metadata {
@@ -253,6 +285,40 @@ impl<A: Actor + ?Sized> Context<A> {
                 }
             },
         })
+    }
+
+    /// Send a message without attaching source, causation, or deadline metadata.
+    ///
+    /// This is intended for internal fire-and-forget fanout where the receiver
+    /// does not rely on reply routing or trace ancestry.
+    pub fn send_untracked<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
+    where
+        M: Send + Sync + 'static,
+    {
+        self.router
+            .route(Envelope::new(dest, msg))
+            .map_err(|e| match e {
+                RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
+                RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
+                    crate::runtime::router::DeliveryError::MailboxFull {
+                        capacity,
+                        current_len,
+                    } => SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    },
+                    crate::runtime::router::DeliveryError::HighLaneFull {
+                        capacity,
+                        current_len,
+                    } => SendError::MailboxFull {
+                        target,
+                        occupancy: current_len as f64 / capacity as f64,
+                    },
+                    crate::runtime::router::DeliveryError::ActorStopped => {
+                        SendError::ActorStopped { target }
+                    }
+                },
+            })
     }
 
     /// Publish a domain event to the router.

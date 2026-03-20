@@ -156,24 +156,16 @@ impl NoticeRouteActor {
             self.index
                 .match_all_with_capacity(self.family_id, &msg.route, match_capacity);
 
-        // Share route and payload via Arc for zero-allocation fanout
-        let route = Arc::new(msg.route);
-        let payload = Arc::new(msg.payload);
+        let deliver = NotificationMessage::Deliver(DeliverMessage::new(msg.route, msg.payload));
 
-        // Fan-out to each matching subscriber (only atomic increments, no clones)
+        // Fan-out to each matching subscriber using cheap Route/Bytes clones.
         for subscription_id in matching_ids {
             if let Some((_, subscriber, _pattern, sink)) =
                 self.subscriptions.get_mut(&subscription_id)
             {
-                let deliver = DeliverMessage::new_shared(Arc::clone(&route), Arc::clone(&payload));
-
                 let mut delivered = false;
                 if let Some(cached_sink) = sink.as_ref() {
-                    let envelope = Envelope::from_route(
-                        ctx.address().clone(),
-                        subscriber.clone(),
-                        NotificationMessage::Deliver(deliver.clone()),
-                    );
+                    let envelope = Envelope::new(subscriber.clone(), deliver.clone());
                     if cached_sink.deliver(envelope).is_ok() {
                         delivered = true;
                     } else {
@@ -186,7 +178,7 @@ impl NoticeRouteActor {
                     if sink.is_none() {
                         *sink = ctx.resolve_sink(subscriber);
                     }
-                    let _ = ctx.send(subscriber.clone(), NotificationMessage::Deliver(deliver));
+                    let _ = ctx.send_untracked(subscriber.clone(), deliver.clone());
                 }
             }
         }

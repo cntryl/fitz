@@ -38,6 +38,7 @@ use crate::observability as obs;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::routing::RouteAddress;
 use dashmap::DashMap;
+use fxhash::FxBuildHasher;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, trace, warn};
@@ -163,17 +164,20 @@ impl std::error::Error for RouteError {}
 /// Enforces route family isolation: routes in different families
 /// never conflict even if they have the same path string.
 struct RouteRegistry {
-    sinks: DashMap<RouteAddress, Arc<dyn MailboxSink>>,
+    sinks: DashMap<RouteAddress, Arc<dyn MailboxSink>, FxBuildHasher>,
     /// Domain pattern registry: Maps domain prefix (e.g., "kv", "queue") to sink
     /// Used as fallback when exact RouteAddress lookup fails
-    domain_patterns: DashMap<String, Arc<dyn MailboxSink>>,
+    domain_patterns: DashMap<String, Arc<dyn MailboxSink>, FxBuildHasher>,
 }
 
 impl RouteRegistry {
     fn new() -> Self {
         Self {
-            sinks: DashMap::new(),
-            domain_patterns: DashMap::new(),
+            // Router lookups and registrations are hot paths. Use a faster
+            // non-cryptographic hasher and reserve a modest working set up front
+            // to reduce repeated rehashing during actor registration bursts.
+            sinks: DashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
+            domain_patterns: DashMap::with_capacity_and_hasher(16, FxBuildHasher::default()),
         }
     }
 

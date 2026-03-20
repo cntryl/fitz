@@ -39,17 +39,17 @@ impl LeaseKey {
             path
         };
 
-        let parts: Vec<&str> = path_without_scheme
-            .trim_start_matches('/')
-            .split('/')
-            .collect();
+        let mut parts = path_without_scheme.trim_start_matches('/').split('/');
+        let realm = parts.next()?;
+        let area = parts.next()?;
+        let resource = parts.next()?;
 
-        if parts.len() >= 3 {
+        if !realm.is_empty() && !area.is_empty() && !resource.is_empty() {
             Some(LeaseKey {
                 family,
-                realm: parts[0].to_string(),
-                area: parts[1].to_string(),
-                resource: parts[2].to_string(),
+                realm: realm.to_string(),
+                area: area.to_string(),
+                resource: resource.to_string(),
             })
         } else {
             None
@@ -58,7 +58,14 @@ impl LeaseKey {
 
     /// Convert key back into a canonical lease route string (no operation suffix).
     pub fn to_route(&self) -> Route {
-        let s = format!("lease://{}/{}/{}", self.realm, self.area, self.resource);
+        let mut s =
+            String::with_capacity(8 + self.realm.len() + self.area.len() + self.resource.len());
+        s.push_str("lease://");
+        s.push_str(&self.realm);
+        s.push('/');
+        s.push_str(&self.area);
+        s.push('/');
+        s.push_str(&self.resource);
         Route::new(&s)
     }
 }

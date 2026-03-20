@@ -30,6 +30,9 @@
 //! The RouteFamily ID must match exactly; wildcards never cross family boundaries.
 
 use crate::runtime::routing::Route;
+use smallvec::SmallVec;
+
+type RouteSegments<'a> = SmallVec<[&'a str; 8]>;
 
 /// Wildcard pattern for route subscriptions
 ///
@@ -75,7 +78,13 @@ impl Pattern {
     /// Check if this pattern matches a given route
     #[inline]
     pub fn matches(&self, route: &Route) -> bool {
-        let (route_scheme, route_segments) = split_route(route.as_str());
+        self.matches_str(route.as_str())
+    }
+
+    /// Check if this pattern matches a raw route string.
+    #[inline]
+    pub fn matches_str(&self, route: &str) -> bool {
+        let (route_scheme, route_segments) = split_route(route);
 
         if let Some(pattern_scheme) = self.scheme.as_deref() {
             if route_scheme != Some(pattern_scheme) {
@@ -102,14 +111,17 @@ pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
 
 /// Extract an optional scheme and borrowed path segments from a route string.
 #[inline]
-fn split_route(route: &str) -> (Option<&str>, Vec<&str>) {
+fn split_route(route: &str) -> (Option<&str>, RouteSegments<'_>) {
     let (scheme, path) = if let Some(idx) = route.find("://") {
         (Some(&route[..idx]), &route[idx + 3..])
     } else {
         (None, route)
     };
 
-    let segments = path.split('/').filter(|s| !s.is_empty()).collect();
+    let segments = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<RouteSegments<'_>>();
     (scheme, segments)
 }
 
@@ -140,7 +152,7 @@ pub fn extract_route_segments(route: &str) -> Vec<String> {
 /// Extract path segments from a route string as borrowed string slices
 /// Zero-copy variant for hot-path matching
 #[inline]
-pub fn extract_route_segments_borrowed(route: &str) -> Vec<&str> {
+pub fn extract_route_segments_borrowed(route: &str) -> RouteSegments<'_> {
     split_route(route).1
 }
 

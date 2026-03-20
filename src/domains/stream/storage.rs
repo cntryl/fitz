@@ -231,16 +231,53 @@ pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
 }
 
 pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
-    serialize(&(
-        event.body.to_vec(),
-        event.metadata.as_ref().map(|m| m.to_vec()),
-    ))
-    .unwrap()
+    let metadata_len = event.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+    let mut buf = Vec::with_capacity(8 + event.body.len() + metadata_len);
+    buf.extend_from_slice(&(event.body.len() as u32).to_le_bytes());
+    buf.extend_from_slice(
+        &event
+            .metadata
+            .as_ref()
+            .map(|m| m.len() as u32)
+            .unwrap_or(u32::MAX)
+            .to_le_bytes(),
+    );
+    buf.extend_from_slice(&event.body);
+    if let Some(metadata) = &event.metadata {
+        buf.extend_from_slice(metadata);
+    }
+    buf
 }
 
 pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
-    let (body, metadata): (Vec<u8>, Option<Vec<u8>>) =
-        deserialize(data).map_err(|e| format!("decode_staging_value: {:?}", e))?;
+    if data.len() < 8 {
+        return Err("decode_staging_value: header too short".to_string());
+    }
+
+    let body_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    let metadata_len_raw = u32::from_le_bytes(data[4..8].try_into().unwrap());
+    let metadata_len = if metadata_len_raw == u32::MAX {
+        None
+    } else {
+        Some(metadata_len_raw as usize)
+    };
+
+    let mut offset = 8;
+    if data.len() < offset + body_len {
+        return Err("decode_staging_value: truncated body".to_string());
+    }
+    let body = data[offset..offset + body_len].to_vec();
+    offset += body_len;
+
+    let metadata = if let Some(metadata_len) = metadata_len {
+        if data.len() < offset + metadata_len {
+            return Err("decode_staging_value: truncated metadata".to_string());
+        }
+        Some(data[offset..offset + metadata_len].to_vec())
+    } else {
+        None
+    };
+
     Ok(EventPayload {
         body: Bytes::from(body),
         metadata: metadata.map(Bytes::from),
@@ -318,5 +355,33 @@ mod tests {
         assert_eq!(decoded.resource_offset, 42);
         assert_eq!(decoded.body, Bytes::from("test"));
         assert_eq!(decoded.area_offset, Some(10));
+    }
+
+    #[test]
+    fn should_roundtrip_staging_value_with_metadata() {
+        let event = EventPayload {
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+        };
+
+        let encoded = encode_staging_value(&event);
+        let decoded = decode_staging_value(&encoded).expect("decode staging value");
+
+        assert_eq!(decoded.body, event.body);
+        assert_eq!(decoded.metadata, event.metadata);
+    }
+
+    #[test]
+    fn should_roundtrip_staging_value_without_metadata() {
+        let event = EventPayload {
+            body: Bytes::from("body"),
+            metadata: None,
+        };
+
+        let encoded = encode_staging_value(&event);
+        let decoded = decode_staging_value(&encoded).expect("decode staging value");
+
+        assert_eq!(decoded.body, event.body);
+        assert_eq!(decoded.metadata, None);
     }
 }

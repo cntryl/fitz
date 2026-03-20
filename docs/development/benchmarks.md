@@ -265,7 +265,7 @@ Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: ru
 
 ### Performance targets
 
-Numerical, testable performance targets (single-node, best-in-class) and the benchmark scenarios that verify them are defined in **[Performance targets](bench-targets.md)**. Each target has a threshold, conditions (payload size, concurrency, transport), and a mapping to an existing stress scenario or a "new scenario required" spec. Use that doc for optimization goals and to prove competitive positioning vs SQS/RabbitMQ, Kafka, and NATS. For tier4 TCP/WS latency (RPC, Notice), see the **Tier4 transport optimization** section in that doc.
+Numerical, testable performance targets are defined in **[Performance targets](bench-targets.md)** and mirrored in [`config/perf_targets.json`](../../config/perf_targets.json). The doc is the human-facing matrix; the JSON file is the machine-readable source used by the perf loop. Fitz currently gates on `mean_us`, with derived ops/sec shown only as a convenience. Latency percentiles remain out of scope until explicit percentile scenarios exist.
 
 ## Best Practices
 

@@ -52,6 +52,40 @@ pub fn parse_request(
     }
 }
 
+/// Extract the publish route or subscription pattern needed for authorization.
+pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match msg_type {
+        500 => {
+            let route = dec.get_string_ref()?;
+            dec.skip_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        501 | 502 => {
+            let pattern = dec.get_string_ref()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(pattern))
+        }
+        503 => Ok(None),
+        504 => {
+            dec.get_u64()?;
+            let route = dec.get_string_ref()?;
+            dec.skip_bytes()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(Some(route))
+        }
+        _ => Err(format!("Unknown operation: {}", msg_type)),
+    }
+}
+
 /// Encode domain response to TLV-encoded bytes
 pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
@@ -187,8 +221,5 @@ fn parse_deliver(dec: &mut PayloadDecoder) -> Result<DeliverMessage, String> {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(DeliverMessage {
-        route: std::sync::Arc::new(route),
-        payload: std::sync::Arc::new(payload),
-    })
+    Ok(DeliverMessage { route, payload })
 }

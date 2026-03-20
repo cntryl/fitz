@@ -2,12 +2,12 @@
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
-//! - Durable storage: Message bodies persisted to Midge
+//! - Durable storage: Message headers and bodies persisted separately in Midge
 //! - Ephemeral leases: In-memory visibility tracking
 //!
 //! # Invariants
 //!
-//! 1. **Atomic batch operations**: ID allocation + message writes commit together (V-001 Fix)
+//! 1. **Crash-safe ID reservation**: persisted ID reservations prevent collisions across restarts
 //! 2. **At-least-once delivery**: Messages may be delivered multiple times
 //! 3. **Lease isolation**: Reserved messages invisible to other consumers
 //! 4. **Automatic redelivery**: Expired leases or crashes return messages to ready queue
@@ -19,8 +19,8 @@
 //!
 //! Queues represent **intent** (work to be done), not events of record.
 //! Minimal data loss is acceptable (producers can regenerate work items).
-//! Batch operations are atomic: all-or-nothing across ID allocation + message writes.
-//! Within transactions: next_id and messages commit together (prevents ID collisions on crash).
+//! Messages commit together with any required ID-reservation extension.
+//! Crashes may create ID gaps, but never ID reuse or collisions.
 //!
 //! # State Model
 //!
@@ -34,7 +34,7 @@
 //!
 //! # Performance Model
 //!
-//! - ready shards: VecDeque - O(1) push_back, O(1) pop_front
+//! - ready shards: VecDeque of compressed ranges - O(1) push_back, O(1) pop_front
 //! - inflight: HashMap - O(1) lookup, O(1) insert, O(1) remove
 //! - timers: BinaryHeap - O(log n) push, O(1) peek, O(log n) pop
 //!
@@ -46,10 +46,13 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
+use fxhash::FxBuildHasher;
 
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
@@ -57,19 +60,41 @@ use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 
+type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
+
 /// Durable queue record (persisted to Midge)
 ///
 /// All time values use SystemTime::UNIX_EPOCH (milliseconds).
 /// This ensures delays survive process restarts correctly.
 #[derive(Debug, Clone)]
 struct QueueRecord {
-    /// Message body
-    body: Bytes,
+    /// Message body, hydrated lazily for recovered records.
+    body: Option<Bytes>,
     /// Redelivery attempt counter (starts at 0, incremented on redelivery)
     attempts: u32,
     /// Visibility timestamp (milliseconds since UNIX epoch)
     /// Message is invisible until this time has passed (absolute, not relative)
     visible_at_ms: u64,
+}
+
+impl QueueRecord {
+    #[inline]
+    fn loaded(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
+        Self {
+            body: Some(body),
+            attempts,
+            visible_at_ms,
+        }
+    }
+
+    #[inline]
+    fn metadata_only(attempts: u32, visible_at_ms: u64) -> Self {
+        Self {
+            body: None,
+            attempts,
+            visible_at_ms,
+        }
+    }
 }
 
 /// In-flight message lease (ephemeral, actor-owned)
@@ -125,6 +150,13 @@ impl PartialOrd for DelayedMessage {
     }
 }
 
+/// Compressed ready-queue segment for one shard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReadyRange {
+    next: u64,
+    end: u64,
+}
+
 /// Clock abstraction for testable time
 pub trait Clock: Send + Sync {
     fn now_instant(&self) -> Instant;
@@ -176,23 +208,55 @@ pub struct QueueActor {
     /// Queue identity
     queue_key: QueueKey,
 
+    /// Cached Midge metadata key for this queue.
+    meta_key: Vec<u8>,
+
+    /// Cached Midge header-key prefix for this queue.
+    header_key_prefix: Vec<u8>,
+
+    /// Cached Midge body-key prefix for this queue.
+    body_key_prefix: Vec<u8>,
+
+    /// Cached Midge legacy record-key prefix for this queue.
+    legacy_message_key_prefix: Vec<u8>,
+
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,
 
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
 
-    /// Ready queues: sharded FIFO lists of message IDs available for reservation
-    ready_shards: Vec<VecDeque<MessageId>>,
+    /// Exclusive upper bound of IDs already reserved durably in queue metadata.
+    /// This lets hot enqueue paths skip rewriting metadata on every message.
+    next_id_limit: u64,
+
+    /// Ready queues: sharded FIFO lists of compressed message-ID ranges.
+    ready_shards: Vec<VecDeque<ReadyRange>>,
+
+    /// Cached total number of ready messages across all shards.
+    ready_count: usize,
 
     /// Round-robin cursor for ready shard selection
     next_ready_shard: usize,
 
-    /// In-memory record cache (durable backing is Midge)
-    records: HashMap<MessageId, QueueRecord>,
+    /// Bounded in-memory message metadata cache (durable backing is Midge).
+    records: FastMap<MessageId, QueueRecord>,
+
+    /// FIFO eviction order for the bounded metadata cache.
+    record_cache_fifo: VecDeque<MessageId>,
+
+    /// Small hot-body cache to keep recent enqueue/receive paths fast without
+    /// pinning the full queue payload set in memory.
+    body_cache: FastMap<MessageId, Bytes>,
+
+    /// FIFO eviction order for the bounded hot-body cache.
+    body_cache_fifo: VecDeque<MessageId>,
+
+    /// Approximate total bytes pinned by the hot-body cache.
+    body_cache_bytes: usize,
 
     /// Inflight map: leased messages (id Ã¢â€ â€™ Inflight)
-    pub inflight: HashMap<MessageId, Inflight>,
+    pub inflight: FastMap<MessageId, Inflight>,
 
     /// Timer heap: lease expiration events (earliest first, min-heap)
     timers: BinaryHeap<Reverse<LeaseExpiry>>,
@@ -230,6 +294,12 @@ pub struct QueueActor {
 impl QueueActor {
     const READY_SHARDS: usize = 8;
     const NOTICE_DEBOUNCE_MS: u64 = 25;
+    const ID_RESERVATION_BLOCK: u64 = 256;
+    const RECORD_CACHE_LIMIT: usize = 16 * 1024;
+    const RECORD_CACHE_FIFO_SLACK_MULTIPLIER: usize = 2;
+    const BODY_CACHE_LIMIT: usize = 1024;
+    const BODY_CACHE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+    const BODY_CACHE_FIFO_SLACK_MULTIPLIER: usize = 2;
 
     /// Create a new queue actor. Persistence mode is locked to buffered-only (throughput-first).
     pub fn new(
@@ -258,20 +328,27 @@ impl QueueActor {
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        // Recover next_id from Midge on startup
-        let next_id = Self::recover_next_id(&store, &queue_key);
-
         let now = Instant::now();
 
         let mut actor = Self {
             family,
+            meta_key: Self::meta_key(&queue_key),
+            header_key_prefix: Self::header_key_prefix(&queue_key),
+            body_key_prefix: Self::body_key_prefix(&queue_key),
+            legacy_message_key_prefix: Self::legacy_message_key_prefix(&queue_key),
             queue_key,
             store,
-            next_id,
+            next_id: 1,
+            next_id_limit: 1,
             ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
+            ready_count: 0,
             next_ready_shard: 0,
-            records: HashMap::new(),
-            inflight: HashMap::new(),
+            records: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
+            record_cache_fifo: VecDeque::with_capacity(128),
+            body_cache: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
+            body_cache_fifo: VecDeque::with_capacity(Self::BODY_CACHE_LIMIT),
+            body_cache_bytes: 0,
+            inflight: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
             pending_publish: None,
@@ -285,47 +362,51 @@ impl QueueActor {
             next_delayed_deadline: now,
         };
 
-        actor.recover_ready_and_delayed_from_store();
+        actor.recover_from_store();
         actor
     }
 
-    /// Recover next message ID from durable storage
-    fn recover_next_id(store: &cntryl_midge::Engine, queue_key: &QueueKey) -> u64 {
-        let key = Self::meta_key(queue_key);
-        let cf_id = queue_key.family.id();
-
-        match store.begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly) {
-            Ok(txn) => match txn.get(&key) {
-                Ok(Some(bytes)) => bytes
-                    .get(0..8)
-                    .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
-                    .unwrap_or(1),
-                Ok(None) => 1,
-                Err(e) => {
-                    eprintln!(
-                        "WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1",
-                        queue_key, e
-                    );
-                    1
-                }
-            },
-            Err(e) => {
-                eprintln!(
-                    "WARN: Failed to begin tx for next_id recovery: {:?}, starting from 1",
-                    e
-                );
-                1
-            }
+    #[inline]
+    fn reserved_id_limit_for(&self, additional_ids: u64) -> Option<u64> {
+        let required_limit = self.next_id.saturating_add(additional_ids);
+        if required_limit <= self.next_id_limit {
+            return None;
         }
+
+        let deficit = required_limit.saturating_sub(self.next_id_limit);
+        let blocks = (deficit + Self::ID_RESERVATION_BLOCK - 1) / Self::ID_RESERVATION_BLOCK;
+        Some(
+            self.next_id_limit
+                .saturating_add(blocks.saturating_mul(Self::ID_RESERVATION_BLOCK)),
+        )
     }
 
     /// Generate a random lease token
     fn generate_token() -> u64 {
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
+        static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
+        static TOKEN_SEED: OnceLock<u64> = OnceLock::new();
 
-        let hasher = RandomState::new().build_hasher();
-        hasher.finish()
+        let seed = *TOKEN_SEED.get_or_init(|| {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_else(|_| Duration::from_secs(0))
+                .as_nanos() as u64;
+            now ^ ((std::process::id() as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15
+        });
+
+        let mixed = TOKEN_COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(seed);
+
+        Self::mix_u64(mixed)
+    }
+
+    #[inline]
+    fn mix_u64(mut value: u64) -> u64 {
+        value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^ (value >> 31)
     }
 
     /// Midge key for queue metadata
@@ -337,26 +418,126 @@ impl QueueActor {
         .into_bytes()
     }
 
-    /// Midge key for message record
-    fn message_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
+    /// Midge key for legacy combined message record
+    #[cfg(test)]
+    fn legacy_message_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
+        let mut key = Self::legacy_message_key_prefix(queue_key);
+        key.extend_from_slice(id.as_u64().to_string().as_bytes());
+        key
+    }
+
+    /// Midge key for persisted message header
+    #[cfg(test)]
+    fn header_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
+        let mut key = Self::header_key_prefix(queue_key);
+        key.extend_from_slice(id.as_u64().to_string().as_bytes());
+        key
+    }
+
+    /// Midge key for persisted message body
+    #[cfg(test)]
+    fn body_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
+        let mut key = Self::body_key_prefix(queue_key);
+        key.extend_from_slice(id.as_u64().to_string().as_bytes());
+        key
+    }
+
+    fn header_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
         format!(
-            "queue:{}:{}:{}:msg:{}",
-            queue_key.realm,
-            queue_key.area,
-            queue_key.resource,
-            id.as_u64()
+            "queue:{}:{}:{}:hdr:{}",
+            queue_key.realm, queue_key.area, queue_key.resource, ""
         )
         .into_bytes()
     }
 
-    /// Serialize QueueRecord to bytes
-    fn encode_record(record: &QueueRecord) -> Vec<u8> {
-        // Encoding: [attempts:4][visible_at_ms:8][body_len:4][body]
-        let mut buf = Vec::with_capacity(16 + record.body.len());
+    fn body_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:body:{}",
+            queue_key.realm, queue_key.area, queue_key.resource, ""
+        )
+        .into_bytes()
+    }
+
+    fn legacy_message_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:msg:{}",
+            queue_key.realm, queue_key.area, queue_key.resource, ""
+        )
+        .into_bytes()
+    }
+
+    fn cached_id_key(prefix: &[u8], id: MessageId) -> Vec<u8> {
+        let mut digits = [0_u8; 20];
+        let mut value = id.as_u64();
+        let mut start = digits.len();
+
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+
+        let mut key = Vec::with_capacity(prefix.len() + digits.len() - start);
+        key.extend_from_slice(prefix);
+        key.extend_from_slice(&digits[start..]);
+        key
+    }
+
+    #[inline]
+    fn cached_header_key(&self, id: MessageId) -> Vec<u8> {
+        Self::cached_id_key(&self.header_key_prefix, id)
+    }
+
+    #[inline]
+    fn cached_body_key(&self, id: MessageId) -> Vec<u8> {
+        Self::cached_id_key(&self.body_key_prefix, id)
+    }
+
+    #[inline]
+    fn cached_legacy_message_key(&self, id: MessageId) -> Vec<u8> {
+        Self::cached_id_key(&self.legacy_message_key_prefix, id)
+    }
+
+    #[inline]
+    fn parse_message_id_from_key(key: &[u8], prefix: &[u8]) -> Option<MessageId> {
+        if !key.starts_with(prefix) || key.len() <= prefix.len() {
+            return None;
+        }
+
+        let mut value = 0_u64;
+        for &byte in &key[prefix.len()..] {
+            if !byte.is_ascii_digit() {
+                return None;
+            }
+            value = value.checked_mul(10)?.checked_add((byte - b'0') as u64)?;
+        }
+
+        Some(MessageId::new(value))
+    }
+
+    /// Serialize QueueRecord header to bytes.
+    fn encode_record_header(record: &QueueRecord) -> Vec<u8> {
+        // Encoding: [attempts:4][visible_at_ms:8]
+        let mut buf = Vec::with_capacity(12);
         buf.extend_from_slice(&record.attempts.to_le_bytes());
         buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
-        buf.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
-        buf.extend_from_slice(&record.body);
+        buf
+    }
+
+    /// Serialize a legacy combined QueueRecord for compatibility writes.
+    fn encode_legacy_record(record: &QueueRecord) -> Vec<u8> {
+        let body = record
+            .body
+            .as_ref()
+            .expect("legacy queue record must have a body before persistence");
+        let mut buf = Vec::with_capacity(16 + body.len());
+        buf.extend_from_slice(&record.attempts.to_le_bytes());
+        buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
+        buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(body);
         buf
     }
 
@@ -366,13 +547,110 @@ impl QueueActor {
 
     fn push_ready(&mut self, id: MessageId) {
         let shard = Self::shard_for_id(id);
-        self.ready_shards[shard].push_back(id);
+        let id_u64 = id.as_u64();
+        let step = Self::READY_SHARDS as u64;
+
+        if let Some(range) = self.ready_shards[shard].back_mut() {
+            if id_u64 == range.end.saturating_add(step) {
+                range.end = id_u64;
+                self.ready_count += 1;
+                return;
+            }
+        }
+
+        self.ready_shards[shard].push_back(ReadyRange {
+            next: id_u64,
+            end: id_u64,
+        });
+        self.ready_count += 1;
+    }
+
+    fn cache_record(&mut self, id: MessageId, record: QueueRecord) {
+        if self.records.insert(id, record).is_none() {
+            self.record_cache_fifo.push_back(id);
+        }
+
+        self.compact_record_cache_fifo_if_needed();
+
+        while self.records.len() > Self::RECORD_CACHE_LIMIT {
+            let Some(evicted_id) = self.record_cache_fifo.pop_front() else {
+                break;
+            };
+            self.records.remove(&evicted_id);
+        }
+    }
+
+    fn evict_cached_record(&mut self, id: MessageId) {
+        self.records.remove(&id);
+        self.compact_record_cache_fifo_if_needed();
+    }
+
+    fn compact_record_cache_fifo_if_needed(&mut self) {
+        let max_fifo_len = Self::RECORD_CACHE_LIMIT * Self::RECORD_CACHE_FIFO_SLACK_MULTIPLIER
+            + self.records.len();
+        if self.record_cache_fifo.len() <= max_fifo_len {
+            return;
+        }
+
+        self.record_cache_fifo
+            .retain(|id| self.records.contains_key(id));
+    }
+
+    fn cache_body(&mut self, id: MessageId, body: Bytes) {
+        if self.body_cache.contains_key(&id) {
+            return;
+        }
+
+        let body_len = body.len();
+        if body_len > Self::BODY_CACHE_LIMIT_BYTES {
+            return;
+        }
+
+        self.body_cache.insert(id, body);
+        self.body_cache_fifo.push_back(id);
+        self.body_cache_bytes = self.body_cache_bytes.saturating_add(body_len);
+        self.compact_body_cache_fifo_if_needed();
+
+        while self.body_cache.len() > Self::BODY_CACHE_LIMIT
+            || self.body_cache_bytes > Self::BODY_CACHE_LIMIT_BYTES
+        {
+            let Some(evicted_id) = self.body_cache_fifo.pop_front() else {
+                break;
+            };
+            self.evict_cached_body(evicted_id);
+        }
+    }
+
+    fn evict_cached_body(&mut self, id: MessageId) {
+        if let Some(body) = self.body_cache.remove(&id) {
+            self.body_cache_bytes = self.body_cache_bytes.saturating_sub(body.len());
+        }
+        self.compact_body_cache_fifo_if_needed();
+    }
+
+    fn compact_body_cache_fifo_if_needed(&mut self) {
+        let max_fifo_len =
+            Self::BODY_CACHE_LIMIT * Self::BODY_CACHE_FIFO_SLACK_MULTIPLIER + self.body_cache.len();
+        if self.body_cache_fifo.len() <= max_fifo_len {
+            return;
+        }
+
+        self.body_cache_fifo
+            .retain(|id| self.body_cache.contains_key(id));
     }
 
     fn pop_ready(&mut self) -> Option<MessageId> {
+        let step = Self::READY_SHARDS as u64;
         for _ in 0..Self::READY_SHARDS {
             let shard = self.next_ready_shard;
-            if let Some(id) = self.ready_shards[shard].pop_front() {
+            if let Some(range) = self.ready_shards[shard].front_mut() {
+                let id = MessageId::new(range.next);
+                if range.next == range.end {
+                    self.ready_shards[shard].pop_front();
+                } else {
+                    range.next = range.next.saturating_add(step);
+                }
+                self.ready_count = self.ready_count.saturating_sub(1);
                 self.next_ready_shard = (shard + 1) % Self::READY_SHARDS;
                 return Some(id);
             }
@@ -383,11 +661,17 @@ impl QueueActor {
     }
 
     pub fn ready_len(&self) -> usize {
-        self.ready_shards.iter().map(|shard| shard.len()).sum()
+        self.ready_count
     }
 
     pub fn ready_contains(&self, id: MessageId) -> bool {
-        self.ready_shards.iter().any(|shard| shard.contains(&id))
+        let shard = Self::shard_for_id(id);
+        let id_u64 = id.as_u64();
+        let step = Self::READY_SHARDS as u64;
+
+        self.ready_shards[shard].iter().any(|range| {
+            id_u64 >= range.next && id_u64 <= range.end && (id_u64 - range.next) % step == 0
+        })
     }
 
     /// Returns true if an availability notification should be sent (queue transitioned empty->non-empty).
@@ -418,8 +702,11 @@ impl QueueActor {
         }
     }
 
-    /// Deserialize QueueRecord from bytes
-    fn decode_record(bytes: &[u8]) -> Result<QueueRecord, String> {
+    /// Deserialize a legacy combined QueueRecord from an owned buffer without copying
+    /// the body again.
+    fn decode_legacy_record<B: Into<Bytes>>(bytes: B) -> Result<QueueRecord, String> {
+        let bytes = bytes.into();
+
         if bytes.len() < 16 {
             return Err("Invalid record format".to_string());
         }
@@ -432,19 +719,140 @@ impl QueueActor {
             return Err("Truncated record body".to_string());
         }
 
-        let body = Bytes::copy_from_slice(&bytes[16..16 + body_len]);
-
-        Ok(QueueRecord {
-            body,
+        Ok(QueueRecord::loaded(
+            bytes.slice(16..16 + body_len),
             attempts,
             visible_at_ms,
-        })
+        ))
+    }
+
+    /// Deserialize only queue metadata without hydrating the body.
+    fn decode_record_header(bytes: &[u8]) -> Result<QueueRecord, String> {
+        if bytes.len() < 12 {
+            return Err("Invalid record format".to_string());
+        }
+
+        let attempts = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
+
+        Ok(QueueRecord::metadata_only(attempts, visible_at_ms))
+    }
+
+    fn load_record_metadata_from_store(&self, id: MessageId) -> Result<QueueRecord, String> {
+        let cf_id = self.queue_key.family.id();
+        let header_key = self.cached_header_key(id);
+        let legacy_key = self.cached_legacy_message_key(id);
+        let txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("Failed to begin read tx for message {}: {:?}", id, e))?;
+
+        match txn.get(&header_key) {
+            Ok(Some(bytes)) => Self::decode_record_header(&bytes),
+            Ok(None) => match txn.get(&legacy_key) {
+                Ok(Some(bytes)) => {
+                    let record = Self::decode_legacy_record(bytes)?;
+                    Ok(QueueRecord::metadata_only(
+                        record.attempts,
+                        record.visible_at_ms,
+                    ))
+                }
+                Ok(None) => Err(format!("Message {} disappeared from storage", id)),
+                Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
+            },
+            Err(e) => Err(format!("Failed to read message header {}: {:?}", id, e)),
+        }
+    }
+
+    fn load_body_from_store(&self, id: MessageId) -> Result<Bytes, String> {
+        let cf_id = self.queue_key.family.id();
+        let body_key = self.cached_body_key(id);
+        let legacy_key = self.cached_legacy_message_key(id);
+        let txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("Failed to begin read tx for message body {}: {:?}", id, e))?;
+
+        match txn.get(&body_key) {
+            Ok(Some(bytes)) => Ok(bytes),
+            Ok(None) => match txn.get(&legacy_key) {
+                Ok(Some(bytes)) => {
+                    let record = Self::decode_legacy_record(bytes)?;
+                    record
+                        .body
+                        .ok_or_else(|| format!("Legacy message {} body missing", id))
+                }
+                Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
+                Err(e) => Err(format!(
+                    "Failed to read legacy message body {}: {:?}",
+                    id, e
+                )),
+            },
+            Err(e) => Err(format!("Failed to read message body {}: {:?}", id, e)),
+        }
+    }
+
+    fn load_record_for_receive_from_store(&self, id: MessageId) -> Result<QueueRecord, String> {
+        let cf_id = self.queue_key.family.id();
+        let header_key = self.cached_header_key(id);
+        let body_key = self.cached_body_key(id);
+        let legacy_key = self.cached_legacy_message_key(id);
+        let txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("Failed to begin read tx for message {}: {:?}", id, e))?;
+
+        match txn.get(&header_key) {
+            Ok(Some(header_bytes)) => {
+                let header = Self::decode_record_header(&header_bytes)?;
+                match txn.get(&body_key) {
+                    Ok(Some(body_bytes)) => Ok(QueueRecord::loaded(
+                        body_bytes,
+                        header.attempts,
+                        header.visible_at_ms,
+                    )),
+                    Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
+                    Err(e) => Err(format!("Failed to read message body {}: {:?}", id, e)),
+                }
+            }
+            Err(e) => Err(format!("Failed to read message {}: {:?}", id, e)),
+            Ok(None) => match txn.get(&legacy_key) {
+                Ok(Some(bytes)) => Self::decode_legacy_record(bytes),
+                Ok(None) => Err(format!("Message {} disappeared from storage", id)),
+                Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
+            },
+        }
+    }
+
+    fn hydrate_record_for_receive(&mut self, id: MessageId) -> Result<(Bytes, u32), String> {
+        if let Some(record) = self.records.get(&id) {
+            let attempts = record.attempts;
+            if let Some(body) = self.body_cache.get(&id) {
+                return Ok((body.clone(), attempts));
+            }
+
+            let body = self.load_body_from_store(id)?;
+            self.cache_body(id, body.clone());
+            return Ok((body, attempts));
+        }
+
+        let record = self.load_record_for_receive_from_store(id)?;
+        let body = record
+            .body
+            .clone()
+            .ok_or_else(|| format!("Message {} body missing after hydration", id))?;
+        self.cache_record(
+            id,
+            QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
+        );
+        self.cache_body(id, body.clone());
+        Ok((body, record.attempts))
     }
 
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
         // Track empty state before send for notification
-        let was_empty = self.ready_len() == 0;
+        let was_empty = self.ready_count == 0;
 
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
@@ -469,31 +877,32 @@ impl QueueActor {
         let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
         let visible_at = now_instant + Duration::from_millis(delay_ms);
 
-        let record = QueueRecord {
-            body,
-            attempts: 0,
-            visible_at_ms,
-        };
+        let record = QueueRecord::metadata_only(0, visible_at_ms);
+        let cached_body = body.clone();
+        let reserved_limit = self.reserved_id_limit_for(1);
 
-        // Write message to transaction
-        let key = Self::message_key(&self.queue_key, id);
-        let value = Self::encode_record(&record);
-        if let Err(e) = txn.put(key, value, None) {
+        // Write message header + body to one durable transaction.
+        let header_key = self.cached_header_key(id);
+        let header_value = Self::encode_record_header(&record);
+        if let Err(e) = txn.put(header_key, header_value, None) {
             return QueueResponse::Error {
-                message: format!("Failed to add message to transaction: {:?}", e),
+                message: format!("Failed to add message header to transaction: {:?}", e),
             };
         }
 
-        // Update next_id counter in SAME transaction
-        let next_id = self.next_id + 1;
-        if let Err(e) = txn.put(
-            Self::meta_key(&self.queue_key),
-            next_id.to_le_bytes().to_vec(),
-            None,
-        ) {
+        let body_key = self.cached_body_key(id);
+        if let Err(e) = txn.put(body_key, body.to_vec(), None) {
             return QueueResponse::Error {
-                message: format!("Failed to update queue meta: {:?}", e),
+                message: format!("Failed to add message body to transaction: {:?}", e),
             };
+        }
+
+        if let Some(limit) = reserved_limit {
+            if let Err(e) = txn.put(self.meta_key.clone(), limit.to_le_bytes().to_vec(), None) {
+                return QueueResponse::Error {
+                    message: format!("Failed to update queue meta: {:?}", e),
+                };
+            }
         }
 
         // Commit with buffered mode for high throughput
@@ -507,11 +916,15 @@ impl QueueActor {
             };
         }
 
-        // Commit succeeded; advance in-memory next_id
-        self.next_id = next_id;
+        // Commit succeeded; advance in-memory ID state.
+        self.next_id = self.next_id.saturating_add(1);
+        if let Some(limit) = reserved_limit {
+            self.next_id_limit = limit;
+        }
 
         // Cache record in memory for fast reserve path
-        self.records.insert(id, record);
+        self.cache_record(id, record);
+        self.cache_body(id, cached_body);
 
         // Update in-memory queues
         if visible_at <= now_instant {
@@ -523,7 +936,7 @@ impl QueueActor {
 
         // Emit availability notification if queue transitioned from empty to non-empty
         // (only for immediately visible messages, not delayed ones)
-        if was_empty && visible_at <= now_instant && self.ready_len() > 0 {
+        if was_empty && visible_at <= now_instant && self.ready_count > 0 {
             self.needs_notify_availability = true;
         }
 
@@ -554,9 +967,10 @@ impl QueueActor {
         };
 
         let mut ids = Vec::with_capacity(items.len());
-        let mut post_commit: Vec<(MessageId, QueueRecord, std::time::Instant)> =
+        let mut post_commit: Vec<(MessageId, QueueRecord, Bytes, std::time::Instant)> =
             Vec::with_capacity(items.len());
         let mut next_id = self.next_id;
+        let reserved_limit = self.reserved_id_limit_for(items.len() as u64);
 
         for (body, delay_seconds) in items {
             let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
@@ -564,33 +978,34 @@ impl QueueActor {
             let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
             let visible_at = now_instant + Duration::from_millis(delay_ms);
 
-            let record = QueueRecord {
-                body: body.clone(),
-                attempts: 0,
-                visible_at_ms,
-            };
+            let record = QueueRecord::metadata_only(0, visible_at_ms);
 
-            let key = Self::message_key(&self.queue_key, id);
-            let value = Self::encode_record(&record);
-            if let Err(e) = txn.put(key, value, None) {
+            let header_key = self.cached_header_key(id);
+            let header_value = Self::encode_record_header(&record);
+            if let Err(e) = txn.put(header_key, header_value, None) {
                 return QueueResponse::Error {
-                    message: format!("Failed to add message to transaction: {:?}", e),
+                    message: format!("Failed to add message header to transaction: {:?}", e),
+                };
+            }
+
+            let body_key = self.cached_body_key(id);
+            if let Err(e) = txn.put(body_key, body.to_vec(), None) {
+                return QueueResponse::Error {
+                    message: format!("Failed to add message body to transaction: {:?}", e),
                 };
             }
 
             ids.push(id);
-            post_commit.push((id, record, visible_at));
+            post_commit.push((id, record, body.clone(), visible_at));
             next_id += 1;
         }
 
-        if let Err(e) = txn.put(
-            Self::meta_key(&self.queue_key),
-            next_id.to_le_bytes().to_vec(),
-            None,
-        ) {
-            return QueueResponse::Error {
-                message: format!("Failed to update queue meta: {:?}", e),
-            };
+        if let Some(limit) = reserved_limit {
+            if let Err(e) = txn.put(self.meta_key.clone(), limit.to_le_bytes().to_vec(), None) {
+                return QueueResponse::Error {
+                    message: format!("Failed to update queue meta: {:?}", e),
+                };
+            }
         }
 
         if let Err(e) = self
@@ -603,8 +1018,12 @@ impl QueueActor {
         }
 
         self.next_id = next_id;
-        for (id, record, visible_at) in post_commit {
-            self.records.insert(id, record);
+        if let Some(limit) = reserved_limit {
+            self.next_id_limit = limit;
+        }
+        for (id, record, cached_body, visible_at) in post_commit {
+            self.cache_record(id, record);
+            self.cache_body(id, cached_body);
             if visible_at <= now_instant {
                 self.push_ready(id);
             } else {
@@ -639,7 +1058,7 @@ impl QueueActor {
         let now = self.clock.now_instant();
         let lease_duration = Duration::from_secs(lease_seconds);
 
-        let mut messages = Vec::new();
+        let mut messages = Vec::with_capacity(batch_size);
 
         for _ in 0..batch_size {
             // Pop from ready queue
@@ -648,49 +1067,11 @@ impl QueueActor {
                 None => break, // No more messages
             };
 
-            let record = match self.records.get(&id) {
-                Some(record) => record.clone(),
-                None => {
-                    // Fallback to storage if cache missed
-                    let cf_id = self.queue_key.family.id();
-                    let key = Self::message_key(&self.queue_key, id);
-                    let txn = match self
-                        .store
-                        .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-                    {
-                        Ok(t) => t,
-                        Err(e) => {
-                            eprintln!("WARN: Failed to begin tx: {:?}", e);
-                            continue;
-                        }
-                    };
-
-                    let record = match txn.get(&key) {
-                        Ok(Some(bytes)) => match Self::decode_record(&bytes) {
-                            Ok(record) => {
-                                drop(txn);
-                                record
-                            }
-                            Err(e) => {
-                                eprintln!("WARN: Failed to decode message {}: {}", id, e);
-                                drop(txn);
-                                continue;
-                            }
-                        },
-                        Ok(None) => {
-                            eprintln!("WARN: Message {} disappeared from storage", id);
-                            drop(txn);
-                            continue;
-                        }
-                        Err(e) => {
-                            eprintln!("WARN: Failed to read message {}: {:?}", id, e);
-                            drop(txn);
-                            continue;
-                        }
-                    };
-
-                    self.records.insert(id, record.clone());
-                    record
+            let (body, attempts) = match self.hydrate_record_for_receive(id) {
+                Ok(record) => record,
+                Err(e) => {
+                    eprintln!("WARN: {}", e);
+                    continue;
                 }
             };
 
@@ -712,10 +1093,10 @@ impl QueueActor {
             // Build response message
             messages.push(ReservedMessage {
                 id,
-                body: record.body,
+                body,
                 token,
                 lease_seconds,
-                attempts: record.attempts + 1, // First attempt is 1 (not 0)
+                attempts: attempts + 1, // First attempt is 1 (not 0)
             });
         }
 
@@ -848,28 +1229,36 @@ impl QueueActor {
         self.inflight.remove(&id);
 
         // Remove cached record (storage is durable source of truth)
-        self.records.remove(&id);
+        self.evict_cached_record(id);
+        self.evict_cached_body(id);
 
-        // Delete from Midge with durability options (via transaction API)
-        // TODO: Use transaction API for deletes:
-        // let cf = self.store.default_column_family();
-        // let mut txn = self.store.begin_transaction(cf).unwrap();
-        // let key = Self::message_key(&self.queue_key, id);
-        // txn.delete(&key).unwrap();
-        // let (sync, disable_wal) = self.durability.to_midge_options();
-        // let mut opts = WriteOptions::default();
-        // opts.set_sync(sync);
-        // opts.set_disable_wal(disable_wal);
-        // self.store.commit_transaction_boxed(txn, &opts).ok();
         let cf_id = self.queue_key.family.id();
-        let key = Self::message_key(&self.queue_key, id);
+        let header_key = self.cached_header_key(id);
+        let body_key = self.cached_body_key(id);
+        let legacy_key = self.cached_legacy_message_key(id);
 
         match self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(mut txn) => {
-                if let Err(e) = txn.delete(key) {
+                let has_split_record = match txn.get(&header_key) {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(e) => {
+                        eprintln!("WARN: Failed to inspect message {} in txn: {:?}", id, e);
+                        false
+                    }
+                };
+
+                let delete_result = if has_split_record {
+                    txn.delete(header_key)
+                        .and_then(|_| txn.delete(body_key))
+                } else {
+                    txn.delete(legacy_key)
+                };
+
+                if let Err(e) = delete_result {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
                 } else {
                     // Use buffered writes for throughput (queues represent intent, not events of record)
@@ -925,42 +1314,23 @@ impl QueueActor {
 
         // Increment attempts in storage and check DLQ threshold
         let cf_id = self.queue_key.family.id();
-        let key = Self::message_key(&self.queue_key, id);
+        let header_key = self.cached_header_key(id);
+        let body_key = self.cached_body_key(id);
+        let legacy_key = self.cached_legacy_message_key(id);
 
-        let mut record = match self.records.get(&id) {
-            Some(record) => record.clone(),
-            None => match self
-                .store
-                .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-            {
-                Ok(txn) => match txn.get(&key) {
-                    Ok(Some(bytes)) => match Self::decode_record(&bytes) {
-                        Ok(record) => record,
-                        Err(e) => {
-                            eprintln!(
-                                "WARN: Failed to decode message {} during redelivery: {}",
-                                id, e
-                            );
-                            return;
-                        }
-                    },
-                    Ok(None) => return,
-                    Err(e) => {
-                        eprintln!(
-                            "WARN: Failed to read message {} during redelivery: {:?}",
-                            id, e
-                        );
-                        return;
-                    }
-                },
+        let mut record = if let Some(cached) = self.records.get(&id) {
+            cached.clone()
+        } else {
+            match self.load_record_metadata_from_store(id) {
+                Ok(record) => record,
                 Err(e) => {
                     eprintln!(
-                        "WARN: Failed to begin txn for redelivery for message {}: {:?}",
+                        "WARN: Failed to load message {} during redelivery: {}",
                         id, e
                     );
                     return;
                 }
-            },
+            }
         };
 
         record.attempts += 1;
@@ -976,8 +1346,27 @@ impl QueueActor {
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(mut txn) => {
+                let has_split_record = match txn.get(&header_key) {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(e) => {
+                        eprintln!(
+                            "WARN: Failed to inspect queue storage layout for message {}: {:?}",
+                            id, e
+                        );
+                        return;
+                    }
+                };
+
                 if is_dlq {
-                    if let Err(e) = txn.delete(key.clone()) {
+                    let delete_result = if has_split_record {
+                        txn.delete(header_key.clone())
+                            .and_then(|_| txn.delete(body_key))
+                    } else {
+                        txn.delete(legacy_key.clone())
+                    };
+
+                    if let Err(e) = delete_result {
                         eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
                     } else if let Err(e) = self
                         .store
@@ -986,7 +1375,8 @@ impl QueueActor {
                         eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
                     }
 
-                    self.records.remove(&id);
+                    self.evict_cached_record(id);
+                    self.evict_cached_body(id);
 
                     eprintln!(
                         "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
@@ -996,8 +1386,41 @@ impl QueueActor {
                     return;
                 }
 
-                let value = Self::encode_record(&record);
-                if let Err(e) = txn.put(key.clone(), value, None) {
+                let write_result = if has_split_record {
+                    let value = Self::encode_record_header(&record);
+                    txn.put(header_key.clone(), value, None)
+                } else {
+                    match txn.get(&legacy_key) {
+                        Ok(Some(bytes)) => match Self::decode_legacy_record(bytes) {
+                            Ok(mut legacy_record) => {
+                                legacy_record.attempts = record.attempts;
+                                legacy_record.visible_at_ms = record.visible_at_ms;
+                                let value = Self::encode_legacy_record(&legacy_record);
+                                txn.put(legacy_key.clone(), value, None)
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "WARN: Failed to decode legacy message {} during redelivery: {}",
+                                    id, e
+                                );
+                                return;
+                            }
+                        },
+                        Ok(None) => {
+                            eprintln!("WARN: Legacy message {} disappeared during redelivery", id);
+                            return;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "WARN: Failed to read legacy message {} during redelivery: {:?}",
+                                id, e
+                            );
+                            return;
+                        }
+                    }
+                };
+
+                if let Err(e) = write_result {
                     eprintln!(
                         "WARN: Failed to increment attempts for message {}: {:?}",
                         id, e
@@ -1021,7 +1444,10 @@ impl QueueActor {
             }
         }
 
-        self.records.insert(id, record);
+        self.cache_record(
+            id,
+            QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
+        );
 
         // Re-enqueue to ready queue (back of queue for FIFO)
         self.push_ready(id);
@@ -1197,7 +1623,7 @@ impl QueueActor {
     ///
     /// Messages are guaranteed to survive if:
     /// - Batch commit returned successfully (sync())
-    fn recover_ready_and_delayed_from_store(&mut self) {
+    fn recover_from_store(&mut self) {
         let cf_id = self.queue_key.family.id();
         let txn = match self
             .store
@@ -1213,57 +1639,79 @@ impl QueueActor {
             }
         };
 
-        let prefix = format!(
-            "queue:{}:{}:{}:msg:",
-            self.queue_key.realm, self.queue_key.area, self.queue_key.resource
-        )
-        .into_bytes();
+        let mut next_id = match txn.get(&self.meta_key) {
+            Ok(Some(bytes)) => bytes
+                .get(0..8)
+                .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
+                .unwrap_or(1),
+            Ok(None) => 1,
+            Err(e) => {
+                eprintln!(
+                    "WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1",
+                    self.queue_key, e
+                );
+                1
+            }
+        };
 
-        let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix));
-        let mut iter = match txn.scan(&query) {
+        let header_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.header_key_prefix));
+        let mut header_iter = match txn.scan(&header_query) {
             Ok(iter) => iter,
             Err(e) => {
                 eprintln!(
-                    "WARN: Failed to scan for recovery for queue {:?}: {:?}",
+                    "WARN: Failed to scan queue headers for recovery for queue {:?}: {:?}",
                     self.queue_key, e
                 );
                 return;
             }
         };
-        let results = iter.collect_all();
+        let legacy_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.legacy_message_key_prefix));
+        let mut legacy_iter = match txn.scan(&legacy_query) {
+            Ok(iter) => iter,
+            Err(e) => {
+                eprintln!(
+                    "WARN: Failed to scan legacy queue records for recovery for queue {:?}: {:?}",
+                    self.queue_key, e
+                );
+                return;
+            }
+        };
+        let recovered_count = header_iter.remaining() + legacy_iter.remaining();
+        let per_shard = recovered_count / Self::READY_SHARDS + 1;
+        for shard in &mut self.ready_shards {
+            shard.reserve(per_shard);
+        }
+        self.delayed.reserve(recovered_count);
 
         // Use absolute SystemTime epoch (V-002 Fix)
         let now_epoch_ms = self.clock.now_epoch_ms();
         let now_instant = self.clock.now_instant();
         let mut max_id = None::<u64>;
 
-        for (key_bytes, value_bytes) in results {
-            let key_str = String::from_utf8_lossy(&key_bytes);
-            let Some(pos) = key_str.rfind(":msg:") else {
+        while let Some((key_bytes, value_bytes)) = header_iter.next() {
+            let Some(id) = Self::parse_message_id_from_key(&key_bytes, &self.header_key_prefix)
+            else {
                 continue;
             };
-            let id_str = &key_str[pos + 5..];
-            let Ok(id_u64) = id_str.parse::<u64>() else {
-                continue;
-            };
-            let id = MessageId::new(id_u64);
+            let id_u64 = id.as_u64();
 
-            let record = match Self::decode_record(&value_bytes) {
+            let record = match Self::decode_record_header(&value_bytes) {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-
-            self.records.insert(id, record.clone());
+            let visible_at_ms = record.visible_at_ms;
 
             max_id = Some(max_id.map(|m| m.max(id_u64)).unwrap_or(id_u64));
 
             // Compare absolute epochs (survives restarts correctly)
-            if record.visible_at_ms <= now_epoch_ms {
+            if visible_at_ms <= now_epoch_ms {
                 // Immediately visible
                 self.push_ready(id);
             } else {
                 // Delayed: use absolute epoch difference
-                let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
+                let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
                 self.delayed
                     .push(Reverse(DelayedMessage { id, visible_at }));
@@ -1275,10 +1723,42 @@ impl QueueActor {
             }
         }
 
+        while let Some((key_bytes, value_bytes)) = legacy_iter.next() {
+            let Some(id) =
+                Self::parse_message_id_from_key(&key_bytes, &self.legacy_message_key_prefix)
+            else {
+                continue;
+            };
+            let id_u64 = id.as_u64();
+
+            let record = match Self::decode_legacy_record(value_bytes) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let visible_at_ms = record.visible_at_ms;
+
+            max_id = Some(max_id.map(|m| m.max(id_u64)).unwrap_or(id_u64));
+
+            if visible_at_ms <= now_epoch_ms {
+                self.push_ready(id);
+            } else {
+                let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
+                let visible_at = now_instant + Duration::from_millis(delay_ms);
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
+
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
+            }
+        }
+
         // Ensure next_id is never decremented
         if let Some(max_id) = max_id {
-            self.next_id = self.next_id.max(max_id + 1);
+            next_id = next_id.max(max_id + 1);
         }
+        self.next_id = next_id;
+        self.next_id_limit = next_id;
     }
 }
 
@@ -1387,6 +1867,245 @@ pub mod tests {
         }
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
+    }
+
+    #[test]
+    fn should_bound_hot_body_cache_size() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-body-cache");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        for i in 0..(QueueActor::BODY_CACHE_LIMIT + 32) {
+            let body = Bytes::from(format!("message-{}", i));
+            let response = actor.handle_send(body, None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+        }
+
+        assert!(actor.records.len() <= QueueActor::RECORD_CACHE_LIMIT);
+        assert_eq!(actor.body_cache.len(), QueueActor::BODY_CACHE_LIMIT);
+        assert!(actor.body_cache_bytes <= QueueActor::BODY_CACHE_LIMIT_BYTES);
+    }
+
+    #[test]
+    fn should_bound_metadata_cache_size() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-record-cache");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        for i in 0..(QueueActor::RECORD_CACHE_LIMIT + 32) {
+            let body = Bytes::from(format!("message-{}", i));
+            let response = actor.handle_send(body, None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+        }
+
+        assert_eq!(actor.records.len(), QueueActor::RECORD_CACHE_LIMIT);
+        let max_fifo_len = QueueActor::RECORD_CACHE_LIMIT
+            * QueueActor::RECORD_CACHE_FIFO_SLACK_MULTIPLIER
+            + actor.records.len();
+        assert!(actor.record_cache_fifo.len() <= max_fifo_len);
+    }
+
+    #[test]
+    fn should_bound_hot_body_cache_total_bytes() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-body-cache-bytes");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        let body_size = QueueActor::BODY_CACHE_LIMIT_BYTES / 4 + 1;
+        for i in 0..5 {
+            let body = Bytes::from(vec![i as u8; body_size]);
+            let response = actor.handle_send(body, None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+        }
+
+        assert_eq!(actor.records.len(), 5);
+        assert!(actor.body_cache.len() < 5);
+        assert!(actor.body_cache_bytes <= QueueActor::BODY_CACHE_LIMIT_BYTES);
+    }
+
+    #[test]
+    fn should_not_hydrate_metadata_cache_during_recovery() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-recovery-meta");
+
+        {
+            let mut actor = QueueActor::new(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                None,
+                crate::utils::idempotency::global_dedup_store(),
+            );
+
+            for i in 0..64 {
+                let body = Bytes::from(format!("recovered-{}", i));
+                let response = actor.handle_send(body, None);
+                assert!(matches!(response, QueueResponse::Sent { .. }));
+            }
+        }
+
+        let actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        assert_eq!(actor.ready_len(), 64);
+        assert!(actor.records.is_empty());
+        assert!(actor.record_cache_fifo.is_empty());
+        assert!(actor.body_cache.is_empty());
+    }
+
+    #[test]
+    fn should_recover_legacy_combined_records_after_storage_split() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-legacy-storage");
+        let msg_id = MessageId::new(1);
+        let cf_id = queue_key.family.id();
+        let mut txn = store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin tx");
+
+        txn.put(QueueActor::meta_key(&queue_key), 2_u64.to_le_bytes().to_vec(), None)
+            .expect("write queue meta");
+        txn.put(
+            QueueActor::legacy_message_key(&queue_key, msg_id),
+            QueueActor::encode_legacy_record(&QueueRecord::loaded(
+                Bytes::from_static(b"legacy-message"),
+                0,
+                1_700_000_000_000,
+            )),
+            None,
+        )
+        .expect("write legacy queue record");
+        store
+            .commit(txn, cntryl_midge::WriteOptions::buffered())
+            .expect("commit legacy queue record");
+
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        assert_eq!(actor.ready_len(), 1);
+
+        match actor.handle_receive(30, Some(1)) {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, msg_id);
+                assert_eq!(messages[0].body, Bytes::from_static(b"legacy-message"));
+            }
+            _ => panic!("Expected Received response"),
+        }
+    }
+
+    #[test]
+    fn should_skip_caching_oversized_body_and_hydrate_from_store() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-oversized-body");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        let oversized = Bytes::from(vec![b'x'; QueueActor::BODY_CACHE_LIMIT_BYTES + 1]);
+        let response = actor.handle_send(oversized.clone(), None);
+        assert!(matches!(response, QueueResponse::Sent { .. }));
+        assert_eq!(actor.body_cache.len(), 0);
+        assert_eq!(actor.body_cache_bytes, 0);
+
+        match actor.handle_receive(30, Some(1)) {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].body, oversized);
+            }
+            _ => panic!("Expected Received response"),
+        }
+    }
+
+    #[test]
+    fn should_compact_hot_body_fifo_under_cache_churn() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-body-cache-churn");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        for i in 0..(QueueActor::BODY_CACHE_LIMIT * 3) {
+            let body = Bytes::from(format!("message-{}", i));
+            let response = actor.handle_send(body, None);
+            let id = match response {
+                QueueResponse::Sent { id } => id,
+                _ => panic!("Expected Sent response"),
+            };
+            let response = actor.handle_receive(30, Some(1));
+            let token = match response {
+                QueueResponse::Received { messages } => {
+                    assert_eq!(messages.len(), 1);
+                    messages[0].token
+                }
+                _ => panic!("Expected Received response"),
+            };
+            assert_eq!(actor.handle_ack(id, token), QueueResponse::Acked);
+        }
+
+        let max_fifo_len = QueueActor::BODY_CACHE_LIMIT
+            * QueueActor::BODY_CACHE_FIFO_SLACK_MULTIPLIER
+            + actor.body_cache.len();
+        assert!(actor.body_cache.is_empty());
+        assert!(actor.body_cache_bytes == 0);
+        assert!(actor.body_cache_fifo.len() <= max_fifo_len);
     }
 
     #[test]
@@ -1921,12 +2640,15 @@ pub mod tests {
 
         // Verify message deleted from storage
         let cf_id = queue_key.family.id();
-        let key = QueueActor::message_key(&queue_key, msg_id);
+        let key = QueueActor::header_key(&queue_key, msg_id);
         let txn = store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .expect("begin tx");
         let result = txn.get(&key).expect("midge get");
-        assert!(result.is_none(), "Message should be deleted from storage");
+        assert!(result.is_none(), "Message header should be deleted from storage");
+        let body_key = QueueActor::body_key(&queue_key, msg_id);
+        let body_result = txn.get(&body_key).expect("midge get body");
+        assert!(body_result.is_none(), "Message body should be deleted from storage");
     }
 
     #[test]

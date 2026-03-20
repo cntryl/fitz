@@ -203,6 +203,16 @@ impl<'a> PayloadDecoder<'a> {
         Ok(data)
     }
 
+    /// Skip bytes with length prefix without allocating.
+    pub fn skip_bytes(&mut self) -> Result<(), String> {
+        let len = self.get_u32()? as usize;
+        if self.offset + len > self.payload.len() {
+            return Err("Incomplete bytes data".to_string());
+        }
+        self.offset += len;
+        Ok(())
+    }
+
     /// Decode an optional u64
     pub fn get_optional_u64(&mut self) -> Result<Option<u64>, String> {
         let flag = self.get_u8()?;
@@ -230,6 +240,16 @@ impl<'a> PayloadDecoder<'a> {
             self.get_bytes().map(Some)
         } else {
             Ok(None)
+        }
+    }
+
+    /// Skip optional bytes without allocating.
+    pub fn skip_optional_bytes(&mut self) -> Result<(), String> {
+        let flag = self.get_u8()?;
+        if flag == 1 {
+            self.skip_bytes()
+        } else {
+            Ok(())
         }
     }
 

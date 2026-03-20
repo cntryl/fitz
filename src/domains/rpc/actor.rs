@@ -31,10 +31,13 @@ use super::errors::RpcError;
 use super::protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::{RouteAddress, RouteFamily};
+use fxhash::FxBuildHasher;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
 /// Default queue capacity per route
 const DEFAULT_QUEUE_CAPACITY: usize = 1000;
@@ -69,13 +72,11 @@ impl PartialOrd for ExpiringLease {
 ///
 /// Optimized for minimal allocation:
 /// - Stores worker_index instead of RouteAddress (no clone)
-/// - No request storage (already dispatched to worker)
+/// - Does not retain reply routing state while reply forwarding is a no-op
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct Lease {
-    correlation_id: Uuid,
     worker_index: usize, // Index into workers vec (no allocation)
-    reply_route: crate::runtime::routing::Route,
     expiration: Instant,
 }
 
@@ -125,7 +126,7 @@ pub struct RpcRouteActor {
     capacity: usize,
 
     /// Active leases (correlation_id → Lease)
-    leases: HashMap<Uuid, Lease>,
+    leases: FastMap<Uuid, Lease>,
 
     /// Expiration queue for O(K) expired lease detection (min-heap)
     expiration_queue: BinaryHeap<ExpiringLease>,
@@ -148,7 +149,7 @@ impl RpcRouteActor {
             workers: Vec::with_capacity(16),            // Reserve space for typical worker count
             ready_queue: VecDeque::with_capacity(16),
             capacity,
-            leases: HashMap::with_capacity(capacity), // Pre-allocate for expected load
+            leases: HashMap::with_capacity_and_hasher(capacity, FxBuildHasher::default()), // Pre-allocate for expected load
             expiration_queue: BinaryHeap::with_capacity(capacity), // Pre-allocate for expected load
             lease_timeout: DEFAULT_LEASE_TIMEOUT,
         }
@@ -162,7 +163,7 @@ impl RpcRouteActor {
             workers: Vec::with_capacity(16),
             ready_queue: VecDeque::with_capacity(16),
             capacity,
-            leases: HashMap::with_capacity(capacity),
+            leases: HashMap::with_capacity_and_hasher(capacity, FxBuildHasher::default()),
             expiration_queue: BinaryHeap::with_capacity(capacity),
             lease_timeout,
         }
@@ -224,7 +225,7 @@ impl RpcRouteActor {
                     request.family_id, self.family
                 ),
             );
-            self.send_error(error, &request.reply_route);
+            self.send_error(error);
             return;
         }
 
@@ -235,7 +236,7 @@ impl RpcRouteActor {
         if self.pending.len() >= self.capacity {
             // Send backpressure error to client
             let error = RpcError::backpressure(request.correlation_id);
-            self.send_error(error, &request.reply_route);
+            self.send_error(error);
             return;
         }
 
@@ -250,22 +251,10 @@ impl RpcRouteActor {
 
     /// Handle response from worker
     fn handle_response(&mut self, response: RpcResponse, ctx: &mut Context<Self>) {
-        // Check if we have a lease for this correlation ID
-        if let Some(lease) = self.leases.get(&response.correlation_id) {
-            let reply_route = lease.reply_route.clone();
-
-            // Forward response to client inbox
-            // NOTE: ReplyInboxActor integration pending - responses currently dropped
-            // See: https://github.com/cntryl/fitz/issues/track-response-routing
-            let _ = reply_route; // Silence unused warning for now
-
-            // If this is the final chunk, release the lease
-            if response.stream_end {
-                let correlation_id = response.correlation_id;
-                self.release_lease(&correlation_id, ctx);
-            }
+        // Terminal responses release the worker lease. Late responses naturally no-op.
+        if response.stream_end {
+            self.release_lease(&response.correlation_id, ctx);
         }
-        // Else: late response after lease expired, drop it
     }
 
     /// Handle worker acknowledgment
@@ -296,12 +285,10 @@ impl RpcRouteActor {
             // Create lease with minimal data
             let expiration = Instant::now() + self.lease_timeout;
             let lease = Lease {
-                correlation_id: request.correlation_id,
                 worker_index: idx, // Store index, not address
-                reply_route: request.reply_route.clone(),
                 expiration,
             };
-            self.leases.insert(request.correlation_id, lease.clone());
+            self.leases.insert(request.correlation_id, lease);
 
             // Add to expiration queue for O(K) timeout checking
             self.expiration_queue.push(ExpiringLease {
@@ -327,7 +314,7 @@ impl RpcRouteActor {
     ///
     /// Uses worker_index for O(1) lookup (no linear search needed)
     #[inline]
-    fn release_lease_internal(&mut self, correlation_id: &Uuid) {
+    fn release_lease_internal(&mut self, correlation_id: &Uuid) -> bool {
         if let Some(lease) = self.leases.remove(correlation_id) {
             // Direct O(1) lookup by index (no linear search)
             let idx = lease.worker_index;
@@ -341,13 +328,17 @@ impl RpcRouteActor {
                     self.ready_queue.push_back(idx);
                 }
             }
+            true
+        } else {
+            false
         }
     }
 
     /// Release a lease and try to dispatch pending requests
     fn release_lease(&mut self, correlation_id: &Uuid, ctx: &mut Context<Self>) {
-        self.release_lease_internal(correlation_id);
-        self.try_dispatch_pending(ctx);
+        if self.release_lease_internal(correlation_id) {
+            self.try_dispatch_pending(ctx);
+        }
     }
 
     /// Check for expired leases and re-enqueue requests
@@ -386,9 +377,10 @@ impl RpcRouteActor {
                     }
                 }
 
-                // Send timeout error to client
+                // Timeout is currently observed only through lease release.
+                // Error forwarding remains a no-op until reply inbox routing lands.
                 let error = RpcError::timeout(correlation_id);
-                self.send_error(error, &lease.reply_route);
+                self.send_error(error);
 
                 // NOTE: We don't re-enqueue for retry since we don't have the original request
                 // (removed request clone for performance). Client should retry if needed.
@@ -402,7 +394,7 @@ impl RpcRouteActor {
     }
 
     /// Send error to client inbox
-    fn send_error(&self, _error: RpcError, _reply_route: &crate::runtime::routing::Route) {
+    fn send_error(&self, _error: RpcError) {
         // NOTE: ReplyInboxActor integration pending - errors currently dropped
         // See: https://github.com/cntryl/fitz/issues/track-response-routing
     }
