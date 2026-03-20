@@ -1252,8 +1252,7 @@ impl QueueActor {
                 };
 
                 let delete_result = if has_split_record {
-                    txn.delete(header_key)
-                        .and_then(|_| txn.delete(body_key))
+                    txn.delete(header_key).and_then(|_| txn.delete(body_key))
                 } else {
                     txn.delete(legacy_key)
                 };
@@ -1666,8 +1665,8 @@ impl QueueActor {
                 return;
             }
         };
-        let legacy_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.legacy_message_key_prefix));
+        let legacy_query = cntryl_midge::Query::new()
+            .prefix(Bytes::copy_from_slice(&self.legacy_message_key_prefix));
         let mut legacy_iter = match txn.scan(&legacy_query) {
             Ok(iter) => iter,
             Err(e) => {
@@ -2006,8 +2005,12 @@ pub mod tests {
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
             .expect("begin tx");
 
-        txn.put(QueueActor::meta_key(&queue_key), 2_u64.to_le_bytes().to_vec(), None)
-            .expect("write queue meta");
+        txn.put(
+            QueueActor::meta_key(&queue_key),
+            2_u64.to_le_bytes().to_vec(),
+            None,
+        )
+        .expect("write queue meta");
         txn.put(
             QueueActor::legacy_message_key(&queue_key, msg_id),
             QueueActor::encode_legacy_record(&QueueRecord::loaded(
@@ -2650,10 +2653,16 @@ pub mod tests {
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .expect("begin tx");
         let result = txn.get(&key).expect("midge get");
-        assert!(result.is_none(), "Message header should be deleted from storage");
+        assert!(
+            result.is_none(),
+            "Message header should be deleted from storage"
+        );
         let body_key = QueueActor::body_key(&queue_key, msg_id);
         let body_result = txn.get(&body_key).expect("midge get body");
-        assert!(body_result.is_none(), "Message body should be deleted from storage");
+        assert!(
+            body_result.is_none(),
+            "Message body should be deleted from storage"
+        );
     }
 
     #[test]

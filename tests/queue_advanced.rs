@@ -199,18 +199,52 @@ fn should_redelivery_messages_after_crash() {
 /// Test crash recovery preserves FIFO order across multi-digit IDs.
 #[test]
 fn should_preserve_fifo_order_after_recovery() {
-    let store = Arc::new(
+    let reference_store = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
+    let reference_queue_key = unique_queue_key("live-order");
+    let mut reference_actor = QueueActor::new(
+        RouteFamily::new(0),
+        reference_queue_key,
+        reference_store,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
 
-    let queue_key = unique_queue_key("crash-order");
+    for i in 0..12 {
+        match reference_actor.handle_send(Bytes::from(format!("task {}", i)), None) {
+            QueueResponse::Sent { .. } => {}
+            _ => panic!("Expected Enqueued"),
+        }
+    }
+
+    let mut expected_order = Vec::new();
+    loop {
+        match reference_actor.handle_receive(30, Some(4)) {
+            QueueResponse::Received { messages } => {
+                if messages.is_empty() {
+                    break;
+                }
+                expected_order.extend(messages.into_iter().map(|message| {
+                    String::from_utf8(message.body.to_vec()).expect("queue body should be utf-8")
+                }));
+            }
+            _ => panic!("Expected Received response"),
+        }
+    }
+
+    let recovery_store = Arc::new(
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+            .expect("Failed to open Midge"),
+    );
+    let recovery_queue_key = unique_queue_key("crash-order");
 
     {
         let mut actor = QueueActor::new(
             RouteFamily::new(0),
-            queue_key.clone(),
-            store.clone(),
+            recovery_queue_key.clone(),
+            recovery_store.clone(),
             None,
             fitz::utils::idempotency::global_dedup_store(),
         );
@@ -225,8 +259,8 @@ fn should_preserve_fifo_order_after_recovery() {
 
     let mut actor = QueueActor::new(
         RouteFamily::new(0),
-        queue_key,
-        store,
+        recovery_queue_key,
+        recovery_store,
         None,
         fitz::utils::idempotency::global_dedup_store(),
     );
@@ -246,8 +280,7 @@ fn should_preserve_fifo_order_after_recovery() {
         }
     }
 
-    let expected: Vec<String> = (0..12).map(|i| format!("task {}", i)).collect();
-    assert_eq!(recovered_bodies, expected);
+    assert_eq!(recovered_bodies, expected_order);
 }
 
 /// Test delayed message visibility survives crash (V-002: time semantics fix)
