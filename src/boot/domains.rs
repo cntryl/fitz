@@ -1910,9 +1910,27 @@ struct StreamFamilyState {
 }
 
 /// Per-route next offset and session tracking for expected_offset enforcement
+#[derive(Clone)]
+struct PendingStreamRecord {
+    body: bytes::Bytes,
+}
+
+struct PendingStreamSession {
+    route: String,
+    records: Vec<PendingStreamRecord>,
+}
+
+#[derive(Clone)]
+struct CommittedStreamRecord {
+    offset: u64,
+    body: bytes::Bytes,
+}
+
 struct StreamWriteState {
     next_offset_by_route: HashMap<String, u64>,
     session_to_route: HashMap<u64, String>,
+    sessions: HashMap<u64, PendingStreamSession>,
+    records_by_route: HashMap<String, Vec<CommittedStreamRecord>>,
 }
 
 /// Stream domain sink: append-only streaming operations with subscription tracking
@@ -1953,6 +1971,8 @@ impl StreamDomainSink {
             write_state: Mutex::new(StreamWriteState {
                 next_offset_by_route: HashMap::new(),
                 session_to_route: HashMap::new(),
+                sessions: HashMap::new(),
+                records_by_route: HashMap::new(),
             }),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
@@ -1991,6 +2011,59 @@ impl StreamDomainSink {
             .collect();
         drop(state);
         self.admin_read_model.replace_streams(streams);
+    }
+
+    fn encode_stream_read_data(
+        records: &[CommittedStreamRecord],
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+    ) -> Vec<u8> {
+        let mut selected = Vec::new();
+        let mut total_bytes = 0usize;
+
+        for record in records.iter().filter(|record| record.offset >= from_offset) {
+            if selected.len() >= limit as usize {
+                break;
+            }
+
+            if let Some(max_bytes) = max_bytes {
+                let projected = total_bytes + record.body.len();
+                if !selected.is_empty() && projected > max_bytes {
+                    break;
+                }
+                total_bytes = projected;
+            }
+
+            selected.push(record);
+        }
+
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_u32(selected.len() as u32);
+        for record in selected {
+            encoder.put_u64(record.offset);
+            encoder.put_bytes(record.body.as_ref());
+        }
+        encoder.finish()
+    }
+
+    fn encode_stream_last_data(record: &CommittedStreamRecord) -> Vec<u8> {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_u64(record.offset);
+        encoder.put_bytes(record.body.as_ref());
+        encoder.finish()
+    }
+
+    fn encode_stream_metadata_data(records: &[CommittedStreamRecord]) -> Vec<u8> {
+        if records.is_empty() {
+            return Vec::new();
+        }
+
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_u64(records.first().map(|record| record.offset).unwrap_or(0));
+        encoder.put_u64(records.last().map(|record| record.offset).unwrap_or(0));
+        encoder.put_u64(records.len() as u64);
+        encoder.finish()
     }
 
     /// Handle a DomainPublishEvent from stream actors.
@@ -2181,12 +2254,13 @@ impl MailboxSink for StreamDomainSink {
         use crate::domains::stream::protocol::StreamMessage;
         use crate::protocol::stream_codec::StreamResponse;
 
-        // Enforce expected_offset at Begin; track session->route for Commit (advance next_offset).
-        // If Commit advances a route, we emit STREAM_NOTIFY (609) to matching subscribers.
-        let (response, commit_notify_route) = match stream_msg {
+        // Enforce expected_offset at Begin; persist committed records in-memory for READ/LAST/METADATA.
+        // If Commit advances a route, emit STREAM_NOTIFY (609) with batch offset metadata.
+        let (response, commit_notify) = match stream_msg {
             StreamMessage::Begin {
                 route,
                 expected_offset,
+                ingest_metadata: _,
                 ..
             } => {
                 let route_key = route.as_str().to_string();
@@ -2216,7 +2290,14 @@ impl MailboxSink for StreamDomainSink {
                     };
                 }
                 let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-                state.session_to_route.insert(session_id, route_key);
+                state.session_to_route.insert(session_id, route_key.clone());
+                state.sessions.insert(
+                    session_id,
+                    PendingStreamSession {
+                        route: route_key,
+                        records: Vec::new(),
+                    },
+                );
                 (
                     StreamResponse::Ok {
                         session_id: Some(session_id),
@@ -2225,33 +2306,86 @@ impl MailboxSink for StreamDomainSink {
                     None,
                 )
             }
-            StreamMessage::Append { .. } => (
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                },
-                None,
-            ),
+            StreamMessage::Append {
+                session_id,
+                body,
+                metadata: _,
+            } => {
+                let mut state = self.write_state.lock();
+                let route_key = state.session_to_route.get(&session_id).cloned();
+                let maybe_offset = route_key.and_then(|route_key| {
+                    let next_offset = state.next_offset_by_route.get(&route_key).copied().unwrap_or(0);
+                    state.sessions.get_mut(&session_id).map(|session| {
+                        let assigned_offset = next_offset + session.records.len() as u64;
+                        session.records.push(PendingStreamRecord { body });
+                        assigned_offset
+                    })
+                });
+
+                let data = if let Some(offset) = maybe_offset {
+                    let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+                    encoder.put_u64(offset);
+                    encoder.finish()
+                } else {
+                    Vec::new()
+                };
+
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data,
+                    },
+                    None,
+                )
+            }
             StreamMessage::Commit { session_id, .. } => {
                 let mut state = self.write_state.lock();
-                let commit_route = state.session_to_route.remove(&session_id).map(|route_key| {
-                    state
+                state.session_to_route.remove(&session_id);
+                let commit_notify = state.sessions.remove(&session_id).map(|session| {
+                    let batch_size = session.records.len();
+                    let next_offset = state
                         .next_offset_by_route
-                        .entry(route_key.clone())
-                        .and_modify(|n| *n += 1)
-                        .or_insert(1);
-                    crate::runtime::routing::Route::new(route_key)
+                        .entry(session.route.clone())
+                        .or_insert(0);
+                    let first_offset = *next_offset;
+                    let mut committed = Vec::with_capacity(batch_size);
+                    let mut current_offset = *next_offset;
+                    for record in session.records {
+                        committed.push(CommittedStreamRecord {
+                            offset: current_offset,
+                            body: record.body,
+                        });
+                        current_offset += 1;
+                    }
+
+                    *next_offset = current_offset;
+                    if !committed.is_empty() {
+                        state
+                            .records_by_route
+                            .entry(session.route.clone())
+                            .or_default()
+                            .extend(committed);
+                    }
+
+                    let last_offset = current_offset.saturating_sub(1);
+                    let payload = bytes::Bytes::from(format!(
+                        "{{\"first_resource_offset\":{},\"last_resource_offset\":{},\"batch_size\":{}}}",
+                        first_offset, last_offset, batch_size
+                    ));
+                    (crate::runtime::routing::Route::new(session.route), payload)
                 });
                 (
                     StreamResponse::Ok {
                         session_id: None,
                         data: vec![],
                     },
-                    commit_route,
+                    commit_notify,
                 )
             }
             StreamMessage::Rollback { session_id, .. } => {
-                self.write_state.lock().session_to_route.remove(&session_id);
+                let mut state = self.write_state.lock();
+                state.session_to_route.remove(&session_id);
+                state.sessions.remove(&session_id);
                 (
                     StreamResponse::Ok {
                         session_id: None,
@@ -2260,27 +2394,60 @@ impl MailboxSink for StreamDomainSink {
                     None,
                 )
             }
-            StreamMessage::Read { .. } => (
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                },
-                None,
-            ),
-            StreamMessage::Last { .. } => (
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                },
-                None,
-            ),
-            StreamMessage::GetMetadata { .. } => (
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                },
-                None,
-            ),
+            StreamMessage::Read {
+                route,
+                from_offset,
+                limit,
+                max_bytes,
+                ..
+            } => {
+                let state = self.write_state.lock();
+                let data = state
+                    .records_by_route
+                    .get(route.as_str())
+                    .map(|records| {
+                        Self::encode_stream_read_data(records, from_offset, limit, max_bytes)
+                    })
+                    .unwrap_or_default();
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data,
+                    },
+                    None,
+                )
+            }
+            StreamMessage::Last { route, .. } => {
+                let state = self.write_state.lock();
+                let data = state
+                    .records_by_route
+                    .get(route.as_str())
+                    .and_then(|records| records.last())
+                    .map(Self::encode_stream_last_data)
+                    .unwrap_or_default();
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data,
+                    },
+                    None,
+                )
+            }
+            StreamMessage::GetMetadata { route, .. } => {
+                let state = self.write_state.lock();
+                let data = state
+                    .records_by_route
+                    .get(route.as_str())
+                    .map(|records| Self::encode_stream_metadata_data(records))
+                    .unwrap_or_default();
+                (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data,
+                    },
+                    None,
+                )
+            }
             StreamMessage::Subscribe {
                 family_id,
                 pattern,
@@ -2382,14 +2549,13 @@ impl MailboxSink for StreamDomainSink {
         self.sync_admin_snapshot();
 
         // If we just committed a stream session, fan out STREAM_NOTIFY (609) to matching subscribers
-        if let Some(route) = commit_notify_route {
+        if let Some((route, payload)) = commit_notify {
             tracing::info!(
                 domain = "stream",
                 route = %route,
                 route_family = frame_ctx.route_family.id(),
                 "Stream: commit triggered availability notification - CALLING handle_domain_publish"
             );
-            let payload = bytes::Bytes::from("{}");
             let event =
                 crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
             if let Err(e) = self.handle_domain_publish(&event) {

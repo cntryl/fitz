@@ -1,0 +1,14 @@
+{
+  "name": "@askrjs/icons-lucide",
+  "version": "0.0.0-local",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.jsx"
+    }
+  },
+  "peerDependencies": {
+    "@askrjs/askr": "^0.0.28"
+  }
+}

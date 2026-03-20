@@ -1,12 +1,15 @@
-import { defineConfig } from 'vite';
+import { askr } from "@askrjs/askr/vite";
+import { defineConfig } from "vite";
 
 export default defineConfig(({ command }) => ({
+  plugins: [askr()],
+  base: "/",
   define: {
-    'process.env': {},
+    "process.env": {},
   },
   esbuild: {
-    jsx: 'automatic',
-    jsxImportSource: '@askrjs/askr',
+    jsx: "automatic",
+    jsxImportSource: "@askrjs/askr",
   },
   server: {
     port: 5173,
@@ -40,7 +43,8 @@ export default defineConfig(({ command }) => ({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: "../public",
+    emptyOutDir: false,
     sourcemap: true,
   },
 }));

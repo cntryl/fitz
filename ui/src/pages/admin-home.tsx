@@ -1,4 +1,9 @@
 import { resource } from "@askrjs/askr/resources";
+import { Badge } from "@askrjs/askr-ui/badge";
+import { Button } from "@askrjs/askr-ui/button";
+import { Container } from "@askrjs/askr-ui/container";
+import { Stack } from "@askrjs/askr-ui/stack";
+import { ArrowRight, Gauge, LogOut } from "@askrjs/icons-lucide";
 import { deleteSession, fetchSession } from "../resources/session";
 
 export default function AdminHome() {
@@ -6,13 +11,13 @@ export default function AdminHome() {
 
   if (session.value === null && typeof window !== "undefined") {
     queueMicrotask(() => {
-      window.location.replace("/admin/login");
+      window.location.replace("/login");
     });
   }
 
   async function onSignOut() {
     await deleteSession();
-    window.location.replace("/admin/login");
+    window.location.replace("/login");
   }
 
   if (session.pending) {
@@ -42,18 +47,44 @@ export default function AdminHome() {
 
   return (
     <section class="admin-panel">
-      <p class="eyebrow">Admin Home</p>
-      <h1>Welcome, {session.value.username}</h1>
-      <p>
-        Your admin session is active. This is the landing page that future
-        management views will build on.
-      </p>
-      <div class="admin-actions">
-        <a href="/api/v1/stats" role="button" class="secondary">
-          Open Stats API
-        </a>
-        <button onClick={onSignOut}>Sign out</button>
-      </div>
+      <Container>
+        <Stack gap="1.25rem">
+          <div class="panel-heading">
+            <Badge class="status-badge">Authenticated</Badge>
+            <p class="eyebrow">Admin Home</p>
+          </div>
+
+          <div class="panel-copy">
+            <h1>Welcome, {session.value.username}</h1>
+            <p>
+              The Fitz admin SPA is now mounted at the root path and ready for
+              feature work. This baseline confirms the shell, auth flow, and API
+              wiring are in place.
+            </p>
+          </div>
+
+          <div class="stats-callout">
+            <Gauge size={18} />
+            <span>
+              Live broker inspection stays behind the existing authenticated
+              admin API.
+            </span>
+          </div>
+
+          <div class="admin-actions">
+            <Button asChild class="primary-action">
+              <a href="/api/v1/stats">
+                <ArrowRight size={16} />
+                Open Stats API
+              </a>
+            </Button>
+            <Button class="secondary-action" onPress={onSignOut}>
+              <LogOut size={16} />
+              Sign out
+            </Button>
+          </div>
+        </Stack>
+      </Container>
     </section>
   );
 }

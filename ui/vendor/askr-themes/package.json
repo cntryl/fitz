@@ -1,0 +1,11 @@
+{
+  "name": "@askrjs/askr-themes",
+  "version": "0.0.0-local",
+  "type": "module",
+  "exports": {
+    "./default": "./default.css"
+  },
+  "sideEffects": [
+    "./default.css"
+  ]
+}
