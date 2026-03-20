@@ -196,6 +196,60 @@ fn should_redelivery_messages_after_crash() {
     );
 }
 
+/// Test crash recovery preserves FIFO order across multi-digit IDs.
+#[test]
+fn should_preserve_fifo_order_after_recovery() {
+    let store = Arc::new(
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+            .expect("Failed to open Midge"),
+    );
+
+    let queue_key = unique_queue_key("crash-order");
+
+    {
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            fitz::utils::idempotency::global_dedup_store(),
+        );
+
+        for i in 0..12 {
+            match actor.handle_send(Bytes::from(format!("task {}", i)), None) {
+                QueueResponse::Sent { .. } => {}
+                _ => panic!("Expected Enqueued"),
+            }
+        }
+    }
+
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        fitz::utils::idempotency::global_dedup_store(),
+    );
+
+    let mut recovered_bodies = Vec::new();
+    loop {
+        match actor.handle_receive(30, Some(4)) {
+            QueueResponse::Received { messages } => {
+                if messages.is_empty() {
+                    break;
+                }
+                recovered_bodies.extend(messages.into_iter().map(|message| {
+                    String::from_utf8(message.body.to_vec()).expect("queue body should be utf-8")
+                }));
+            }
+            _ => panic!("Expected Received response"),
+        }
+    }
+
+    let expected: Vec<String> = (0..12).map(|i| format!("task {}", i)).collect();
+    assert_eq!(recovered_bodies, expected);
+}
+
 /// Test delayed message visibility survives crash (V-002: time semantics fix)
 #[test]
 fn should_preserve_delayed_visibility_across_restart() {

@@ -1684,6 +1684,7 @@ impl QueueActor {
             shard.reserve(per_shard);
         }
         self.delayed.reserve(recovered_count);
+        let mut recovered_ready_ids = Vec::with_capacity(recovered_count);
 
         // Use absolute SystemTime epoch (V-002 Fix)
         let now_epoch_ms = self.clock.now_epoch_ms();
@@ -1707,8 +1708,7 @@ impl QueueActor {
 
             // Compare absolute epochs (survives restarts correctly)
             if visible_at_ms <= now_epoch_ms {
-                // Immediately visible
-                self.push_ready(id);
+                recovered_ready_ids.push(id);
             } else {
                 // Delayed: use absolute epoch difference
                 let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
@@ -1740,7 +1740,7 @@ impl QueueActor {
             max_id = Some(max_id.map(|m| m.max(id_u64)).unwrap_or(id_u64));
 
             if visible_at_ms <= now_epoch_ms {
-                self.push_ready(id);
+                recovered_ready_ids.push(id);
             } else {
                 let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
@@ -1751,6 +1751,11 @@ impl QueueActor {
                     self.next_delayed_deadline = visible_at;
                 }
             }
+        }
+
+        recovered_ready_ids.sort_unstable_by_key(|id| id.as_u64());
+        for id in recovered_ready_ids {
+            self.push_ready(id);
         }
 
         // Ensure next_id is never decremented
