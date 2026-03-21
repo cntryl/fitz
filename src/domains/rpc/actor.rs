@@ -523,4 +523,178 @@ mod tests {
         // Assert
         assert_eq!(actor.pending_count(), 1);
     }
+
+    fn make_ctx() -> (
+        Context<RpcRouteActor>,
+        std::sync::Arc<crate::runtime::router::Router>,
+    ) {
+        let router = std::sync::Arc::new(crate::runtime::router::Router::new());
+        let addr = RouteAddress::new(RouteFamily::new(1), Route::new("rpc://test/route"));
+        let ctx = Context::new(addr, router.clone());
+        (ctx, router)
+    }
+
+    fn make_worker_addr(n: u64) -> RouteAddress {
+        RouteAddress::new(
+            RouteFamily::new(1),
+            Route::new(format!("worker://test/worker{}", n)),
+        )
+    }
+
+    fn make_request(family: u64) -> RpcRequest {
+        RpcRequest {
+            family_id: RouteFamily::new(family),
+            correlation_id: Uuid::new_v4(),
+            route: Route::new("rpc://test/route"),
+            reply_route: Route::new("inbox://session/1"),
+            body: Bytes::from("payload"),
+        }
+    }
+
+    #[test]
+    fn should_dispatch_request_immediately_when_worker_is_available() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_subscribe(make_worker_addr(1), &mut ctx);
+        let request = make_request(1);
+
+        // Act
+        actor.handle_request(request, &mut ctx);
+
+        // Assert — request dispatched, not queued; one lease created
+        assert_eq!(actor.pending_count(), 0);
+        assert_eq!(actor.active_leases(), 1);
+    }
+
+    #[test]
+    fn should_reject_request_with_mismatched_route_family() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_subscribe(make_worker_addr(1), &mut ctx);
+        // Request uses family 2, actor is family 1
+        let request = make_request(2);
+
+        // Act
+        actor.handle_request(request, &mut ctx);
+
+        // Assert — misrouted request: nothing queued, no lease
+        assert_eq!(actor.pending_count(), 0);
+        assert_eq!(actor.active_leases(), 0);
+    }
+
+    #[test]
+    fn should_reject_request_when_queue_is_full() {
+        // Arrange — capacity of 2, no workers so requests queue
+        let mut actor = RpcRouteActor::with_capacity(RouteFamily::new(1), 2);
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_request(make_request(1), &mut ctx);
+        actor.handle_request(make_request(1), &mut ctx);
+        assert_eq!(actor.pending_count(), 2);
+
+        // Act — one more request over capacity
+        actor.handle_request(make_request(1), &mut ctx);
+
+        // Assert — rejected: queue stays at 2
+        assert_eq!(actor.pending_count(), 2);
+    }
+
+    #[test]
+    fn should_release_lease_when_response_has_stream_end_true() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_subscribe(make_worker_addr(1), &mut ctx);
+        let request = make_request(1);
+        let corr = request.correlation_id;
+        actor.handle_request(request, &mut ctx);
+        assert_eq!(actor.active_leases(), 1);
+
+        // Act
+        let response = RpcResponse::single(corr, Bytes::from("result"));
+        actor.handle_response(response, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.active_leases(), 0);
+    }
+
+    #[test]
+    fn should_retain_lease_when_response_has_stream_end_false() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_subscribe(make_worker_addr(1), &mut ctx);
+        let request = make_request(1);
+        let corr = request.correlation_id;
+        actor.handle_request(request, &mut ctx);
+
+        // Act — intermediate streaming chunk (not terminal)
+        let chunk = RpcResponse::chunk(corr, 0, Bytes::from("partial"), false);
+        actor.handle_response(chunk, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.active_leases(), 1);
+    }
+
+    #[test]
+    fn should_release_lease_on_ack() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_subscribe(make_worker_addr(1), &mut ctx);
+        let request = make_request(1);
+        let corr = request.correlation_id;
+        actor.handle_request(request, &mut ctx);
+        assert_eq!(actor.active_leases(), 1);
+
+        // Act
+        actor.handle_ack(corr, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.active_leases(), 0);
+    }
+
+    #[test]
+    fn should_be_noop_when_unsubscribing_unknown_worker() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let unknown = make_worker_addr(99);
+
+        // Act — no panic, count stays 0
+        actor.handle_unsubscribe(&unknown);
+
+        // Assert
+        assert_eq!(actor.worker_count(), 0);
+    }
+
+    #[test]
+    fn should_dispatch_pending_requests_when_worker_registers() {
+        // Arrange — queue 2 requests before any worker exists
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        actor.handle_request(make_request(1), &mut ctx);
+        actor.handle_request(make_request(1), &mut ctx);
+        assert_eq!(actor.pending_count(), 2);
+
+        // Act — register a worker; should drain the pending queue
+        actor.handle_subscribe(make_worker_addr(1), &mut ctx);
+
+        // Assert — worker took one pending request (max_concurrent=1)
+        assert_eq!(actor.pending_count(), 1);
+        assert_eq!(actor.active_leases(), 1);
+    }
+
+    #[test]
+    fn should_return_false_when_releasing_unknown_correlation_id() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let unknown_id = Uuid::new_v4();
+
+        // Act
+        let released = actor.release_lease_internal(&unknown_id);
+
+        // Assert
+        assert!(!released);
+    }
 }

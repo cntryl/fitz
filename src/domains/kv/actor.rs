@@ -1587,4 +1587,257 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn should_return_not_found_when_key_never_written() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadOnly,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+
+        // Act
+        let response = actor.handle(KvMessage::Get {
+            tx_id,
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: Bytes::from("nonexistent"),
+        });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::GetResult {
+                found: false,
+                value: None
+            }
+        ));
+    }
+
+    #[test]
+    fn should_delete_nonexistent_key_without_error() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+
+        // Act
+        let response = actor.handle(KvMessage::Delete {
+            tx_id,
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: Bytes::from("never_written"),
+        });
+
+        // Assert
+        assert!(matches!(response, KvResponse::DeleteOk));
+    }
+
+    #[test]
+    fn should_scan_empty_table_returns_empty_result() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "empty_table".to_string(),
+            mode: TxMode::ReadOnly,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+
+        // Act
+        let response = actor.handle(KvMessage::Scan {
+            tx_id,
+            route_family: RouteFamily::new(1),
+            resource: "empty_table".to_string(),
+            query: ScanQuery {
+                start: None,
+                end: None,
+                limit: None,
+                reverse: false,
+            },
+        });
+
+        // Assert
+        match response {
+            KvResponse::ScanResult { items, .. } => {
+                assert!(items.is_empty());
+            }
+            _ => panic!("Expected ScanResult"),
+        }
+    }
+
+    #[test]
+    fn should_reject_begin_with_empty_realm() {
+        // Arrange
+        let mut actor = test_actor();
+
+        // Act
+        let response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidRealm
+            }
+        ));
+    }
+
+    #[test]
+    fn should_reject_begin_with_realm_containing_spaces() {
+        // Arrange
+        let mut actor = test_actor();
+
+        // Act
+        let response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "bad realm".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidRealm
+            }
+        ));
+    }
+
+    #[test]
+    fn should_reject_commit_on_already_committed_txid() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+        actor.handle(KvMessage::Commit { tx_id });
+
+        // Act
+        let response = actor.handle(KvMessage::Commit { tx_id });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidTxId
+            }
+        ));
+    }
+
+    #[test]
+    fn should_reject_rollback_on_already_rolled_back_txid() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+        actor.handle(KvMessage::Rollback { tx_id });
+
+        // Act
+        let response = actor.handle(KvMessage::Rollback { tx_id });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidTxId
+            }
+        ));
+    }
+
+    #[test]
+    fn should_use_bound_resource_when_resource_param_is_empty() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+        actor.handle(KvMessage::Put {
+            tx_id,
+            route_family: RouteFamily::new(1),
+            resource: "table1".to_string(),
+            key: Bytes::from("key"),
+            value: Bytes::from("value"),
+        });
+
+        // Act — empty resource falls back to bound_resource ("table1")
+        let response = actor.handle(KvMessage::Get {
+            tx_id,
+            route_family: RouteFamily::new(1),
+            resource: "".to_string(),
+            key: Bytes::from("key"),
+        });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::GetResult {
+                found: true,
+                value: Some(_)
+            }
+        ));
+    }
 }

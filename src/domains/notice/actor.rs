@@ -589,4 +589,124 @@ mod tests {
         assert_eq!(actor.subscription_count(), 0);
         assert_eq!(actor.index_count(), 0);
     }
+
+    #[test]
+    fn should_not_deliver_when_no_subscribers_match_route() {
+        // Arrange
+        let router = crate::testkit::notice::make_router();
+        let sink = std::sync::Arc::new(crate::testkit::notice::TestSink::new());
+        let subscriber = test_address("notify://realm/area/nomatch/recv");
+        router.register(subscriber.clone(), sink.clone());
+
+        let mut actor = NoticeRouteActor::new(test_family());
+        let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+
+        // Subscribe to "orders/*"
+        let family = *ctx.address().family();
+        let subscribe = SubscribeMessage::new(
+            family,
+            test_route("notify://realm/orders/*"),
+            test_session_id(1),
+            subscriber.clone(),
+        );
+        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
+
+        // Act — publish to a completely different route that doesn't match
+        let pubmsg = PublishMessage::new(
+            family,
+            test_route("notify://realm/invoices/created"),
+            bytes::Bytes::from("nope"),
+        );
+        actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
+
+        // Assert — subscriber received nothing
+        assert_eq!(sink.count(), 0);
+    }
+
+    #[test]
+    fn should_silently_drop_publish_with_mismatched_family() {
+        // Arrange
+        let router = crate::testkit::notice::make_router();
+        let sink = std::sync::Arc::new(crate::testkit::notice::TestSink::new());
+        let subscriber = test_address("notify://realm/area/mismatch/recv");
+        router.register(subscriber.clone(), sink.clone());
+
+        // Actor bound to family 1
+        let mut actor = NoticeRouteActor::new(test_family());
+        let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router.clone()));
+        let family = *ctx.address().family();
+
+        let subscribe = SubscribeMessage::new(
+            family,
+            test_route("notify://realm/area/*"),
+            test_session_id(1),
+            subscriber.clone(),
+        );
+        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
+
+        // Act — publish with a different family (family 99)
+        let wrong_family = crate::runtime::routing::RouteFamily::new(99);
+        let pubmsg = PublishMessage::new(
+            wrong_family,
+            test_route("notify://realm/area/event"),
+            bytes::Bytes::from("sneaky"),
+        );
+        actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
+
+        // Assert — silently dropped; subscriber received nothing
+        assert_eq!(sink.count(), 0);
+    }
+
+    #[test]
+    fn should_be_noop_when_unsubscribing_nonexistent_pattern() {
+        // Arrange
+        let mut actor = NoticeRouteActor::new(test_family());
+        let subscriber = test_address("session/ghost");
+
+        // Act — unsubscribe a pattern that was never subscribed
+        let unsubscribe = UnsubscribeMessage::new(
+            test_family(),
+            test_route("notify://realm/ghost/*"),
+            test_session_id(1),
+            subscriber,
+        );
+        actor.handle_unsubscribe(unsubscribe);
+
+        // Assert — actor remains empty, no panic
+        assert_eq!(actor.subscription_count(), 0);
+        assert_eq!(actor.index_count(), 0);
+    }
+
+    #[test]
+    fn should_be_noop_when_unsubscribe_all_with_no_subscriptions() {
+        // Arrange
+        let mut actor = NoticeRouteActor::new(test_family());
+        let subscriber = test_address("session/empty");
+
+        // Act — unsubscribe all on an actor that has no subscriptions
+        let msg = UnsubscribeAllMessage::new(test_session_id(7), subscriber);
+        actor.handle_unsubscribe_all(msg);
+
+        // Assert — still empty, no panic
+        assert_eq!(actor.subscription_count(), 0);
+    }
+
+    #[test]
+    fn should_ignore_deliver_message() {
+        // Arrange
+        let router = crate::testkit::notice::make_router();
+        let subscriber = test_address("notify://realm/area/deliver/recv");
+        let mut actor = NoticeRouteActor::new(test_family());
+        let mut ctx = Context::new(subscriber.clone(), std::sync::Arc::new(router));
+
+        // Act — send a Deliver message to the route actor (not a subscriber)
+        let deliver = crate::domains::notice::protocol::DeliverMessage::new(
+            test_route("notify://realm/area/deliver/recv"),
+            bytes::Bytes::from("ignored"),
+        );
+        actor.receive(NotificationMessage::Deliver(deliver), &mut ctx);
+
+        // Assert — no state change, actor still has zero subscriptions
+        assert_eq!(actor.subscription_count(), 0);
+    }
 }
