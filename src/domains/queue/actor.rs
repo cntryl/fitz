@@ -54,6 +54,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bytes::Bytes;
 use fxhash::FxBuildHasher;
 
+use crate::observability as obs;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
@@ -140,7 +141,10 @@ struct DelayedMessage {
 impl Ord for DelayedMessage {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Earlier visibility = higher priority (min-heap via Reverse wrapper)
-        other.visible_at.cmp(&self.visible_at)
+        other
+            .visible_at
+            .cmp(&self.visible_at)
+            .then_with(|| other.id.as_u64().cmp(&self.id.as_u64()))
     }
 }
 
@@ -155,6 +159,38 @@ impl PartialOrd for DelayedMessage {
 struct ReadyRange {
     next: u64,
     end: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersistedReadyMutation {
+    Delete {
+        removed: ReadyRange,
+    },
+    Replace {
+        removed: ReadyRange,
+        inserted: ReadyRange,
+    },
+    Split {
+        removed: ReadyRange,
+        left: ReadyRange,
+        right: ReadyRange,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecoveryPath {
+    Empty,
+    IndexHit,
+    IndexMissingFallback,
+    IndexInvalidFallback,
+    IndexErrorFallback,
+}
+
+enum IndexRecoveryAttempt {
+    Hit { next_id: u64, max_id: Option<u64> },
+    Missing { next_id: u64 },
+    Invalid { next_id: u64, reason: String },
+    Error { next_id: u64, reason: String },
 }
 
 /// Clock abstraction for testable time
@@ -220,6 +256,15 @@ pub struct QueueActor {
     /// Cached Midge legacy record-key prefix for this queue.
     legacy_message_key_prefix: Vec<u8>,
 
+    /// Cached Midge metadata key for the authoritative recovery index.
+    index_meta_key: Vec<u8>,
+
+    /// Cached Midge ready-index prefix for this queue.
+    ready_index_prefix: Vec<u8>,
+
+    /// Cached Midge delayed-index prefix for this queue.
+    delayed_index_prefix: Vec<u8>,
+
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,
 
@@ -232,6 +277,9 @@ pub struct QueueActor {
 
     /// Ready queues: sharded FIFO lists of compressed message-ID ranges.
     ready_shards: Vec<VecDeque<ReadyRange>>,
+
+    /// Authoritative persisted ready index: compressed ranges by shard.
+    persisted_ready_shards: Vec<VecDeque<ReadyRange>>,
 
     /// Cached total number of ready messages across all shards.
     ready_count: usize,
@@ -264,6 +312,15 @@ pub struct QueueActor {
     /// Delayed visibility heap: messages not yet visible (earliest first, min-heap)
     delayed: BinaryHeap<Reverse<DelayedMessage>>,
 
+    /// Authoritative delayed index entries keyed by message ID.
+    persisted_delayed: FastMap<MessageId, u64>,
+
+    /// Whether a valid persisted index marker is already stored for this queue.
+    index_meta_written: bool,
+
+    /// How the current in-memory state was last recovered.
+    recovery_path: RecoveryPath,
+
     /// Pending availability notification (debounced)
     pending_publish: Option<crate::runtime::domain_event::DomainPublishEvent>,
 
@@ -295,6 +352,8 @@ impl QueueActor {
     const READY_SHARDS: usize = 8;
     const NOTICE_DEBOUNCE_MS: u64 = 25;
     const ID_RESERVATION_BLOCK: u64 = 256;
+    const INDEX_VERSION: u8 = 1;
+    const PADDED_U64_WIDTH: usize = 20;
     const RECORD_CACHE_LIMIT: usize = 16 * 1024;
     const RECORD_CACHE_FIFO_SLACK_MULTIPLIER: usize = 2;
     const BODY_CACHE_LIMIT: usize = 1024;
@@ -336,11 +395,15 @@ impl QueueActor {
             header_key_prefix: Self::header_key_prefix(&queue_key),
             body_key_prefix: Self::body_key_prefix(&queue_key),
             legacy_message_key_prefix: Self::legacy_message_key_prefix(&queue_key),
+            index_meta_key: Self::index_meta_key(&queue_key),
+            ready_index_prefix: Self::ready_index_prefix(&queue_key),
+            delayed_index_prefix: Self::delayed_index_prefix(&queue_key),
             queue_key,
             store,
             next_id: 1,
             next_id_limit: 1,
             ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
+            persisted_ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             ready_count: 0,
             next_ready_shard: 0,
             records: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
@@ -351,6 +414,9 @@ impl QueueActor {
             inflight: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
+            persisted_delayed: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
+            index_meta_written: false,
+            recovery_path: RecoveryPath::Empty,
             pending_publish: None,
             notify_timer: None,
             needs_notify_availability: false,
@@ -374,7 +440,7 @@ impl QueueActor {
         }
 
         let deficit = required_limit.saturating_sub(self.next_id_limit);
-        let blocks = (deficit + Self::ID_RESERVATION_BLOCK - 1) / Self::ID_RESERVATION_BLOCK;
+        let blocks = deficit.div_ceil(Self::ID_RESERVATION_BLOCK);
         Some(
             self.next_id_limit
                 .saturating_add(blocks.saturating_mul(Self::ID_RESERVATION_BLOCK)),
@@ -418,6 +484,14 @@ impl QueueActor {
         .into_bytes()
     }
 
+    fn index_meta_key(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:idx:meta",
+            queue_key.realm, queue_key.area, queue_key.resource
+        )
+        .into_bytes()
+    }
+
     /// Midge key for legacy combined message record
     #[cfg(test)]
     fn legacy_message_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
@@ -454,6 +528,22 @@ impl QueueActor {
         format!(
             "queue:{}:{}:{}:body:{}",
             queue_key.realm, queue_key.area, queue_key.resource, ""
+        )
+        .into_bytes()
+    }
+
+    fn ready_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:idx:ready:",
+            queue_key.realm, queue_key.area, queue_key.resource
+        )
+        .into_bytes()
+    }
+
+    fn delayed_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:idx:delay:",
+            queue_key.realm, queue_key.area, queue_key.resource
         )
         .into_bytes()
     }
@@ -501,6 +591,127 @@ impl QueueActor {
         Self::cached_id_key(&self.legacy_message_key_prefix, id)
     }
 
+    fn append_padded_u64(buf: &mut Vec<u8>, value: u64) {
+        let mut digits = [b'0'; Self::PADDED_U64_WIDTH];
+        let mut cursor = Self::PADDED_U64_WIDTH;
+        let mut remaining = value;
+
+        loop {
+            cursor -= 1;
+            digits[cursor] = b'0' + (remaining % 10) as u8;
+            remaining /= 10;
+            if remaining == 0 {
+                break;
+            }
+        }
+
+        buf.extend_from_slice(&digits);
+    }
+
+    fn parse_padded_u64(bytes: &[u8]) -> Option<u64> {
+        if bytes.len() != Self::PADDED_U64_WIDTH {
+            return None;
+        }
+
+        let mut value = 0_u64;
+        for &byte in bytes {
+            if !byte.is_ascii_digit() {
+                return None;
+            }
+            value = value.checked_mul(10)?.checked_add((byte - b'0') as u64)?;
+        }
+        Some(value)
+    }
+
+    fn encode_index_meta() -> Vec<u8> {
+        vec![Self::INDEX_VERSION, 1]
+    }
+
+    fn index_meta_is_valid(bytes: &[u8]) -> bool {
+        bytes.len() >= 2 && bytes[0] == Self::INDEX_VERSION && bytes[1] == 1
+    }
+
+    fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
+        bytes
+            .and_then(|raw| raw.get(0..8))
+            .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
+            .unwrap_or(1)
+    }
+
+    fn ready_range_key_with_prefix(prefix: &[u8], shard: usize, start: u64) -> Vec<u8> {
+        let tens = (shard / 10) as u8;
+        let ones = (shard % 10) as u8;
+        let mut key = Vec::with_capacity(prefix.len() + 3 + Self::PADDED_U64_WIDTH);
+        key.extend_from_slice(prefix);
+        key.push(b'0' + tens);
+        key.push(b'0' + ones);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, start);
+        key
+    }
+
+    fn ready_range_key(&self, shard: usize, start: u64) -> Vec<u8> {
+        Self::ready_range_key_with_prefix(&self.ready_index_prefix, shard, start)
+    }
+
+    fn parse_ready_range_key(key: &[u8], prefix: &[u8]) -> Option<(usize, u64)> {
+        let rest = key.strip_prefix(prefix)?;
+        if rest.len() != 3 + Self::PADDED_U64_WIDTH {
+            return None;
+        }
+        if !rest[0].is_ascii_digit() || !rest[1].is_ascii_digit() || rest[2] != b':' {
+            return None;
+        }
+
+        let shard = ((rest[0] - b'0') as usize) * 10 + (rest[1] - b'0') as usize;
+        if shard >= Self::READY_SHARDS {
+            return None;
+        }
+
+        let start = Self::parse_padded_u64(&rest[3..])?;
+        Some((shard, start))
+    }
+
+    fn encode_ready_range_value(range: ReadyRange) -> Vec<u8> {
+        range.end.to_le_bytes().to_vec()
+    }
+
+    fn decode_ready_range(start: u64, value: &[u8]) -> Option<ReadyRange> {
+        let end = u64::from_le_bytes(value.get(0..8)?.try_into().ok()?);
+        let step = Self::READY_SHARDS as u64;
+        if end < start || !(end - start).is_multiple_of(step) {
+            return None;
+        }
+        Some(ReadyRange { next: start, end })
+    }
+
+    fn delayed_index_key_with_prefix(prefix: &[u8], visible_at_ms: u64, id: MessageId) -> Vec<u8> {
+        let mut key = Vec::with_capacity(prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        key.extend_from_slice(prefix);
+        Self::append_padded_u64(&mut key, visible_at_ms);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, id.as_u64());
+        key
+    }
+
+    fn delayed_index_key(&self, visible_at_ms: u64, id: MessageId) -> Vec<u8> {
+        Self::delayed_index_key_with_prefix(&self.delayed_index_prefix, visible_at_ms, id)
+    }
+
+    fn parse_delayed_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
+        let rest = key.strip_prefix(prefix)?;
+        if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
+            return None;
+        }
+        if rest[Self::PADDED_U64_WIDTH] != b':' {
+            return None;
+        }
+
+        let visible_at_ms = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
+        let id = Self::parse_padded_u64(&rest[(Self::PADDED_U64_WIDTH + 1)..])?;
+        Some((visible_at_ms, MessageId::new(id)))
+    }
+
     #[inline]
     fn parse_message_id_from_key(key: &[u8], prefix: &[u8]) -> Option<MessageId> {
         if !key.starts_with(prefix) || key.len() <= prefix.len() {
@@ -545,6 +756,79 @@ impl QueueActor {
         id.as_u64() as usize & (Self::READY_SHARDS - 1)
     }
 
+    fn range_len(range: ReadyRange) -> usize {
+        (((range.end - range.next) / Self::READY_SHARDS as u64) + 1) as usize
+    }
+
+    fn reset_live_ready_state(&mut self) {
+        for shard in &mut self.ready_shards {
+            shard.clear();
+        }
+        self.ready_count = 0;
+        self.next_ready_shard = 0;
+    }
+
+    fn reset_persisted_index_state(&mut self) {
+        for shard in &mut self.persisted_ready_shards {
+            shard.clear();
+        }
+        self.persisted_delayed.clear();
+    }
+
+    fn push_range_into(shards: &mut [VecDeque<ReadyRange>], shard: usize, range: ReadyRange) {
+        let step = Self::READY_SHARDS as u64;
+
+        if let Some(existing) = shards[shard].back_mut() {
+            if range.next == existing.end.saturating_add(step) {
+                existing.end = range.end;
+                return;
+            }
+        }
+
+        shards[shard].push_back(range);
+    }
+
+    fn prepare_persisted_ready_append(
+        tail: Option<ReadyRange>,
+        id: MessageId,
+    ) -> (usize, ReadyRange) {
+        let shard = Self::shard_for_id(id);
+        let id_u64 = id.as_u64();
+        let range = match tail {
+            Some(existing) if id_u64 == existing.end.saturating_add(Self::READY_SHARDS as u64) => {
+                ReadyRange {
+                    next: existing.next,
+                    end: id_u64,
+                }
+            }
+            _ => ReadyRange {
+                next: id_u64,
+                end: id_u64,
+            },
+        };
+
+        (shard, range)
+    }
+
+    #[cfg(test)]
+    fn stage_persisted_ready_append(
+        shards: &mut [VecDeque<ReadyRange>],
+        id: MessageId,
+    ) -> (usize, ReadyRange) {
+        let shard = Self::shard_for_id(id);
+        let (_, range) = Self::prepare_persisted_ready_append(shards[shard].back().copied(), id);
+
+        if let Some(existing) = shards[shard].back_mut() {
+            if range.next == existing.next {
+                existing.end = range.end;
+                return (shard, range);
+            }
+        }
+
+        shards[shard].push_back(range);
+        (shard, range)
+    }
+
     fn push_ready(&mut self, id: MessageId) {
         let shard = Self::shard_for_id(id);
         let id_u64 = id.as_u64();
@@ -563,6 +847,115 @@ impl QueueActor {
             end: id_u64,
         });
         self.ready_count += 1;
+    }
+
+    fn push_ready_range(&mut self, range: ReadyRange) {
+        let shard = range.next as usize & (Self::READY_SHARDS - 1);
+        Self::push_range_into(&mut self.ready_shards, shard, range);
+        self.ready_count += Self::range_len(range);
+    }
+
+    fn push_persisted_ready(&mut self, id: MessageId) {
+        let shard = Self::shard_for_id(id);
+        let range = ReadyRange {
+            next: id.as_u64(),
+            end: id.as_u64(),
+        };
+        Self::push_range_into(&mut self.persisted_ready_shards, shard, range);
+    }
+
+    fn push_persisted_ready_range(&mut self, range: ReadyRange) {
+        let shard = range.next as usize & (Self::READY_SHARDS - 1);
+        Self::push_range_into(&mut self.persisted_ready_shards, shard, range);
+    }
+
+    fn plan_ready_index_mutation(
+        shards: &[VecDeque<ReadyRange>],
+        id: MessageId,
+    ) -> Option<(usize, PersistedReadyMutation)> {
+        let shard = Self::shard_for_id(id);
+        let id_u64 = id.as_u64();
+        let step = Self::READY_SHARDS as u64;
+        let ranges = &shards[shard];
+
+        for range in ranges.iter().copied() {
+            if id_u64 < range.next
+                || id_u64 > range.end
+                || !(id_u64 - range.next).is_multiple_of(step)
+            {
+                continue;
+            }
+
+            let mutation = if range.next == range.end {
+                PersistedReadyMutation::Delete { removed: range }
+            } else if id_u64 == range.next {
+                let inserted = ReadyRange {
+                    next: range.next.saturating_add(step),
+                    end: range.end,
+                };
+                PersistedReadyMutation::Replace {
+                    removed: range,
+                    inserted,
+                }
+            } else if id_u64 == range.end {
+                let inserted = ReadyRange {
+                    next: range.next,
+                    end: range.end.saturating_sub(step),
+                };
+                PersistedReadyMutation::Replace {
+                    removed: range,
+                    inserted,
+                }
+            } else {
+                let left = ReadyRange {
+                    next: range.next,
+                    end: id_u64.saturating_sub(step),
+                };
+                let right = ReadyRange {
+                    next: id_u64.saturating_add(step),
+                    end: range.end,
+                };
+                PersistedReadyMutation::Split {
+                    removed: range,
+                    left,
+                    right,
+                }
+            };
+
+            return Some((shard, mutation));
+        }
+
+        None
+    }
+
+    fn apply_ready_index_mutation(
+        shards: &mut [VecDeque<ReadyRange>],
+        shard: usize,
+        mutation: PersistedReadyMutation,
+    ) {
+        let ranges = &mut shards[shard];
+        let removed = match mutation {
+            PersistedReadyMutation::Delete { removed }
+            | PersistedReadyMutation::Replace { removed, .. }
+            | PersistedReadyMutation::Split { removed, .. } => removed,
+        };
+
+        let Some(idx) = ranges.iter().position(|range| *range == removed) else {
+            return;
+        };
+
+        match mutation {
+            PersistedReadyMutation::Delete { .. } => {
+                ranges.remove(idx);
+            }
+            PersistedReadyMutation::Replace { inserted, .. } => {
+                ranges[idx] = inserted;
+            }
+            PersistedReadyMutation::Split { left, right, .. } => {
+                ranges[idx] = left;
+                ranges.insert(idx + 1, right);
+            }
+        }
     }
 
     fn cache_record(&mut self, id: MessageId, record: QueueRecord) {
@@ -670,7 +1063,9 @@ impl QueueActor {
         let step = Self::READY_SHARDS as u64;
 
         self.ready_shards[shard].iter().any(|range| {
-            id_u64 >= range.next && id_u64 <= range.end && (id_u64 - range.next) % step == 0
+            id_u64 >= range.next
+                && id_u64 <= range.end
+                && (id_u64 - range.next).is_multiple_of(step)
         })
     }
 
@@ -824,6 +1219,22 @@ impl QueueActor {
         }
     }
 
+    fn observe_histogram_us(metric_name: &str, value_us: u64) {
+        crate::boot::observability::histogram_observe_us(metric_name, value_us);
+    }
+
+    fn observe_elapsed_us(metric_name: &str, start: Instant) {
+        Self::observe_histogram_us(metric_name, start.elapsed().as_micros() as u64);
+    }
+
+    fn increment_counter(metric_name: &str) {
+        crate::boot::observability::counter_inc(metric_name);
+    }
+
+    fn is_missing_read_snapshot_error(error: &impl std::fmt::Debug) -> bool {
+        format!("{:?}", error).contains("read snapshot not available")
+    }
+
     fn hydrate_record_for_receive(&mut self, id: MessageId) -> Result<(Bytes, u32), String> {
         if let Some(record) = self.records.get(&id) {
             let attempts = record.attempts;
@@ -831,12 +1242,16 @@ impl QueueActor {
                 return Ok((body.clone(), attempts));
             }
 
+            let start = Instant::now();
             let body = self.load_body_from_store(id)?;
+            Self::observe_elapsed_us(obs::METRIC_QUEUE_RECEIVE_HYDRATE_LATENCY, start);
             self.cache_body(id, body.clone());
             return Ok((body, attempts));
         }
 
+        let start = Instant::now();
         let record = self.load_record_for_receive_from_store(id)?;
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_RECEIVE_HYDRATE_LATENCY, start);
         let body = record
             .body
             .clone()
@@ -880,6 +1295,14 @@ impl QueueActor {
         let record = QueueRecord::metadata_only(0, visible_at_ms);
         let cached_body = body.clone();
         let reserved_limit = self.reserved_id_limit_for(1);
+        let ready_index_write = if visible_at <= now_instant {
+            let tail = self.persisted_ready_shards[Self::shard_for_id(id)]
+                .back()
+                .copied();
+            Some(Self::prepare_persisted_ready_append(tail, id))
+        } else {
+            None
+        };
 
         // Write message header + body to one durable transaction.
         let header_key = self.cached_header_key(id);
@@ -897,6 +1320,23 @@ impl QueueActor {
             };
         }
 
+        if let Some((shard, range)) = ready_index_write {
+            if let Err(e) = txn.put(
+                self.ready_range_key(shard, range.next),
+                Self::encode_ready_range_value(range),
+                None,
+            ) {
+                return QueueResponse::Error {
+                    message: format!("Failed to update queue ready index: {:?}", e),
+                };
+            }
+        } else if let Err(e) = txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
+        {
+            return QueueResponse::Error {
+                message: format!("Failed to update queue delayed index: {:?}", e),
+            };
+        }
+
         if let Some(limit) = reserved_limit {
             if let Err(e) = txn.put(self.meta_key.clone(), limit.to_le_bytes().to_vec(), None) {
                 return QueueResponse::Error {
@@ -905,8 +1345,17 @@ impl QueueActor {
             }
         }
 
+        if !self.index_meta_written {
+            if let Err(e) = txn.put(self.index_meta_key.clone(), Self::encode_index_meta(), None) {
+                return QueueResponse::Error {
+                    message: format!("Failed to update queue index meta: {:?}", e),
+                };
+            }
+        }
+
         // Commit with buffered mode for high throughput
         // The store will sync periodically, maintaining durability without per-operation cost
+        let commit_start = Instant::now();
         if let Err(e) = self
             .store
             .commit(txn, cntryl_midge::WriteOptions::buffered())
@@ -915,6 +1364,7 @@ impl QueueActor {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
         }
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
 
         // Commit succeeded; advance in-memory ID state.
         self.next_id = self.next_id.saturating_add(1);
@@ -929,9 +1379,14 @@ impl QueueActor {
         // Update in-memory queues
         if visible_at <= now_instant {
             self.push_ready(id);
+            self.push_persisted_ready(id);
         } else {
             self.delayed
                 .push(Reverse(DelayedMessage { id, visible_at }));
+            self.persisted_delayed.insert(id, visible_at_ms);
+        }
+        if !self.index_meta_written {
+            self.index_meta_written = true;
         }
 
         // Emit availability notification if queue transitioned from empty to non-empty
@@ -969,6 +1424,13 @@ impl QueueActor {
         let mut ids = Vec::with_capacity(items.len());
         let mut post_commit: Vec<(MessageId, QueueRecord, Bytes, std::time::Instant)> =
             Vec::with_capacity(items.len());
+        let mut staged_ready_tails: Vec<Option<ReadyRange>> = self
+            .persisted_ready_shards
+            .iter()
+            .map(|ranges| ranges.back().copied())
+            .collect();
+        let mut staged_ready_ids = Vec::new();
+        let mut staged_delayed = Vec::new();
         let mut next_id = self.next_id;
         let reserved_limit = self.reserved_id_limit_for(items.len() as u64);
 
@@ -995,8 +1457,35 @@ impl QueueActor {
                 };
             }
 
+            if visible_at <= now_instant {
+                let (shard, range) = Self::prepare_persisted_ready_append(
+                    staged_ready_tails[Self::shard_for_id(id)],
+                    id,
+                );
+                staged_ready_tails[shard] = Some(range);
+                if let Err(e) = txn.put(
+                    self.ready_range_key(shard, range.next),
+                    Self::encode_ready_range_value(range),
+                    None,
+                ) {
+                    return QueueResponse::Error {
+                        message: format!("Failed to update queue ready index: {:?}", e),
+                    };
+                }
+                staged_ready_ids.push(id);
+            } else if let Err(e) =
+                txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
+            {
+                return QueueResponse::Error {
+                    message: format!("Failed to update queue delayed index: {:?}", e),
+                };
+            }
+
             ids.push(id);
             post_commit.push((id, record, body.clone(), visible_at));
+            if visible_at > now_instant {
+                staged_delayed.push((id, visible_at_ms));
+            }
             next_id += 1;
         }
 
@@ -1008,6 +1497,15 @@ impl QueueActor {
             }
         }
 
+        if !self.index_meta_written {
+            if let Err(e) = txn.put(self.index_meta_key.clone(), Self::encode_index_meta(), None) {
+                return QueueResponse::Error {
+                    message: format!("Failed to update queue index meta: {:?}", e),
+                };
+            }
+        }
+
+        let commit_start = Instant::now();
         if let Err(e) = self
             .store
             .commit(txn, cntryl_midge::WriteOptions::buffered())
@@ -1016,6 +1514,7 @@ impl QueueActor {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
         }
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
 
         self.next_id = next_id;
         if let Some(limit) = reserved_limit {
@@ -1030,6 +1529,15 @@ impl QueueActor {
                 self.delayed
                     .push(Reverse(DelayedMessage { id, visible_at }));
             }
+        }
+        for id in staged_ready_ids {
+            self.push_persisted_ready(id);
+        }
+        for (id, visible_at_ms) in staged_delayed {
+            self.persisted_delayed.insert(id, visible_at_ms);
+        }
+        if !self.index_meta_written {
+            self.index_meta_written = true;
         }
 
         QueueResponse::SentBatch { ids }
@@ -1228,6 +1736,14 @@ impl QueueActor {
         // Remove inflight entry
         self.inflight.remove(&id);
 
+        let stored_record = self
+            .records
+            .get(&id)
+            .cloned()
+            .or_else(|| self.load_record_metadata_from_store(id).ok());
+        let persisted_ready_mutation =
+            Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
+
         // Remove cached record (storage is durable source of truth)
         self.evict_cached_record(id);
         self.evict_cached_body(id);
@@ -1260,6 +1776,72 @@ impl QueueActor {
                 if let Err(e) = delete_result {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
                 } else {
+                    let mut index_update_failed = false;
+                    if let Some((shard, mutation)) = persisted_ready_mutation {
+                        let ready_result = match mutation {
+                            PersistedReadyMutation::Delete { removed } => {
+                                txn.delete(self.ready_range_key(shard, removed.next))
+                            }
+                            PersistedReadyMutation::Replace { removed, inserted } => txn
+                                .delete(self.ready_range_key(shard, removed.next))
+                                .and_then(|_| {
+                                    txn.put(
+                                        self.ready_range_key(shard, inserted.next),
+                                        Self::encode_ready_range_value(inserted),
+                                        None,
+                                    )
+                                }),
+                            PersistedReadyMutation::Split {
+                                removed,
+                                left,
+                                right,
+                            } => txn
+                                .delete(self.ready_range_key(shard, removed.next))
+                                .and_then(|_| {
+                                    txn.put(
+                                        self.ready_range_key(shard, left.next),
+                                        Self::encode_ready_range_value(left),
+                                        None,
+                                    )
+                                })
+                                .and_then(|_| {
+                                    txn.put(
+                                        self.ready_range_key(shard, right.next),
+                                        Self::encode_ready_range_value(right),
+                                        None,
+                                    )
+                                }),
+                        };
+
+                        if let Err(e) = ready_result {
+                            eprintln!(
+                                "WARN: Failed to update ready index for message {}: {:?}",
+                                id, e
+                            );
+                            index_update_failed = true;
+                        }
+                    }
+
+                    if let Some(record) = stored_record.as_ref() {
+                        if let Err(e) = txn.delete(self.delayed_index_key(record.visible_at_ms, id))
+                        {
+                            eprintln!(
+                                "WARN: Failed to update delayed index for message {}: {:?}",
+                                id, e
+                            );
+                            index_update_failed = true;
+                        }
+                    }
+
+                    if index_update_failed {
+                        return QueueResponse::Error {
+                            message: format!(
+                                "Failed to update queue recovery index while deleting message {}",
+                                id
+                            ),
+                        };
+                    }
+
                     // Use buffered writes for throughput (queues represent intent, not events of record)
                     if let Err(e) = self
                         .store
@@ -1269,6 +1851,15 @@ impl QueueActor {
                             "WARN: Failed to commit delete txn for message {}: {:?}",
                             id, e
                         );
+                    } else {
+                        if let Some((shard, mutation)) = persisted_ready_mutation {
+                            Self::apply_ready_index_mutation(
+                                &mut self.persisted_ready_shards,
+                                shard,
+                                mutation,
+                            );
+                        }
+                        self.persisted_delayed.remove(&id);
                     }
                 }
             }
@@ -1358,6 +1949,8 @@ impl QueueActor {
                 };
 
                 if is_dlq {
+                    let persisted_ready_mutation =
+                        Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
                     let delete_result = if has_split_record {
                         txn.delete(header_key.clone())
                             .and_then(|_| txn.delete(body_key))
@@ -1367,11 +1960,86 @@ impl QueueActor {
 
                     if let Err(e) = delete_result {
                         eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
-                    } else if let Err(e) = self
-                        .store
-                        .commit(txn, cntryl_midge::WriteOptions::buffered())
-                    {
-                        eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
+                    } else {
+                        let mut index_update_failed = false;
+                        if let Some((shard, mutation)) = persisted_ready_mutation {
+                            let ready_result = match mutation {
+                                PersistedReadyMutation::Delete { removed } => {
+                                    txn.delete(self.ready_range_key(shard, removed.next))
+                                }
+                                PersistedReadyMutation::Replace { removed, inserted } => txn
+                                    .delete(self.ready_range_key(shard, removed.next))
+                                    .and_then(|_| {
+                                        txn.put(
+                                            self.ready_range_key(shard, inserted.next),
+                                            Self::encode_ready_range_value(inserted),
+                                            None,
+                                        )
+                                    }),
+                                PersistedReadyMutation::Split {
+                                    removed,
+                                    left,
+                                    right,
+                                } => txn
+                                    .delete(self.ready_range_key(shard, removed.next))
+                                    .and_then(|_| {
+                                        txn.put(
+                                            self.ready_range_key(shard, left.next),
+                                            Self::encode_ready_range_value(left),
+                                            None,
+                                        )
+                                    })
+                                    .and_then(|_| {
+                                        txn.put(
+                                            self.ready_range_key(shard, right.next),
+                                            Self::encode_ready_range_value(right),
+                                            None,
+                                        )
+                                    }),
+                            };
+
+                            if let Err(e) = ready_result {
+                                eprintln!(
+                                    "WARN: Failed to update ready index for DLQ message {}: {:?}",
+                                    id, e
+                                );
+                                index_update_failed = true;
+                            }
+                        }
+
+                        if let Err(e) = txn.delete(self.delayed_index_key(record.visible_at_ms, id))
+                        {
+                            eprintln!(
+                                "WARN: Failed to update delayed index for DLQ message {}: {:?}",
+                                id, e
+                            );
+                            index_update_failed = true;
+                        }
+
+                        if index_update_failed {
+                            return;
+                        }
+
+                        let update_start = Instant::now();
+                        if let Err(e) = self
+                            .store
+                            .commit(txn, cntryl_midge::WriteOptions::buffered())
+                        {
+                            eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
+                        } else {
+                            Self::observe_elapsed_us(
+                                obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
+                                update_start,
+                            );
+                            if let Some((shard, mutation)) = persisted_ready_mutation {
+                                Self::apply_ready_index_mutation(
+                                    &mut self.persisted_ready_shards,
+                                    shard,
+                                    mutation,
+                                );
+                            }
+                            self.persisted_delayed.remove(&id);
+                        }
                     }
 
                     self.evict_cached_record(id);
@@ -1424,14 +2092,22 @@ impl QueueActor {
                         "WARN: Failed to increment attempts for message {}: {:?}",
                         id, e
                     );
-                } else if let Err(e) = self
-                    .store
-                    .commit(txn, cntryl_midge::WriteOptions::buffered())
-                {
-                    eprintln!(
-                        "WARN: Failed to commit retry txn for message {}: {:?}",
-                        id, e
-                    );
+                } else {
+                    let update_start = Instant::now();
+                    if let Err(e) = self
+                        .store
+                        .commit(txn, cntryl_midge::WriteOptions::buffered())
+                    {
+                        eprintln!(
+                            "WARN: Failed to commit retry txn for message {}: {:?}",
+                            id, e
+                        );
+                    } else {
+                        Self::observe_elapsed_us(
+                            obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
+                            update_start,
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -1592,6 +2268,393 @@ impl Actor for QueueActor {
 }
 
 impl QueueActor {
+    fn reset_recovery_state(&mut self) {
+        self.reset_live_ready_state();
+        self.reset_persisted_index_state();
+        self.delayed.clear();
+        let now = self.clock.now_instant();
+        self.next_delayed_deadline = now + Duration::from_secs(3600);
+    }
+
+    fn populate_live_ready_from_persisted(&mut self, matured_delayed_ids: &[MessageId]) {
+        self.reset_live_ready_state();
+
+        if matured_delayed_ids.is_empty() {
+            for shard in 0..self.persisted_ready_shards.len() {
+                let shard_len = self.persisted_ready_shards[shard].len();
+                for idx in 0..shard_len {
+                    let range = self.persisted_ready_shards[shard][idx];
+                    self.push_ready_range(range);
+                }
+            }
+            return;
+        }
+
+        let mut ready_ids = Vec::new();
+        for ranges in &self.persisted_ready_shards {
+            for range in ranges {
+                let mut id = range.next;
+                while id <= range.end {
+                    ready_ids.push(MessageId::new(id));
+                    id = id.saturating_add(Self::READY_SHARDS as u64);
+                }
+            }
+        }
+        ready_ids.extend_from_slice(matured_delayed_ids);
+        ready_ids.sort_unstable_by_key(|id| id.as_u64());
+        ready_ids.dedup_by_key(|id| id.as_u64());
+
+        for id in ready_ids {
+            self.push_ready(id);
+        }
+    }
+
+    fn try_recover_from_index(&mut self) -> IndexRecoveryAttempt {
+        let cf_id = self.queue_key.family.id();
+        let start = Instant::now();
+        let txn = match self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+        {
+            Ok(txn) => txn,
+            Err(e) => {
+                self.index_meta_written = false;
+                return IndexRecoveryAttempt::Error {
+                    next_id: 1,
+                    reason: format!("Failed to begin index recovery tx: {:?}", e),
+                };
+            }
+        };
+
+        let next_id = match txn.get(&self.meta_key) {
+            Ok(Some(bytes)) => Self::decode_next_id(Some(bytes.as_ref())),
+            Ok(None) => 1,
+            Err(e) => {
+                if Self::is_missing_read_snapshot_error(&e) {
+                    1
+                } else {
+                    eprintln!(
+                        "WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1",
+                        self.queue_key, e
+                    );
+                    1
+                }
+            }
+        };
+
+        let index_meta = match txn.get(&self.index_meta_key) {
+            Ok(value) => value,
+            Err(e) if Self::is_missing_read_snapshot_error(&e) => {
+                self.index_meta_written = false;
+                Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_MISSING);
+                return IndexRecoveryAttempt::Missing { next_id };
+            }
+            Err(e) => {
+                self.index_meta_written = false;
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: format!("Failed to read queue index meta: {:?}", e),
+                };
+            }
+        };
+        let Some(index_meta) = index_meta else {
+            self.index_meta_written = false;
+            Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_MISSING);
+            return IndexRecoveryAttempt::Missing { next_id };
+        };
+
+        if !Self::index_meta_is_valid(&index_meta) {
+            self.index_meta_written = false;
+            Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
+            return IndexRecoveryAttempt::Invalid {
+                next_id,
+                reason: "Queue index meta is missing version or validity marker".to_string(),
+            };
+        }
+
+        self.index_meta_written = true;
+        self.reset_recovery_state();
+
+        let ready_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
+        let delayed_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.delayed_index_prefix));
+
+        let mut ready_iter = match txn.scan(&ready_query) {
+            Ok(iter) => iter,
+            Err(e) => {
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: format!("Failed to scan queue ready index: {:?}", e),
+                };
+            }
+        };
+        let mut delayed_iter = match txn.scan(&delayed_query) {
+            Ok(iter) => iter,
+            Err(e) => {
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: format!("Failed to scan queue delayed index: {:?}", e),
+                };
+            }
+        };
+
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let now_instant = self.clock.now_instant();
+        let mut max_id = None::<u64>;
+        let mut matured_delayed_ids = Vec::new();
+
+        while let Some((key_bytes, value_bytes)) = ready_iter.next() {
+            let Some((shard, start_id)) =
+                Self::parse_ready_range_key(&key_bytes, &self.ready_index_prefix)
+            else {
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: "Malformed queue ready index key".to_string(),
+                };
+            };
+            let Some(range) = Self::decode_ready_range(start_id, &value_bytes) else {
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: "Malformed queue ready index value".to_string(),
+                };
+            };
+            if shard != (range.next as usize & (Self::READY_SHARDS - 1)) {
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: "Queue ready index shard does not match message ID".to_string(),
+                };
+            }
+            self.push_persisted_ready_range(range);
+            self.push_ready_range(range);
+            max_id = Some(max_id.map(|m| m.max(range.end)).unwrap_or(range.end));
+        }
+
+        while let Some((key_bytes, _value_bytes)) = delayed_iter.next() {
+            let Some((visible_at_ms, id)) =
+                Self::parse_delayed_index_key(&key_bytes, &self.delayed_index_prefix)
+            else {
+                return IndexRecoveryAttempt::Error {
+                    next_id,
+                    reason: "Malformed queue delayed index key".to_string(),
+                };
+            };
+            self.persisted_delayed.insert(id, visible_at_ms);
+            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+
+            if visible_at_ms <= now_epoch_ms {
+                matured_delayed_ids.push(id);
+            } else {
+                let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
+                let visible_at = now_instant + Duration::from_millis(delay_ms);
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
+            }
+        }
+
+        if self.delayed.is_empty() {
+            self.next_delayed_deadline = now_instant + Duration::from_secs(3600);
+        }
+
+        if !matured_delayed_ids.is_empty() {
+            self.populate_live_ready_from_persisted(&matured_delayed_ids);
+        }
+
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_RECOVERY_INDEX_LOAD_LATENCY, start);
+        Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_HITS);
+        IndexRecoveryAttempt::Hit { next_id, max_id }
+    }
+
+    fn rewrite_index_from_memory(&mut self) -> Result<(), String> {
+        let cf_id = self.queue_key.family.id();
+        let mut txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("Failed to begin queue index rebuild tx: {:?}", e))?;
+
+        let ready_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
+        let delayed_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.delayed_index_prefix));
+
+        let mut ready_iter = txn
+            .scan(&ready_query)
+            .map_err(|e| format!("Failed to scan ready index for rebuild: {:?}", e))?;
+        let mut delayed_iter = txn
+            .scan(&delayed_query)
+            .map_err(|e| format!("Failed to scan delayed index for rebuild: {:?}", e))?;
+        let mut ready_keys = Vec::new();
+        let mut delayed_keys = Vec::new();
+
+        while let Some((key, _)) = ready_iter.next() {
+            ready_keys.push(key.to_vec());
+        }
+        while let Some((key, _)) = delayed_iter.next() {
+            delayed_keys.push(key.to_vec());
+        }
+
+        for key in ready_keys.into_iter().chain(delayed_keys) {
+            txn.delete(key)
+                .map_err(|e| format!("Failed to delete stale queue index key: {:?}", e))?;
+        }
+
+        for (shard, ranges) in self.persisted_ready_shards.iter().enumerate() {
+            for range in ranges {
+                txn.put(
+                    self.ready_range_key(shard, range.next),
+                    Self::encode_ready_range_value(*range),
+                    None,
+                )
+                .map_err(|e| format!("Failed to write queue ready index: {:?}", e))?;
+            }
+        }
+
+        for (&id, &visible_at_ms) in &self.persisted_delayed {
+            txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
+                .map_err(|e| format!("Failed to write queue delayed index: {:?}", e))?;
+        }
+
+        txn.put(self.index_meta_key.clone(), Self::encode_index_meta(), None)
+            .map_err(|e| format!("Failed to write queue index meta: {:?}", e))?;
+
+        self.store
+            .commit(txn, cntryl_midge::WriteOptions::buffered())
+            .map_err(|e| format!("Failed to commit queue index rebuild: {:?}", e))?;
+        self.index_meta_written = true;
+        Ok(())
+    }
+
+    fn recover_from_scan_and_rebuild_index(&mut self) -> Result<Option<u64>, String> {
+        let cf_id = self.queue_key.family.id();
+        let start = Instant::now();
+        let txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("Failed to begin recovery scan tx: {:?}", e))?;
+
+        self.reset_recovery_state();
+
+        let header_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.header_key_prefix));
+        let legacy_query = cntryl_midge::Query::new()
+            .prefix(Bytes::copy_from_slice(&self.legacy_message_key_prefix));
+
+        let mut header_iter = match txn.scan(&header_query) {
+            Ok(iter) => iter,
+            Err(e) if Self::is_missing_read_snapshot_error(&e) => return Ok(None),
+            Err(e) => {
+                return Err(format!(
+                    "Failed to scan queue headers for recovery: {:?}",
+                    e
+                ))
+            }
+        };
+        let mut legacy_iter = match txn.scan(&legacy_query) {
+            Ok(iter) => iter,
+            Err(e) if Self::is_missing_read_snapshot_error(&e) => return Ok(None),
+            Err(e) => {
+                return Err(format!(
+                    "Failed to scan legacy queue records for recovery: {:?}",
+                    e
+                ))
+            }
+        };
+
+        if header_iter.remaining() == 0 && legacy_iter.remaining() == 0 {
+            return Ok(None);
+        }
+
+        let recovered_count = header_iter.remaining() + legacy_iter.remaining();
+        let per_shard = recovered_count / Self::READY_SHARDS + 1;
+        for shard in &mut self.ready_shards {
+            shard.reserve(per_shard);
+        }
+        for shard in &mut self.persisted_ready_shards {
+            shard.reserve(per_shard);
+        }
+        self.delayed.reserve(recovered_count);
+        let mut recovered_ready_ids = Vec::with_capacity(recovered_count);
+
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let now_instant = self.clock.now_instant();
+        let mut max_id = None::<u64>;
+
+        while let Some((key_bytes, value_bytes)) = header_iter.next() {
+            let Some(id) = Self::parse_message_id_from_key(&key_bytes, &self.header_key_prefix)
+            else {
+                continue;
+            };
+            let record = match Self::decode_record_header(&value_bytes) {
+                Ok(record) => record,
+                Err(_) => continue,
+            };
+
+            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            if record.visible_at_ms <= now_epoch_ms {
+                recovered_ready_ids.push(id);
+            } else {
+                let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
+                let visible_at = now_instant + Duration::from_millis(delay_ms);
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
+                self.persisted_delayed.insert(id, record.visible_at_ms);
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
+            }
+        }
+
+        while let Some((key_bytes, value_bytes)) = legacy_iter.next() {
+            let Some(id) =
+                Self::parse_message_id_from_key(&key_bytes, &self.legacy_message_key_prefix)
+            else {
+                continue;
+            };
+            let record = match Self::decode_legacy_record(value_bytes) {
+                Ok(record) => record,
+                Err(_) => continue,
+            };
+
+            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            if record.visible_at_ms <= now_epoch_ms {
+                recovered_ready_ids.push(id);
+            } else {
+                let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
+                let visible_at = now_instant + Duration::from_millis(delay_ms);
+                self.delayed
+                    .push(Reverse(DelayedMessage { id, visible_at }));
+                self.persisted_delayed.insert(id, record.visible_at_ms);
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
+            }
+        }
+
+        if self.delayed.is_empty() {
+            self.next_delayed_deadline = now_instant + Duration::from_secs(3600);
+        }
+
+        recovered_ready_ids.sort_unstable_by_key(|id| id.as_u64());
+        for id in recovered_ready_ids {
+            self.push_ready(id);
+            self.push_persisted_ready(id);
+        }
+
+        Self::observe_elapsed_us(obs::METRIC_QUEUE_RECOVERY_FALLBACK_SCAN_LATENCY, start);
+        Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_FALLBACKS);
+
+        if let Err(e) = self.rewrite_index_from_memory() {
+            eprintln!(
+                "WARN: Failed to rewrite queue recovery index for queue {:?}: {}",
+                self.queue_key, e
+            );
+        }
+        Ok(max_id)
+    }
+
     /// Recover ready queue and delayed queue from durable storage (V-003 Fix)
     ///
     /// This is called during actor construction to restore state after restart.
@@ -1623,146 +2686,75 @@ impl QueueActor {
     /// Messages are guaranteed to survive if:
     /// - Batch commit returned successfully (sync())
     fn recover_from_store(&mut self) {
-        let cf_id = self.queue_key.family.id();
-        let txn = match self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-        {
-            Ok(txn) => txn,
-            Err(e) => {
+        let (mut next_id, max_id) = match self.try_recover_from_index() {
+            IndexRecoveryAttempt::Hit { next_id, max_id } => {
+                self.recovery_path = RecoveryPath::IndexHit;
+                (next_id, max_id)
+            }
+            IndexRecoveryAttempt::Missing { next_id } => {
+                self.recovery_path = RecoveryPath::IndexMissingFallback;
+                let max_id = match self.recover_from_scan_and_rebuild_index() {
+                    Ok(max_id) => max_id,
+                    Err(e) => {
+                        eprintln!(
+                            "WARN: Failed to rebuild queue index for queue {:?}: {}",
+                            self.queue_key, e
+                        );
+                        None
+                    }
+                };
+                (next_id, max_id)
+            }
+            IndexRecoveryAttempt::Invalid { next_id, reason } => {
                 eprintln!(
-                    "WARN: Failed to begin recovery tx for queue {:?}: {:?}",
-                    self.queue_key, e
+                    "WARN: Queue index recovery found invalid index for queue {:?}: {}, falling back to full scan",
+                    self.queue_key, reason
                 );
-                return;
+                self.recovery_path = RecoveryPath::IndexInvalidFallback;
+                let max_id = match self.recover_from_scan_and_rebuild_index() {
+                    Ok(max_id) => max_id,
+                    Err(scan_err) => {
+                        eprintln!(
+                            "WARN: Queue fallback recovery failed for queue {:?}: {}",
+                            self.queue_key, scan_err
+                        );
+                        None
+                    }
+                };
+                (next_id, max_id)
+            }
+            IndexRecoveryAttempt::Error { next_id, reason } => {
+                eprintln!(
+                    "WARN: Queue index recovery failed for queue {:?}: {}, falling back to full scan",
+                    self.queue_key, reason
+                );
+                self.recovery_path = RecoveryPath::IndexErrorFallback;
+                let max_id = match self.recover_from_scan_and_rebuild_index() {
+                    Ok(max_id) => max_id,
+                    Err(scan_err) => {
+                        eprintln!(
+                            "WARN: Queue fallback recovery failed for queue {:?}: {}",
+                            self.queue_key, scan_err
+                        );
+                        None
+                    }
+                };
+                (next_id, max_id)
             }
         };
 
-        let mut next_id = match txn.get(&self.meta_key) {
-            Ok(Some(bytes)) => bytes
-                .get(0..8)
-                .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
-                .unwrap_or(1),
-            Ok(None) => 1,
-            Err(e) => {
-                eprintln!(
-                    "WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1",
-                    self.queue_key, e
-                );
-                1
-            }
-        };
-
-        let header_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.header_key_prefix));
-        let mut header_iter = match txn.scan(&header_query) {
-            Ok(iter) => iter,
-            Err(e) => {
-                eprintln!(
-                    "WARN: Failed to scan queue headers for recovery for queue {:?}: {:?}",
-                    self.queue_key, e
-                );
-                return;
-            }
-        };
-        let legacy_query = cntryl_midge::Query::new()
-            .prefix(Bytes::copy_from_slice(&self.legacy_message_key_prefix));
-        let mut legacy_iter = match txn.scan(&legacy_query) {
-            Ok(iter) => iter,
-            Err(e) => {
-                eprintln!(
-                    "WARN: Failed to scan legacy queue records for recovery for queue {:?}: {:?}",
-                    self.queue_key, e
-                );
-                return;
-            }
-        };
-        let recovered_count = header_iter.remaining() + legacy_iter.remaining();
-        let per_shard = recovered_count / Self::READY_SHARDS + 1;
-        for shard in &mut self.ready_shards {
-            shard.reserve(per_shard);
-        }
-        self.delayed.reserve(recovered_count);
-        let mut recovered_ready_ids = Vec::with_capacity(recovered_count);
-
-        // Use absolute SystemTime epoch (V-002 Fix)
-        let now_epoch_ms = self.clock.now_epoch_ms();
-        let now_instant = self.clock.now_instant();
-        let mut max_id = None::<u64>;
-
-        while let Some((key_bytes, value_bytes)) = header_iter.next() {
-            let Some(id) = Self::parse_message_id_from_key(&key_bytes, &self.header_key_prefix)
-            else {
-                continue;
-            };
-            let id_u64 = id.as_u64();
-
-            let record = match Self::decode_record_header(&value_bytes) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let visible_at_ms = record.visible_at_ms;
-
-            max_id = Some(max_id.map(|m| m.max(id_u64)).unwrap_or(id_u64));
-
-            // Compare absolute epochs (survives restarts correctly)
-            if visible_at_ms <= now_epoch_ms {
-                recovered_ready_ids.push(id);
-            } else {
-                // Delayed: use absolute epoch difference
-                let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
-                let visible_at = now_instant + Duration::from_millis(delay_ms);
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
-
-                // Update deadline cache if this visibility is sooner
-                if visible_at < self.next_delayed_deadline {
-                    self.next_delayed_deadline = visible_at;
-                }
-            }
-        }
-
-        while let Some((key_bytes, value_bytes)) = legacy_iter.next() {
-            let Some(id) =
-                Self::parse_message_id_from_key(&key_bytes, &self.legacy_message_key_prefix)
-            else {
-                continue;
-            };
-            let id_u64 = id.as_u64();
-
-            let record = match Self::decode_legacy_record(value_bytes) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let visible_at_ms = record.visible_at_ms;
-
-            max_id = Some(max_id.map(|m| m.max(id_u64)).unwrap_or(id_u64));
-
-            if visible_at_ms <= now_epoch_ms {
-                recovered_ready_ids.push(id);
-            } else {
-                let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
-                let visible_at = now_instant + Duration::from_millis(delay_ms);
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
-
-                if visible_at < self.next_delayed_deadline {
-                    self.next_delayed_deadline = visible_at;
-                }
-            }
-        }
-
-        recovered_ready_ids.sort_unstable_by_key(|id| id.as_u64());
-        for id in recovered_ready_ids {
-            self.push_ready(id);
-        }
-
-        // Ensure next_id is never decremented
         if let Some(max_id) = max_id {
-            next_id = next_id.max(max_id + 1);
+            next_id = next_id.max(max_id.saturating_add(1));
         }
+
         self.next_id = next_id;
         self.next_id_limit = next_id;
+        if self.ready_len() == 0
+            && self.delayed.is_empty()
+            && self.recovery_path == RecoveryPath::IndexHit
+        {
+            self.recovery_path = RecoveryPath::Empty;
+        }
     }
 }
 
@@ -1824,6 +2816,111 @@ pub mod tests {
             area: "queue".to_string(),
             resource: format!("{}-{}", resource_prefix, Uuid::new_v4()),
         }
+    }
+
+    fn read_index_meta(
+        store: &Arc<cntryl_midge::MidgeEngine>,
+        queue_key: &QueueKey,
+    ) -> Option<Bytes> {
+        let txn = store
+            .begin_tx(
+                queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .expect("begin read tx");
+        txn.get(&QueueActor::index_meta_key(queue_key))
+            .expect("read index meta")
+    }
+
+    fn read_ready_index_ranges(
+        store: &Arc<cntryl_midge::MidgeEngine>,
+        queue_key: &QueueKey,
+    ) -> Vec<(usize, ReadyRange)> {
+        let txn = store
+            .begin_tx(
+                queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .expect("begin read tx");
+        let prefix = QueueActor::ready_index_prefix(queue_key);
+        let query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&prefix));
+        let mut iter = txn.scan(&query).expect("scan ready index");
+        let mut ranges = Vec::new();
+
+        while let Some((key, value)) = iter.next() {
+            let (shard, start) =
+                QueueActor::parse_ready_range_key(&key, &prefix).expect("parse ready key");
+            let range = QueueActor::decode_ready_range(start, &value).expect("decode ready range");
+            ranges.push((shard, range));
+        }
+
+        ranges.sort_unstable_by_key(|(shard, range)| (*shard, range.next));
+        ranges
+    }
+
+    fn read_delayed_index_entries(
+        store: &Arc<cntryl_midge::MidgeEngine>,
+        queue_key: &QueueKey,
+    ) -> Vec<(MessageId, u64)> {
+        let txn = store
+            .begin_tx(
+                queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .expect("begin read tx");
+        let prefix = QueueActor::delayed_index_prefix(queue_key);
+        let query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&prefix));
+        let mut iter = txn.scan(&query).expect("scan delayed index");
+        let mut entries = Vec::new();
+
+        while let Some((key, _value)) = iter.next() {
+            let (visible_at_ms, id) =
+                QueueActor::parse_delayed_index_key(&key, &prefix).expect("parse delayed key");
+            entries.push((id, visible_at_ms));
+        }
+
+        entries.sort_unstable_by_key(|(id, visible_at_ms)| (*visible_at_ms, id.as_u64()));
+        entries
+    }
+
+    fn clear_queue_index(
+        store: &Arc<cntryl_midge::MidgeEngine>,
+        queue_key: &QueueKey,
+        meta_override: Option<Vec<u8>>,
+    ) {
+        let cf_id = queue_key.family.id();
+        let mut txn = store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        let ready_prefix = QueueActor::ready_index_prefix(queue_key);
+        let delayed_prefix = QueueActor::delayed_index_prefix(queue_key);
+        let ready_query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&ready_prefix));
+        let delayed_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&delayed_prefix));
+        let mut ready_iter = txn.scan(&ready_query).expect("scan ready index");
+        let mut delayed_iter = txn.scan(&delayed_query).expect("scan delayed index");
+        let mut keys = Vec::new();
+
+        while let Some((key, _)) = ready_iter.next() {
+            keys.push(key.to_vec());
+        }
+        while let Some((key, _)) = delayed_iter.next() {
+            keys.push(key.to_vec());
+        }
+        keys.push(QueueActor::index_meta_key(queue_key));
+
+        for key in keys {
+            txn.delete(key).expect("delete queue index key");
+        }
+
+        if let Some(meta) = meta_override {
+            txn.put(QueueActor::index_meta_key(queue_key), meta, None)
+                .expect("override index meta");
+        }
+
+        store
+            .commit(txn, cntryl_midge::WriteOptions::buffered())
+            .expect("commit index mutation");
     }
 
     #[test]
@@ -1980,8 +3077,8 @@ pub mod tests {
 
         let actor = QueueActor::new(
             RouteFamily::new(0),
-            queue_key,
-            store,
+            queue_key.clone(),
+            store.clone(),
             None,
             crate::utils::idempotency::global_dedup_store(),
         );
@@ -1990,6 +3087,191 @@ pub mod tests {
         assert!(actor.records.is_empty());
         assert!(actor.record_cache_fifo.is_empty());
         assert!(actor.body_cache.is_empty());
+        assert_eq!(actor.recovery_path, RecoveryPath::IndexHit);
+        assert!(QueueActor::index_meta_is_valid(
+            &read_index_meta(&store, &queue_key).expect("index meta should exist")
+        ));
+        assert!(!read_ready_index_ranges(&store, &queue_key).is_empty());
+    }
+
+    #[test]
+    fn should_fallback_and_rewrite_missing_queue_index() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-missing-index");
+
+        {
+            let mut actor = QueueActor::new(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                None,
+                crate::utils::idempotency::global_dedup_store(),
+            );
+
+            for i in 0..12 {
+                let response = actor.handle_send(Bytes::from(format!("visible-{}", i)), None);
+                assert!(matches!(response, QueueResponse::Sent { .. }));
+            }
+        }
+
+        clear_queue_index(&store, &queue_key, None);
+
+        let actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        assert_eq!(actor.ready_len(), 12);
+        assert_eq!(actor.recovery_path, RecoveryPath::IndexMissingFallback);
+        assert!(QueueActor::index_meta_is_valid(
+            &read_index_meta(&store, &queue_key).expect("rewritten index meta should exist")
+        ));
+        assert!(!read_ready_index_ranges(&store, &queue_key).is_empty());
+    }
+
+    #[test]
+    fn should_fallback_and_rewrite_corrupted_queue_index_meta() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-corrupt-index");
+
+        {
+            let mut actor = QueueActor::new(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                None,
+                crate::utils::idempotency::global_dedup_store(),
+            );
+
+            for i in 0..8 {
+                let response = actor.handle_send(Bytes::from(format!("task-{}", i)), None);
+                assert!(matches!(response, QueueResponse::Sent { .. }));
+            }
+        }
+
+        clear_queue_index(&store, &queue_key, Some(vec![0, 0]));
+
+        let actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        assert_eq!(actor.ready_len(), 8);
+        assert_eq!(actor.recovery_path, RecoveryPath::IndexInvalidFallback);
+        assert!(QueueActor::index_meta_is_valid(
+            &read_index_meta(&store, &queue_key).expect("rewritten index meta should exist")
+        ));
+    }
+
+    #[test]
+    fn should_remove_head_tail_and_middle_from_persisted_ready_ranges() {
+        let mut shards: Vec<VecDeque<ReadyRange>> = (0..QueueActor::READY_SHARDS)
+            .map(|_| VecDeque::new())
+            .collect();
+        for id in [1_u64, 9, 17, 25] {
+            QueueActor::stage_persisted_ready_append(&mut shards, MessageId::new(id));
+        }
+
+        let (shard, mutation) = QueueActor::plan_ready_index_mutation(&shards, MessageId::new(1))
+            .expect("head mutation");
+        assert_eq!(shard, 1);
+        assert_eq!(
+            mutation,
+            PersistedReadyMutation::Replace {
+                removed: ReadyRange { next: 1, end: 25 },
+                inserted: ReadyRange { next: 9, end: 25 },
+            }
+        );
+
+        let (shard, mutation) = QueueActor::plan_ready_index_mutation(&shards, MessageId::new(25))
+            .expect("tail mutation");
+        assert_eq!(shard, 1);
+        assert_eq!(
+            mutation,
+            PersistedReadyMutation::Replace {
+                removed: ReadyRange { next: 1, end: 25 },
+                inserted: ReadyRange { next: 1, end: 17 },
+            }
+        );
+
+        let mut split_shards = shards.clone();
+        let (shard, mutation) =
+            QueueActor::plan_ready_index_mutation(&split_shards, MessageId::new(17))
+                .expect("middle mutation");
+        assert_eq!(shard, 1);
+        assert_eq!(
+            mutation,
+            PersistedReadyMutation::Split {
+                removed: ReadyRange { next: 1, end: 25 },
+                left: ReadyRange { next: 1, end: 9 },
+                right: ReadyRange { next: 25, end: 25 },
+            }
+        );
+        QueueActor::apply_ready_index_mutation(&mut split_shards, shard, mutation);
+        assert_eq!(split_shards[1].len(), 2);
+    }
+
+    #[test]
+    fn should_remove_delayed_index_entry_after_ack_even_when_visibility_passed() {
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-delayed-index");
+        let clock = MockClock::new();
+
+        {
+            let mut actor = QueueActor::with_clock(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                Box::new(clock.clone()),
+                None,
+                crate::utils::idempotency::global_dedup_store(),
+            );
+            let response = actor.handle_send(Bytes::from("delayed"), Some(1));
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+        }
+
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        assert_eq!(actor.ready_len(), 0);
+        assert_eq!(read_delayed_index_entries(&store, &queue_key).len(), 1);
+
+        clock.advance(Duration::from_secs(2));
+        actor.process_delayed_messages();
+
+        let reserved = match actor.handle_receive(30, Some(1)) {
+            QueueResponse::Received { messages } => messages,
+            other => panic!("Expected Received response, got {:?}", other),
+        };
+        assert_eq!(reserved.len(), 1);
+
+        let message = &reserved[0];
+        assert!(matches!(
+            actor.handle_ack(message.id, message.token),
+            QueueResponse::Acked
+        ));
+        assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
     }
 
     #[test]

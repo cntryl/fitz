@@ -199,6 +199,7 @@ fn should_redelivery_messages_after_crash() {
 /// Test crash recovery preserves FIFO order across multi-digit IDs.
 #[test]
 fn should_preserve_fifo_order_after_recovery() {
+    // Arrange
     let reference_store = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
@@ -257,6 +258,7 @@ fn should_preserve_fifo_order_after_recovery() {
         }
     }
 
+    // Act
     let mut actor = QueueActor::new(
         RouteFamily::new(0),
         recovery_queue_key,
@@ -280,6 +282,7 @@ fn should_preserve_fifo_order_after_recovery() {
         }
     }
 
+    // Assert
     assert_eq!(recovered_bodies, expected_order);
 }
 

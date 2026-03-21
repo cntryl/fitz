@@ -8,6 +8,15 @@ use cntryl_midge::WriteOptions;
 /// This gives the schedule time to be processed and fanned out before cleanup
 const GRACE_PERIOD_SECS: u64 = 3600; // 1 hour
 
+pub struct ScheduleInsert<'a> {
+    pub route: &'a str,
+    pub cron: &'a str,
+    pub payload: &'a Bytes,
+    pub next_fire_time: Instant,
+    pub next_fire_ms: u64,
+    pub previous_fire_ms: Option<u64>,
+}
+
 pub struct ScheduleStore {
     db: Arc<cntryl_midge::Engine>,
 }
@@ -128,21 +137,16 @@ impl ScheduleStore {
     pub fn insert(
         &self,
         cf_id: u64,
-        route: &str,
-        cron: &str,
-        payload: &Bytes,
-        next_fire_time: Instant,
-        next_fire_ms: u64,
-        previous_fire_ms: Option<u64>,
+        schedule: ScheduleInsert<'_>,
         write_options: WriteOptions,
     ) -> Result<Vec<u8>, String> {
-        let key = Self::encode_key(next_fire_ms, route);
-        let value = Self::encode_value(cron, payload);
+        let key = Self::encode_key(schedule.next_fire_ms, schedule.route);
+        let value = Self::encode_value(schedule.cron, schedule.payload);
 
         // TTL = time until next fire + grace period
         let now = Instant::now();
-        let time_until_fire = if next_fire_time > now {
-            next_fire_time - now
+        let time_until_fire = if schedule.next_fire_time > now {
+            schedule.next_fire_time - now
         } else {
             Duration::from_secs(0)
         };
@@ -153,9 +157,9 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        if let Some(previous_fire_ms) = previous_fire_ms {
-            if previous_fire_ms != next_fire_ms {
-                let old_key = Self::encode_key(previous_fire_ms, route);
+        if let Some(previous_fire_ms) = schedule.previous_fire_ms {
+            if previous_fire_ms != schedule.next_fire_ms {
+                let old_key = Self::encode_key(previous_fire_ms, schedule.route);
                 txn.delete(old_key)
                     .map_err(|e| format!("delete previous key failed: {:?}", e))?;
             }

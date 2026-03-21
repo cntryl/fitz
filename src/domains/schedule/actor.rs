@@ -1,7 +1,7 @@
 use crate::domains::schedule::protocol::{
     CronSchedule, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
-use crate::domains::schedule::store::ScheduleStore;
+use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
@@ -145,12 +145,14 @@ impl ScheduleActor {
         // Persist first, then move payload into the in-memory definition.
         let storage_key = self.store.insert(
             self.family.as_u64(),
-            &route,
-            &cron,
-            &payload,
-            next_fire,
-            next_fire_ms,
-            previous_next_fire_ms,
+            ScheduleInsert {
+                route: &route,
+                cron: &cron,
+                payload: &payload,
+                next_fire_time: next_fire,
+                next_fire_ms,
+                previous_fire_ms: previous_next_fire_ms,
+            },
             self.write_options,
         )?;
 

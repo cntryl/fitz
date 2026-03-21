@@ -359,28 +359,34 @@ mod tests {
 
     #[test]
     fn should_roundtrip_staging_value_with_metadata() {
+        // Arrange
         let event = EventPayload {
             body: Bytes::from("body"),
             metadata: Some(Bytes::from("meta")),
         };
 
+        // Act
         let encoded = encode_staging_value(&event);
         let decoded = decode_staging_value(&encoded).expect("decode staging value");
 
+        // Assert
         assert_eq!(decoded.body, event.body);
         assert_eq!(decoded.metadata, event.metadata);
     }
 
     #[test]
     fn should_roundtrip_staging_value_without_metadata() {
+        // Arrange
         let event = EventPayload {
             body: Bytes::from("body"),
             metadata: None,
         };
 
+        // Act
         let encoded = encode_staging_value(&event);
         let decoded = decode_staging_value(&encoded).expect("decode staging value");
 
+        // Assert
         assert_eq!(decoded.body, event.body);
         assert_eq!(decoded.metadata, None);
     }

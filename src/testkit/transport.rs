@@ -423,18 +423,18 @@ impl TlvFrameBuilder {
 }
 
 /// TLV decoder for parsing protocol frames
-pub struct TlvFrameParser {
-    buf: Vec<u8>,
+pub struct TlvFrameParser<'a> {
+    buf: &'a [u8],
     offset: usize,
 }
 
-impl TlvFrameParser {
-    pub fn new(buf: Vec<u8>) -> Self {
+impl<'a> TlvFrameParser<'a> {
+    pub fn new(buf: &'a [u8]) -> Self {
         Self { buf, offset: 0 }
     }
 
-    /// Parse next TLV field
-    pub fn next_field(&mut self) -> Option<(u16, Vec<u8>)> {
+    /// Parse next TLV field without copying the payload.
+    pub fn next_field_ref(&mut self) -> Option<(u16, &'a [u8])> {
         const ESCAPE_MARKER: u8 = 0xFF;
 
         if self.offset >= self.buf.len() {
@@ -466,10 +466,16 @@ impl TlvFrameParser {
         if self.offset + len > self.buf.len() {
             return None;
         }
-        let value = self.buf[self.offset..self.offset + len].to_vec();
+        let value = &self.buf[self.offset..self.offset + len];
         self.offset += len;
 
         Some((msg_type, value))
+    }
+
+    /// Parse next TLV field into an owned buffer.
+    pub fn next_field(&mut self) -> Option<(u16, Vec<u8>)> {
+        self.next_field_ref()
+            .map(|(msg_type, value)| (msg_type, value.to_vec()))
     }
 
     /// Parse all fields
@@ -664,7 +670,7 @@ mod tests {
         let frame = builder.build();
 
         // Act
-        let mut parser = TlvFrameParser::new(frame);
+        let mut parser = TlvFrameParser::new(&frame);
         let fields = parser.parse_all();
 
         // Assert

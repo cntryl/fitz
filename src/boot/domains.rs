@@ -1,6 +1,7 @@
 //! Domain actor setup and registration
 
 use crate::boot::runtime::BootResult;
+use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
+use std::time::Instant;
 
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -1363,7 +1365,9 @@ pub struct QueueDomainSink {
     /// Midge storage engine
     store: Arc<cntryl_midge::Engine>,
     /// Per-queue actors keyed by QueueKey
-    actors: Mutex<HashMap<crate::domains::queue::QueueKey, crate::domains::queue::QueueActor>>,
+    actors: Mutex<
+        HashMap<crate::domains::queue::QueueKey, Arc<Mutex<crate::domains::queue::QueueActor>>>,
+    >,
     /// Per-family subscription state for queue availability notifications
     families: Mutex<HashMap<u64, QueueFamilyState>>,
     /// Monotonic subscription ID counter
@@ -1393,6 +1397,43 @@ impl QueueDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn queue_key_for_route(
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &crate::runtime::routing::Route,
+    ) -> crate::domains::queue::QueueKey {
+        crate::domains::queue::QueueKey::from_route(family_id, route).unwrap_or(
+            crate::domains::queue::QueueKey {
+                family: family_id,
+                realm: String::new(),
+                area: String::new(),
+                resource: "default".to_string(),
+            },
+        )
+    }
+
+    fn get_or_create_actor(
+        &self,
+        key: crate::domains::queue::QueueKey,
+    ) -> (Arc<Mutex<crate::domains::queue::QueueActor>>, bool) {
+        use std::collections::hash_map::Entry;
+
+        let mut actors = self.actors.lock();
+        match actors.entry(key.clone()) {
+            Entry::Occupied(entry) => (entry.get().clone(), false),
+            Entry::Vacant(entry) => {
+                let actor = Arc::new(Mutex::new(crate::domains::queue::QueueActor::new(
+                    key.family,
+                    key,
+                    self.store.clone(),
+                    None,
+                    crate::utils::idempotency::global_dedup_store(),
+                )));
+                entry.insert(actor.clone());
+                (actor, true)
+            }
+        }
     }
 
     fn sync_admin_snapshot(&self) {
@@ -1512,12 +1553,15 @@ impl QueueDomainSink {
 
     pub fn pending_message_count(&self) -> usize {
         let actors = self.actors.lock();
-        actors.values().map(|actor| actor.ready_len()).sum()
+        actors.values().map(|actor| actor.lock().ready_len()).sum()
     }
 
     pub fn active_lease_count(&self) -> usize {
         let actors = self.actors.lock();
-        actors.values().map(|actor| actor.inflight.len()).sum()
+        actors
+            .values()
+            .map(|actor| actor.lock().inflight.len())
+            .sum()
     }
 }
 
@@ -1663,13 +1707,9 @@ impl MailboxSink for QueueDomainSink {
         );
 
         // Dispatch to per-queue actor or handle subscription
-        use crate::domains::queue::protocol::{QueueKey, QueueMessage};
+        use crate::domains::queue::protocol::QueueMessage;
 
         let (response, availability_notify_route, should_sync_admin_snapshot) = {
-            use std::collections::hash_map::Entry;
-
-            let mut actors = self.actors.lock();
-
             match queue_msg {
                 QueueMessage::Send {
                     family_id,
@@ -1677,29 +1717,22 @@ impl MailboxSink for QueueDomainSink {
                     body,
                     delay_seconds,
                 } => {
-                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
-                        family: family_id,
-                        realm: String::new(),
-                        area: String::new(),
-                        resource: "default".to_string(),
-                    });
-                    let store = self.store.clone();
-                    let (actor, created_actor) = match actors.entry(key.clone()) {
-                        Entry::Occupied(entry) => (entry.into_mut(), false),
-                        Entry::Vacant(entry) => (
-                            entry.insert(crate::domains::queue::QueueActor::new(
-                                family_id,
-                                key.clone(),
-                                store,
-                                None,
-                                crate::utils::idempotency::global_dedup_store(),
-                            )),
-                            true,
-                        ),
-                    };
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
                     let resp = actor.handle_send(body, delay_seconds);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
                     let notify_route = if actor.take_needs_notify_availability() {
                         tracing::info!(
                             domain = "queue",
@@ -1721,33 +1754,23 @@ impl MailboxSink for QueueDomainSink {
                     batch_size,
                     ..
                 } => {
-                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
-                        family: family_id,
-                        realm: String::new(),
-                        area: String::new(),
-                        resource: "default".to_string(),
-                    });
-                    let store = self.store.clone();
-                    let (actor, created_actor) = match actors.entry(key.clone()) {
-                        Entry::Occupied(entry) => (entry.into_mut(), false),
-                        Entry::Vacant(entry) => (
-                            entry.insert(crate::domains::queue::QueueActor::new(
-                                family_id,
-                                key.clone(),
-                                store,
-                                None,
-                                crate::utils::idempotency::global_dedup_store(),
-                            )),
-                            true,
-                        ),
-                    };
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (
-                        actor.handle_receive(lease_seconds, batch_size),
-                        None,
-                        created_actor,
-                    )
+                    let response = actor.handle_receive(lease_seconds, batch_size);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    (response, None, created_actor)
                 }
                 QueueMessage::Extend {
                     family_id,
@@ -1756,33 +1779,23 @@ impl MailboxSink for QueueDomainSink {
                     token,
                     lease_seconds,
                 } => {
-                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
-                        family: family_id,
-                        realm: String::new(),
-                        area: String::new(),
-                        resource: "default".to_string(),
-                    });
-                    let store = self.store.clone();
-                    let (actor, created_actor) = match actors.entry(key.clone()) {
-                        Entry::Occupied(entry) => (entry.into_mut(), false),
-                        Entry::Vacant(entry) => (
-                            entry.insert(crate::domains::queue::QueueActor::new(
-                                family_id,
-                                key.clone(),
-                                store,
-                                None,
-                                crate::utils::idempotency::global_dedup_store(),
-                            )),
-                            true,
-                        ),
-                    };
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (
-                        actor.handle_extend(id, token, lease_seconds),
-                        None,
-                        created_actor,
-                    )
+                    let response = actor.handle_extend(id, token, lease_seconds);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    (response, None, created_actor)
                 }
                 QueueMessage::Ack {
                     family_id,
@@ -1790,29 +1803,23 @@ impl MailboxSink for QueueDomainSink {
                     id,
                     token,
                 } => {
-                    let key = QueueKey::from_route(family_id, &route).unwrap_or(QueueKey {
-                        family: family_id,
-                        realm: String::new(),
-                        area: String::new(),
-                        resource: "default".to_string(),
-                    });
-                    let store = self.store.clone();
-                    let (actor, created_actor) = match actors.entry(key.clone()) {
-                        Entry::Occupied(entry) => (entry.into_mut(), false),
-                        Entry::Vacant(entry) => (
-                            entry.insert(crate::domains::queue::QueueActor::new(
-                                family_id,
-                                key.clone(),
-                                store,
-                                None,
-                                crate::utils::idempotency::global_dedup_store(),
-                            )),
-                            true,
-                        ),
-                    };
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
                     actor.process_expired_timers();
                     actor.process_delayed_messages();
-                    (actor.handle_ack(id, token), None, created_actor)
+                    let response = actor.handle_ack(id, token);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    (response, None, created_actor)
                 }
                 QueueMessage::LeaseExpired { .. } => {
                     // Internal message, not dispatched via sink

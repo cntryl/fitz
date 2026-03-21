@@ -83,6 +83,10 @@ pub const METRIC_PERMISSION_DENIALS: &str = "fitz_permission_denials_total";
 // Domain-specific counters (per domain)
 pub const METRIC_DOMAIN_OPERATIONS: &str = "fitz_domain_operations_total";
 pub const METRIC_DOMAIN_ERRORS: &str = "fitz_domain_errors_total";
+pub const METRIC_QUEUE_RECOVERY_INDEX_HITS: &str = "fitz_queue_recovery_index_hits_total";
+pub const METRIC_QUEUE_RECOVERY_INDEX_MISSING: &str = "fitz_queue_recovery_index_missing_total";
+pub const METRIC_QUEUE_RECOVERY_INDEX_INVALID: &str = "fitz_queue_recovery_index_invalid_total";
+pub const METRIC_QUEUE_RECOVERY_INDEX_FALLBACKS: &str = "fitz_queue_recovery_index_fallbacks_total";
 
 // Gauges
 pub const METRIC_CONNECTIONS_ACTIVE: &str = "fitz_connections_active";
@@ -96,6 +100,15 @@ pub const METRIC_TLV_CODEC_LATENCY: &str = "fitz_tlv_codec_latency_us";
 pub const METRIC_ROUTE_MATCH_LATENCY: &str = "fitz_route_match_latency_us";
 pub const METRIC_DOMAIN_OPERATION_LATENCY: &str = "fitz_domain_operation_latency_ms";
 pub const METRIC_PERMISSION_CHECK_LATENCY: &str = "fitz_permission_check_latency_us";
+pub const METRIC_QUEUE_RECOVERY_INDEX_LOAD_LATENCY: &str =
+    "fitz_queue_recovery_index_load_latency_us";
+pub const METRIC_QUEUE_RECOVERY_FALLBACK_SCAN_LATENCY: &str =
+    "fitz_queue_recovery_fallback_scan_latency_us";
+pub const METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY: &str = "fitz_queue_enqueue_commit_latency_us";
+pub const METRIC_QUEUE_RECEIVE_HYDRATE_LATENCY: &str = "fitz_queue_receive_hydrate_latency_us";
+pub const METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY: &str = "fitz_queue_redelivery_update_latency_us";
+pub const METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY: &str = "fitz_queue_actor_lock_hold_latency_us";
+pub const METRIC_QUEUE_ACTOR_EXECUTION_LATENCY: &str = "fitz_queue_actor_execution_latency_us";
 
 // ============================================================================
 // ATTRIBUTE KEYS (for structured logging and span fields)

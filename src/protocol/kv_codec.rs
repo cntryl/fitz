@@ -342,7 +342,7 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     offset += route_len;
 
     // Parse route into realm/area/resource
-    let (realm, area, resource) = parse_route(&route_str)?;
+    let (realm, area, resource) = parse_route(route_str)?;
 
     // Read mode (u8): 0=ReadOnly, 1=ReadWrite
     if offset >= payload.len() {

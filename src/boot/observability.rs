@@ -23,6 +23,20 @@ pub fn metrics() -> Arc<MetricsCollector> {
         .clone()
 }
 
+fn metrics_ref() -> &'static Arc<MetricsCollector> {
+    METRICS_COLLECTOR.get_or_init(|| Arc::new(MetricsCollector::new()))
+}
+
+/// Record a histogram observation in microseconds using the cached global collector.
+pub fn histogram_observe_us(name: &str, value_us: u64) {
+    metrics_ref().histogram_observe_us(name, value_us);
+}
+
+/// Increment a counter using the cached global collector.
+pub fn counter_inc(name: &str) {
+    metrics_ref().counter_inc(name);
+}
+
 /// Try to initialize observability, returning existing collector if already initialized.
 ///
 /// This is safe to call multiple times (useful for tests).

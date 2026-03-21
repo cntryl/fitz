@@ -77,7 +77,8 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     let mut actor = KvActor::new(store);
 
     ctx.measure(|| {
-        let mut parser = TlvFrameParser::new(begin_frame.clone());
+        let begin_frame = begin_frame.clone();
+        let mut parser = TlvFrameParser::new(&begin_frame);
         let (msg_type, payload) = parser.next_field().expect("begin field");
         let msg = kv_parse_request(msg_type, family, &payload).expect("parse begin");
         let tx_id = match actor.handle(msg) {
@@ -86,13 +87,13 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
         };
 
         let put_frame = build_kv_put(tx_id, route, key, value);
-        let mut parser = TlvFrameParser::new(put_frame);
+        let mut parser = TlvFrameParser::new(&put_frame);
         let (msg_type, payload) = parser.next_field().expect("put field");
         let msg = kv_parse_request(msg_type, family, &payload).expect("parse put");
         actor.handle(msg);
 
         let rollback_frame = build_kv_rollback(tx_id, route);
-        let mut parser = TlvFrameParser::new(rollback_frame);
+        let mut parser = TlvFrameParser::new(&rollback_frame);
         let (msg_type, payload) = parser.next_field().expect("rollback field");
         let msg = kv_parse_request(msg_type, family, &payload).expect("parse rollback");
         actor.handle(msg);

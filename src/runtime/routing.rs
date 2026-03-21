@@ -310,6 +310,14 @@ impl Route {
         }
     }
 
+    /// Create a route directly from a borrowed string slice.
+    #[inline]
+    pub fn from_ref(path: &str) -> Self {
+        Self {
+            path: Arc::from(path),
+        }
+    }
+
     /// Get the route path as a string slice
     #[inline]
     pub fn as_str(&self) -> &str {

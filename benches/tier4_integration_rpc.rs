@@ -81,7 +81,8 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
     let request_frame = build_rpc_request("rpc://tier4/service", b"ping");
 
     ctx.measure(|| {
-        let mut parser = TlvFrameParser::new(request_frame.clone());
+        let request_frame = request_frame.clone();
+        let mut parser = TlvFrameParser::new(&request_frame);
         let (msg_type, payload) = parser.next_field().expect("one field");
         let frame_ctx = FrameContext::new(
             0,
@@ -127,7 +128,7 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
                     Ok(f) => f,
                     Err(_) => continue,
                 };
-                let mut parser = TlvFrameParser::new(frame);
+                let mut parser = TlvFrameParser::new(&frame);
                 if let Some((msg_type, payload)) = parser.next_field() {
                     if msg_type == 302 {
                         let frame_ctx = FrameContext::new(
@@ -200,7 +201,7 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
                     Ok(f) => f,
                     Err(_) => continue,
                 };
-                let mut parser = TlvFrameParser::new(frame);
+                let mut parser = TlvFrameParser::new(&frame);
                 if let Some((msg_type, payload)) = parser.next_field() {
                     if msg_type == 302 {
                         let frame_ctx = FrameContext::new(

@@ -74,9 +74,9 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
 
     ctx.measure(|| {
-        let mut parser = TlvFrameParser::new(enqueue_frame.clone());
-        let (msg_type, payload) = parser.next_field().expect("enqueue field");
-        let msg = queue_parse_request(msg_type, family, &payload).expect("parse enqueue");
+        let mut parser = TlvFrameParser::new(&enqueue_frame);
+        let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
+        let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
         actor.receive(msg, &mut actor_ctx);
     });
 }

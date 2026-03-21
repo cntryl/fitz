@@ -52,13 +52,13 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 /// Parse KV response
 /// Format: [u8 status][optional data...]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return ((msg_type & 0xFF) as u8, status, payload.to_vec());
     }
 
     (0, 1, Vec::new())
@@ -108,9 +108,9 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
 
 /// Parse NOTICE response
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
         let data = if payload.len() > 1 {
             payload[1..].to_vec()
@@ -155,11 +155,11 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
 
 /// Parse QUEUE response
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return ((msg_type & 0xFF) as u8, status, payload.to_vec());
     }
 
     (0, 1, Vec::new())
@@ -202,11 +202,11 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
 
 /// Parse LEASE response: (msg_type, status, data)
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return ((msg_type & 0xFF) as u8, status, payload.to_vec());
     }
 
     (0, 1, Vec::new())
@@ -302,11 +302,11 @@ pub fn build_rpc_ack_frame(correlation_id: uuid::Uuid) -> Vec<u8> {
 
 /// Parse RPC response
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return ((msg_type & 0xFF) as u8, status, payload.to_vec());
     }
 
     (0, 1, Vec::new())
@@ -354,11 +354,11 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
 
 /// Parse STREAM response
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return ((msg_type & 0xFF) as u8, status, payload.to_vec());
     }
 
     (0, 1, Vec::new())
@@ -409,11 +409,11 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
 
 /// Parse SCHEDULE response
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
-    if let Some((msg_type, payload)) = parser.next_field() {
+    if let Some((msg_type, payload)) = parser.next_field_ref() {
         let status = if !payload.is_empty() { payload[0] } else { 1 };
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return ((msg_type & 0xFF) as u8, status, payload.to_vec());
     }
 
     (0, 1, Vec::new())

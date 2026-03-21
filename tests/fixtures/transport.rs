@@ -194,7 +194,7 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
 
 /// Parse LEASE response: (msg_type: u8, status: u8, data: Vec<u8>)
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][optional u64 token]
@@ -331,7 +331,7 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
 
 /// Parse NOTICE response
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -448,7 +448,7 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
 
 /// Parse QUEUE response
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -649,7 +649,7 @@ pub fn build_rpc_response_delivery(
 
 /// Parse RPC response
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -683,7 +683,7 @@ pub struct RpcResponseDelivery {
 pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame.to_vec());
+    let mut parser = TlvFrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing RPC request delivery frame".to_string())?;
@@ -720,7 +720,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
 pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
-    let mut parser = TlvFrameParser::new(frame.to_vec());
+    let mut parser = TlvFrameParser::new(frame);
     let (msg_type, payload) = parser
         .next_field()
         .ok_or_else(|| "Missing RPC response delivery frame".to_string())?;
@@ -896,7 +896,7 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
 
 /// Parse STREAM response
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][optional u64 session_id][...response data...]
@@ -1057,7 +1057,7 @@ pub fn build_schedule_list() -> Vec<u8> {
 
 /// Parse SCHEDULE response
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
@@ -1183,7 +1183,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 /// Parse KV response
 /// Format: [u8 status][optional data...]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
-    let mut parser = TlvFrameParser::new(response.to_vec());
+    let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]

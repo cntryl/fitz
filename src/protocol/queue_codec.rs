@@ -107,13 +107,6 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
 
 // ===== Parsers =====
 
-/// Parse route string (used for QueueMessage construction)
-/// Expected format: "queue://realm/area/resource" or just "realm/area/resource"  
-/// Returns full route string without decomposition
-fn parse_route_string(payload: &[u8], offset: &mut usize) -> Result<String, String> {
-    parse_route_str_ref(payload, offset).map(str::to_string)
-}
-
 fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a str, String> {
     // Read route length (u32)
     if *offset + 4 > payload.len() {
@@ -159,7 +152,7 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
     let mut offset = 0;
 
     // Parse route
-    let route_str = parse_route_string(payload, &mut offset)?;
+    let route_str = parse_route_str_ref(payload, &mut offset)?;
 
     // Parse body length
     if offset + 4 > payload.len() {
@@ -207,7 +200,7 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     Ok(QueueMessage::Send {
         family_id,
-        route: Route::new(route_str),
+        route: Route::from_ref(route_str),
         body,
         delay_seconds,
     })
@@ -218,7 +211,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
     let mut offset = 0;
 
     // Parse route
-    let route_str = parse_route_string(payload, &mut offset)?;
+    let route_str = parse_route_str_ref(payload, &mut offset)?;
 
     // Parse lease_seconds (u64)
     if offset + 8 > payload.len() {
@@ -284,7 +277,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     Ok(QueueMessage::Receive {
         family_id,
-        route: Route::new(route_str),
+        route: Route::from_ref(route_str),
         lease_seconds,
         batch_size,
         wait_seconds,
@@ -296,7 +289,7 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
     let mut offset = 0;
 
     // Parse route
-    let route_str = parse_route_string(payload, &mut offset)?;
+    let route_str = parse_route_str_ref(payload, &mut offset)?;
 
     // Parse id (u64)
     if offset + 8 > payload.len() {
@@ -347,7 +340,7 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
 
     Ok(QueueMessage::Extend {
         family_id,
-        route: Route::new(route_str),
+        route: Route::from_ref(route_str),
         id,
         token,
         lease_seconds,
@@ -359,7 +352,7 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
     let mut offset = 0;
 
     // Parse route
-    let route_str = parse_route_string(payload, &mut offset)?;
+    let route_str = parse_route_str_ref(payload, &mut offset)?;
 
     // Parse id (u64)
     if offset + 8 > payload.len() {
@@ -394,7 +387,7 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
 
     Ok(QueueMessage::Ack {
         family_id,
-        route: Route::new(route_str),
+        route: Route::from_ref(route_str),
         id,
         token,
     })
@@ -412,11 +405,11 @@ pub fn parse_subscribe(
     let mut offset = 0;
 
     // Parse pattern string
-    let pattern_str = parse_route_string(payload, &mut offset)?;
+    let pattern_str = parse_route_str_ref(payload, &mut offset)?;
 
     Ok(QueueMessage::Subscribe {
         family_id: route_family,
-        pattern: Route::new(&pattern_str),
+        pattern: Route::from_ref(pattern_str),
         session_id,
         subscriber,
     })
@@ -434,11 +427,11 @@ pub fn parse_unsubscribe(
     let mut offset = 0;
 
     // Parse pattern string
-    let pattern_str = parse_route_string(payload, &mut offset)?;
+    let pattern_str = parse_route_str_ref(payload, &mut offset)?;
 
     Ok(QueueMessage::Unsubscribe {
         family_id: route_family,
-        pattern: Route::new(&pattern_str),
+        pattern: Route::from_ref(pattern_str),
         session_id,
         subscriber,
     })

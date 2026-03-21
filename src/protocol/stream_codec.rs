@@ -94,7 +94,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        605 | 606 | 607 | 608 => {
+        605..=608 => {
             let route = dec.get_string_ref()?;
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
