@@ -127,6 +127,31 @@ impl fmt::Display for TlvError {
 
 impl std::error::Error for TlvError {}
 
+/// O(1) duplicate-tag tracker for u16 message tags without heap allocation.
+struct SeenTags {
+    bits: [u64; 1024],
+}
+
+impl SeenTags {
+    #[inline]
+    fn new() -> Self {
+        Self { bits: [0; 1024] }
+    }
+
+    /// Returns true if this is the first time `tag` is seen.
+    #[inline]
+    fn insert(&mut self, tag: u16) -> bool {
+        let idx = (tag >> 6) as usize;
+        let mask = 1u64 << (tag & 63);
+        let slot = &mut self.bits[idx];
+        let is_new = (*slot & mask) == 0;
+        if is_new {
+            *slot |= mask;
+        }
+        is_new
+    }
+}
+
 /// TLV decoder
 #[derive(Clone)]
 pub struct TlvDecoder {
@@ -217,7 +242,8 @@ impl TlvDecoder {
     pub fn decode_into(&self, input: &[u8], out: &mut Vec<TlvRecord>) -> Result<usize, TlvError> {
         let mut offset = 0usize;
         let mut count = 0usize;
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = SeenTags::new();
+        out.reserve(input.len() / 3);
         while offset < input.len() {
             let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
             if !seen.insert(msg_type.as_u16()) {
@@ -238,7 +264,8 @@ impl TlvDecoder {
     ) -> Result<usize, TlvError> {
         let mut offset = 0usize;
         let mut count = 0usize;
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = SeenTags::new();
+        out.reserve(input.len() / 3);
         while offset < input.len() {
             let (msg_type, slice, consumed) = self.decode_one_ref(&input[offset..])?;
             if !seen.insert(msg_type.as_u16()) {
@@ -256,7 +283,7 @@ impl TlvDecoder {
 
     /// Decode all convenience API (allocating)
     pub fn decode_all(&self, input: &[u8]) -> Result<Vec<TlvRecord>, TlvError> {
-        let mut vec = Vec::new();
+        let mut vec = Vec::with_capacity(input.len() / 3);
         self.decode_into(input, &mut vec)?;
         Ok(vec)
     }
@@ -267,7 +294,7 @@ impl TlvDecoder {
             decoder: self,
             buf: input,
             offset: 0,
-            seen: std::collections::HashSet::new(),
+            seen: SeenTags::new(),
         }
     }
 }
@@ -277,7 +304,7 @@ pub struct TlvDecoderIter<'a> {
     decoder: &'a TlvDecoder,
     buf: &'a [u8],
     offset: usize,
-    seen: std::collections::HashSet<u16>,
+    seen: SeenTags,
 }
 
 impl<'a> Iterator for TlvDecoderIter<'a> {

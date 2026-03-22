@@ -304,9 +304,9 @@ impl Route {
     /// let route = Route::new("rpc://acme/auth/users/authenticate".to_string());
     /// ```
     #[inline]
-    pub fn new(path: impl Into<String>) -> Self {
+    pub fn new(path: impl AsRef<str>) -> Self {
         Self {
-            path: Arc::from(path.into()),
+            path: Arc::from(path.as_ref()),
         }
     }
 
