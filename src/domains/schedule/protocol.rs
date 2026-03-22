@@ -47,6 +47,8 @@ pub enum ScheduleMessage {
 pub enum ScheduleResponse {
     /// Operation succeeded (no schedule_id returned - route is identity)
     Ok,
+    /// SUBSCRIBE succeeded with the logical subscription_id used for NOTIFY fanout
+    SubscribeOk { subscription_id: u64 },
     /// LIST operation: returns paginated schedules with total count
     ListDefs {
         entries: Arc<Vec<Arc<ScheduleListEntry>>>,

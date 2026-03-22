@@ -78,6 +78,10 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
         ScheduleResponse::Ok => {
             enc.put_u8(0); // success flag
         }
+        ScheduleResponse::SubscribeOk { subscription_id } => {
+            enc.put_u8(0); // success flag
+            enc.put_optional_u64(Some(*subscription_id));
+        }
         ScheduleResponse::ListDefs {
             entries,
             total_count,
@@ -195,15 +199,54 @@ fn parse_unsubscribe(
 
 /// Encode a SCHEDULE_NOTIFY (705) payload.
 ///
-/// Wire format: [bytes payload]
+/// Wire format: [u64 subscription_id][bytes payload]
 /// Payload is what was stored with the schedule (fanout data)
-pub fn encode_notify(payload: &[u8]) -> Vec<u8> {
+pub fn encode_notify(subscription_id: u64, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
-    encode_notify_into(&mut enc, payload)
+    encode_notify_into(&mut enc, subscription_id, payload)
 }
 
-pub fn encode_notify_into(enc: &mut PayloadEncoder, payload: &[u8]) -> Vec<u8> {
+pub fn encode_notify_into(
+    enc: &mut PayloadEncoder,
+    subscription_id: u64,
+    payload: &[u8],
+) -> Vec<u8> {
     enc.clear();
+    enc.put_u64(subscription_id);
     enc.put_bytes(payload);
     enc.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{encode_notify, encode_response};
+    use crate::domains::schedule::ScheduleResponse;
+
+    #[test]
+    fn should_encode_subscribe_response_with_subscription_id() {
+        // Arrange
+        let payload = encode_response(&ScheduleResponse::SubscribeOk {
+            subscription_id: 42,
+        });
+
+        // Act
+
+        // Assert
+        assert_eq!(payload[0], 0);
+        assert_eq!(payload[1], 1);
+        assert_eq!(&payload[2..10], &42u64.to_be_bytes());
+    }
+
+    #[test]
+    fn should_encode_schedule_notify_with_subscription_id() {
+        // Arrange
+        let payload = encode_notify(7, b"fire");
+
+        // Act
+
+        // Assert
+        assert_eq!(&payload[0..8], &7u64.to_be_bytes());
+        assert_eq!(&payload[8..12], &(4u32).to_be_bytes());
+        assert_eq!(&payload[12..], b"fire");
+    }
 }

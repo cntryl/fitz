@@ -52,7 +52,7 @@ WORKDIR /app
 COPY --from=builder /usr/src/fitz/target/release/fitz /app/fitz
 
 # Copy SPA files for admin UI (built from ui/)
-COPY --from=ui-builder /ui/dist /app/public
+COPY --from=ui-builder /public /app/public
 
 # Run as non-root numeric UID
 USER 65532

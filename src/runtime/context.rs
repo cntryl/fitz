@@ -1,6 +1,6 @@
 //! Actor execution context and environment
 
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 use std::time::{Duration, Instant};
 
 /// Timer identifier
@@ -119,10 +119,11 @@ struct TimerEntry {
 
 pub struct TimerManager {
     next_timer_id: u64,
-    timers: HashMap<TimerId, TimerEntry>,
+    timers: FxHashMap<TimerId, TimerEntry>,
     wheel: TimingWheel,
     start_instant: Instant,
     current_tick: u64,
+    min_deadline_tick: Option<u64>,
 }
 
 impl TimerManager {
@@ -130,10 +131,11 @@ impl TimerManager {
         let start_instant = Instant::now();
         Self {
             next_timer_id: 1,
-            timers: HashMap::new(),
+            timers: FxHashMap::default(),
             wheel: TimingWheel::new(),
             start_instant,
             current_tick: 0,
+            min_deadline_tick: None,
         }
     }
 
@@ -175,6 +177,10 @@ impl TimerManager {
         let level = Self::level_for_delta(delta);
         let slot = Self::slot_for_tick(deadline_tick, level);
 
+        self.min_deadline_tick = Some(
+            self.min_deadline_tick
+                .map_or(deadline_tick, |m| m.min(deadline_tick)),
+        );
         self.wheel.insert(level, slot, id);
         self.timers.insert(
             id,
@@ -241,6 +247,10 @@ impl TimerManager {
         best
     }
 
+    fn refresh_next_deadline_tick(&mut self) {
+        self.min_deadline_tick = self.recompute_next_deadline_tick();
+    }
+
     /// Schedule a one-time timer
     #[inline]
     pub fn schedule_once(&mut self, delay: Duration) -> TimerId {
@@ -272,6 +282,13 @@ impl TimerManager {
     pub fn cancel(&mut self, timer_id: TimerId) -> bool {
         if let Some(entry) = self.timers.remove(&timer_id) {
             self.wheel.remove(entry.level, entry.slot, timer_id);
+            if self.min_deadline_tick == Some(entry.deadline_tick) {
+                if self.timers.is_empty() {
+                    self.min_deadline_tick = None;
+                } else {
+                    self.refresh_next_deadline_tick();
+                }
+            }
             return true;
         }
         false
@@ -283,6 +300,12 @@ impl TimerManager {
         let now = Instant::now();
         let start_instant = self.start_instant;
         let now_tick = self.ticks_from_instant(now);
+
+        // Fast path: nothing is due yet
+        if self.min_deadline_tick.is_some_and(|m| m > now_tick) {
+            return Vec::new();
+        }
+
         let mut fired = Vec::new();
 
         while self.current_tick <= now_tick {
@@ -328,13 +351,19 @@ impl TimerManager {
             self.current_tick = self.current_tick.saturating_add(1);
         }
 
+        if self.timers.is_empty() {
+            self.min_deadline_tick = None;
+        } else {
+            self.refresh_next_deadline_tick();
+        }
+
         fired
     }
 
     /// Get the next timer deadline
     #[inline]
     pub fn next_deadline(&self) -> Option<Instant> {
-        let next_tick = self.recompute_next_deadline_tick()?;
+        let next_tick = self.min_deadline_tick?;
         let deadline = self
             .start_instant
             .checked_add(Duration::from_millis(next_tick.saturating_mul(TICK_MS)))?;
@@ -347,6 +376,7 @@ impl TimerManager {
         self.wheel = TimingWheel::new();
         self.current_tick = 0;
         self.start_instant = Instant::now();
+        self.min_deadline_tick = None;
     }
 }
 
@@ -414,6 +444,62 @@ mod tests {
         // Assert
         assert!(cancelled);
         assert!(fired.is_empty());
+    }
+
+    #[test]
+    fn should_return_next_deadline_for_remaining_timer_when_earliest_timer_is_cancelled() {
+        // Arrange
+        let mut tm = TimerManager::new();
+        let first_timer = tm.schedule_once(Duration::from_millis(50));
+        let second_timer = tm.schedule_once(Duration::from_millis(100));
+        let expected_tick = tm
+            .timers
+            .get(&second_timer)
+            .map(|entry| entry.deadline_tick)
+            .unwrap();
+
+        // Act
+        let cancelled = tm.cancel(first_timer);
+        let next_deadline = tm.next_deadline();
+
+        // Assert
+        assert!(cancelled);
+        assert_eq!(tm.min_deadline_tick, Some(expected_tick));
+        assert!(next_deadline.is_some());
+    }
+
+    #[test]
+    fn should_return_next_deadline_for_rescheduled_repeat_when_timer_fires() {
+        // Arrange
+        let mut tm = TimerManager::new();
+        let timer_id = tm.schedule_repeat(Duration::from_millis(1), Duration::from_millis(50));
+
+        thread::sleep(Duration::from_millis(10));
+
+        // Act
+        let fired = tm.fired_timers();
+        let next_deadline = tm.next_deadline();
+
+        // Assert
+        assert_eq!(fired, vec![timer_id]);
+        assert!(next_deadline.is_some());
+        assert!(next_deadline.unwrap() > Instant::now());
+    }
+
+    #[test]
+    fn should_keep_next_deadline_unchanged_when_no_timers_have_fired() {
+        // Arrange
+        let mut tm = TimerManager::new();
+        tm.schedule_once(Duration::from_secs(1));
+        let expected_deadline = tm.next_deadline();
+
+        // Act
+        let fired = tm.fired_timers();
+        let next_deadline = tm.next_deadline();
+
+        // Assert
+        assert!(fired.is_empty());
+        assert_eq!(next_deadline, expected_deadline);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -3506,6 +3506,53 @@ impl ScheduleDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    pub fn start_tick_loop(self: &Arc<Self>) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
+            return;
+        };
+
+        let weak = Arc::downgrade(self);
+        handle.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(250));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+
+                let Some(sink) = weak.upgrade() else {
+                    break;
+                };
+                if !sink.active.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                sink.scan_due_schedules();
+            }
+        });
+    }
+
+    fn scan_due_schedules(&self) {
+        let mut publishes = Vec::new();
+        {
+            let mut actors = self.actors.lock();
+            for (family, actor) in actors.iter_mut() {
+                for (route, payload) in actor.scan_and_fire() {
+                    let route = crate::runtime::routing::Route::new(route);
+                    publishes.push(crate::runtime::DomainPublishEvent::new(
+                        *family, route, payload,
+                    ));
+                }
+            }
+        }
+
+        for event in publishes {
+            let destination =
+                crate::runtime::routing::RouteAddress::new(event.family_id, event.route.clone());
+            let _ = self.router.route(Envelope::new(destination, event));
+        }
+    }
+
     /// Handle a DomainPublishEvent from schedule actors.
     /// Matches the event route against subscription patterns and fans out
     /// SCHEDULE_NOTIFY (705) frames to matching subscribers.
@@ -3522,6 +3569,7 @@ impl ScheduleDomainSink {
                 if sub.pattern.matches(&event.route) {
                     let notify_payload = crate::protocol::schedule_codec::encode_notify_into(
                         &mut payload_encoder,
+                        sub.subscription_id,
                         &event.payload,
                     );
                     let notify_ctx = FrameContext::new(
@@ -3771,7 +3819,9 @@ impl MailboxSink for ScheduleDomainSink {
                         new_id
                     };
 
-                    ScheduleResponse::Ok
+                    ScheduleResponse::SubscribeOk {
+                        subscription_id: _sub_id,
+                    }
                 }
                 ScheduleMessage::Unsubscribe {
                     family_id,
@@ -3950,6 +4000,7 @@ pub fn setup(
         admin_read_model.clone(),
     ));
     router.register_domain_pattern("schedule", schedule_sink.clone() as Arc<dyn MailboxSink>);
+    schedule_sink.start_tick_loop();
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
     tracing::info!("All 7 domain sinks registered with router");

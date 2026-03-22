@@ -255,7 +255,7 @@ async fn handle_tcp_connection(
     let outbound_sink = sink.clone();
     let current_inbox_for_frames = current_inbox.clone();
     let registered_inboxes_for_frames = registered_inboxes.clone();
-    let frame_handle = tokio::spawn(async move {
+    let mut frame_handle = tokio::spawn(async move {
         // Create ONE session instance that persists for all frames on this connection
         let session_config = crate::session::NewSessionConfig::unauthenticated(
             crate::session::TransportKind::Tcp,
@@ -284,7 +284,7 @@ async fn handle_tcp_connection(
                         crate::session::CloseReason::Error(format!("{:?}", e)),
                     )
                     .await;
-                break;
+                return Err(format!("{e}"));
             }
 
             if let Some(updated_route_family) = ingress_clone.get_route_family(session_id) {
@@ -307,15 +307,44 @@ async fn handle_tcp_connection(
                 }
             }
         }
+        Ok::<(), String>(())
     });
 
-    // Run TCP handler (reads frames and forwards to ingress) - this will block until client closes
-    let run_result = handler.run().await;
-    drop(frame_tx);
-
-    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), frame_handle).await {
-        tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
-    }
+    // Run TCP handler (reads frames and forwards to ingress). If frame processing
+    // requests close (for example, CONNECT auth failure), stop waiting for the
+    // client to hang up and actively tear down the transport so the peer sees EOF.
+    let mut handler_task = tokio::spawn(async move { handler.run().await });
+    let run_result = tokio::select! {
+        res = &mut handler_task => {
+            drop(frame_tx);
+            if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), &mut frame_handle).await {
+                tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
+            }
+            match res {
+                Ok(result) => result,
+                Err(e) => Err(format!("tcp handler task join error: {e}")),
+            }
+        }
+        res = &mut frame_handle => {
+            drop(frame_tx);
+            match res {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(reason)) => {
+                    tracing::debug!(
+                        session_id = session_id,
+                        reason = %reason,
+                        "TCP frame task requested transport close"
+                    );
+                    handler_task.abort();
+                    Err(reason)
+                }
+                Err(e) => {
+                    handler_task.abort();
+                    Err(format!("tcp frame task join error: {e}"))
+                }
+            }
+        }
+    };
 
     let inboxes = registered_inboxes.lock().clone();
     for inbox in &inboxes {

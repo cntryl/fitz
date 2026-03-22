@@ -4146,7 +4146,7 @@ client.schedule_subscribe(
 )
 
 # Receive notification when schedule fires (Message Type 705)
-# Server sends: SCHEDULE_NOTIFY with payload bytes
+# Server sends: SCHEDULE_NOTIFY(subscription_id, payload)
 
 # List schedules
 schedules = client.schedule_list()
@@ -4219,6 +4219,8 @@ Subscribe to schedule fire notifications for a route pattern.
 [bytes]   route_pattern (supports * wildcard)
 Response (status=0):
   [u8]     0
+  [u8]     1
+  [u64 BE] subscription_id
 Response (status=1):
   [u8]     1
   [u32 BE] error_len
@@ -4231,7 +4233,8 @@ Response (status=1):
 
 **Semantics:**
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
-- Idempotent: re-subscribing to the same pattern returns the same logical subscription
+- Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
+- Client is responsible for local multiplexing when multiple handlers share the same pattern
 - When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with subscription_id and payload; the client matches notifications to the pattern they subscribed with
 
 #### Schedule UNSUBSCRIBE (704)
