@@ -139,11 +139,7 @@ fn dispatch_worker_response(
     .expect("rpc response");
 }
 
-fn service_workers(
-    router: &Arc<Router>,
-    family: RouteFamily,
-    workers: &[WorkerHandle],
-) -> usize {
+fn service_workers(router: &Arc<Router>, family: RouteFamily, workers: &[WorkerHandle]) -> usize {
     let mut total = 0usize;
     loop {
         let mut round = 0usize;

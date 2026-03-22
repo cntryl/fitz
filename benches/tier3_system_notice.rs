@@ -113,8 +113,7 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     ctx.set_elements(1);
     ctx.tag("scenario", "high_subscriber_count");
 
-    let (router, family, publisher_source) =
-        setup_notice_sink(100, "notice://realm/area/orders/*");
+    let (router, family, publisher_source) = setup_notice_sink(100, "notice://realm/area/orders/*");
     let publish_frame = build_notice_publish(
         "notice://realm/area/orders/create",
         Bytes::from_static(b"high subscriber fanout").as_ref(),

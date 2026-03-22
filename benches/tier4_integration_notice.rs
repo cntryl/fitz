@@ -49,7 +49,10 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     .expect("notice subscribe");
 
     let (publisher_source, _publisher_sink) = register_session_counting_sink(&router, family, 2);
-    let publish_frame = build_notice_publish("notice://test/events", Bytes::from_static(b"event").as_ref());
+    let publish_frame = build_notice_publish(
+        "notice://test/events",
+        Bytes::from_static(b"event").as_ref(),
+    );
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
 
     ctx.measure(|| {

@@ -10,8 +10,8 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
-    build_stream_read, create_bench_stream_sink, extract_single_tlv_field,
-    parse_stream_session_id, register_session_queue_sink, route_frame, FrameQueueSink,
+    build_stream_read, create_bench_stream_sink, extract_single_tlv_field, parse_stream_session_id,
+    register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
@@ -82,7 +82,15 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     let (msg_type, payload) = extract_single_tlv_field(&append_frame);
 
     ctx.measure(|| {
-        let _ = request(&router, family, &source, &inbox, route, msg_type, payload.clone());
+        let _ = request(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            msg_type,
+            payload.clone(),
+        );
     });
 }
 

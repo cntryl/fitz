@@ -81,6 +81,8 @@ pub struct ScheduleDef {
     pub next_fire_ms: u64,
     /// Cached main storage key for the current next-fire timestamp.
     pub storage_key: Vec<u8>,
+    /// Cached route index key for O(1) schedule lookups.
+    pub index_key: Vec<u8>,
     /// Current index in the actor's mutable LIST backing store.
     pub list_index: usize,
 }
@@ -93,6 +95,11 @@ pub struct CronSchedule {
     pub day_of_month: CronField,
     pub month: CronField,
     pub day_of_week: CronField,
+    minute_matcher: FieldMatcher,
+    hour_matcher: FieldMatcher,
+    day_of_month_matcher: FieldMatcher,
+    month_matcher: FieldMatcher,
+    day_of_week_matcher: FieldMatcher,
 }
 
 /// Represents a single field in a cron expression (e.g., hour, minute)
@@ -105,6 +112,39 @@ pub enum CronField {
     Step(Box<CronField>, u32),
 }
 
+#[derive(Debug, Clone)]
+struct FieldMatcher {
+    values: Vec<u32>,
+}
+
+impl FieldMatcher {
+    fn from_field(field: &CronField, min: u32, max: u32) -> Self {
+        let mut values = Vec::with_capacity((max - min + 1) as usize);
+        for value in min..=max {
+            if matches_field(field, value) {
+                values.push(value);
+            }
+        }
+        Self { values }
+    }
+
+    fn matches(&self, value: u32) -> bool {
+        self.values.binary_search(&value).is_ok()
+    }
+
+    fn next_at_or_after(&self, current: u32) -> Option<(u32, bool)> {
+        if self.values.is_empty() {
+            return None;
+        }
+
+        match self.values.binary_search(&current) {
+            Ok(index) => Some((self.values[index], false)),
+            Err(index) if index < self.values.len() => Some((self.values[index], false)),
+            Err(_) => Some((self.values[0], true)),
+        }
+    }
+}
+
 impl CronSchedule {
     /// Parse a 5-field cron expression (minute hour day month day_of_week)
     pub fn parse(expr: &str) -> Result<Self, String> {
@@ -113,12 +153,23 @@ impl CronSchedule {
             return Err("Cron expression must have exactly 5 fields".to_string());
         }
 
+        let minute = parse_cron_field(fields[0], 0, 59)?;
+        let hour = parse_cron_field(fields[1], 0, 23)?;
+        let day_of_month = parse_cron_field(fields[2], 1, 31)?;
+        let month = parse_cron_field(fields[3], 1, 12)?;
+        let day_of_week = parse_cron_field(fields[4], 0, 6)?;
+
         Ok(CronSchedule {
-            minute: parse_cron_field(fields[0], 0, 59)?,
-            hour: parse_cron_field(fields[1], 0, 23)?,
-            day_of_month: parse_cron_field(fields[2], 1, 31)?,
-            month: parse_cron_field(fields[3], 1, 12)?,
-            day_of_week: parse_cron_field(fields[4], 0, 6)?,
+            minute_matcher: FieldMatcher::from_field(&minute, 0, 59),
+            hour_matcher: FieldMatcher::from_field(&hour, 0, 23),
+            day_of_month_matcher: FieldMatcher::from_field(&day_of_month, 1, 31),
+            month_matcher: FieldMatcher::from_field(&month, 1, 12),
+            day_of_week_matcher: FieldMatcher::from_field(&day_of_week, 0, 6),
+            minute,
+            hour,
+            day_of_month,
+            month,
+            day_of_week,
         })
     }
 
@@ -156,8 +207,7 @@ impl CronSchedule {
         for _ in 0..(4 * 366 * 12) {
             let (year, month, day, hour, minute, _) = seconds_to_datetime(candidate_secs);
 
-            let Some((target_month, wrapped_month)) =
-                next_matching_value(&self.month, month, 1, 12)
+            let Some((target_month, wrapped_month)) = self.month_matcher.next_at_or_after(month)
             else {
                 break;
             };
@@ -181,9 +231,7 @@ impl CronSchedule {
                 continue;
             }
 
-            let Some((target_hour, wrapped_hour)) =
-                next_matching_value(&self.hour, hour, 0, 23)
-            else {
+            let Some((target_hour, wrapped_hour)) = self.hour_matcher.next_at_or_after(hour) else {
                 break;
             };
             if wrapped_hour {
@@ -196,7 +244,7 @@ impl CronSchedule {
             }
 
             let Some((target_minute, wrapped_minute)) =
-                next_matching_value(&self.minute, minute, 0, 59)
+                self.minute_matcher.next_at_or_after(minute)
             else {
                 break;
             };
@@ -222,11 +270,11 @@ impl CronSchedule {
     }
 
     fn matches_day_of_month(&self, day: u32) -> bool {
-        matches_field(&self.day_of_month, day)
+        self.day_of_month_matcher.matches(day)
     }
 
     fn matches_day_of_week(&self, day_of_week: u32) -> bool {
-        matches_field(&self.day_of_week, day_of_week)
+        self.day_of_week_matcher.matches(day_of_week)
     }
 
     fn next_matching_day(&self, year: u32, month: u32, start_day: u32) -> Option<u32> {
@@ -263,22 +311,6 @@ fn matches_field(field: &CronField, value: u32) -> bool {
             }
         }
     }
-}
-
-fn next_matching_value(field: &CronField, current: u32, min: u32, max: u32) -> Option<(u32, bool)> {
-    for value in current..=max {
-        if matches_field(field, value) {
-            return Some((value, false));
-        }
-    }
-
-    for value in min..current {
-        if matches_field(field, value) {
-            return Some((value, true));
-        }
-    }
-
-    None
 }
 
 /// Convert Unix timestamp (seconds) to calendar components
@@ -377,7 +409,8 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 }
 
 fn day_of_week_for_date(year: u32, month: u32, day: u32) -> u32 {
-    let (_, _, _, _, _, day_of_week) = seconds_to_datetime(datetime_to_seconds(year, month, day, 0, 0));
+    let (_, _, _, _, _, day_of_week) =
+        seconds_to_datetime(datetime_to_seconds(year, month, day, 0, 0));
     day_of_week
 }
 
@@ -491,6 +524,7 @@ mod tests {
             next_fire_time: Instant::now(),
             next_fire_ms: 0,
             storage_key: Vec::new(),
+            index_key: Vec::new(),
             list_index: 0,
         };
 

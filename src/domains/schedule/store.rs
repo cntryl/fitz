@@ -15,6 +15,8 @@ pub struct ScheduleInsert<'a> {
     pub next_fire_time: Instant,
     pub next_fire_ms: u64,
     pub previous_fire_ms: Option<u64>,
+    pub previous_storage_key: Option<Vec<u8>>,
+    pub index_key: Option<Vec<u8>>,
 }
 
 pub struct ScheduleStore {
@@ -152,6 +154,9 @@ impl ScheduleStore {
         write_options: WriteOptions,
     ) -> Result<Vec<u8>, String> {
         let key = Self::encode_key(schedule.next_fire_ms, schedule.route);
+        let index_key = schedule
+            .index_key
+            .unwrap_or_else(|| Self::encode_index_key(schedule.route));
         let value = Self::encode_value(schedule.cron, schedule.payload);
 
         // TTL = time until next fire + grace period
@@ -170,7 +175,9 @@ impl ScheduleStore {
 
         if let Some(previous_fire_ms) = schedule.previous_fire_ms {
             if previous_fire_ms != schedule.next_fire_ms {
-                let old_key = Self::encode_key(previous_fire_ms, schedule.route);
+                let old_key = schedule
+                    .previous_storage_key
+                    .unwrap_or_else(|| Self::encode_key(previous_fire_ms, schedule.route));
                 txn.delete(old_key)
                     .map_err(|e| format!("delete previous key failed: {:?}", e))?;
             }
@@ -178,7 +185,7 @@ impl ScheduleStore {
 
         txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
             .map_err(|e| format!("put failed: {:?}", e))?;
-        txn.put(Self::encode_index_key(schedule.route), key.clone(), None)
+        txn.put(index_key, key.clone(), None)
             .map_err(|e| format!("put index failed: {:?}", e))?;
 
         self.db
@@ -311,7 +318,7 @@ impl ScheduleStore {
     pub fn delete_prepared(
         &self,
         cf_id: u64,
-        route: &str,
+        index_key: Vec<u8>,
         main_key: Vec<u8>,
         write_options: WriteOptions,
     ) -> Result<(), String> {
@@ -320,7 +327,6 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        let index_key = Self::encode_index_key(route);
         let has_index = txn
             .get(&index_key)
             .map_err(|e| format!("get index failed: {:?}", e))?

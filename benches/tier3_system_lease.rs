@@ -193,7 +193,10 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
         let _ = acquire_token(&router, family, &source, &inbox, route, owner);
     }
 
-    let query_payloads: Vec<Bytes> = routes.iter().map(|route| build_query_payload(route)).collect();
+    let query_payloads: Vec<Bytes> = routes
+        .iter()
+        .map(|route| build_query_payload(route))
+        .collect();
     let mut phase = 0usize;
     ctx.measure(|| {
         let route = routes[phase % routes.len()];

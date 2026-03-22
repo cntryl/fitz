@@ -82,6 +82,7 @@ impl ScheduleActor {
                             next_fire_time: next_fire,
                             next_fire_ms,
                             storage_key: ScheduleStore::encode_key(next_fire_ms, &route),
+                            index_key: ScheduleStore::encode_index_key(&route),
                             list_index,
                         };
                         actor.schedules.insert(route.clone(), def);
@@ -152,6 +153,15 @@ impl ScheduleActor {
                 next_fire_time: next_fire,
                 next_fire_ms,
                 previous_fire_ms: previous_next_fire_ms,
+                previous_storage_key: self
+                    .schedules
+                    .get(&route)
+                    .map(|existing| existing.storage_key.clone()),
+                index_key: self
+                    .schedules
+                    .get(&route)
+                    .map(|existing| existing.index_key.clone())
+                    .or_else(|| Some(ScheduleStore::encode_index_key(&route))),
             },
             self.write_options,
         )?;
@@ -167,6 +177,7 @@ impl ScheduleActor {
             next_fire_time: next_fire,
             next_fire_ms,
             storage_key,
+            index_key: ScheduleStore::encode_index_key(&route),
             list_index,
         };
 
@@ -188,7 +199,7 @@ impl ScheduleActor {
         self.store
             .delete_prepared(
                 self.family.as_u64(),
-                &route,
+                removed_def.index_key,
                 removed_def.storage_key,
                 self.write_options,
             )
@@ -378,6 +389,7 @@ impl ScheduleActor {
                 def.next_fire_time = next_fire;
                 def.next_fire_ms = next_fire_ms;
                 def.storage_key = ScheduleStore::encode_key(next_fire_ms, &route);
+                def.index_key = ScheduleStore::encode_index_key(&route);
 
                 to_reschedule.push((
                     route.clone(),

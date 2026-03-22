@@ -113,6 +113,7 @@ pub fn register_session_counting_sink(
     (route, sink)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn route_frame(
     router: &Router,
     source: &RouteAddress,
