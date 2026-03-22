@@ -1161,6 +1161,7 @@ impl QueueActor {
 
     fn load_body_from_store(&self, id: MessageId) -> Result<Bytes, String> {
         let cf_id = self.queue_key.family.id();
+        let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
         let legacy_key = self.cached_legacy_message_key(id);
         let txn = self
@@ -1170,18 +1171,27 @@ impl QueueActor {
 
         match txn.get(&body_key) {
             Ok(Some(bytes)) => Ok(bytes),
-            Ok(None) => match txn.get(&legacy_key) {
-                Ok(Some(bytes)) => {
+            Ok(None) => match txn.get(&header_key) {
+                Ok(Some(bytes)) if bytes.len() >= 16 => {
                     let record = Self::decode_legacy_record(bytes)?;
                     record
                         .body
-                        .ok_or_else(|| format!("Legacy message {} body missing", id))
+                        .ok_or_else(|| format!("Embedded message {} body missing", id))
                 }
-                Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
-                Err(e) => Err(format!(
-                    "Failed to read legacy message body {}: {:?}",
-                    id, e
-                )),
+                Ok(Some(_)) | Ok(None) => match txn.get(&legacy_key) {
+                    Ok(Some(bytes)) => {
+                        let record = Self::decode_legacy_record(bytes)?;
+                        record
+                            .body
+                            .ok_or_else(|| format!("Legacy message {} body missing", id))
+                    }
+                    Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
+                    Err(e) => Err(format!(
+                        "Failed to read legacy message body {}: {:?}",
+                        id, e
+                    )),
+                },
+                Err(e) => Err(format!("Failed to read message header {}: {:?}", id, e)),
             },
             Err(e) => Err(format!("Failed to read message body {}: {:?}", id, e)),
         }
@@ -1199,6 +1209,11 @@ impl QueueActor {
 
         match txn.get(&header_key) {
             Ok(Some(header_bytes)) => {
+                if header_bytes.len() >= 16 {
+                    if let Ok(record) = Self::decode_legacy_record(header_bytes.clone()) {
+                        return Ok(record);
+                    }
+                }
                 let header = Self::decode_record_header(&header_bytes)?;
                 match txn.get(&body_key) {
                     Ok(Some(body_bytes)) => Ok(QueueRecord::loaded(
@@ -1306,17 +1321,14 @@ impl QueueActor {
 
         // Write message header + body to one durable transaction.
         let header_key = self.cached_header_key(id);
-        let header_value = Self::encode_record_header(&record);
+        let header_value = Self::encode_legacy_record(&QueueRecord::loaded(
+            body.clone(),
+            record.attempts,
+            record.visible_at_ms,
+        ));
         if let Err(e) = txn.put(header_key, header_value, None) {
             return QueueResponse::Error {
                 message: format!("Failed to add message header to transaction: {:?}", e),
-            };
-        }
-
-        let body_key = self.cached_body_key(id);
-        if let Err(e) = txn.put(body_key, body.to_vec(), None) {
-            return QueueResponse::Error {
-                message: format!("Failed to add message body to transaction: {:?}", e),
             };
         }
 
@@ -1443,17 +1455,14 @@ impl QueueActor {
             let record = QueueRecord::metadata_only(0, visible_at_ms);
 
             let header_key = self.cached_header_key(id);
-            let header_value = Self::encode_record_header(&record);
+            let header_value = Self::encode_legacy_record(&QueueRecord::loaded(
+                body.clone(),
+                record.attempts,
+                record.visible_at_ms,
+            ));
             if let Err(e) = txn.put(header_key, header_value, None) {
                 return QueueResponse::Error {
                     message: format!("Failed to add message header to transaction: {:?}", e),
-                };
-            }
-
-            let body_key = self.cached_body_key(id);
-            if let Err(e) = txn.put(body_key, body.to_vec(), None) {
-                return QueueResponse::Error {
-                    message: format!("Failed to add message body to transaction: {:?}", e),
                 };
             }
 
@@ -1766,9 +1775,26 @@ impl QueueActor {
                         false
                     }
                 };
+                let has_body_key = if has_split_record {
+                    match txn.get(&body_key) {
+                        Ok(Some(_)) => true,
+                        Ok(None) => false,
+                        Err(e) => {
+                            eprintln!("WARN: Failed to inspect body {} in txn: {:?}", id, e);
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
 
                 let delete_result = if has_split_record {
-                    txn.delete(header_key).and_then(|_| txn.delete(body_key))
+                    let delete_header = txn.delete(header_key);
+                    if has_body_key {
+                        delete_header.and_then(|_| txn.delete(body_key))
+                    } else {
+                        delete_header
+                    }
                 } else {
                     txn.delete(legacy_key)
                 };
@@ -1947,13 +1973,32 @@ impl QueueActor {
                         return;
                     }
                 };
+                let has_body_key = if has_split_record {
+                    match txn.get(&body_key) {
+                        Ok(Some(_)) => true,
+                        Ok(None) => false,
+                        Err(e) => {
+                            eprintln!(
+                                "WARN: Failed to inspect body storage layout for message {}: {:?}",
+                                id, e
+                            );
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
 
                 if is_dlq {
                     let persisted_ready_mutation =
                         Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
                     let delete_result = if has_split_record {
-                        txn.delete(header_key.clone())
-                            .and_then(|_| txn.delete(body_key))
+                        let delete_header = txn.delete(header_key.clone());
+                        if has_body_key {
+                            delete_header.and_then(|_| txn.delete(body_key))
+                        } else {
+                            delete_header
+                        }
                     } else {
                         txn.delete(legacy_key.clone())
                     };
@@ -2054,8 +2099,40 @@ impl QueueActor {
                 }
 
                 let write_result = if has_split_record {
-                    let value = Self::encode_record_header(&record);
-                    txn.put(header_key.clone(), value, None)
+                    match txn.get(&header_key) {
+                        Ok(Some(bytes)) if !has_body_key && bytes.len() >= 16 => {
+                            match Self::decode_legacy_record(bytes) {
+                                Ok(mut embedded_record) => {
+                                    embedded_record.attempts = record.attempts;
+                                    embedded_record.visible_at_ms = record.visible_at_ms;
+                                    let value = Self::encode_legacy_record(&embedded_record);
+                                    txn.put(header_key.clone(), value, None)
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "WARN: Failed to decode embedded message {} during redelivery: {}",
+                                        id, e
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                        Ok(Some(_)) => {
+                            let value = Self::encode_record_header(&record);
+                            txn.put(header_key.clone(), value, None)
+                        }
+                        Ok(None) => {
+                            eprintln!("WARN: Message {} disappeared during redelivery", id);
+                            return;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "WARN: Failed to read message {} during redelivery: {:?}",
+                                id, e
+                            );
+                            return;
+                        }
+                    }
                 } else {
                     match txn.get(&legacy_key) {
                         Ok(Some(bytes)) => match Self::decode_legacy_record(bytes) {

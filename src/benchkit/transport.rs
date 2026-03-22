@@ -4,6 +4,14 @@
 
 use crate::testkit::transport::{TlvFrameBuilder, TlvFrameParser};
 use bytes::BufMut;
+use bytes::Bytes;
+
+/// Extract the single TLV field from a test frame for direct-to-sink delivery.
+pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser.next_field_ref().expect("single TLV field");
+    (msg_type, Bytes::copy_from_slice(payload))
+}
 
 /// Build KV BEGIN frame (msg_type 100)
 pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
@@ -200,6 +208,35 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
     builder.build()
 }
 
+/// Build LEASE EXTEND frame (msg_type 401)
+pub fn build_lease_extend(route: &str, owner_id: &str, token: u64, ttl_secs: i32) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    buf.put_u32(owner_id.len() as u32);
+    buf.put_slice(owner_id.as_bytes());
+
+    buf.put_u64(token);
+    buf.put_u64(ttl_secs as u64);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(401, &buf);
+    builder.build()
+}
+
+/// Build LEASE QUERY frame (msg_type 403)
+pub fn build_lease_query(route: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(403, &buf);
+    builder.build()
+}
+
 /// Parse LEASE response: (msg_type, status, data)
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
@@ -241,6 +278,27 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
 
     let bytes = [
         data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
+    ];
+    Ok(u64::from_be_bytes(bytes))
+}
+
+/// Parse lease token from EXTEND success response data.
+///
+/// Wire format:
+/// - data[0]: status (0 = success)
+/// - data[1..9]: new fencing_token (u64 big-endian)
+pub fn parse_lease_extend_token_response(data: &[u8]) -> Result<u64, String> {
+    if data.len() < 9 {
+        return Err("Extend token data too short".to_string());
+    }
+
+    let status = data[0];
+    if status != 0 {
+        return Err("Lease extend operation failed".to_string());
+    }
+
+    let bytes = [
+        data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
     ];
     Ok(u64::from_be_bytes(bytes))
 }
@@ -338,6 +396,17 @@ pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
     builder.build()
 }
 
+/// Build STREAM COMMIT frame (msg_type 602)
+pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u64(session_id);
+    buf.put_u8(mode);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(602, &buf);
+    builder.build()
+}
+
 /// Build STREAM READ frame (msg_type 604)
 pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -349,6 +418,17 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(604, &buf);
+    builder.build()
+}
+
+/// Build STREAM LAST frame (msg_type 605)
+pub fn build_stream_last(route: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(605, &buf);
     builder.build()
 }
 

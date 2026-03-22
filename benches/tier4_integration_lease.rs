@@ -10,26 +10,16 @@
 
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_lease_acquire_immediate, build_lease_release, parse_lease_response,
-    parse_lease_token_response, shared_bench_runtime,
+    build_lease_acquire_immediate, build_lease_release, create_bench_lease_sink,
+    extract_single_tlv_field, parse_lease_response, parse_lease_token_response,
+    register_session_queue_sink, route_frame, shared_bench_runtime,
 };
-use fitz::domains::lease::{LeaseActor, LeaseMessage};
-use fitz::prelude::Actor;
-use fitz::runtime::actor::Context;
-use fitz::runtime::router::Router;
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::protocol::frame::ChannelId;
+use fitz::runtime::router::{MailboxSink, Router};
+use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-fn make_ctx() -> Context<LeaseActor> {
-    let router = Router::new();
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("lease://tier4/locks/session"),
-    );
-    Context::new(addr, Arc::new(router))
-}
 
 #[stress_test]
 fn should_complete_direct_acquire(ctx: &mut StressContext) {
@@ -37,20 +27,27 @@ fn should_complete_direct_acquire(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "acquire");
 
-    let mut actor = LeaseActor::new(RouteFamily::new(1));
-    let mut actor_ctx = make_ctx();
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink = create_bench_lease_sink(router.clone());
+    router.register_domain_pattern("lease", sink as Arc<dyn MailboxSink>);
+    let (source, inbox) = register_session_queue_sink(&router, family, 1);
+    let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
+    let (msg_type, payload) = extract_single_tlv_field(&acquire_frame);
 
     ctx.measure(|| {
-        actor.receive(
-            LeaseMessage::Acquire {
-                family_id: RouteFamily::new(1),
-                route: Route::new("lease://tier4/locks/primary"),
-                owner_id: "owner1".to_string(),
-                ttl_secs: 30,
-                wait_seconds: 0,
-            },
-            &mut actor_ctx,
-        );
+        route_frame(
+            router.as_ref(),
+            &source,
+            "lease://tier4/locks/primary",
+            1,
+            ChannelId::Lease,
+            msg_type,
+            payload.clone(),
+            family,
+        )
+        .expect("lease acquire");
+        let _ = inbox.drain();
     });
 }
 

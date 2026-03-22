@@ -11,45 +11,16 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_notice_publish, build_notice_subscribe, parse_notice_response, shared_bench_runtime,
+    build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
+    extract_single_tlv_field, parse_notice_response, register_session_counting_sink, route_frame,
+    shared_bench_runtime,
 };
-use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
-use fitz::domains::notice::NoticeRouteActor;
-use fitz::prelude::Actor;
-use fitz::runtime::actor::Context;
+use fitz::protocol::frame::ChannelId;
+use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::{
-    addr, make_router, route, session_id, TestClient, TestServer, TestSink, TestWebSocketClient,
-};
+use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-fn setup_notice_actor(
-    subscriber_count: usize,
-    pattern: &str,
-) -> (NoticeRouteActor, Context<NoticeRouteActor>) {
-    let router = make_router();
-    let sink = Arc::new(TestSink::new());
-    let family = RouteFamily::new(1);
-    let mut actor = NoticeRouteActor::new(family);
-
-    for i in 0..subscriber_count {
-        let subscriber = addr(&format!("notice://realm/area/sub{}", i));
-        router.register(subscriber.clone(), sink.clone());
-    }
-
-    let router = Arc::new(router);
-    let mut ctx = Context::new(addr("notice://realm/area/ctx"), router.clone());
-
-    for i in 0..subscriber_count {
-        let subscriber = addr(&format!("notice://realm/area/sub{}", i));
-        let subscribe =
-            SubscribeMessage::new(family, route(pattern), session_id(i as u64 + 1), subscriber);
-        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
-    }
-
-    (actor, ctx)
-}
 
 #[stress_test]
 fn should_complete_direct_publish(ctx: &mut StressContext) {
@@ -57,18 +28,42 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "publish");
 
-    let (mut actor, mut actor_ctx) = setup_notice_actor(1, "notice://test/events");
-    let publish = PublishMessage::new(
-        RouteFamily::new(1),
-        route("notice://test/events"),
-        Bytes::from_static(b"event"),
-    );
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink = create_bench_notice_sink(router.clone());
+    router.register_domain_pattern("notice", sink as Arc<dyn MailboxSink>);
+
+    let (subscriber_source, _subscriber_sink) = register_session_counting_sink(&router, family, 1);
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
+    route_frame(
+        router.as_ref(),
+        &subscriber_source,
+        "notice://test/events",
+        1,
+        ChannelId::Pub,
+        subscribe_msg_type,
+        subscribe_payload,
+        family,
+    )
+    .expect("notice subscribe");
+
+    let (publisher_source, _publisher_sink) = register_session_counting_sink(&router, family, 2);
+    let publish_frame = build_notice_publish("notice://test/events", Bytes::from_static(b"event").as_ref());
+    let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
 
     ctx.measure(|| {
-        actor.receive(
-            NotificationMessage::Publish(publish.clone()),
-            &mut actor_ctx,
-        );
+        route_frame(
+            router.as_ref(),
+            &publisher_source,
+            "notice://test/events",
+            2,
+            ChannelId::Pub,
+            publish_msg_type,
+            publish_payload.clone(),
+            family,
+        )
+        .expect("notice publish");
     });
 }
 

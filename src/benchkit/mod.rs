@@ -10,7 +10,9 @@ pub mod runtime;
 pub mod storage;
 pub mod stream;
 pub mod transport;
+pub mod live_sink;
 
+pub use live_sink::*;
 pub use queue::*;
 pub use rpc::*;
 pub use runtime::*;

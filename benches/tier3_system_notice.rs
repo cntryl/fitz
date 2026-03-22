@@ -1,48 +1,57 @@
-// Notice domain tier 3 system benchmarks using stress
+// Notice domain tier 3 system benchmarks using live domain sinks.
 //
 // Concurrent fanout, pattern matching, and subscriber lifecycle.
-// Tests sustained notification delivery with multiple subscribers.
-// Tier3 measures fanout + delivery to TestSink (includes sink overhead); in-proc
-// Criterion matcher benchmarks are sink-free and report match cost only.
+// Tests sustained notification delivery through the same sink/router path the
+// server uses in-process.
 //
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
-use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
-use fitz::domains::notice::NoticeRouteActor;
-use fitz::prelude::Actor;
-use fitz::runtime::actor::Context;
-use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::{addr, make_router, route, session_id, TestSink};
+use fitz::benchkit::{
+    build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
+    extract_single_tlv_field, register_session_counting_sink, route_frame,
+};
+use fitz::protocol::frame::ChannelId;
+use fitz::runtime::router::{MailboxSink, Router};
+use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
 
-fn setup_notice_actor(
+const PUBLISHER_SESSION_ID: u64 = 10_000;
+
+fn setup_notice_sink(
     subscriber_count: usize,
     pattern: &str,
-) -> (NoticeRouteActor, Context<NoticeRouteActor>) {
-    let router = make_router();
-    let sink = Arc::new(TestSink::new());
+) -> (Arc<Router>, RouteFamily, RouteAddress) {
     let family = RouteFamily::new(1);
-    let mut actor = NoticeRouteActor::new(family);
+    let router = Arc::new(Router::new());
+    let sink = create_bench_notice_sink(router.clone());
+    router.register_domain_pattern("notice", sink as Arc<dyn MailboxSink>);
+
+    let subscribe_frame = build_notice_subscribe(pattern);
+    let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
 
     for i in 0..subscriber_count {
-        let subscriber = addr(&format!("notice://realm/area/sub{}", i));
-        router.register(subscriber.clone(), sink.clone());
+        let session_id = i as u64 + 1;
+        let (source, _sink) = register_session_counting_sink(&router, family, session_id);
+        route_frame(
+            router.as_ref(),
+            &source,
+            pattern,
+            session_id,
+            ChannelId::Pub,
+            subscribe_msg_type,
+            subscribe_payload.clone(),
+            family,
+        )
+        .expect("notice subscribe");
     }
 
-    let router = Arc::new(router);
-    let mut ctx = Context::new(addr("notice://realm/area/ctx"), router.clone());
+    let (publisher_source, _publisher_sink) =
+        register_session_counting_sink(&router, family, PUBLISHER_SESSION_ID);
 
-    for i in 0..subscriber_count {
-        let subscriber = addr(&format!("notice://realm/area/sub{}", i));
-        let subscribe =
-            SubscribeMessage::new(family, route(pattern), session_id(i as u64 + 1), subscriber);
-        actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
-    }
-
-    (actor, ctx)
+    (router, family, publisher_source)
 }
 
 #[stress_test]
@@ -50,20 +59,25 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     ctx.set_elements(1);
     ctx.tag("scenario", "sustained_fanout");
 
-    // Setup: Actor with pre-subscribed parties
-    let (mut actor, mut actor_ctx) = setup_notice_actor(1, "notice://realm/area/orders/*");
-    let payload = Bytes::from_static(b"sustained fanout message");
-    let publish = PublishMessage::new(
-        RouteFamily::new(1),
-        route("notice://realm/area/orders/create"),
-        payload,
+    let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/orders/*");
+    let publish_frame = build_notice_publish(
+        "notice://realm/area/orders/create",
+        Bytes::from_static(b"sustained fanout message").as_ref(),
     );
+    let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
     ctx.measure(|| {
-        actor.receive(
-            NotificationMessage::Publish(publish.clone()),
-            &mut actor_ctx,
-        );
+        route_frame(
+            router.as_ref(),
+            &publisher_source,
+            "notice://realm/area/orders/create",
+            PUBLISHER_SESSION_ID,
+            ChannelId::Pub,
+            msg_type,
+            payload.clone(),
+            family,
+        )
+        .expect("notice publish");
     });
 }
 
@@ -72,20 +86,25 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     ctx.set_elements(1);
     ctx.tag("scenario", "pattern_matching");
 
-    // Setup: Actor with pattern subscriptions
-    let (mut actor, mut actor_ctx) = setup_notice_actor(1, "notice://realm/area/**");
-    let payload = Bytes::from_static(b"pattern match message");
-    let publish = PublishMessage::new(
-        RouteFamily::new(1),
-        route("notice://realm/area/orders/created"),
-        payload,
+    let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/**");
+    let publish_frame = build_notice_publish(
+        "notice://realm/area/orders/created",
+        Bytes::from_static(b"pattern match message").as_ref(),
     );
+    let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
     ctx.measure(|| {
-        actor.receive(
-            NotificationMessage::Publish(publish.clone()),
-            &mut actor_ctx,
-        );
+        route_frame(
+            router.as_ref(),
+            &publisher_source,
+            "notice://realm/area/orders/created",
+            PUBLISHER_SESSION_ID,
+            ChannelId::Pub,
+            msg_type,
+            payload.clone(),
+            family,
+        )
+        .expect("notice publish");
     });
 }
 
@@ -94,20 +113,26 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     ctx.set_elements(1);
     ctx.tag("scenario", "high_subscriber_count");
 
-    // Setup: Actor ready for high subscriber fanout
-    let (mut actor, mut actor_ctx) = setup_notice_actor(100, "notice://realm/area/orders/*");
-    let payload = Bytes::from_static(b"high subscriber fanout");
-    let publish = PublishMessage::new(
-        RouteFamily::new(1),
-        route("notice://realm/area/orders/create"),
-        payload,
+    let (router, family, publisher_source) =
+        setup_notice_sink(100, "notice://realm/area/orders/*");
+    let publish_frame = build_notice_publish(
+        "notice://realm/area/orders/create",
+        Bytes::from_static(b"high subscriber fanout").as_ref(),
     );
+    let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
     ctx.measure(|| {
-        actor.receive(
-            NotificationMessage::Publish(publish.clone()),
-            &mut actor_ctx,
-        );
+        route_frame(
+            router.as_ref(),
+            &publisher_source,
+            "notice://realm/area/orders/create",
+            PUBLISHER_SESSION_ID,
+            ChannelId::Pub,
+            msg_type,
+            payload.clone(),
+            family,
+        )
+        .expect("notice publish");
     });
 }
 

@@ -555,7 +555,8 @@ struct NoticeSubscription {
 
 /// Per-family subscription state
 struct NoticeFamilyState {
-    subscriptions: Vec<NoticeSubscription>,
+    subscriptions: HashMap<u64, NoticeSubscription>,
+    index: crate::runtime::SubscriptionIndex,
 }
 
 /// Notice domain sink: pub/sub notification routing
@@ -598,7 +599,7 @@ impl NoticeDomainSink {
         let mut subscriptions = Vec::new();
         let mut routes: HashMap<String, usize> = HashMap::new();
         for state in families.values() {
-            for subscription in &state.subscriptions {
+            for subscription in state.subscriptions.values() {
                 let pattern = subscription.pattern.route().to_string();
                 if let Some((realm, _area, _resource)) = parse_route_triplet(&pattern) {
                     subscriptions.push(crate::api::admin::NoticeSubscription {
@@ -641,8 +642,13 @@ impl NoticeDomainSink {
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
-            for sub in &state.subscriptions {
-                if sub.pattern.matches(&event.route) {
+            let matches = state.index.match_all_with_capacity(
+                event.family_id,
+                &event.route,
+                state.subscriptions.len(),
+            );
+            for sub_id in matches {
+                if let Some(sub) = state.subscriptions.get(&sub_id.0) {
                     let notify_payload = crate::protocol::notice_codec::encode_notify_into(
                         sub.subscription_id,
                         &event.route,
@@ -669,8 +675,22 @@ impl NoticeDomainSink {
     /// Remove all subscriptions for a given session (called on disconnect cleanup).
     pub fn unsubscribe_all_for_session(&self, session_id: u64) {
         let mut families = self.families.lock();
-        for state in families.values_mut() {
-            state.subscriptions.retain(|s| s.session_id != session_id);
+        for (family_id, state) in families.iter_mut() {
+            let removed_ids: Vec<u64> = state
+                .subscriptions
+                .iter()
+                .filter_map(|(sub_id, sub)| (sub.session_id == session_id).then_some(*sub_id))
+                .collect();
+            for sub_id in removed_ids {
+                if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                    let pattern = crate::runtime::routing::Route::new(sub.pattern.route());
+                    state.index.remove(
+                        crate::runtime::routing::RouteFamily::new(*family_id),
+                        &pattern,
+                        crate::runtime::SubscriptionId(sub_id),
+                    );
+                }
+            }
         }
         tracing::debug!(
             domain = "notice",
@@ -767,9 +787,13 @@ impl MailboxSink for NoticeDomainSink {
                 let families = self.families.lock();
                 if let Some(state) = families.get(&family_id) {
                     let route = pub_msg.route.clone();
-
-                    for sub in &state.subscriptions {
-                        if sub.pattern.matches(&route) {
+                    let matches = state.index.match_all_with_capacity(
+                        pub_msg.family_id,
+                        &route,
+                        state.subscriptions.len(),
+                    );
+                    for sub_id in matches {
+                        if let Some(sub) = state.subscriptions.get(&sub_id.0) {
                             let notify_payload = crate::protocol::notice_codec::encode_notify_into(
                                 sub.subscription_id,
                                 &route,
@@ -804,13 +828,14 @@ impl MailboxSink for NoticeDomainSink {
                 let state = families
                     .entry(family_id)
                     .or_insert_with(|| NoticeFamilyState {
-                        subscriptions: Vec::new(),
+                        subscriptions: HashMap::new(),
+                        index: crate::runtime::SubscriptionIndex::new(),
                     });
 
                 // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
                 let existing_sub_id = state
                     .subscriptions
-                    .iter()
+                    .values()
                     .find(|s| {
                         s.session_id == sub_msg.session_id.0
                             && s.pattern.route() == sub_msg.pattern.as_str()
@@ -843,7 +868,12 @@ impl MailboxSink for NoticeDomainSink {
                         let pattern =
                             crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
 
-                        state.subscriptions.push(NoticeSubscription {
+                        state.index.insert(
+                            sub_msg.family_id,
+                            &sub_msg.pattern,
+                            crate::runtime::SubscriptionId(new_id),
+                        );
+                        state.subscriptions.insert(new_id, NoticeSubscription {
                             pattern,
                             session_id: sub_msg.session_id.0,
                             subscription_id: new_id,
@@ -872,10 +902,24 @@ impl MailboxSink for NoticeDomainSink {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
                 if let Some(state) = families.get_mut(&family_id) {
-                    state.subscriptions.retain(|s| {
-                        !(s.session_id == unsub_msg.session_id.0
-                            && s.pattern.route() == unsub_msg.pattern.as_str())
-                    });
+                    let removed_ids: Vec<u64> = state
+                        .subscriptions
+                        .iter()
+                        .filter_map(|(sub_id, sub)| {
+                            (sub.session_id == unsub_msg.session_id.0
+                                && sub.pattern.route() == unsub_msg.pattern.as_str())
+                            .then_some(*sub_id)
+                        })
+                        .collect();
+                    for sub_id in removed_ids {
+                        if state.subscriptions.remove(&sub_id).is_some() {
+                            state.index.remove(
+                                unsub_msg.family_id,
+                                &unsub_msg.pattern,
+                                crate::runtime::SubscriptionId(sub_id),
+                            );
+                        }
+                    }
                 }
                 (
                     Some(NoticeResponse::Ok {
@@ -886,10 +930,7 @@ impl MailboxSink for NoticeDomainSink {
             }
             NotificationMessage::UnsubscribeAll(unsub_all) => {
                 let session_id = unsub_all.session_id.0;
-                let mut families = self.families.lock();
-                for state in families.values_mut() {
-                    state.subscriptions.retain(|s| s.session_id != session_id);
-                }
+                self.unsubscribe_all_for_session(session_id);
                 tracing::debug!(
                     domain = "notice",
                     session = session_id,
@@ -2029,6 +2070,8 @@ struct StreamWriteState {
     session_to_route: HashMap<u64, String>,
     sessions: HashMap<u64, PendingStreamSession>,
     records_by_route: HashMap<String, Vec<CommittedStreamRecord>>,
+    last_data_by_route: HashMap<String, Vec<u8>>,
+    metadata_data_by_route: HashMap<String, Vec<u8>>,
 }
 
 /// Stream domain sink: append-only streaming operations with subscription tracking
@@ -2071,6 +2114,8 @@ impl StreamDomainSink {
                 session_to_route: HashMap::new(),
                 sessions: HashMap::new(),
                 records_by_route: HashMap::new(),
+                last_data_by_route: HashMap::new(),
+                metadata_data_by_route: HashMap::new(),
             }),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
@@ -2152,15 +2197,11 @@ impl StreamDomainSink {
         encoder.finish()
     }
 
-    fn encode_stream_metadata_data(records: &[CommittedStreamRecord]) -> Vec<u8> {
-        if records.is_empty() {
-            return Vec::new();
-        }
-
+    fn encode_stream_metadata_summary(first_offset: u64, last_offset: u64, count: u64) -> Vec<u8> {
         let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        encoder.put_u64(records.first().map(|record| record.offset).unwrap_or(0));
-        encoder.put_u64(records.last().map(|record| record.offset).unwrap_or(0));
-        encoder.put_u64(records.len() as u64);
+        encoder.put_u64(first_offset);
+        encoder.put_u64(last_offset);
+        encoder.put_u64(count);
         encoder.finish()
     }
 
@@ -2445,9 +2486,10 @@ impl MailboxSink for StreamDomainSink {
                 state.session_to_route.remove(&session_id);
                 let commit_notify = state.sessions.remove(&session_id).map(|session| {
                     let batch_size = session.records.len();
+                    let route_key = session.route.clone();
                     let next_offset = state
                         .next_offset_by_route
-                        .entry(session.route.clone())
+                        .entry(route_key.clone())
                         .or_insert(0);
                     let first_offset = *next_offset;
                     let mut committed = Vec::with_capacity(batch_size);
@@ -2462,11 +2504,30 @@ impl MailboxSink for StreamDomainSink {
 
                     *next_offset = current_offset;
                     if !committed.is_empty() {
-                        state
+                        let last_record = committed.last().cloned();
+                        let records = state
                             .records_by_route
-                            .entry(session.route.clone())
-                            .or_default()
-                            .extend(committed);
+                            .entry(route_key.clone())
+                            .or_default();
+                        records.extend(committed);
+                        let first_record_offset =
+                            records.first().map(|record| record.offset).unwrap_or(0);
+                        let total_records = records.len() as u64;
+                        let _ = records;
+                        if let Some(last_record) = last_record {
+                            state.last_data_by_route.insert(
+                                route_key.clone(),
+                                Self::encode_stream_last_data(&last_record),
+                            );
+                            state.metadata_data_by_route.insert(
+                                route_key.clone(),
+                                Self::encode_stream_metadata_summary(
+                                    first_record_offset,
+                                    last_record.offset,
+                                    total_records,
+                                ),
+                            );
+                        }
                     }
 
                     let last_offset = current_offset.saturating_sub(1);
@@ -2474,7 +2535,7 @@ impl MailboxSink for StreamDomainSink {
                         "{{\"first_resource_offset\":{},\"last_resource_offset\":{},\"batch_size\":{}}}",
                         first_offset, last_offset, batch_size
                     ));
-                    (crate::runtime::routing::Route::new(session.route), payload)
+                    (crate::runtime::routing::Route::new(route_key), payload)
                 });
                 (
                     StreamResponse::Ok {
@@ -2525,10 +2586,9 @@ impl MailboxSink for StreamDomainSink {
             StreamMessage::Last { route, .. } => {
                 let state = self.write_state.lock();
                 let data = state
-                    .records_by_route
+                    .last_data_by_route
                     .get(route.as_str())
-                    .and_then(|records| records.last())
-                    .map(Self::encode_stream_last_data)
+                    .cloned()
                     .unwrap_or_default();
                 (
                     StreamResponse::Ok {
@@ -2542,9 +2602,9 @@ impl MailboxSink for StreamDomainSink {
             StreamMessage::GetMetadata { route, .. } => {
                 let state = self.write_state.lock();
                 let data = state
-                    .records_by_route
+                    .metadata_data_by_route
                     .get(route.as_str())
-                    .map(|records| Self::encode_stream_metadata_data(records))
+                    .cloned()
                     .unwrap_or_default();
                 (
                     StreamResponse::Ok {
@@ -2737,8 +2797,6 @@ pub struct LeaseDomainSink {
 struct LeaseSubscription {
     /// Subscription pattern string (e.g., "lease://*/*/resource/changed")
     pattern_str: String,
-    /// Parsed subscription pattern
-    pattern: crate::runtime::matcher::Pattern,
     /// Session that requested this subscription
     session_id: u64,
     /// Route address for sending NOTIFY frames
@@ -2748,10 +2806,19 @@ struct LeaseSubscription {
 }
 
 /// Per-family lease subscription state
-#[derive(Debug, Default)]
 struct LeaseFamilyState {
     /// Active subscriptions for this family
-    subscriptions: Vec<LeaseSubscription>,
+    subscriptions: HashMap<u64, LeaseSubscription>,
+    index: crate::runtime::SubscriptionIndex,
+}
+
+impl Default for LeaseFamilyState {
+    fn default() -> Self {
+        Self {
+            subscriptions: HashMap::new(),
+            index: crate::runtime::SubscriptionIndex::new(),
+        }
+    }
 }
 
 impl LeaseDomainSink {
@@ -2845,8 +2912,13 @@ impl LeaseDomainSink {
         if let Some(family_state) = families.get(&family_id) {
             let mut payload_encoder =
                 crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            for sub in &family_state.subscriptions {
-                if sub.pattern.matches(&event.route) {
+            let matches = family_state.index.match_all_with_capacity(
+                event.family_id,
+                &event.route,
+                family_state.subscriptions.len(),
+            );
+            for sub_id in matches {
+                if let Some(sub) = family_state.subscriptions.get(&sub_id.0) {
                     // Encode notification frame using lease codec (409=NOTIFY)
                     let notify_payload = crate::protocol::lease_codec::encode_notify_into(
                         &mut payload_encoder,
@@ -2875,10 +2947,22 @@ impl LeaseDomainSink {
     /// Remove all subscriptions for a session
     fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.families.lock();
-        for state in families.values_mut() {
-            state
+        for (family_id, state) in families.iter_mut() {
+            let removed_ids: Vec<u64> = state
                 .subscriptions
-                .retain(|sub| sub.session_id != session_id);
+                .iter()
+                .filter_map(|(sub_id, sub)| (sub.session_id == session_id).then_some(*sub_id))
+                .collect();
+            for sub_id in removed_ids {
+                if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                    let pattern = crate::runtime::routing::Route::new(sub.pattern_str.clone());
+                    state.index.remove(
+                        crate::runtime::routing::RouteFamily::new(*family_id),
+                        &pattern,
+                        crate::runtime::SubscriptionId(sub_id),
+                    );
+                }
+            }
         }
     }
 
@@ -3195,8 +3279,6 @@ impl MailboxSink for LeaseDomainSink {
             }
             LeaseMessage::Subscribe { family_id, pattern } => {
                 // Handle subscription to availability notifications
-                let parsed_pattern = crate::runtime::matcher::Pattern::new(&pattern);
-
                 // Get route address for sending notifications
                 let route_address = match envelope.source() {
                     Some(src) => src,
@@ -3226,7 +3308,7 @@ impl MailboxSink for LeaseDomainSink {
                 // Check for existing subscription with same pattern and session
                 if let Some(existing) = family_state
                     .subscriptions
-                    .iter()
+                    .values()
                     .find(|s| s.session_id == frame_ctx.session_id && s.pattern_str == pattern)
                 {
                     // Idempotent: return existing subscription_id
@@ -3250,9 +3332,14 @@ impl MailboxSink for LeaseDomainSink {
                 }
 
                 // Add new subscription
-                family_state.subscriptions.push(LeaseSubscription {
+                let pattern_route = crate::runtime::routing::Route::new(pattern.as_str());
+                family_state.index.insert(
+                    family_id,
+                    &pattern_route,
+                    crate::runtime::SubscriptionId(subscription_id),
+                );
+                family_state.subscriptions.insert(subscription_id, LeaseSubscription {
                     pattern_str: pattern,
-                    pattern: parsed_pattern,
                     session_id: frame_ctx.session_id,
                     route_address: route_address.clone(),
                     subscription_id,
@@ -3280,9 +3367,24 @@ impl MailboxSink for LeaseDomainSink {
                 let mut families = self.families.lock();
 
                 if let Some(family_state) = families.get_mut(&family_id_u64) {
-                    family_state.subscriptions.retain(|s| {
-                        !(s.session_id == frame_ctx.session_id && s.pattern_str == pattern)
-                    });
+                    let pattern_route = crate::runtime::routing::Route::new(pattern.as_str());
+                    let removed_ids: Vec<u64> = family_state
+                        .subscriptions
+                        .iter()
+                        .filter_map(|(sub_id, sub)| {
+                            (sub.session_id == frame_ctx.session_id && sub.pattern_str == pattern)
+                                .then_some(*sub_id)
+                        })
+                        .collect();
+                    for sub_id in removed_ids {
+                        if family_state.subscriptions.remove(&sub_id).is_some() {
+                            family_state.index.remove(
+                                family_id,
+                                &pattern_route,
+                                crate::runtime::SubscriptionId(sub_id),
+                            );
+                        }
+                    }
                 }
 
                 let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(

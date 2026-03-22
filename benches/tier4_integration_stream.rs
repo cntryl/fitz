@@ -11,12 +11,13 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_stream_append, build_stream_begin, create_local_bench_stream_actor,
-    parse_stream_response, parse_stream_session_id, shared_bench_runtime,
+    build_stream_append, build_stream_begin, create_bench_stream_sink, extract_single_tlv_field,
+    parse_stream_response, parse_stream_session_id, register_session_queue_sink, route_frame,
+    shared_bench_runtime,
 };
-use fitz::domains::stream::protocol::StreamMessage;
-use fitz::prelude::Actor;
-use fitz::runtime::routing::{Route, RouteFamily};
+use fitz::protocol::frame::ChannelId;
+use fitz::runtime::router::{MailboxSink, Router};
+use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -27,29 +28,52 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "append");
 
-    let (mut actor, mut actor_ctx, _temp_dir) =
-        create_local_bench_stream_actor("tier4", "stream", "direct");
     let family = RouteFamily::new(1);
-    let route = Route::new("stream://tier4/stream/direct/append".to_string());
-    actor.receive(
-        StreamMessage::Begin {
-            family_id: family,
-            route,
-            expected_offset: 0,
-            ingest_metadata: None,
-        },
-        &mut actor_ctx,
-    );
+    let route = "stream://tier4/stream/direct/append";
+    let router = Arc::new(Router::new());
+    let sink = create_bench_stream_sink(router.clone());
+    router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
+    let (source, inbox) = register_session_queue_sink(&router, family, 1);
+
+    let begin_frame = build_stream_begin(route, 0);
+    let (begin_msg_type, begin_payload) = extract_single_tlv_field(&begin_frame);
+    route_frame(
+        router.as_ref(),
+        &source,
+        route,
+        1,
+        ChannelId::Pub,
+        begin_msg_type,
+        begin_payload,
+        family,
+    )
+    .expect("stream begin");
+    let begin_responses = inbox.drain();
+    let session_id = parse_stream_session_id(
+        begin_responses
+            .last()
+            .expect("begin response")
+            .payload
+            .as_ref(),
+    )
+    .expect("session_id");
+
+    let append_frame = build_stream_append(session_id, Bytes::from_static(b"event").as_ref());
+    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
     ctx.measure(|| {
-        actor.receive(
-            StreamMessage::Append {
-                session_id: 1,
-                body: Bytes::from_static(b"event"),
-                metadata: None,
-            },
-            &mut actor_ctx,
-        );
+        route_frame(
+            router.as_ref(),
+            &source,
+            route,
+            1,
+            ChannelId::Pub,
+            append_msg_type,
+            append_payload.clone(),
+            family,
+        )
+        .expect("stream append");
+        let _ = inbox.drain();
     });
 }
 

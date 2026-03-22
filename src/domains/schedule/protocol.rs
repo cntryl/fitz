@@ -147,36 +147,73 @@ impl CronSchedule {
             .unwrap_or_default()
             .as_secs();
 
-        // Start from next minute (round up)
+        // Start from next minute (round up). We then jump between matching
+        // month/day/hour/minute candidates instead of scanning minute-by-minute.
         let mut candidate_secs = ((seconds / 60) + 1) * 60;
 
-        // Try up to 4 years worth of minutes (to handle edge cases like "Feb 31")
-        for _ in 0..(4 * 365 * 24 * 60) {
-            let candidate_sys = UNIX_EPOCH + std::time::Duration::from_secs(candidate_secs);
+        // Try up to 4 years worth of month/day transitions to handle edge cases
+        // like "Feb 31" without falling back to per-minute scans.
+        for _ in 0..(4 * 366 * 12) {
+            let (year, month, day, hour, minute, _) = seconds_to_datetime(candidate_secs);
 
-            // Convert to calendar time (naive UTC)
-            let (_year, month, day, hour, minute, day_of_week) =
-                seconds_to_datetime(candidate_secs);
-
-            // Check if this time matches all cron fields
-            if self.matches_minute(minute)
-                && self.matches_hour(hour)
-                && self.matches_day_of_month(day)
-                && self.matches_month(month)
-                && self.matches_day_of_week(day_of_week)
-            {
-                // Found matching time - convert back to Instant
-                // Calculate offset from now_sys to candidate_sys
-                let duration_from_now_sys =
-                    candidate_sys.duration_since(now_sys).unwrap_or_else(|_| {
-                        // If candidate is in the past, treat as 0 (shouldn't happen)
-                        std::time::Duration::from_secs(0)
-                    });
-                return now_instant + duration_from_now_sys;
+            let Some((target_month, wrapped_month)) =
+                next_matching_value(&self.month, month, 1, 12)
+            else {
+                break;
+            };
+            if wrapped_month || target_month != month {
+                let target_year = if wrapped_month {
+                    year.saturating_add(1)
+                } else {
+                    year
+                };
+                candidate_secs = datetime_to_seconds(target_year, target_month, 1, 0, 0);
+                continue;
             }
 
-            // Try next minute
-            candidate_secs += 60;
+            let Some(target_day) = self.next_matching_day(year, month, day) else {
+                let (next_year, next_month) = increment_month(year, month);
+                candidate_secs = datetime_to_seconds(next_year, next_month, 1, 0, 0);
+                continue;
+            };
+            if target_day != day {
+                candidate_secs = datetime_to_seconds(year, month, target_day, 0, 0);
+                continue;
+            }
+
+            let Some((target_hour, wrapped_hour)) =
+                next_matching_value(&self.hour, hour, 0, 23)
+            else {
+                break;
+            };
+            if wrapped_hour {
+                candidate_secs = datetime_to_seconds(year, month, day, 0, 0) + 86_400;
+                continue;
+            }
+            if target_hour != hour {
+                candidate_secs = datetime_to_seconds(year, month, day, target_hour, 0);
+                continue;
+            }
+
+            let Some((target_minute, wrapped_minute)) =
+                next_matching_value(&self.minute, minute, 0, 59)
+            else {
+                break;
+            };
+            if wrapped_minute {
+                candidate_secs = datetime_to_seconds(year, month, day, hour, 0) + 3_600;
+                continue;
+            }
+            if target_minute != minute {
+                candidate_secs = datetime_to_seconds(year, month, day, hour, target_minute);
+                continue;
+            }
+
+            let candidate_sys = UNIX_EPOCH + std::time::Duration::from_secs(candidate_secs);
+            let duration_from_now_sys = candidate_sys
+                .duration_since(now_sys)
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0));
+            return now_instant + duration_from_now_sys;
         }
 
         // Fallback: if no match found in 4 years, return 1 hour from now
@@ -184,24 +221,23 @@ impl CronSchedule {
         from + std::time::Duration::from_secs(3600)
     }
 
-    fn matches_minute(&self, minute: u32) -> bool {
-        matches_field(&self.minute, minute)
-    }
-
-    fn matches_hour(&self, hour: u32) -> bool {
-        matches_field(&self.hour, hour)
-    }
-
     fn matches_day_of_month(&self, day: u32) -> bool {
         matches_field(&self.day_of_month, day)
     }
 
-    fn matches_month(&self, month: u32) -> bool {
-        matches_field(&self.month, month)
-    }
-
     fn matches_day_of_week(&self, day_of_week: u32) -> bool {
         matches_field(&self.day_of_week, day_of_week)
+    }
+
+    fn next_matching_day(&self, year: u32, month: u32, start_day: u32) -> Option<u32> {
+        let end_day = days_in_month(year, month);
+        for day in start_day..=end_day {
+            let day_of_week = day_of_week_for_date(year, month, day);
+            if self.matches_day_of_month(day) && self.matches_day_of_week(day_of_week) {
+                return Some(day);
+            }
+        }
+        None
     }
 }
 
@@ -227,6 +263,22 @@ fn matches_field(field: &CronField, value: u32) -> bool {
             }
         }
     }
+}
+
+fn next_matching_value(field: &CronField, current: u32, min: u32, max: u32) -> Option<(u32, bool)> {
+    for value in current..=max {
+        if matches_field(field, value) {
+            return Some((value, false));
+        }
+    }
+
+    for value in min..current {
+        if matches_field(field, value) {
+            return Some((value, true));
+        }
+    }
+
+    None
 }
 
 /// Convert Unix timestamp (seconds) to calendar components
@@ -282,6 +334,59 @@ fn seconds_to_datetime(seconds: u64) -> (u32, u32, u32, u32, u32, u32) {
     let day = (days + 1) as u32;
 
     (year, month, day, hour, minute, day_of_week)
+}
+
+fn datetime_to_seconds(year: u32, month: u32, day: u32, hour: u32, minute: u32) -> u64 {
+    let mut days = 0_u64;
+
+    for current_year in 1970..year {
+        days += if is_leap_year(current_year) { 366 } else { 365 } as u64;
+    }
+
+    for current_month in 1..month {
+        days += days_in_month(year, current_month) as u64;
+    }
+
+    days += day.saturating_sub(1) as u64;
+
+    (days * 86_400) + (hour as u64 * 3_600) + (minute as u64 * 60)
+}
+
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 => 31,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        3 => 31,
+        4 => 30,
+        5 => 31,
+        6 => 30,
+        7 => 31,
+        8 => 31,
+        9 => 30,
+        10 => 31,
+        11 => 30,
+        12 => 31,
+        _ => 31,
+    }
+}
+
+fn day_of_week_for_date(year: u32, month: u32, day: u32) -> u32 {
+    let (_, _, _, _, _, day_of_week) = seconds_to_datetime(datetime_to_seconds(year, month, day, 0, 0));
+    day_of_week
+}
+
+fn increment_month(year: u32, month: u32) -> (u32, u32) {
+    if month == 12 {
+        (year.saturating_add(1), 1)
+    } else {
+        (year, month + 1)
+    }
 }
 
 fn is_leap_year(year: u32) -> bool {

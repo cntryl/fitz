@@ -188,6 +188,7 @@ impl ScheduleActor {
         self.store
             .delete_prepared(
                 self.family.as_u64(),
+                &route,
                 removed_def.storage_key,
                 self.write_options,
             )
