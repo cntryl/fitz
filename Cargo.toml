@@ -23,7 +23,7 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "rus
 once_cell = "1.19"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.21"
-jsonwebtoken = "8"
+jsonwebtoken = "10"
 argon2 = "0.5"
 sha1 = "0.10"
 hmac = "0.12"
