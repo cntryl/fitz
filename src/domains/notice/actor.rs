@@ -224,7 +224,7 @@ mod tests {
     }
 
     fn test_route(path: &str) -> Route {
-        Route::new(path.to_string())
+        Route::new(path)
     }
 
     fn test_address(suffix: &str) -> RouteAddress {

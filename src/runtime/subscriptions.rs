@@ -453,7 +453,7 @@ mod tests {
     use super::*;
 
     fn route(s: &str) -> Route {
-        Route::new(s.to_string())
+        Route::new(s)
     }
 
     fn family(id: u64) -> RouteFamily {

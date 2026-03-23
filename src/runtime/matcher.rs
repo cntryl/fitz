@@ -316,7 +316,7 @@ mod tests {
     use super::*;
 
     fn route(path: &str) -> Route {
-        Route::new(path.to_string())
+        Route::new(path)
     }
 
     #[test]

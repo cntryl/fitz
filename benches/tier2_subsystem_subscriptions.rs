@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 
@@ -35,7 +35,7 @@ fn make_index_fanout_sparse(sub_count: usize) -> (SubscriptionIndex, Route, Rout
     }
 
     // Route that matches only one
-    let route = Route::new("notify://realm/orders/item0/action".to_string());
+    let route = Route::new("notify://realm/orders/item0/action");
     (index, route, family)
 }
 
@@ -46,11 +46,11 @@ fn make_index_fanout_dense(sub_count: usize) -> (SubscriptionIndex, Route, Route
 
     // Insert patterns that all match the same route via **
     for i in 0..sub_count {
-        let pattern = Route::new("notify://realm/**/action".to_string());
+        let pattern = Route::new("notify://realm/**/action");
         index.insert(family, &pattern, SubscriptionId(i as u64));
     }
 
-    let route = Route::new("notify://realm/orders/items/action".to_string());
+    let route = Route::new("notify://realm/orders/items/action");
     (index, route, family)
 }
 
@@ -85,7 +85,7 @@ fn make_index_with_depth(
 
 fn bench_insert_single_pattern(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/orders/create".to_string());
+    let pattern = Route::new("notify://realm/orders/create");
 
     let mut group = c.benchmark_group("subsystem_subscriptions");
     group.sampling_mode(SamplingMode::Flat);
@@ -104,7 +104,7 @@ fn bench_insert_single_pattern(c: &mut Criterion) {
 
 fn bench_insert_with_single_star(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/orders/*".to_string());
+    let pattern = Route::new("notify://realm/orders/*");
 
     let mut group = c.benchmark_group("subsystem_subscriptions");
     group.sampling_mode(SamplingMode::Flat);
@@ -123,7 +123,7 @@ fn bench_insert_with_single_star(c: &mut Criterion) {
 
 fn bench_insert_with_double_star(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/**/created".to_string());
+    let pattern = Route::new("notify://realm/**/created");
 
     let mut group = c.benchmark_group("subsystem_subscriptions");
     group.sampling_mode(SamplingMode::Flat);
@@ -147,7 +147,7 @@ fn bench_match_exact_pattern(c: &mut Criterion) {
     group.bench_function("exact", |b| {
         let index = make_subscriptions_with_patterns(100);
         let family = RouteFamily::new(1);
-        let route = Route::new("notify://realm/orders/create".to_string());
+        let route = Route::new("notify://realm/orders/create");
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
         })
@@ -162,7 +162,7 @@ fn bench_match_single_star(c: &mut Criterion) {
     group.bench_function("single_star", |b| {
         let index = make_subscriptions_with_patterns(100);
         let family = RouteFamily::new(1);
-        let route = Route::new("notify://realm/orders/create".to_string());
+        let route = Route::new("notify://realm/orders/create");
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
         })
@@ -177,7 +177,7 @@ fn bench_match_double_star(c: &mut Criterion) {
     group.bench_function("double_star", |b| {
         let index = make_subscriptions_with_patterns(100);
         let family = RouteFamily::new(1);
-        let route = Route::new("notify://realm/orders/created".to_string());
+        let route = Route::new("notify://realm/orders/created");
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
         })
@@ -252,7 +252,7 @@ fn bench_match_depth_10(c: &mut Criterion) {
 
 fn bench_remove_subscription(c: &mut Criterion) {
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/orders/*".to_string());
+    let pattern = Route::new("notify://realm/orders/*");
 
     let mut group = c.benchmark_group("subsystem_subscriptions");
     group.sampling_mode(SamplingMode::Flat);
@@ -276,8 +276,8 @@ fn bench_remove_subscription(c: &mut Criterion) {
 fn bench_mixed_insert_remove_match(c: &mut Criterion) {
     let family = RouteFamily::new(1);
     let routes = vec![
-        Route::new("notify://realm/orders/create".to_string()),
-        Route::new("notify://realm/items/remove/action".to_string()),
+        Route::new("notify://realm/orders/create"),
+        Route::new("notify://realm/items/remove/action"),
     ];
 
     let mut group = c.benchmark_group("subsystem_subscriptions");
@@ -290,10 +290,10 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
                 let batch: Vec<(Route, SubscriptionId)> = (0..100)
                     .map(|i| {
                         let pattern = match i % 4 {
-                            0 => Route::new("notify://realm/orders/create".to_string()),
-                            1 => Route::new("notify://realm/orders/*".to_string()),
-                            2 => Route::new("notify://realm/**/created".to_string()),
-                            _ => Route::new("notify://realm/items/*/action".to_string()),
+                            0 => Route::new("notify://realm/orders/create"),
+                            1 => Route::new("notify://realm/orders/*"),
+                            2 => Route::new("notify://realm/**/created"),
+                            _ => Route::new("notify://realm/items/*/action"),
                         };
                         (pattern, SubscriptionId(i as u64))
                     })

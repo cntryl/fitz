@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::auth::{Access, Permission};
 use fitz::runtime::routing::Route;
 use fitz::session::permissions::SessionPermissions;
@@ -61,8 +61,8 @@ fn bench_permission_allows_exact_match(c: &mut Criterion) {
         Permission::parse("notify://prod/events/orders#read").unwrap(),
     ]);
 
-    let allowed_route = Route::new("rpc://acme/auth/users".to_string());
-    let denied_route = Route::new("rpc://acme/auth/admin".to_string());
+    let allowed_route = Route::new("rpc://acme/auth/users");
+    let denied_route = Route::new("rpc://acme/auth/admin");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
@@ -92,9 +92,9 @@ fn bench_permission_allows_wildcard_match(c: &mut Criterion) {
         Permission::parse("notify://prod/events/*#read").unwrap(),
     ]);
 
-    let allowed_route1 = Route::new("rpc://acme/auth/users".to_string());
-    let allowed_route2 = Route::new("rpc://acme/admin/users".to_string());
-    let denied_route = Route::new("rpc://other/auth/users".to_string());
+    let allowed_route1 = Route::new("rpc://acme/auth/users");
+    let allowed_route2 = Route::new("rpc://acme/admin/users");
+    let denied_route = Route::new("rpc://other/auth/users");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
@@ -131,9 +131,9 @@ fn bench_permission_allows_doublestar_match(c: &mut Criterion) {
         Permission::parse("notify://**#read").unwrap(),
     ]);
 
-    let deep_route = Route::new("rpc://acme/auth/users/session/create".to_string());
-    let shallow_route = Route::new("rpc://acme/auth".to_string());
-    let global_route = Route::new("notify://prod/events/orders/items/added".to_string());
+    let deep_route = Route::new("rpc://acme/auth/users/session/create");
+    let shallow_route = Route::new("rpc://acme/auth");
+    let global_route = Route::new("notify://prod/events/orders/items/added");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
@@ -178,7 +178,7 @@ fn bench_permission_allows_access_levels(c: &mut Criterion) {
     let all_perms =
         SessionPermissions::from_permissions(vec![Permission::parse("rpc://acme/**#*").unwrap()]);
 
-    let route = Route::new("rpc://acme/auth/users".to_string());
+    let route = Route::new("rpc://acme/auth/users");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
@@ -240,8 +240,8 @@ fn bench_permission_allows_multiple_permissions(c: &mut Criterion) {
         Permission::parse("kv://acme/**#write").unwrap(),
     ]);
 
-    let first_match_route = Route::new("rpc://acme/auth/users".to_string());
-    let last_match_route = Route::new("kv://acme/app/users".to_string());
+    let first_match_route = Route::new("rpc://acme/auth/users");
+    let last_match_route = Route::new("kv://acme/app/users");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
@@ -274,7 +274,7 @@ fn bench_permission_allows_multiple_permissions(c: &mut Criterion) {
 fn bench_permission_allows_deny_by_default(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let empty_perms = SessionPermissions::empty();
-    let route = Route::new("rpc://acme/auth/users".to_string());
+    let route = Route::new("rpc://acme/auth/users");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
@@ -293,7 +293,7 @@ fn bench_permission_allows_deny_by_default(c: &mut Criterion) {
 fn bench_permission_allows_allow_all(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let all_perms = SessionPermissions::all();
-    let route = Route::new("rpc://acme/auth/users".to_string());
+    let route = Route::new("rpc://acme/auth/users");
 
     let mut group = c.benchmark_group("hotpath_permissions");
     group.sampling_mode(SamplingMode::Flat);
