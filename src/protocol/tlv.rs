@@ -177,7 +177,8 @@ impl TlvDecoder {
         &self,
         input: &'a [u8],
     ) -> Result<(MessageType, &'a [u8], usize), TlvError> {
-        if input.is_empty() {
+        let len = input.len();
+        if len == 0 {
             return Err(TlvError::EmptyFrame);
         }
 
@@ -185,8 +186,8 @@ impl TlvDecoder {
 
         // Parse type (single-byte or escape + two-byte BE u16)
         let msg_type = if input[offset] == MessageType::ESCAPE_MARKER {
-            // need marker + 2 bytes
-            if input.len() < offset + 3 {
+            // need marker + 2 bytes = 3 total for type
+            if len < 3 {
                 return Err(TlvError::IncompleteType);
             }
             let hi = input[offset + 1];
@@ -204,28 +205,30 @@ impl TlvDecoder {
             MessageType(value)
         };
 
-        // Read length (2 bytes BE)
-        if input.len() < offset + 2 {
+        // Read length (2 bytes BE) - need at least offset + 2 bytes
+        let min_len = offset + 2;
+        if len < min_len {
             return Err(TlvError::IncompleteLength);
         }
-        let len = u16::from_be_bytes([input[offset], input[offset + 1]]) as usize;
+        let value_len = u16::from_be_bytes([input[offset], input[offset + 1]]) as usize;
         offset += 2;
 
-        if (len as u32) > self.max_value_len {
-            return Err(TlvError::LengthTooLarge(len as u32));
+        if (value_len as u32) > self.max_value_len {
+            return Err(TlvError::LengthTooLarge(value_len as u32));
         }
 
-        if input.len() < offset + len {
+        // Check we have enough bytes for the value
+        let end_offset = offset + value_len;
+        if len < end_offset {
             return Err(TlvError::IncompleteValue {
-                needed: offset + len,
-                available: input.len(),
+                needed: end_offset,
+                available: len,
             });
         }
 
-        let value_slice = &input[offset..offset + len];
-        offset += len;
+        let value_slice = &input[offset..end_offset];
 
-        Ok((msg_type, value_slice, offset))
+        Ok((msg_type, value_slice, end_offset))
     }
 
     /// Owned decode convenience wrapper that copies value bytes into a `Bytes`.

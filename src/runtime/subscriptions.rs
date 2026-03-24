@@ -26,13 +26,63 @@
 
 use crate::runtime::matcher::{
     extract_route_segments_borrowed, match_pattern_segments, match_pattern_segments_borrowed,
-    parse_pattern_segments, PatternSegment,
+    PatternSegment,
 };
 use crate::runtime::routing::{Route, RouteFamily};
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use self::segments_cache::SegmentsCache;
+
+mod segments_cache {
+    use crate::runtime::matcher::{parse_pattern_segments, PatternSegment};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    pub struct SegmentsCache {
+        cache: HashMap<Arc<str>, Arc<Vec<PatternSegment>>>,
+    }
+
+    impl SegmentsCache {
+        pub fn new() -> Self {
+            Self {
+                cache: HashMap::with_capacity_and_hasher(256, Default::default()),
+            }
+        }
+
+        pub fn get_or_parse(&mut self, route: &str) -> Arc<Vec<PatternSegment>> {
+            let route_str: Arc<str> = Arc::from(route);
+            if let Some(cached) = self.cache.get(&route_str) {
+                return Arc::clone(cached);
+            }
+
+            // Hard cap prevents unbounded growth; when hit, clear and restart
+            // This is acceptable because cache hits are the common case
+            const CACHE_MAX_ENTRIES: usize = 4096;
+            if self.cache.len() >= CACHE_MAX_ENTRIES {
+                self.cache.clear();
+            }
+
+            let segments = Arc::new(parse_pattern_segments(route));
+            self.cache
+                .insert(Arc::clone(&route_str), Arc::clone(&segments));
+            segments
+        }
+
+        #[allow(dead_code)]
+        pub fn clear(&mut self) {
+            self.cache.clear();
+        }
+    }
+
+    impl Default for SegmentsCache {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+}
 
 /// Unique subscription identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -75,15 +125,32 @@ impl TrieNode {
 /// Uses RwLock for high read concurrency - matching takes read lock,
 /// insert/remove take write lock.
 pub struct SubscriptionIndex {
-    /// Trie root per RouteFamily (protected by RwLock for concurrent reads)
-    roots: RwLock<HashMap<RouteFamily, Box<TrieNode>>>,
+    /// Trie root per RouteFamily using direct indexing by family ID
+    /// This provides O(1) access without hash computation for common family IDs
+    roots: RwLock<Vec<Option<Box<TrieNode>>>>,
+    /// Cache for parsed pattern segments to avoid re-parsing same routes
+    segments_cache: SegmentsCache,
 }
 
 impl SubscriptionIndex {
     /// Create a new empty subscription index
     pub fn new() -> Self {
         Self {
-            roots: RwLock::new(HashMap::new()),
+            roots: RwLock::new(Vec::new()),
+            segments_cache: SegmentsCache::new(),
+        }
+    }
+
+    /// Ensure the roots vector can index the given family ID
+    ///
+    /// Uses a vector indexed by family ID for O(1) access without hashing.
+    /// Grows as needed - memory usage is proportional to max family ID used,
+    /// which is bounded by the tenant allocator's u32 counter.
+    #[inline]
+    fn ensure_capacity(roots: &mut Vec<Option<Box<TrieNode>>>, family_id: RouteFamily) {
+        let idx = family_id.id() as usize;
+        if idx >= roots.len() {
+            roots.resize_with(idx + 1, || None);
         }
     }
 
@@ -93,28 +160,33 @@ impl SubscriptionIndex {
     /// - `family_id`: RouteFamily for isolation
     /// - `pattern`: The route pattern (may contain `*` and `**` wildcards)
     /// - `subscription_id`: Unique identifier for this subscription
-    pub fn insert(&self, family_id: RouteFamily, pattern: &Route, subscription_id: SubscriptionId) {
-        let segments = parse_pattern_segments(pattern.as_str());
+    pub fn insert(
+        &mut self,
+        family_id: RouteFamily,
+        pattern: &Route,
+        subscription_id: SubscriptionId,
+    ) {
+        let segments = self.segments_cache.get_or_parse(pattern.as_str());
         let mut roots = self.roots.write();
-        let root = roots
-            .entry(family_id)
-            .or_insert_with(|| Box::new(TrieNode::new()));
+        Self::ensure_capacity(&mut roots, family_id);
+
+        let root = roots[family_id.id() as usize].get_or_insert_with(|| Box::new(TrieNode::new()));
 
         insert_into_trie(root, &segments, 0, subscription_id);
     }
 
     /// Insert multiple subscriptions with a single write lock (reduces contention in batch setups).
-    pub fn insert_batch(&self, family_id: RouteFamily, items: &[(Route, SubscriptionId)]) {
+    pub fn insert_batch(&mut self, family_id: RouteFamily, items: &[(Route, SubscriptionId)]) {
         if items.is_empty() {
             return;
         }
         let mut roots = self.roots.write();
-        let root = roots
-            .entry(family_id)
-            .or_insert_with(|| Box::new(TrieNode::new()));
+        Self::ensure_capacity(&mut roots, family_id);
+
+        let root = roots[family_id.id() as usize].get_or_insert_with(|| Box::new(TrieNode::new()));
 
         for (pattern, subscription_id) in items {
-            let segments = parse_pattern_segments(pattern.as_str());
+            let segments = self.segments_cache.get_or_parse(pattern.as_str());
             insert_into_trie(root, &segments, 0, *subscription_id);
         }
     }
@@ -125,11 +197,19 @@ impl SubscriptionIndex {
     /// - `family_id`: RouteFamily
     /// - `pattern`: The original route pattern
     /// - `subscription_id`: Subscription to remove
-    pub fn remove(&self, family_id: RouteFamily, pattern: &Route, subscription_id: SubscriptionId) {
-        let segments = parse_pattern_segments(pattern.as_str());
+    pub fn remove(
+        &mut self,
+        family_id: RouteFamily,
+        pattern: &Route,
+        subscription_id: SubscriptionId,
+    ) {
+        let segments = self.segments_cache.get_or_parse(pattern.as_str());
         let mut roots = self.roots.write();
-        if let Some(root) = roots.get_mut(&family_id) {
-            remove_from_trie(root, &segments, 0, subscription_id);
+        let idx = family_id.id() as usize;
+        if idx < roots.len() {
+            if let Some(ref mut root) = roots[idx] {
+                remove_from_trie(root, &segments, 0, subscription_id);
+            }
         }
     }
 
@@ -144,14 +224,22 @@ impl SubscriptionIndex {
     pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> SubscriptionMatches {
         let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
-        let root = match roots.get(&family_id) {
-            Some(r) => r,
-            None => return SubscriptionMatches::new(),
+        let idx = family_id.id() as usize;
+
+        let root = if idx < roots.len() {
+            roots[idx].as_ref()
+        } else {
+            return SubscriptionMatches::new();
         };
 
-        let mut results = SubscriptionMatches::new();
-        collect_matches_borrowed(root, &route_segments, 0, &mut results);
-        results
+        match root {
+            Some(r) => {
+                let mut results = SubscriptionMatches::new();
+                collect_matches_borrowed(r, &route_segments, 0, &mut results);
+                results
+            }
+            None => SubscriptionMatches::new(),
+        }
     }
 
     /// Find all subscriptions matching a route with pre-allocated capacity
@@ -165,23 +253,33 @@ impl SubscriptionIndex {
     ) -> SubscriptionMatches {
         let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
-        let root = match roots.get(&family_id) {
-            Some(r) => r,
-            None => return SubscriptionMatches::new(),
+        let idx = family_id.id() as usize;
+
+        let root = if idx < roots.len() {
+            roots[idx].as_ref()
+        } else {
+            return SubscriptionMatches::new();
         };
 
-        let mut results = SubscriptionMatches::with_capacity(capacity);
-        collect_matches_borrowed(root, &route_segments, 0, &mut results);
-        results
+        match root {
+            Some(r) => {
+                let mut results = SubscriptionMatches::with_capacity(capacity);
+                collect_matches_borrowed(r, &route_segments, 0, &mut results);
+                results
+            }
+            None => SubscriptionMatches::new(),
+        }
     }
 
     /// Count subscriptions in a specific RouteFamily (for diagnostics/metrics)
     pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
         let roots = self.roots.read();
-        roots
-            .get(&family_id)
-            .map(|root| count_node(root))
-            .unwrap_or(0)
+        let idx = family_id.id() as usize;
+        if idx < roots.len() {
+            roots[idx].as_ref().map(|r| count_node(r)).unwrap_or(0)
+        } else {
+            0
+        }
     }
 
     /// Get approximate memory usage of a specific RouteFamily index
@@ -189,10 +287,15 @@ impl SubscriptionIndex {
     /// Includes trie nodes, but not String allocations or Arc payloads.
     pub fn approx_memory_usage(&self, family_id: RouteFamily) -> usize {
         let roots = self.roots.read();
-        roots
-            .get(&family_id)
-            .map(|root| approx_node_memory(root))
-            .unwrap_or(0)
+        let idx = family_id.id() as usize;
+        if idx < roots.len() {
+            roots[idx]
+                .as_ref()
+                .map(|r| approx_node_memory(r))
+                .unwrap_or(0)
+        } else {
+            0
+        }
     }
 
     /// Extract realm from a route string (first segment after scheme://)
@@ -467,7 +570,7 @@ mod tests {
     #[test]
     fn should_match_exact_pattern() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         let pattern = route("notify://realm/orders/create");
 
@@ -482,7 +585,7 @@ mod tests {
     #[test]
     fn should_not_match_different_route() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/create"), sub_id(1));
 
@@ -496,7 +599,7 @@ mod tests {
     #[test]
     fn should_match_single_star_wildcard() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/*"), sub_id(1));
 
@@ -510,7 +613,7 @@ mod tests {
     #[test]
     fn should_not_cross_star_boundary() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/*"), sub_id(1));
 
@@ -524,7 +627,7 @@ mod tests {
     #[test]
     fn should_match_double_star_zero_segments() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/**"), sub_id(1));
 
@@ -538,7 +641,7 @@ mod tests {
     #[test]
     fn should_match_double_star_multiple_segments() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/**"), sub_id(1));
 
@@ -552,7 +655,7 @@ mod tests {
     #[test]
     fn should_match_double_star_with_suffix() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/**/created"), sub_id(1));
 
@@ -566,7 +669,7 @@ mod tests {
     #[test]
     fn should_not_cross_realm_with_double_star() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://acme/**"), sub_id(1));
 
@@ -580,7 +683,7 @@ mod tests {
     #[test]
     fn should_isolate_by_route_family() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f1 = family(1);
         let f2 = family(2);
         index.insert(f1, &route("notify://realm/orders/*"), sub_id(1));
@@ -596,7 +699,7 @@ mod tests {
     #[test]
     fn should_isolate_families_independently() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f1 = family(1);
         let f2 = family(2);
         index.insert(f1, &route("notify://realm/orders/*"), sub_id(1));
@@ -612,7 +715,7 @@ mod tests {
     #[test]
     fn should_handle_multiple_subscribers_to_same_pattern() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         let pattern = route("notify://realm/orders/*");
         index.insert(f, &pattern, sub_id(1));
@@ -629,7 +732,7 @@ mod tests {
     #[test]
     fn should_remove_subscription() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         let pattern = route("notify://realm/orders/*");
         index.insert(f, &pattern, sub_id(1));
@@ -645,7 +748,7 @@ mod tests {
     #[test]
     fn should_handle_mixed_patterns() {
         // Arrange
-        let index = SubscriptionIndex::new();
+        let mut index = SubscriptionIndex::new();
         let f = family(1);
         index.insert(f, &route("notify://realm/orders/create"), sub_id(1));
         index.insert(f, &route("notify://realm/orders/*"), sub_id(2));
