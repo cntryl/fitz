@@ -41,39 +41,42 @@ mod segments_cache {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    const CACHE_MAX_ENTRIES: usize = 4096;
+
     pub struct SegmentsCache {
-        cache: HashMap<Arc<str>, Arc<Vec<PatternSegment>>>,
+        cache: HashMap<String, Arc<Vec<PatternSegment>>>,
     }
 
     impl SegmentsCache {
         pub fn new() -> Self {
             Self {
-                cache: HashMap::with_capacity_and_hasher(256, Default::default()),
+                cache: HashMap::with_capacity(256),
             }
         }
 
         pub fn get_or_parse(&mut self, route: &str) -> Arc<Vec<PatternSegment>> {
-            let route_str: Arc<str> = Arc::from(route);
-            if let Some(cached) = self.cache.get(&route_str) {
+            if let Some(cached) = self.cache.get(route) {
                 return Arc::clone(cached);
             }
 
-            // Hard cap prevents unbounded growth; when hit, clear and restart
-            // This is acceptable because cache hits are the common case
-            const CACHE_MAX_ENTRIES: usize = 4096;
-            if self.cache.len() >= CACHE_MAX_ENTRIES {
-                self.cache.clear();
+            let segments = Arc::new(parse_pattern_segments(route));
+
+            // Keep existing hot entries instead of flushing the whole cache.
+            if self.cache.len() < CACHE_MAX_ENTRIES {
+                self.cache.insert(route.to_string(), Arc::clone(&segments));
             }
 
-            let segments = Arc::new(parse_pattern_segments(route));
-            self.cache
-                .insert(Arc::clone(&route_str), Arc::clone(&segments));
             segments
         }
 
         #[allow(dead_code)]
         pub fn clear(&mut self) {
             self.cache.clear();
+        }
+
+        #[cfg(test)]
+        pub fn len(&self) -> usize {
+            self.cache.len()
         }
     }
 
@@ -125,10 +128,11 @@ impl TrieNode {
 /// Uses RwLock for high read concurrency - matching takes read lock,
 /// insert/remove take write lock.
 pub struct SubscriptionIndex {
-    /// Trie root per RouteFamily using direct indexing by family ID
-    /// This provides O(1) access without hash computation for common family IDs
-    roots: RwLock<Vec<Option<Box<TrieNode>>>>,
-    /// Cache for parsed pattern segments to avoid re-parsing same routes
+    /// Trie root per RouteFamily.
+    /// A sparse map avoids pathological allocation when families are large or externally assigned.
+    roots: RwLock<HashMap<RouteFamily, Box<TrieNode>>>,
+    /// Cache for parsed pattern segments to avoid re-parsing same routes.
+    /// This cache is intentionally local and bounded; it never evicts by flushing all entries.
     segments_cache: SegmentsCache,
 }
 
@@ -136,21 +140,8 @@ impl SubscriptionIndex {
     /// Create a new empty subscription index
     pub fn new() -> Self {
         Self {
-            roots: RwLock::new(Vec::new()),
+            roots: RwLock::new(HashMap::new()),
             segments_cache: SegmentsCache::new(),
-        }
-    }
-
-    /// Ensure the roots vector can index the given family ID
-    ///
-    /// Uses a vector indexed by family ID for O(1) access without hashing.
-    /// Grows as needed - memory usage is proportional to max family ID used,
-    /// which is bounded by the tenant allocator's u32 counter.
-    #[inline]
-    fn ensure_capacity(roots: &mut Vec<Option<Box<TrieNode>>>, family_id: RouteFamily) {
-        let idx = family_id.id() as usize;
-        if idx >= roots.len() {
-            roots.resize_with(idx + 1, || None);
         }
     }
 
@@ -168,9 +159,9 @@ impl SubscriptionIndex {
     ) {
         let segments = self.segments_cache.get_or_parse(pattern.as_str());
         let mut roots = self.roots.write();
-        Self::ensure_capacity(&mut roots, family_id);
-
-        let root = roots[family_id.id() as usize].get_or_insert_with(|| Box::new(TrieNode::new()));
+        let root = roots
+            .entry(family_id)
+            .or_insert_with(|| Box::new(TrieNode::new()));
 
         insert_into_trie(root, &segments, 0, subscription_id);
     }
@@ -181,9 +172,9 @@ impl SubscriptionIndex {
             return;
         }
         let mut roots = self.roots.write();
-        Self::ensure_capacity(&mut roots, family_id);
-
-        let root = roots[family_id.id() as usize].get_or_insert_with(|| Box::new(TrieNode::new()));
+        let root = roots
+            .entry(family_id)
+            .or_insert_with(|| Box::new(TrieNode::new()));
 
         for (pattern, subscription_id) in items {
             let segments = self.segments_cache.get_or_parse(pattern.as_str());
@@ -205,11 +196,8 @@ impl SubscriptionIndex {
     ) {
         let segments = self.segments_cache.get_or_parse(pattern.as_str());
         let mut roots = self.roots.write();
-        let idx = family_id.id() as usize;
-        if idx < roots.len() {
-            if let Some(ref mut root) = roots[idx] {
-                remove_from_trie(root, &segments, 0, subscription_id);
-            }
+        if let Some(root) = roots.get_mut(&family_id) {
+            remove_from_trie(root, &segments, 0, subscription_id);
         }
     }
 
@@ -224,18 +212,10 @@ impl SubscriptionIndex {
     pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> SubscriptionMatches {
         let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
-        let idx = family_id.id() as usize;
-
-        let root = if idx < roots.len() {
-            roots[idx].as_ref()
-        } else {
-            return SubscriptionMatches::new();
-        };
-
-        match root {
-            Some(r) => {
+        match roots.get(&family_id) {
+            Some(root) => {
                 let mut results = SubscriptionMatches::new();
-                collect_matches_borrowed(r, &route_segments, 0, &mut results);
+                collect_matches_borrowed(root, &route_segments, 0, &mut results);
                 results
             }
             None => SubscriptionMatches::new(),
@@ -253,18 +233,10 @@ impl SubscriptionIndex {
     ) -> SubscriptionMatches {
         let route_segments = extract_route_segments_borrowed(route.as_str());
         let roots = self.roots.read();
-        let idx = family_id.id() as usize;
-
-        let root = if idx < roots.len() {
-            roots[idx].as_ref()
-        } else {
-            return SubscriptionMatches::new();
-        };
-
-        match root {
-            Some(r) => {
+        match roots.get(&family_id) {
+            Some(root) => {
                 let mut results = SubscriptionMatches::with_capacity(capacity);
-                collect_matches_borrowed(r, &route_segments, 0, &mut results);
+                collect_matches_borrowed(root, &route_segments, 0, &mut results);
                 results
             }
             None => SubscriptionMatches::new(),
@@ -274,12 +246,7 @@ impl SubscriptionIndex {
     /// Count subscriptions in a specific RouteFamily (for diagnostics/metrics)
     pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
         let roots = self.roots.read();
-        let idx = family_id.id() as usize;
-        if idx < roots.len() {
-            roots[idx].as_ref().map(|r| count_node(r)).unwrap_or(0)
-        } else {
-            0
-        }
+        roots.get(&family_id).map(|root| count_node(root)).unwrap_or(0)
     }
 
     /// Get approximate memory usage of a specific RouteFamily index
@@ -287,15 +254,10 @@ impl SubscriptionIndex {
     /// Includes trie nodes, but not String allocations or Arc payloads.
     pub fn approx_memory_usage(&self, family_id: RouteFamily) -> usize {
         let roots = self.roots.read();
-        let idx = family_id.id() as usize;
-        if idx < roots.len() {
-            roots[idx]
-                .as_ref()
-                .map(|r| approx_node_memory(r))
-                .unwrap_or(0)
-        } else {
-            0
-        }
+        roots
+            .get(&family_id)
+            .map(|root| approx_node_memory(root))
+            .unwrap_or(0)
     }
 
     /// Extract realm from a route string (first segment after scheme://)
@@ -554,6 +516,7 @@ fn approx_node_memory(node: &TrieNode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::segments_cache::SegmentsCache;
 
     fn route(s: &str) -> Route {
         Route::new(s)
@@ -760,5 +723,39 @@ mod tests {
 
         // Assert
         assert_eq!(matches.as_slice(), &[sub_id(1), sub_id(2), sub_id(3)]);
+    }
+
+    #[test]
+    fn should_match_sparse_route_family_without_preallocating_gaps() {
+        // Arrange
+        let mut index = SubscriptionIndex::new();
+        let sparse_family = family(1_000_000);
+        let pattern = route("notify://realm/orders/*");
+
+        // Act
+        index.insert(sparse_family, &pattern, sub_id(7));
+        let matches = index.match_all(sparse_family, &route("notify://realm/orders/create"));
+
+        // Assert
+        assert_eq!(matches.as_slice(), &[sub_id(7)]);
+    }
+
+    #[test]
+    fn should_bound_segments_cache_without_flushing_existing_entries() {
+        // Arrange
+        let mut cache = SegmentsCache::new();
+        let pinned_route = "notify://realm/orders/pinned";
+
+        // Act
+        let original = cache.get_or_parse(pinned_route);
+        for index in 0..4096 {
+            let route = format!("notify://realm/orders/{index}");
+            let _ = cache.get_or_parse(&route);
+        }
+        let reloaded = cache.get_or_parse(pinned_route);
+
+        // Assert
+        assert!(Arc::ptr_eq(&original, &reloaded));
+        assert_eq!(cache.len(), 4096);
     }
 }

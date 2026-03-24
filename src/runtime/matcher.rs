@@ -247,8 +247,8 @@ pub fn match_pattern_segments_borrowed(
     // Route exhausted but pattern remains: only ** can match empty
     if route_idx >= route.len() {
         // Fast path: check remaining patterns are all DoubleStar
-        for i in pat_idx..patterns.len() {
-            if !matches!(patterns[i], PatternSegment::DoubleStar) {
+        for pattern in patterns.iter().skip(pat_idx) {
+            if !matches!(pattern, PatternSegment::DoubleStar) {
                 return false;
             }
         }
@@ -307,8 +307,8 @@ fn match_segments_indexed(
     // Route exhausted but pattern remains: only ** can match empty
     if route_idx >= route.len() {
         // Fast path: check remaining patterns are all DoubleStar
-        for i in pat_idx..patterns.len() {
-            if !matches!(patterns[i], PatternSegment::DoubleStar) {
+        for pattern in patterns.iter().skip(pat_idx) {
+            if !matches!(pattern, PatternSegment::DoubleStar) {
                 return false;
             }
         }

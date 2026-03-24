@@ -177,8 +177,8 @@ impl TlvDecoder {
         &self,
         input: &'a [u8],
     ) -> Result<(MessageType, &'a [u8], usize), TlvError> {
-        let len = input.len();
-        if len == 0 {
+        let input_len = input.len();
+        if input_len == 0 {
             return Err(TlvError::EmptyFrame);
         }
 
@@ -187,17 +187,17 @@ impl TlvDecoder {
         // Parse type (single-byte or escape + two-byte BE u16)
         let msg_type = if input[offset] == MessageType::ESCAPE_MARKER {
             // need marker + 2 bytes = 3 total for type
-            if len < 3 {
+            if input_len < 3 {
                 return Err(TlvError::IncompleteType);
             }
             let hi = input[offset + 1];
             let lo = input[offset + 2];
             let value = u16::from_be_bytes([hi, lo]);
-            // Validate escape encoding: escaped value must be > MAX_SINGLE_BYTE
+            // Escaped values must be outside the single-byte range.
             if value <= MessageType::MAX_SINGLE_BYTE {
                 return Err(TlvError::InvalidTypeEncoding);
             }
-            offset += 3; // marker + 2 bytes
+            offset += 3;
             MessageType(value)
         } else {
             let value = input[offset] as u16;
@@ -205,24 +205,23 @@ impl TlvDecoder {
             MessageType(value)
         };
 
-        // Read length (2 bytes BE) - need at least offset + 2 bytes
-        let min_len = offset + 2;
-        if len < min_len {
+        // Read length (2 bytes BE) - need at least offset + 2 bytes.
+        if input_len < offset + 2 {
             return Err(TlvError::IncompleteLength);
         }
         let value_len = u16::from_be_bytes([input[offset], input[offset + 1]]) as usize;
-        offset += 2;
 
         if (value_len as u32) > self.max_value_len {
             return Err(TlvError::LengthTooLarge(value_len as u32));
         }
 
-        // Check we have enough bytes for the value
+        offset += 2;
         let end_offset = offset + value_len;
-        if len < end_offset {
+        // Preserve the public contract: report absolute bytes needed/available.
+        if input_len < end_offset {
             return Err(TlvError::IncompleteValue {
                 needed: end_offset,
-                available: len,
+                available: input_len,
             });
         }
 
@@ -582,5 +581,63 @@ mod tests {
         // Assert
         assert!(matches!(res_ref, Err(TlvError::InvalidTypeEncoding)));
         assert!(matches!(res, Err(TlvError::InvalidTypeEncoding)));
+    }
+
+    #[test]
+    fn should_decode_zero_length_value() {
+        // Arrange: type=1, length=0, no value bytes
+        let data = vec![0x01, 0x00, 0x00];
+
+        // Act
+        let decoder = TlvDecoder::new();
+        let res = decoder.decode_one_ref(&data);
+
+        // Assert
+        let (msg_type, value, consumed) = res.expect("should decode zero-length value");
+        assert_eq!(msg_type.as_u16(), 1);
+        assert!(value.is_empty());
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn should_decode_zero_length_at_end_of_input() {
+        // Arrange: multiple records, last one has zero length
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(1), b"hello");
+        encoder.encode(MessageType::new(2), b"");
+        let data = encoder.finish().to_vec();
+
+        // Act
+        let decoder = TlvDecoder::new();
+        let (msg_type1, val1, consumed1) = decoder.decode_one_ref(&data).expect("first record");
+        let remainder = &data[consumed1..];
+        let (msg_type2, val2, consumed2) =
+            decoder.decode_one_ref(remainder).expect("second record");
+
+        // Assert
+        assert_eq!(msg_type1.as_u16(), 1);
+        assert_eq!(val1, b"hello");
+        assert_eq!(msg_type2.as_u16(), 2);
+        assert!(val2.is_empty());
+        assert_eq!(consumed2, 3); // type(1) + len(2) + zero value(0)
+    }
+
+    #[test]
+    fn should_report_correct_bytes_needed_on_truncated_value() {
+        // Arrange: type=1, length=5, but only 3 bytes provided
+        let data = vec![0x01, 0x00, 0x05, 0xAA, 0xBB, 0xCC]; // only 3 of 5 value bytes
+
+        // Act
+        let decoder = TlvDecoder::new();
+        let res = decoder.decode_one_ref(&data);
+
+        // Assert
+        assert!(matches!(
+            res,
+            Err(TlvError::IncompleteValue {
+                needed: 8,
+                available: 6
+            })
+        ));
     }
 }
