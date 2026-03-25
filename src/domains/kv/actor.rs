@@ -200,7 +200,7 @@ impl KvActor {
             },
             Some(active) => {
                 // Use write options provided by user at transaction begin
-                match self.store.commit(active.tx, active.write_options) {
+                match active.tx.commit(active.write_options) {
                     Ok(()) => KvResponse::CommitOk,
                     Err(e) => KvResponse::Error {
                         error: Self::map_midge_error(e),

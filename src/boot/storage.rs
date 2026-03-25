@@ -176,9 +176,7 @@ mod tests {
             .expect("begin write tx");
         tx.put(key.to_vec(), value.to_vec(), None)
             .expect("write marker");
-        engine
-            .commit(tx, WriteOptions::buffered())
-            .expect("commit marker");
+        tx.commit(WriteOptions::buffered()).expect("commit marker");
     }
 
     fn read_marker(engine: &cntryl_midge::Engine, cf_id: u32, key: &[u8]) -> Option<Vec<u8>> {

@@ -105,7 +105,6 @@ fn subscribe_stream(context: &StreamBenchContext, route: &str, session_id: u64, 
 
 #[stress_test]
 fn should_complete_append_sustained_load(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("scenario", "sustained_append");
 
     let context = setup_stream_sink();
@@ -114,14 +113,14 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, b"sustained append event");
     let (msg_type, payload) = extract_single_tlv_field(&append_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = request(&context, route, msg_type, payload.clone());
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
-    ctx.set_elements(100);
     ctx.tag("scenario", "read_scan");
 
     let context = setup_stream_sink();
@@ -139,14 +138,14 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     let read_frame = build_stream_read(route, 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = request(&context, route, read_msg_type, read_payload.clone());
     });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_batch_write_operations(ctx: &mut StressContext) {
-    ctx.set_elements(100);
     ctx.tag("scenario", "batch_write");
 
     let context = setup_stream_sink();
@@ -155,16 +154,16 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, b"batch event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..100 {
             let _ = request(&context, route, append_msg_type, append_payload.clone());
         }
     });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("scenario", "multiarea_writes");
 
     let context = setup_stream_sink();
@@ -181,16 +180,16 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
         })
         .collect();
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for (route, msg_type, payload) in &append_requests {
             let _ = request(&context, route, *msg_type, payload.clone());
         }
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("scenario", "publish_fanout");
 
     let context = setup_stream_sink();
@@ -211,16 +210,16 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         commits.push((stream_session, commit_msg_type, commit_payload));
     }
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for (session_id, msg_type, payload) in &commits {
             let _ = request_with_session(&context, route, *session_id, *msg_type, payload.clone());
         }
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("scenario", "offset_tracking");
 
     let context = setup_stream_sink();
@@ -236,9 +235,10 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     let last_frame = build_stream_last(route);
     let (last_msg_type, last_payload) = extract_single_tlv_field(&last_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = request(&context, route, last_msg_type, last_payload.clone());
     });
+    ctx.set_elements(iterations as u64);
 }
 
 stress_main!();

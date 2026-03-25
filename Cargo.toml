@@ -79,7 +79,7 @@ futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 criterion = { version = "0.4", features = ["async_futures"] }
-cntryl-stress = "0.2"
+cntryl-stress = { git = "https://github.com/cntryl/stress", branch = "main" }
 serial_test = "0.5"
 tempfile = "3"
 rand = "0.8"

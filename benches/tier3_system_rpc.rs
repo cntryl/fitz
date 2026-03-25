@@ -157,7 +157,6 @@ fn service_workers(router: &Arc<Router>, family: RouteFamily, workers: &[WorkerH
 #[stress_test]
 fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
-    ctx.set_elements(ITERS);
     ctx.tag("scenario", "sustained_dispatch");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
@@ -165,7 +164,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"rpc request payload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -179,12 +178,12 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
         }
         black_box(&workers);
     });
+    ctx.set_elements(ITERS * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
-    ctx.set_elements(ITERS);
     ctx.tag("scenario", "response_streaming");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
@@ -192,7 +191,7 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"streaming request");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -206,12 +205,12 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
         }
         black_box(&workers);
     });
+    ctx.set_elements(ITERS * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
     const ITERS: u64 = 500;
-    ctx.set_elements(ITERS);
     ctx.tag("scenario", "scaling_64");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
@@ -221,7 +220,7 @@ fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"scaling payload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -235,12 +234,12 @@ fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
         }
         black_box(&workers);
     });
+    ctx.set_elements(ITERS * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
     const ITERS: u64 = 200;
-    ctx.set_elements(ITERS);
     ctx.tag("scenario", "scaling_256");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
@@ -250,7 +249,7 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"scaling payload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -264,12 +263,12 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
         }
         black_box(&workers);
     });
+    ctx.set_elements(ITERS * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
-    ctx.set_elements(ITERS);
     ctx.tag("scenario", "concurrent_tracking");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
@@ -277,7 +276,7 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"concurrent request");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -291,11 +290,11 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
         }
         black_box(&workers);
     });
+    ctx.set_elements(ITERS * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("scenario", "mixed_workload");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
@@ -303,7 +302,7 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"mixed workload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         for _ in 0..10 {
             dispatch_request(
                 &router,
@@ -317,6 +316,7 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
         }
         black_box(&workers);
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 stress_main!();

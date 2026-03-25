@@ -118,7 +118,6 @@ fn service_worker(
 
 #[stress_test]
 fn should_complete_direct_request(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "request");
 
@@ -127,7 +126,7 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(SERVICE_ROUTE, b"ping");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         route_frame(
             router.as_ref(),
             &requester_source,
@@ -142,11 +141,11 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
         service_worker(&router, family, &worker_source, &worker_inbox);
         let _ = requester_inbox.drain();
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_encoded_request(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "encoded");
     ctx.tag("scenario", "request");
 
@@ -154,7 +153,7 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let request_frame = build_rpc_request(SERVICE_ROUTE, b"ping");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let request_frame = request_frame.clone();
         let mut parser = TlvFrameParser::new(&request_frame);
         let (msg_type, payload) = parser.next_field().expect("one field");
@@ -172,11 +171,11 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
         service_worker(&router, family, &worker_source, &worker_inbox);
         let _ = requester_inbox.drain();
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_tcp_request_response(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "tcp");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -231,19 +230,19 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         })
     };
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(requester_client.request(&request_frame, 2000))
             .expect("request response");
         let (_msg_type, _status, _data) = parse_rpc_response(&response);
     });
+    ctx.set_elements(iterations as u64);
 
     worker_handle.abort();
 }
 
 #[stress_test]
 fn should_complete_ws_request_response(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "websocket");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -304,19 +303,19 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         })
     };
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(requester_client.request(&request_frame, 2000))
             .expect("request response");
         let (_msg_type, _status, _data) = parse_rpc_response(&response);
     });
+    ctx.set_elements(iterations as u64);
 
     worker_handle.abort();
 }
 
 #[stress_test]
 fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_subscribe");
 
@@ -337,7 +336,7 @@ fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
         })
         .collect();
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let frame = subscribe_frame.clone();
         let results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
@@ -353,6 +352,7 @@ fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
             let _ = r.expect("request");
         }
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 stress_main!();

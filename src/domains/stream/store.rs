@@ -283,8 +283,7 @@ impl StreamStore {
             StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
             StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
         };
-        self.db
-            .commit(txn, opts)
+        txn.commit(opts)
             .map_err(|e| format!("midge commit error: {:?}", e))?;
 
         Ok(CommitResponse {
@@ -789,8 +788,7 @@ impl StreamStore {
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
         let opts = cntryl_midge::WriteOptions::sync();
-        self.db
-            .commit(txn, opts)
+        txn.commit(opts)
             .map_err(|e| format!("midge commit error: {:?}", e))
     }
 
@@ -829,8 +827,7 @@ impl StreamStore {
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
         let opts = cntryl_midge::WriteOptions::sync();
-        self.db
-            .commit(txn, opts)
+        txn.commit(opts)
             .map_err(|e| format!("midge commit error: {:?}", e))
     }
 

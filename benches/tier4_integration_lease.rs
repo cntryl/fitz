@@ -23,7 +23,6 @@ use tokio::sync::Mutex;
 
 #[stress_test]
 fn should_complete_direct_acquire(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "acquire");
 
@@ -35,7 +34,7 @@ fn should_complete_direct_acquire(ctx: &mut StressContext) {
     let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
     let (msg_type, payload) = extract_single_tlv_field(&acquire_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         route_frame(
             router.as_ref(),
             &source,
@@ -49,11 +48,11 @@ fn should_complete_direct_acquire(ctx: &mut StressContext) {
         .expect("lease acquire");
         let _ = inbox.drain();
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
-    ctx.set_elements(2);
     ctx.tag("layer", "tcp");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -65,7 +64,7 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&acquire_frame, 2000))
             .expect("acquire response");
@@ -77,11 +76,11 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
             .block_on(client.request(&release_frame, 2000))
             .expect("release response");
     });
+    ctx.set_elements(2 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
-    ctx.set_elements(2);
     ctx.tag("layer", "websocket");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -96,7 +95,7 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&acquire_frame, 2000))
             .expect("acquire response");
@@ -108,11 +107,11 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
             .block_on(client.request(&release_frame, 2000))
             .expect("release response");
     });
+    ctx.set_elements(2 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_clients");
 
@@ -130,7 +129,7 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
         })
         .collect();
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _results: Vec<_> = runtime.block_on(futures::future::join_all(
             clients.iter().enumerate().map(|(idx, arc)| {
                 let arc = arc.clone();
@@ -149,6 +148,7 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
             }),
         ));
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 stress_main!();

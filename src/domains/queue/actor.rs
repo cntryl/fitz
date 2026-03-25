@@ -1572,10 +1572,7 @@ impl QueueActor {
         // Commit with buffered mode for high throughput
         // The store will sync periodically, maintaining durability without per-operation cost
         let commit_start = Instant::now();
-        if let Err(e) = self
-            .store
-            .commit(txn, cntryl_midge::WriteOptions::buffered())
-        {
+        if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
@@ -1737,10 +1734,7 @@ impl QueueActor {
         }
 
         let commit_start = Instant::now();
-        if let Err(e) = self
-            .store
-            .commit(txn, cntryl_midge::WriteOptions::buffered())
-        {
+        if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
@@ -2119,10 +2113,7 @@ impl QueueActor {
                     }
 
                     // Use buffered writes for throughput (queues represent intent, not events of record)
-                    if let Err(e) = self
-                        .store
-                        .commit(txn, cntryl_midge::WriteOptions::buffered())
-                    {
+                    if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
                         eprintln!(
                             "WARN: Failed to commit delete txn for message {}: {:?}",
                             id, e
@@ -2341,10 +2332,7 @@ impl QueueActor {
                         }
 
                         let update_start = Instant::now();
-                        if let Err(e) = self
-                            .store
-                            .commit(txn, cntryl_midge::WriteOptions::buffered())
-                        {
+                        if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
                             eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
                         } else {
                             Self::observe_elapsed_us(
@@ -2442,10 +2430,7 @@ impl QueueActor {
                     );
                 } else {
                     let update_start = Instant::now();
-                    if let Err(e) = self
-                        .store
-                        .commit(txn, cntryl_midge::WriteOptions::buffered())
-                    {
+                    if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
                         eprintln!(
                             "WARN: Failed to commit retry txn for message {}: {:?}",
                             id, e
@@ -2917,8 +2902,7 @@ impl QueueActor {
         )
         .map_err(|e| format!("Failed to write queue index meta: {:?}", e))?;
 
-        self.store
-            .commit(txn, cntryl_midge::WriteOptions::buffered())
+        txn.commit(cntryl_midge::WriteOptions::buffered())
             .map_err(|e| format!("Failed to commit queue index rebuild: {:?}", e))?;
         self.index_meta_written = true;
         Ok(())
@@ -3323,8 +3307,7 @@ pub mod tests {
                 .expect("override index meta");
         }
 
-        store
-            .commit(txn, cntryl_midge::WriteOptions::buffered())
+        txn.commit(cntryl_midge::WriteOptions::buffered())
             .expect("commit index mutation");
     }
 
@@ -3708,8 +3691,7 @@ pub mod tests {
             None,
         )
         .expect("write legacy queue record");
-        store
-            .commit(txn, cntryl_midge::WriteOptions::buffered())
+        txn.commit(cntryl_midge::WriteOptions::buffered())
             .expect("commit legacy queue record");
 
         let mut actor = QueueActor::new(

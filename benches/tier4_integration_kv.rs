@@ -28,14 +28,13 @@ use tokio::sync::Mutex;
 
 #[stress_test]
 fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
-    ctx.set_elements(3); // begin + put + rollback
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "transaction_sequence");
 
     let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "tier4".to_string(),
@@ -59,11 +58,11 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
 
         actor.handle(KvMessage::Rollback { tx_id });
     });
+    ctx.set_elements(3 * iterations as u64); // begin + put + rollback
 }
 
 #[stress_test]
 fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
-    ctx.set_elements(3);
     ctx.tag("layer", "encoded");
     ctx.tag("scenario", "transaction_sequence");
 
@@ -76,7 +75,7 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let begin_frame = begin_frame.clone();
         let mut parser = TlvFrameParser::new(&begin_frame);
         let (msg_type, payload) = parser.next_field().expect("begin field");
@@ -98,11 +97,11 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
         let msg = kv_parse_request(msg_type, family, &payload).expect("parse rollback");
         actor.handle(msg);
     });
+    ctx.set_elements(3 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
-    ctx.set_elements(3);
     ctx.tag("layer", "tcp");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -117,7 +116,7 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&begin_frame, 2000))
             .expect("begin response");
@@ -134,11 +133,11 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
             .block_on(client.request(&rollback_frame, 2000))
             .expect("rollback response");
     });
+    ctx.set_elements(3 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
-    ctx.set_elements(3);
     ctx.tag("layer", "websocket");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -156,7 +155,7 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&begin_frame, 2000))
             .expect("begin response");
@@ -173,11 +172,11 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
             .block_on(client.request(&rollback_frame, 2000))
             .expect("rollback response");
     });
+    ctx.set_elements(3 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) {
-    ctx.set_elements(50);
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_transactions");
 
@@ -201,7 +200,7 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
         })
         .collect();
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -221,6 +220,7 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
                 }
             })));
     });
+    ctx.set_elements(50 * iterations as u64);
 }
 
 stress_main!();

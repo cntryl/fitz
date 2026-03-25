@@ -57,7 +57,6 @@ fn subscribe_queue(
 
 #[stress_test]
 fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
-    ctx.set_elements(100); // 50 enqueue + 50 reserve
     ctx.tag("scenario", "sustained_load");
 
     // Setup: Create actor and precompute payloads outside measurement
@@ -72,17 +71,17 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         .take(50)
         .map(|p| (p.clone(), None))
         .collect();
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
         }
     });
+    ctx.set_elements(100 * iterations as u64); // 50 enqueue + 50 reserve
 }
 
 #[stress_test]
 fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
-    ctx.set_elements(100); // 70 + 20 + 10 enqueues
     ctx.tag("scenario", "mixed_workload");
 
     // Setup: Create actor and precompute payloads outside measurement
@@ -105,15 +104,15 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         )
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = actor.handle_send_batch(&batch_mixed);
         let _ = actor.handle_receive(1, Some(10));
     });
+    ctx.set_elements(100 * iterations as u64); // 70 + 20 + 10 enqueues
 }
 
 #[stress_test]
 fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
-    ctx.set_elements(100); // 100 messages recovered
     ctx.tag("scenario", "cold_start_recovery");
 
     // Setup: Create store and pre-populate with messages
@@ -142,7 +141,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     drop(pre_actor);
 
     // Measure: Recover actor from populated store
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _actor = QueueActor::new(
             RouteFamily::new(1),
             queue_key.clone(),
@@ -151,11 +150,11 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
             fitz::utils::idempotency::global_dedup_store(),
         );
     });
+    ctx.set_elements(100 * iterations as u64); // 100 messages recovered
 }
 
 #[stress_test]
 fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
-    ctx.set_elements(100); // 50 enqueue + 50 reserve on one hot queue
     ctx.tag("scenario", "high_contention");
 
     // Setup: One actor (one hot queue), same batch pattern as sustained_load for comparable throughput
@@ -164,17 +163,17 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
         }
     });
+    ctx.set_elements(100 * iterations as u64); // 50 enqueue + 50 reserve on one hot queue
 }
 
 #[stress_test]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("scenario", "publish_fanout");
 
     let (router, family, source, _inbox) = setup_queue_sink();
@@ -191,12 +190,13 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         Bytes::from_static(b"queue fanout payload"),
     );
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _ = router.route(Envelope::new(
             RouteAddress::new(family, publish_route.clone()),
             publish_event.clone(),
         ));
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 stress_main!();

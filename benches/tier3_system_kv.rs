@@ -15,14 +15,13 @@ use fitz::testkit::create_test_engine_with_cfs;
 
 #[stress_test]
 fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("scenario", "single_family_intensive");
 
     // Setup: Actor + store outside measurement
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         // Begin transaction
         let response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -51,18 +50,18 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
         // Rollback
         actor.handle(KvMessage::Rollback { tx_id });
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
-    ctx.set_elements(20); // 10 per family
     ctx.tag("scenario", "dual_family_concurrent");
 
     // Setup: Actor + two column families
     let store = create_test_engine_with_cfs(vec![1, 2]);
     let mut actor = KvActor::new(store);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         // Begin on family 1
         let response1 = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -116,18 +115,18 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
         actor.handle(KvMessage::Rollback { tx_id: tx_id1 });
         actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
     });
+    ctx.set_elements(20 * iterations as u64); // 10 per family
 }
 
 #[stress_test]
 fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
-    ctx.set_elements(30); // 10 per family
     ctx.tag("scenario", "triple_family_contention");
 
     // Setup: Actor + three column families
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         // Three families accessed sequentially
         for family_id in 1..=3 {
             let response = actor.handle(KvMessage::Begin {
@@ -157,11 +156,11 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
             actor.handle(KvMessage::Rollback { tx_id });
         }
     });
+    ctx.set_elements(30 * iterations as u64); // 10 per family
 }
 
 #[stress_test]
 fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
-    ctx.set_elements(10); // 5 reads + 5 writes (no deletes in measure)
     ctx.tag("scenario", "mixed_read_write_families");
 
     // Setup: Actor + two column families with pre-populated data
@@ -195,7 +194,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
     actor.handle(KvMessage::Rollback { tx_id });
 
     // Measure: read-only on f1, write on f2
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         // Read-only transaction on family 1
         let response1 = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -249,6 +248,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
 
         actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
     });
+    ctx.set_elements(10 * iterations as u64); // 5 reads + 5 writes (no deletes in measure)
 }
 
 stress_main!();

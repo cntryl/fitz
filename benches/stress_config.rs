@@ -8,8 +8,9 @@
 /// - `BENCH_WARMUP`: Number of warmup runs before measurement (default: 1).
 ///
 /// **set_elements(N)** in each `#[stress_test]`: N must match the logical number of operations
-/// inside `ctx.measure(|| { ... })` so that throughput (elements/time) reported by
-/// `scripts/benchmark_summary.py` is meaningful and comparable across scenarios.
+/// inside `ctx.measure_for(Duration::from_secs(3), || { ... })` so that throughput
+/// (elements/time) reported by `scripts/benchmark_summary.py` is meaningful and comparable
+/// across scenarios.
 pub struct BenchConfig {
     pub runs: usize,
     pub warmup: usize,

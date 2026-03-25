@@ -41,7 +41,6 @@ fn setup_queue_actor(
 
 #[stress_test]
 fn should_complete_direct_enqueue(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "enqueue");
 
@@ -49,7 +48,7 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         actor.receive(
             QueueMessage::Send {
                 family_id: family,
@@ -60,11 +59,11 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
             &mut actor_ctx,
         );
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "encoded");
     ctx.tag("scenario", "enqueue");
 
@@ -73,17 +72,17 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let enqueue_frame = build_queue_enqueue(route, b"msg");
     let family = RouteFamily::new(1);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let mut parser = TlvFrameParser::new(&enqueue_frame);
         let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
         let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
         actor.receive(msg, &mut actor_ctx);
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "tcp");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -96,17 +95,17 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&enqueue_frame, 2000))
             .expect("enqueue response");
         let (_msg_type, _status, _data) = parse_queue_response(&response);
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_ws_enqueue(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "websocket");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -122,17 +121,17 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&enqueue_frame, 2000))
             .expect("enqueue response");
         let (_msg_type, _status, _data) = parse_queue_response(&response);
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_enqueues");
 
@@ -153,7 +152,7 @@ fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
         })
         .collect();
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -165,6 +164,7 @@ fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
                 }
             })));
     });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 stress_main!();

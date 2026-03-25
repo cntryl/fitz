@@ -56,7 +56,6 @@ fn setup_notice_sink(
 
 #[stress_test]
 fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("scenario", "sustained_fanout");
 
     let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/orders/*");
@@ -66,7 +65,7 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     );
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -79,11 +78,11 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
         )
         .expect("notice publish");
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("scenario", "pattern_matching");
 
     let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/**");
@@ -93,7 +92,7 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     );
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -106,11 +105,11 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
         )
         .expect("notice publish");
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("scenario", "high_subscriber_count");
 
     let (router, family, publisher_source) = setup_notice_sink(100, "notice://realm/area/orders/*");
@@ -120,7 +119,7 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     );
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -133,6 +132,7 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
         )
         .expect("notice publish");
     });
+    ctx.set_elements(iterations as u64);
 }
 
 stress_main!();

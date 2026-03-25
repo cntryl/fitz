@@ -188,8 +188,7 @@ impl ScheduleStore {
         txn.put(index_key, key.clone(), None)
             .map_err(|e| format!("put index failed: {:?}", e))?;
 
-        self.db
-            .commit(txn, write_options)
+        txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
 
         Ok(key)
@@ -236,8 +235,7 @@ impl ScheduleStore {
                 .map_err(|e| format!("put index failed: {:?}", e))?;
         }
 
-        self.db
-            .commit(txn, write_options)
+        txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
 
         Ok(())
@@ -281,8 +279,7 @@ impl ScheduleStore {
             }
         }
 
-        self.db
-            .commit(txn, write_options)
+        txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
 
         Ok(())
@@ -307,8 +304,7 @@ impl ScheduleStore {
         txn.delete(Self::encode_index_key(route))
             .map_err(|e| format!("delete index failed: {:?}", e))?;
 
-        self.db
-            .commit(txn, write_options)
+        txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
 
         Ok(())
@@ -340,8 +336,7 @@ impl ScheduleStore {
                 .map_err(|e| format!("delete failed: {:?}", e))?;
         }
 
-        self.db
-            .commit(txn, write_options)
+        txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
 
         Ok(())

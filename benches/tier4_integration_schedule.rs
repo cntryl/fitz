@@ -31,7 +31,6 @@ fn make_schedule_ctx() -> Context<ScheduleActor> {
 
 #[stress_test]
 fn should_complete_direct_create(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "create");
 
@@ -53,7 +52,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
         &mut actor_ctx,
     );
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         actor.receive(
             ScheduleMessage::Create {
                 route: "schedule://tier4/job1".to_string(),
@@ -63,11 +62,11 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
             &mut actor_ctx,
         );
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_tcp_create(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "tcp");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -85,17 +84,17 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
         .expect("warmup create response");
     let _ = parse_schedule_response(&warmup);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&create_frame, 2000))
             .expect("create response");
         let (_msg_type, _status, _data) = parse_schedule_response(&response);
     });
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_ws_create(ctx: &mut StressContext) {
-    ctx.set_elements(1);
     ctx.tag("layer", "websocket");
     ctx.tag("scenario", "network_roundtrip");
 
@@ -116,12 +115,13 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
         .expect("warmup create response");
     let _ = parse_schedule_response(&warmup);
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let response = runtime
             .block_on(client.request(&create_frame, 2000))
             .expect("create response");
         let (_msg_type, _status, _data) = parse_schedule_response(&response);
     });
+    ctx.set_elements(iterations as u64);
 
     runtime
         .block_on(client.close())
@@ -130,7 +130,6 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_multiclient_creates(ctx: &mut StressContext) {
-    ctx.set_elements(10);
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_creates");
 
@@ -161,7 +160,7 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
         }
     })));
 
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -173,6 +172,7 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
                 }
             })));
     });
+    ctx.set_elements(10 * iterations as u64);
 
     let _closed: Vec<_> = runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
         let arc = arc.clone();

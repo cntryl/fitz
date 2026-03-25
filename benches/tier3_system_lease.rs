@@ -110,7 +110,6 @@ fn acquire_token(
 
 #[stress_test]
 fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
-    ctx.set_elements(100);
     ctx.tag("scenario", "single_route_intensive");
 
     let (router, family, source, inbox) = setup_lease_sink();
@@ -119,7 +118,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
         .collect();
 
     let mut idx = 0usize;
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let route = &routes[idx];
         let token = acquire_token(&router, family, &source, &inbox, route, "client-1");
         let _ = request(
@@ -133,11 +132,11 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
         );
         idx = (idx + 1) % routes.len();
     });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
-    ctx.set_elements(100);
     ctx.tag("scenario", "dual_route_concurrent");
 
     let (router, family, source, inbox) = setup_lease_sink();
@@ -147,7 +146,7 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     let mut token2 = acquire_token(&router, family, &source, &inbox, route2, "client-2");
 
     let mut phase = 0usize;
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         if phase.is_multiple_of(2) {
             let response = request(
                 &router,
@@ -175,11 +174,11 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
         }
         phase += 1;
     });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
-    ctx.set_elements(100);
     ctx.tag("scenario", "triple_route_contention");
 
     let (router, family, source, inbox) = setup_lease_sink();
@@ -198,17 +197,17 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
         .map(|route| build_query_payload(route))
         .collect();
     let mut phase = 0usize;
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         let route = routes[phase % routes.len()];
         let payload = query_payloads[phase % query_payloads.len()].clone();
         let _ = request(&router, family, &source, &inbox, route, 403, payload);
         phase += 1;
     });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
-    ctx.set_elements(3);
     ctx.tag("scenario", "mixed_operations_high_load");
 
     let (router, family, source, inbox) = setup_lease_sink();
@@ -217,7 +216,7 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     let mut token = acquire_token(&router, family, &source, &inbox, route, "client-1");
 
     let mut phase = 0usize;
-    ctx.measure(|| {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
         match phase % 3 {
             0 | 2 => {
                 let _ = request(
@@ -246,6 +245,7 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
         }
         phase += 1;
     });
+    ctx.set_elements(3 * iterations as u64);
 }
 
 stress_main!();
