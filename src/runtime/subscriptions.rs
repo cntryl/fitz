@@ -13,7 +13,7 @@
 //!
 //! Nodes are stored in a flat `Vec<Node>` and referenced by `NodeId` (u32).
 //! Each node can have:
-//! - Exact children: literal segment matches (AHashMap<String, NodeId>)
+//! - Exact children: literal segment matches keyed by interned `SegmentId`
 //! - Star child: single-segment wildcard `*`
 //! - Terminals: subscriptions whose pattern ends at this node
 //! - Double-star: patterns with `**` at this position, storing suffix patterns
@@ -190,11 +190,9 @@ impl Node {
 /// - Insert: O(depth) time
 /// - Remove: O(depth) time
 /// - Match: O(depth + active_nodes * double_star_work) time
-///
-/// Uses RwLock for high read concurrency — matching takes read lock,
-/// insert/remove take write lock.
 pub struct SubscriptionIndex {
-    /// Flat node pool. Node 0 is always the root.
+    /// Flat node pool. NodeIds refer into this vector; per-family roots are
+    /// recorded in `family_roots`.
     nodes: Vec<Node>,
     /// Trie root per RouteFamily.
     family_roots: FastMap<RouteFamily, NodeId>,
@@ -208,7 +206,7 @@ impl SubscriptionIndex {
     /// Create a new empty subscription index
     pub fn new() -> Self {
         Self {
-            nodes: vec![Node::new()],
+            nodes: Vec::new(),
             family_roots: HashMap::with_capacity_and_hasher(8, FxBuildHasher::default()),
             segments_cache: SegmentsCache::new(),
             segment_interner: SegmentInterner::new(),
@@ -249,7 +247,8 @@ impl SubscriptionIndex {
         self.insert_into_trie(root, &segments, 0, subscription_id);
     }
 
-    /// Insert multiple subscriptions with a single write lock (reduces contention in batch setups).
+    /// Insert multiple subscriptions in a single batched operation (reduces
+    /// allocation overhead and improves cache locality in batch setups).
     pub fn insert_batch(&mut self, family_id: RouteFamily, items: &[(Route, SubscriptionId)]) {
         if items.is_empty() {
             return;
@@ -1280,6 +1279,7 @@ mod tests {
         ) {
             use crate::runtime::matcher::Pattern;
 
+            // Arrange
             let f = family(1);
             let mut index = SubscriptionIndex::new();
 
@@ -1292,6 +1292,7 @@ mod tests {
             let full_route = format!("test://{}", route_str);
             let r = route(&full_route);
 
+            // Act
             // Get trie matches
             let mut trie_matches = index.match_all(f, &r);
             trie_matches.sort_by_key(|id| id.0);
@@ -1307,6 +1308,7 @@ mod tests {
             }
             bf_matches.sort_by_key(|id| id.0);
 
+            // Assert
             assert_eq!(trie_matches, bf_matches, "trie diverged from brute-force for patterns={:?} route={}", patterns, full_route);
         }
 
@@ -1317,6 +1319,7 @@ mod tests {
         ) {
             use crate::runtime::matcher::Pattern;
 
+            // Arrange
             let f = family(1);
             let mut index = SubscriptionIndex::new();
             let full_pattern = format!("test://{}", pattern_str);
@@ -1324,14 +1327,13 @@ mod tests {
             let p = route(&full_pattern);
             let r = route(&full_route);
 
-            // Insert
+            // Act
             index.insert(f, &p, sub_id(42));
             let matches_after_insert = index.match_all(f, &r);
-
-            // Remove
             index.remove(f, &p, sub_id(42));
             let matches_after_remove = index.match_all(f, &r);
 
+            // Assert
             // After remove, subscription 42 should never appear
             assert!(!matches_after_remove.contains(&sub_id(42)));
 
