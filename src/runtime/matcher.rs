@@ -110,19 +110,39 @@ pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
 }
 
 /// Extract an optional scheme and borrowed path segments from a route string.
+/// Optimized to minimize allocations and use faster byte scanning.
 #[inline]
 fn split_route(route: &str) -> (Option<&str>, RouteSegments<'_>) {
-    let (scheme, path) = if let Some(idx) = route.find("://") {
-        (Some(&route[..idx]), &route[idx + 3..])
+    let bytes = route.as_bytes();
+
+    // Fast path: scan for "://" using bytes directly
+    let path_start = if bytes.len() >= 3 {
+        // SIMD-like scan: check if "://" pattern exists
+        for i in 0..bytes.len().saturating_sub(2) {
+            if bytes[i] == b':' && bytes[i + 1] == b'/' && bytes[i + 2] == b'/' {
+                // Found scheme://
+                let scheme = &route[..i];
+                return (Some(scheme), collect_path_segments_fast(&route[i + 3..]));
+            }
+        }
+        None
     } else {
-        (None, route)
+        None
     };
 
-    let segments = path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect::<RouteSegments<'_>>();
-    (scheme, segments)
+    (path_start, collect_path_segments_fast(route))
+}
+
+/// Fast path segment collection without intermediate allocations.
+#[inline]
+fn collect_path_segments_fast(path: &str) -> RouteSegments<'_> {
+    let mut segments = RouteSegments::new();
+    for seg in path.split('/') {
+        if !seg.is_empty() {
+            segments.push(seg);
+        }
+    }
+    segments
 }
 
 fn parse_pattern(route: &str) -> (Option<String>, Vec<PatternSegment>) {
@@ -226,9 +246,13 @@ pub fn match_pattern_segments_borrowed(
 
     // Route exhausted but pattern remains: only ** can match empty
     if route_idx >= route.len() {
-        return patterns[pat_idx..]
-            .iter()
-            .all(|p| matches!(p, PatternSegment::DoubleStar));
+        // Fast path: check remaining patterns are all DoubleStar
+        for pattern in patterns.iter().skip(pat_idx) {
+            if !matches!(pattern, PatternSegment::DoubleStar) {
+                return false;
+            }
+        }
+        return true;
     }
 
     match &patterns[pat_idx] {
@@ -245,8 +269,8 @@ pub fn match_pattern_segments_borrowed(
             match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx + 1)
         }
         PatternSegment::Literal(pat) => {
-            // Literal must match exactly
-            if pat.as_str() == route[route_idx] {
+            // Fast path: str comparison is highly optimized
+            if *pat == route[route_idx] {
                 match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx + 1)
             } else {
                 false
@@ -282,9 +306,13 @@ fn match_segments_indexed(
 
     // Route exhausted but pattern remains: only ** can match empty
     if route_idx >= route.len() {
-        return patterns[pat_idx..]
-            .iter()
-            .all(|p| matches!(p, PatternSegment::DoubleStar));
+        // Fast path: check remaining patterns are all DoubleStar
+        for pattern in patterns.iter().skip(pat_idx) {
+            if !matches!(pattern, PatternSegment::DoubleStar) {
+                return false;
+            }
+        }
+        return true;
     }
 
     match &patterns[pat_idx] {
