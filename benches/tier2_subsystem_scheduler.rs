@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 mod criterion_config;
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+    RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
 
 struct SpawnActor;

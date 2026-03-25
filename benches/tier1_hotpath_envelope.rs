@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::envelope::{Envelope, MessageId};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::time::{Duration, Instant};
@@ -175,7 +175,7 @@ fn bench_deadline_checking(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let dest = RouteAddress::new(
         RouteFamily::new(1),
-        Route::new("ftz://1/queue/acme/app/tasks".to_string()),
+        Route::new("ftz://1/queue/acme/app/tasks"),
     );
 
     // Create envelopes with different deadline states
@@ -219,11 +219,11 @@ fn bench_envelope_metadata_extraction(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let source = RouteAddress::new(
         RouteFamily::new(1),
-        Route::new("ftz://1/rpc/acme/app/client".to_string()),
+        Route::new("ftz://1/rpc/acme/app/client"),
     );
     let dest = RouteAddress::new(
         RouteFamily::new(1),
-        Route::new("ftz://1/rpc/acme/app/server".to_string()),
+        Route::new("ftz://1/rpc/acme/app/server"),
     );
     let envelope = Envelope::from_route(source, dest, TestMessage { value: 500 })
         .with_deadline(Instant::now() + Duration::from_secs(30))

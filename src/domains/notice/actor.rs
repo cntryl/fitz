@@ -21,12 +21,15 @@ use crate::runtime::router::MailboxSink;
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 use crate::session::session::SessionId;
+use fxhash::FxBuildHasher;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
+
 /// Maps subscription ID to (session_id, subscriber_address, pattern)
 /// Pattern is stored so we can remove the subscription from the index on unsubscribe
-type SubscriptionMap = HashMap<
+type SubscriptionMap = FastMap<
     SubscriptionId,
     (
         SessionId,
@@ -61,7 +64,7 @@ impl NoticeRouteActor {
         Self {
             family_id,
             index: SubscriptionIndex::new(),
-            subscriptions: HashMap::new(),
+            subscriptions: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
             next_subscription_id: 1,
         }
     }
@@ -224,7 +227,7 @@ mod tests {
     }
 
     fn test_route(path: &str) -> Route {
-        Route::new(path.to_string())
+        Route::new(path)
     }
 
     fn test_address(suffix: &str) -> RouteAddress {

@@ -563,8 +563,7 @@ mod auth_tests {
                 .unwrap();
 
         // Assert
-        let route =
-            crate::runtime::routing::Route::new("stream://realm1/area1/orders/1".to_string());
+        let route = crate::runtime::routing::Route::new("stream://realm1/area1/orders/1");
         assert!(perms.allows(&route, Access::Write));
     }
 

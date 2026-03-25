@@ -158,6 +158,18 @@ impl std::fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
+/// Fast domain extraction from route string (no allocation)
+#[inline]
+fn extract_domain(route_str: &str) -> Option<&str> {
+    let bytes = route_str.as_bytes();
+    for i in 0..bytes.len().saturating_sub(2) {
+        if bytes[i] == b':' && bytes[i + 1] == b'/' && bytes[i + 2] == b'/' {
+            return Some(&route_str[..i]);
+        }
+    }
+    None
+}
+
 /// Route registry mapping RouteAddress to mailbox sinks
 ///
 /// Uses DashMap for lock-free concurrent access with minimal contention.
@@ -176,8 +188,8 @@ impl RouteRegistry {
             // Router lookups and registrations are hot paths. Use a faster
             // non-cryptographic hasher and reserve a modest working set up front
             // to reduce repeated rehashing during actor registration bursts.
-            sinks: DashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
-            domain_patterns: DashMap::with_capacity_and_hasher(16, FxBuildHasher::default()),
+            sinks: DashMap::with_capacity_and_hasher(1024, FxBuildHasher::default()),
+            domain_patterns: DashMap::with_capacity_and_hasher(32, FxBuildHasher::default()),
         }
     }
 
@@ -324,7 +336,7 @@ impl Router {
 
         // Hot path: sample at 0.1% for span visibility; always record metrics
         let route_str = dest.route().as_str();
-        let domain = route_str.split("://").next().unwrap_or("unknown");
+        let domain = extract_domain(route_str).unwrap_or("unknown");
 
         if should_sample_hot_path() {
             let _span = tracing::debug_span!(
@@ -339,9 +351,8 @@ impl Router {
             trace!(destination = %dest, "Router: exact route match found");
             sink
         } else {
-            // Fall back to domain pattern matching
-            let route_str = dest.route().as_str();
-            let domain = route_str.split("://").next().unwrap_or("");
+            // Fall back to domain pattern matching using fast domain extraction
+            let domain = extract_domain(route_str).unwrap_or("");
 
             trace!(destination = %dest, domain = domain, "Router: trying domain pattern fallback");
 
