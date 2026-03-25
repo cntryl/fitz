@@ -136,7 +136,7 @@ pub fn make_router() -> Router {
 
 /// Build a Route for tests
 pub fn route(path: &str) -> Route {
-    Route::new(path.to_string())
+    Route::new(path)
 }
 
 /// Build a RouteAddress in the default test family

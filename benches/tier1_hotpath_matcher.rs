@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::matcher::Pattern;
 use fitz::runtime::routing::Route;
 
@@ -8,7 +8,7 @@ mod criterion_config;
 /// Exact literal route match (best case)
 fn bench_exact_match(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/orders/create");
-    let route = Route::new("notify://acme/orders/create".to_string());
+    let route = Route::new("notify://acme/orders/create");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);
@@ -22,8 +22,8 @@ fn bench_exact_match(c: &mut Criterion) {
 /// Single-level wildcard match
 fn bench_single_wildcard(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/orders/*");
-    let route_create = Route::new("notify://acme/orders/create".to_string());
-    let route_update = Route::new("notify://acme/orders/update".to_string());
+    let route_create = Route::new("notify://acme/orders/create");
+    let route_update = Route::new("notify://acme/orders/update");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);
@@ -40,9 +40,9 @@ fn bench_single_wildcard(c: &mut Criterion) {
 /// Multi-level wildcard at end (depth knee)
 fn bench_double_star_end(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/orders/**");
-    let route_direct = Route::new("notify://acme/orders".to_string());
-    let route_level1 = Route::new("notify://acme/orders/create".to_string());
-    let route_level3 = Route::new("notify://acme/orders/items/history/view".to_string());
+    let route_direct = Route::new("notify://acme/orders");
+    let route_level1 = Route::new("notify://acme/orders/create");
+    let route_level3 = Route::new("notify://acme/orders/items/history/view");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);
@@ -60,9 +60,9 @@ fn bench_double_star_end(c: &mut Criterion) {
 /// Multi-level wildcard in middle
 fn bench_double_star_middle(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/**/created");
-    let route_direct = Route::new("notify://acme/created".to_string());
-    let route_level2 = Route::new("notify://acme/orders/created".to_string());
-    let route_level4 = Route::new("notify://acme/orders/items/history/created".to_string());
+    let route_direct = Route::new("notify://acme/created");
+    let route_level2 = Route::new("notify://acme/orders/created");
+    let route_level4 = Route::new("notify://acme/orders/items/history/created");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);
@@ -80,7 +80,7 @@ fn bench_double_star_middle(c: &mut Criterion) {
 /// Negative match that fails late (worst case for backtracking)
 fn bench_negative_match_late_fail(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/*/items/history/created");
-    let route_fail = Route::new("notify://acme/orders/items/history/updated".to_string());
+    let route_fail = Route::new("notify://acme/orders/items/history/updated");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);
@@ -96,10 +96,10 @@ fn bench_depth_knee(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/orders/**");
 
     // Varying route depths
-    let route_depth1 = Route::new("notify://acme/orders/x".to_string());
-    let route_depth3 = Route::new("notify://acme/orders/a/b/c".to_string());
-    let route_depth5 = Route::new("notify://acme/orders/a/b/c/d/e".to_string());
-    let route_depth10 = Route::new("notify://acme/orders/a/b/c/d/e/f/g/h/i/j".to_string());
+    let route_depth1 = Route::new("notify://acme/orders/x");
+    let route_depth3 = Route::new("notify://acme/orders/a/b/c");
+    let route_depth5 = Route::new("notify://acme/orders/a/b/c/d/e");
+    let route_depth10 = Route::new("notify://acme/orders/a/b/c/d/e/f/g/h/i/j");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);
@@ -126,7 +126,7 @@ fn bench_depth_knee(c: &mut Criterion) {
 
 /// Find the pattern complexity knee: multiple wildcards
 fn bench_pattern_complexity_knee(c: &mut Criterion) {
-    let route = Route::new("notify://acme/orders/items/history/created".to_string());
+    let route = Route::new("notify://acme/orders/items/history/created");
 
     let pattern_literals = Pattern::new("notify://acme/orders/items/history/created");
     let pattern_one_star = Pattern::new("notify://acme/orders/*/history/created");
@@ -163,10 +163,10 @@ fn bench_backtracking_knee(c: &mut Criterion) {
     let pattern = Pattern::new("notify://acme/**/items/created");
 
     // Routes with varying depths before "items"
-    let route_depth1 = Route::new("notify://acme/items/created".to_string());
-    let route_depth2 = Route::new("notify://acme/orders/items/created".to_string());
-    let route_depth3 = Route::new("notify://acme/orders/details/items/created".to_string());
-    let route_depth5 = Route::new("notify://acme/a/b/c/d/items/created".to_string());
+    let route_depth1 = Route::new("notify://acme/items/created");
+    let route_depth2 = Route::new("notify://acme/orders/items/created");
+    let route_depth3 = Route::new("notify://acme/orders/details/items/created");
+    let route_depth5 = Route::new("notify://acme/a/b/c/d/items/created");
 
     let mut group = c.benchmark_group("hotpath_matcher");
     group.sampling_mode(SamplingMode::Flat);

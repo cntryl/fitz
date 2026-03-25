@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 #[path = "criterion_config.rs"]
@@ -97,7 +97,7 @@ fn bench_route_parsing(c: &mut Criterion) {
 fn bench_route_address_creation(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let family = RouteFamily::new(1);
-    let route = Route::new("rpc://acme/auth/users/authenticate".to_string());
+    let route = Route::new("rpc://acme/auth/users/authenticate");
 
     let mut group = c.benchmark_group("hotpath_routing");
     group.sampling_mode(SamplingMode::Flat);
@@ -115,7 +115,7 @@ fn bench_route_address_creation(c: &mut Criterion) {
 
 fn bench_route_access(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
-    let route = Route::new("queue://prod/jobs/worker/process/task".to_string());
+    let route = Route::new("queue://prod/jobs/worker/process/task");
 
     let mut group = c.benchmark_group("hotpath_routing");
     group.sampling_mode(SamplingMode::Flat);
@@ -134,7 +134,7 @@ fn bench_route_access(c: &mut Criterion) {
 fn bench_route_address_access(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let family = RouteFamily::new(1);
-    let route = Route::new("stream://acme/analytics/events/append".to_string());
+    let route = Route::new("stream://acme/analytics/events/append");
     let address = RouteAddress::new(family, route);
 
     let mut group = c.benchmark_group("hotpath_routing");
@@ -160,8 +160,8 @@ fn bench_route_address_access(c: &mut Criterion) {
 
 fn bench_route_clone_overhead(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
-    let short_route = Route::new("rpc://acme/auth".to_string());
-    let long_route = Route::new("rpc://acme/very/deep/nested/organizational/structure/authentication/service/endpoint/handler".to_string());
+    let short_route = Route::new("rpc://acme/auth");
+    let long_route = Route::new("rpc://acme/very/deep/nested/organizational/structure/authentication/service/endpoint/handler");
 
     let mut group = c.benchmark_group("hotpath_routing");
     group.sampling_mode(SamplingMode::Flat);
@@ -187,7 +187,7 @@ fn bench_route_clone_overhead(c: &mut Criterion) {
 fn bench_route_address_clone_overhead(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let family = RouteFamily::new(1);
-    let route = Route::new("lease://acme/locks/db/migration/acquire".to_string());
+    let route = Route::new("lease://acme/locks/db/migration/acquire");
     let address = RouteAddress::new(family, route);
 
     let mut group = c.benchmark_group("hotpath_routing");
@@ -224,7 +224,7 @@ fn bench_full_address_construction_from_string(c: &mut Criterion) {
             // ONLY hot path - full pipeline: family + route + address creation
             let family = RouteFamily::new(black_box(1));
             let route_str = black_box(&route_strings[idx % route_strings.len()]);
-            let route = Route::new(route_str.to_string());
+            let route = Route::new(route_str);
             let _address = RouteAddress::new(family, route);
             idx += 1;
         })
@@ -235,9 +235,9 @@ fn bench_full_address_construction_from_string(c: &mut Criterion) {
 
 fn bench_route_equality(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
-    let route1 = Route::new("rpc://acme/auth/users/authenticate".to_string());
-    let route2 = Route::new("rpc://acme/auth/users/authenticate".to_string());
-    let route3 = Route::new("rpc://acme/auth/users/authorize".to_string());
+    let route1 = Route::new("rpc://acme/auth/users/authenticate");
+    let route2 = Route::new("rpc://acme/auth/users/authenticate");
+    let route3 = Route::new("rpc://acme/auth/users/authorize");
 
     let mut group = c.benchmark_group("hotpath_routing");
     group.sampling_mode(SamplingMode::Flat);

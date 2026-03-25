@@ -1,4 +1,4 @@
-//! Queue domain tier 4 integration benchmarks using stress
+﻿//! Queue domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
@@ -34,7 +34,7 @@ fn setup_queue_actor(
     let family = RouteFamily::new(1);
     let (actor, _temp_dir) = create_local_bench_queue_actor("tier4", "queue", "main", None);
     let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(family, Route::new(route.to_string()));
+    let addr = RouteAddress::new(family, Route::new(route));
     let ctx = Context::new(addr, router);
     (actor, ctx)
 }
@@ -53,7 +53,7 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
         actor.receive(
             QueueMessage::Send {
                 family_id: family,
-                route: Route::new(route.to_string()),
+                route: Route::new(route),
                 body: Bytes::from_static(b"msg"),
                 delay_seconds: None,
             },

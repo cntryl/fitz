@@ -22,7 +22,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -30,6 +30,11 @@ jobs:
 
       - name: Update Rust toolchain
         run: rustup update stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
 
       - name: Validate Test Structure
         run: python ./scripts/validate_tests.py --summary

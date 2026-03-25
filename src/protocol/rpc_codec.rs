@@ -100,8 +100,7 @@ fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
-    let worker_addr =
-        RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
+    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -115,8 +114,7 @@ fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<RpcMessage, String> {
-    let worker_addr =
-        RouteAddress::new(route_family, Route::new(dec.get_string_ref()?.to_string()));
+    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?));
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -138,8 +136,8 @@ fn parse_rpc_request(
     uuid_bytes.copy_from_slice(&correlation_id_bytes);
     let correlation_id = Uuid::from_bytes(uuid_bytes);
 
-    let route = Route::new(dec.get_string_ref()?.to_string());
-    let reply_route = Route::new(dec.get_string_ref()?.to_string());
+    let route = Route::new(dec.get_string_ref()?);
+    let reply_route = Route::new(dec.get_string_ref()?);
 
     let body = dec.get_bytes()?;
 

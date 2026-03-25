@@ -304,7 +304,7 @@ mod tests {
     use std::time::Duration;
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
-        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+        RouteAddress::new(RouteFamily::new(family), Route::new(route))
     }
 
     #[test]

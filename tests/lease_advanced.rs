@@ -19,7 +19,7 @@ fn create_test_actor() -> (LeaseActor, Context<LeaseActor>) {
 }
 
 fn route(path: &str) -> Route {
-    Route::new(path.to_string())
+    Route::new(path)
 }
 
 fn family() -> RouteFamily {

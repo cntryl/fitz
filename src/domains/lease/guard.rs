@@ -217,7 +217,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
-        RouteAddress::new(RouteFamily::new(family), Route::new(route.to_string()))
+        RouteAddress::new(RouteFamily::new(family), Route::new(route))
     }
 
     fn test_family(id: u64) -> RouteFamily {
@@ -225,7 +225,7 @@ mod tests {
     }
 
     fn test_route(route: &str) -> Route {
-        Route::new(route.to_string())
+        Route::new(route)
     }
 
     /// Mock clock for testing expiration
