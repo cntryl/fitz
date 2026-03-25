@@ -11,7 +11,7 @@ on:
 jobs:
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -28,22 +28,22 @@ jobs:
       - name: Build all benchmarks
         run: cargo bench --no-run
 
-      # - name: Run Tier 1 benchmarks (hotpath)
-      #   run: cargo bench --bench 'tier1_*'
+      - name: Run Tier 1 benchmarks (hotpath)
+        run: cargo bench --bench 'tier1_*'
 
-      # - name: Run Tier 2 benchmarks (subsystem)
-      #   run: cargo bench --bench 'tier2_*'
+      - name: Run Tier 2 benchmarks (subsystem)
+        run: cargo bench --bench 'tier2_*'
 
-      # - name: Run Tier 3 benchmarks (system)
-      #   run: cargo bench --bench 'tier3_*'
+      - name: Run Tier 3 benchmarks (system)
+        run: cargo bench --bench 'tier3_*'
 
-      # - name: Run Tier 4 benchmarks (integration)
-      #   run: cargo bench --bench 'tier4_*'
+      - name: Run Tier 4 benchmarks (integration)
+        run: cargo bench --bench 'tier4_*'
 
-      # - name: Upload Criterion artifacts
-      #   uses: actions/upload-artifact@v7
-      #   with:
-      #     name: bench-artifacts-${{ matrix.os }}
-      #     path: |
-      #       target/criterion/**
-      #       target/stress/**
+      - name: Upload Criterion artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-artifacts-${{ matrix.os }}
+          path: |
+            target/criterion/**
+            target/stress/**
