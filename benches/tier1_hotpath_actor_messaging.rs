@@ -68,29 +68,9 @@ fn bench_send_to_self(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_message_overhead(c: &mut Criterion) {
-    // Measure pure ActorRef clone overhead
-    let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/ping"));
-    let actor_ref = scheduler.spawn(PingActor, address, 1000);
-
-    let mut group = c.benchmark_group("hotpath_actor_messaging");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("actorref_clone_overhead", |b| {
-        b.iter(|| {
-            // Measure clone cost
-            let _cloned = black_box(actor_ref.clone());
-        })
-    });
-
-    group.finish();
-}
-
 criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier1();
-    targets = bench_send_to_other, bench_send_to_self, bench_message_overhead
+    targets = bench_send_to_other, bench_send_to_self
 }
 criterion_main!(benches);

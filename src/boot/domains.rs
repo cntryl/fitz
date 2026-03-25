@@ -1394,7 +1394,13 @@ struct QueueSubscription {
 /// Queue family subscription state
 struct QueueFamilyState {
     /// Active subscriptions for this family
-    subscriptions: Vec<QueueSubscription>,
+    subscriptions: HashMap<u64, QueueSubscription>,
+    /// Pattern index for wildcard subscriptions
+    index: crate::runtime::SubscriptionIndex,
+    /// Exact routes mapped to subscription IDs
+    exact_routes: HashMap<String, Vec<u64>>,
+    /// Count of wildcard subscriptions, used to skip trie matching when possible
+    wildcard_subscription_count: usize,
 }
 
 /// Queue domain sink with per-queue QueueActor instances
@@ -1521,38 +1527,82 @@ impl QueueDomainSink {
                 "Queue: found family state with subscriptions"
             );
             let mut matched = 0;
-            for sub in &state.subscriptions {
-                if sub.pattern.matches(&event.route) {
-                    matched += 1;
-                    let notify_payload = crate::protocol::queue_codec::encode_notify(
-                        sub.subscription_id,
-                        &event.route,
-                        &event.payload,
-                    );
-                    let notify_ctx = FrameContext::new(
-                        sub.session_id,
-                        crate::protocol::frame::ChannelId::Sub, // notification channel
-                        crate::protocol::tlv::MessageType::new(209), // QUEUE_NOTIFY
-                        bytes::Bytes::from(notify_payload),
-                        crate::runtime::routing::RouteFamily::from_u32(
-                            sub.subscriber.family().id(),
-                        ),
-                    );
-                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
-                    if let Err(e) = self.router.route(notify_envelope) {
-                        tracing::warn!(
-                            domain = "queue",
-                            destination = %sub.subscriber,
-                            error = ?e,
-                            "Queue: failed to route 209 to subscriber inbox"
+            if let Some(exact_ids) = state.exact_routes.get(event.route.as_str()) {
+                for sub_id in exact_ids {
+                    if let Some(sub) = state.subscriptions.get(sub_id) {
+                        matched += 1;
+                        let notify_payload = crate::protocol::queue_codec::encode_notify(
+                            sub.subscription_id,
+                            &event.route,
+                            &event.payload,
                         );
-                    } else {
-                        tracing::debug!(
-                            domain = "queue",
-                            session_id = sub.session_id,
-                            destination = %sub.subscriber,
-                            "Queue: routed 209 to subscriber"
+                        let notify_ctx = FrameContext::new(
+                            sub.session_id,
+                            crate::protocol::frame::ChannelId::Sub, // notification channel
+                            crate::protocol::tlv::MessageType::new(209), // QUEUE_NOTIFY
+                            bytes::Bytes::from(notify_payload),
+                            crate::runtime::routing::RouteFamily::from_u32(
+                                sub.subscriber.family().id(),
+                            ),
                         );
+                        let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                        if let Err(e) = self.router.route(notify_envelope) {
+                            tracing::warn!(
+                                domain = "queue",
+                                destination = %sub.subscriber,
+                                error = ?e,
+                                "Queue: failed to route 209 to subscriber inbox"
+                            );
+                        } else {
+                            tracing::debug!(
+                                domain = "queue",
+                                session_id = sub.session_id,
+                                destination = %sub.subscriber,
+                                "Queue: routed 209 to subscriber"
+                            );
+                        }
+                    }
+                }
+            }
+            if state.wildcard_subscription_count > 0 {
+                let wildcard_matches = state.index.match_all_with_capacity(
+                    event.family_id,
+                    &event.route,
+                    state.wildcard_subscription_count,
+                );
+                for sub_id in wildcard_matches {
+                    if let Some(sub) = state.subscriptions.get(&sub_id.0) {
+                        matched += 1;
+                        let notify_payload = crate::protocol::queue_codec::encode_notify(
+                            sub.subscription_id,
+                            &event.route,
+                            &event.payload,
+                        );
+                        let notify_ctx = FrameContext::new(
+                            sub.session_id,
+                            crate::protocol::frame::ChannelId::Sub, // notification channel
+                            crate::protocol::tlv::MessageType::new(209), // QUEUE_NOTIFY
+                            bytes::Bytes::from(notify_payload),
+                            crate::runtime::routing::RouteFamily::from_u32(
+                                sub.subscriber.family().id(),
+                            ),
+                        );
+                        let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                        if let Err(e) = self.router.route(notify_envelope) {
+                            tracing::warn!(
+                                domain = "queue",
+                                destination = %sub.subscriber,
+                                error = ?e,
+                                "Queue: failed to route 209 to subscriber inbox"
+                            );
+                        } else {
+                            tracing::debug!(
+                                domain = "queue",
+                                session_id = sub.session_id,
+                                destination = %sub.subscriber,
+                                "Queue: routed 209 to subscriber"
+                            );
+                        }
                     }
                 }
             }
@@ -1579,8 +1629,38 @@ impl QueueDomainSink {
     /// Remove all subscriptions for a given session (called on disconnect cleanup).
     pub fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.families.lock();
-        for state in families.values_mut() {
-            state.subscriptions.retain(|s| s.session_id != session_id);
+        for (family_id, state) in families.iter_mut() {
+            let removed_ids: Vec<u64> = state
+                .subscriptions
+                .iter()
+                .filter_map(|(sub_id, sub)| (sub.session_id == session_id).then_some(*sub_id))
+                .collect();
+            for sub_id in removed_ids {
+                if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                    if sub.pattern.route().contains('*') {
+                        let pattern = crate::runtime::routing::Route::new(sub.pattern.route());
+                        state.index.remove(
+                            crate::runtime::routing::RouteFamily::new(*family_id),
+                            &pattern,
+                            crate::runtime::SubscriptionId(sub_id),
+                        );
+                        state.wildcard_subscription_count =
+                            state.wildcard_subscription_count.saturating_sub(1);
+                    } else {
+                        let route_key = sub.pattern.route().to_string();
+                        let is_empty =
+                            if let Some(route_ids) = state.exact_routes.get_mut(&route_key) {
+                                route_ids.retain(|id| *id != sub_id);
+                                route_ids.is_empty()
+                            } else {
+                                false
+                            };
+                        if is_empty {
+                            state.exact_routes.remove(&route_key);
+                        }
+                    }
+                }
+            }
         }
         tracing::debug!(
             domain = "queue",
@@ -1886,13 +1966,16 @@ impl MailboxSink for QueueDomainSink {
 
                     let mut families = self.families.lock();
                     let state = families.entry(fam_id).or_insert_with(|| QueueFamilyState {
-                        subscriptions: Vec::new(),
+                        subscriptions: HashMap::new(),
+                        index: crate::runtime::SubscriptionIndex::new(),
+                        exact_routes: HashMap::new(),
+                        wildcard_subscription_count: 0,
                     });
 
                     // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
                     let existing_sub_id = state
                         .subscriptions
-                        .iter()
+                        .values()
                         .find(|s| {
                             s.session_id == session_id && s.pattern.route() == pattern.as_str()
                         })
@@ -1911,12 +1994,30 @@ impl MailboxSink for QueueDomainSink {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
                         let pat = crate::runtime::matcher::Pattern::new(pattern.as_str());
 
-                        state.subscriptions.push(QueueSubscription {
-                            pattern: pat,
-                            session_id,
-                            subscription_id: new_id,
-                            subscriber,
-                        });
+                        if pattern.as_str().contains('*') {
+                            state.index.insert(
+                                family_id,
+                                &pattern,
+                                crate::runtime::SubscriptionId(new_id),
+                            );
+                            state.wildcard_subscription_count += 1;
+                        } else {
+                            state
+                                .exact_routes
+                                .entry(pattern.as_str().to_string())
+                                .or_default()
+                                .push(new_id);
+                        }
+
+                        state.subscriptions.insert(
+                            new_id,
+                            QueueSubscription {
+                                pattern: pat,
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            },
+                        );
 
                         tracing::debug!(
                             domain = "queue",
@@ -1945,9 +2046,43 @@ impl MailboxSink for QueueDomainSink {
                     let fam_id = family_id.as_u64();
                     let mut families = self.families.lock();
                     if let Some(state) = families.get_mut(&fam_id) {
-                        state.subscriptions.retain(|s| {
-                            !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
-                        });
+                        let removed_ids: Vec<u64> = state
+                            .subscriptions
+                            .iter()
+                            .filter_map(|(sub_id, sub)| {
+                                (sub.session_id == session_id
+                                    && sub.pattern.route() == pattern.as_str())
+                                .then_some(*sub_id)
+                            })
+                            .collect();
+                        for sub_id in removed_ids {
+                            if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                                if sub.pattern.route().contains('*') {
+                                    let pattern =
+                                        crate::runtime::routing::Route::new(sub.pattern.route());
+                                    state.index.remove(
+                                        family_id,
+                                        &pattern,
+                                        crate::runtime::SubscriptionId(sub_id),
+                                    );
+                                    state.wildcard_subscription_count =
+                                        state.wildcard_subscription_count.saturating_sub(1);
+                                } else {
+                                    let route_key = sub.pattern.route().to_string();
+                                    let is_empty = if let Some(route_ids) =
+                                        state.exact_routes.get_mut(&route_key)
+                                    {
+                                        route_ids.retain(|id| *id != sub_id);
+                                        route_ids.is_empty()
+                                    } else {
+                                        false
+                                    };
+                                    if is_empty {
+                                        state.exact_routes.remove(&route_key);
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     tracing::debug!(
@@ -2048,7 +2183,10 @@ struct StreamSubscription {
 
 /// Per-family stream subscription state
 struct StreamFamilyState {
-    subscriptions: Vec<StreamSubscription>,
+    subscriptions: HashMap<u64, StreamSubscription>,
+    index: crate::runtime::SubscriptionIndex,
+    exact_routes: HashMap<String, Vec<u64>>,
+    wildcard_subscription_count: usize,
 }
 
 /// Per-route next offset and session tracking for expected_offset enforcement
@@ -2233,40 +2371,86 @@ impl StreamDomainSink {
                 "Stream: found family state with subscriptions"
             );
             let mut matched = 0;
-            for sub in &state.subscriptions {
-                if sub.pattern.matches(&event.route) {
-                    matched += 1;
-                    let notify_payload = crate::protocol::stream_codec::encode_notify_into(
-                        &mut payload_encoder,
-                        sub.subscription_id,
-                        &event.route,
-                        &event.payload,
-                    );
-                    let notify_ctx = FrameContext::new(
-                        sub.session_id,
-                        crate::protocol::frame::ChannelId::Sub, // notification channel
-                        crate::protocol::tlv::MessageType::new(609), // STREAM_NOTIFY
-                        bytes::Bytes::from(notify_payload),
-                        crate::runtime::routing::RouteFamily::from_u32(
-                            sub.subscriber.family().id(),
-                        ),
-                    );
-                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
-                    if let Err(e) = self.router.route(notify_envelope) {
-                        tracing::warn!(
-                            domain = "stream",
-                            subscription_id = sub.subscription_id,
-                            destination = %sub.subscriber,
-                            error = ?e,
-                            "Stream: failed to route 609 to subscriber inbox"
+            if let Some(sub_ids) = state.exact_routes.get(event.route.as_str()) {
+                for sub_id in sub_ids {
+                    if let Some(sub) = state.subscriptions.get(sub_id) {
+                        matched += 1;
+                        let notify_payload = crate::protocol::stream_codec::encode_notify_into(
+                            &mut payload_encoder,
+                            sub.subscription_id,
+                            &event.route,
+                            &event.payload,
                         );
-                    } else {
-                        tracing::info!(
-                            domain = "stream",
-                            subscription_id = sub.subscription_id,
-                            destination = %sub.subscriber,
-                            "Stream: routed 609 to subscriber"
+                        let notify_ctx = FrameContext::new(
+                            sub.session_id,
+                            crate::protocol::frame::ChannelId::Sub, // notification channel
+                            crate::protocol::tlv::MessageType::new(609), // STREAM_NOTIFY
+                            bytes::Bytes::from(notify_payload),
+                            crate::runtime::routing::RouteFamily::from_u32(
+                                sub.subscriber.family().id(),
+                            ),
                         );
+                        let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                        if let Err(e) = self.router.route(notify_envelope) {
+                            tracing::warn!(
+                                domain = "stream",
+                                subscription_id = sub.subscription_id,
+                                destination = %sub.subscriber,
+                                error = ?e,
+                                "Stream: failed to route 609 to subscriber inbox"
+                            );
+                        } else {
+                            tracing::info!(
+                                domain = "stream",
+                                subscription_id = sub.subscription_id,
+                                destination = %sub.subscriber,
+                                "Stream: routed 609 to subscriber"
+                            );
+                        }
+                    }
+                }
+            }
+            if state.wildcard_subscription_count > 0 {
+                let wildcard_matches = state.index.match_all_with_capacity(
+                    event.family_id,
+                    &event.route,
+                    state.wildcard_subscription_count,
+                );
+                for sub_id in wildcard_matches {
+                    if let Some(sub) = state.subscriptions.get(&sub_id.0) {
+                        matched += 1;
+                        let notify_payload = crate::protocol::stream_codec::encode_notify_into(
+                            &mut payload_encoder,
+                            sub.subscription_id,
+                            &event.route,
+                            &event.payload,
+                        );
+                        let notify_ctx = FrameContext::new(
+                            sub.session_id,
+                            crate::protocol::frame::ChannelId::Sub, // notification channel
+                            crate::protocol::tlv::MessageType::new(609), // STREAM_NOTIFY
+                            bytes::Bytes::from(notify_payload),
+                            crate::runtime::routing::RouteFamily::from_u32(
+                                sub.subscriber.family().id(),
+                            ),
+                        );
+                        let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                        if let Err(e) = self.router.route(notify_envelope) {
+                            tracing::warn!(
+                                domain = "stream",
+                                subscription_id = sub.subscription_id,
+                                destination = %sub.subscriber,
+                                error = ?e,
+                                "Stream: failed to route 609 to subscriber inbox"
+                            );
+                        } else {
+                            tracing::info!(
+                                domain = "stream",
+                                subscription_id = sub.subscription_id,
+                                destination = %sub.subscriber,
+                                "Stream: routed 609 to subscriber"
+                            );
+                        }
                     }
                 }
             }
@@ -2301,8 +2485,38 @@ impl StreamDomainSink {
     /// Remove all subscriptions for a given session (called on disconnect cleanup).
     pub fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.families.lock();
-        for state in families.values_mut() {
-            state.subscriptions.retain(|s| s.session_id != session_id);
+        for (family_id, state) in families.iter_mut() {
+            let removed_ids: Vec<u64> = state
+                .subscriptions
+                .iter()
+                .filter_map(|(sub_id, sub)| (sub.session_id == session_id).then_some(*sub_id))
+                .collect();
+            for sub_id in removed_ids {
+                if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                    if sub.pattern.route().contains('*') {
+                        let pattern = crate::runtime::routing::Route::new(sub.pattern.route());
+                        state.index.remove(
+                            crate::runtime::routing::RouteFamily::new(*family_id),
+                            &pattern,
+                            crate::runtime::SubscriptionId(sub_id),
+                        );
+                        state.wildcard_subscription_count =
+                            state.wildcard_subscription_count.saturating_sub(1);
+                    } else {
+                        let route_key = sub.pattern.route().to_string();
+                        let is_empty =
+                            if let Some(route_ids) = state.exact_routes.get_mut(&route_key) {
+                                route_ids.retain(|id| *id != sub_id);
+                                route_ids.is_empty()
+                            } else {
+                                false
+                            };
+                        if is_empty {
+                            state.exact_routes.remove(&route_key);
+                        }
+                    }
+                }
+            }
         }
         tracing::debug!(
             domain = "stream",
@@ -2630,13 +2844,16 @@ impl MailboxSink for StreamDomainSink {
 
                 let mut families = self.families.lock();
                 let state = families.entry(fam_id).or_insert_with(|| StreamFamilyState {
-                    subscriptions: Vec::new(),
+                    subscriptions: HashMap::new(),
+                    index: crate::runtime::SubscriptionIndex::new(),
+                    exact_routes: HashMap::new(),
+                    wildcard_subscription_count: 0,
                 });
 
                 // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
                 let existing_sub_id = state
                     .subscriptions
-                    .iter()
+                    .values()
                     .find(|s| s.session_id == session_id && s.pattern.route() == pattern.as_str())
                     .map(|s| s.subscription_id);
 
@@ -2653,12 +2870,30 @@ impl MailboxSink for StreamDomainSink {
                     let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
                     let pat = crate::runtime::matcher::Pattern::new(pattern.as_str());
 
-                    state.subscriptions.push(StreamSubscription {
-                        pattern: pat,
-                        session_id,
-                        subscription_id: new_id,
-                        subscriber,
-                    });
+                    if pattern.as_str().contains('*') {
+                        state.index.insert(
+                            family_id,
+                            &pattern,
+                            crate::runtime::SubscriptionId(new_id),
+                        );
+                        state.wildcard_subscription_count += 1;
+                    } else {
+                        state
+                            .exact_routes
+                            .entry(pattern.as_str().to_string())
+                            .or_default()
+                            .push(new_id);
+                    }
+
+                    state.subscriptions.insert(
+                        new_id,
+                        StreamSubscription {
+                            pattern: pat,
+                            session_id,
+                            subscription_id: new_id,
+                            subscriber,
+                        },
+                    );
 
                     tracing::debug!(
                         domain = "stream",
@@ -2688,9 +2923,40 @@ impl MailboxSink for StreamDomainSink {
                 let fam_id = family_id.as_u64();
                 let mut families = self.families.lock();
                 if let Some(state) = families.get_mut(&fam_id) {
-                    state.subscriptions.retain(|s| {
-                        !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
-                    });
+                    let removed_ids: Vec<u64> = state
+                        .subscriptions
+                        .iter()
+                        .filter_map(|(sub_id, sub)| {
+                            (sub.session_id == session_id
+                                && sub.pattern.route() == pattern.as_str())
+                            .then_some(*sub_id)
+                        })
+                        .collect();
+                    for sub_id in removed_ids {
+                        if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                            if sub.pattern.route().contains('*') {
+                                state.index.remove(
+                                    family_id,
+                                    &pattern,
+                                    crate::runtime::SubscriptionId(sub_id),
+                                );
+                                state.wildcard_subscription_count =
+                                    state.wildcard_subscription_count.saturating_sub(1);
+                            } else {
+                                let is_empty = if let Some(route_ids) =
+                                    state.exact_routes.get_mut(pattern.as_str())
+                                {
+                                    route_ids.retain(|id| *id != sub_id);
+                                    route_ids.is_empty()
+                                } else {
+                                    false
+                                };
+                                if is_empty {
+                                    state.exact_routes.remove(pattern.as_str());
+                                }
+                            }
+                        }
+                    }
                 }
                 (
                     StreamResponse::Ok {

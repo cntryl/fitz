@@ -4,7 +4,9 @@
 //! DomainSink` path that the live server uses, without standing up TCP/WS transport.
 
 use super::create_bench_store;
-use crate::boot::domains::{LeaseDomainSink, NoticeDomainSink, RpcDomainSink, StreamDomainSink};
+use crate::boot::domains::{
+    LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink, StreamDomainSink,
+};
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::tlv::MessageType;
@@ -137,6 +139,14 @@ pub fn route_frame(
 
 pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {
     Arc::new(NoticeDomainSink::new(
+        router,
+        crate::api::admin::read_model::AdminReadModel::new(),
+    ))
+}
+
+pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
+    Arc::new(QueueDomainSink::new(
+        create_bench_store(),
         router,
         crate::api::admin::read_model::AdminReadModel::new(),
     ))

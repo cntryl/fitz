@@ -1,9 +1,51 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
-use fitz::benchkit::create_bench_queue_actor;
+use fitz::benchkit::{
+    build_queue_subscribe, create_bench_queue_actor, create_bench_queue_sink,
+    extract_single_tlv_field, register_session_counting_sink, route_frame, CountingSink,
+};
 use fitz::domains::queue::{QueueActor, QueueKey};
-use fitz::runtime::routing::RouteFamily;
+use fitz::protocol::frame::ChannelId;
+use fitz::runtime::envelope::Envelope;
+use fitz::runtime::router::{MailboxSink, Router};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::runtime::DomainPublishEvent;
 use fitz::testkit::create_test_engine_with_cfs;
+use std::sync::Arc;
+
+const CLIENT_SESSION_ID: u64 = 1;
+
+fn setup_queue_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<CountingSink>) {
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink = create_bench_queue_sink(router.clone());
+    router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
+    let (source, inbox) = register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
+    (router, family, source, inbox)
+}
+
+fn subscribe_queue(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    source: &RouteAddress,
+    destination: &str,
+    session_id: u64,
+    pattern: &str,
+) {
+    let subscribe_frame = build_queue_subscribe(pattern);
+    let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
+    route_frame(
+        router.as_ref(),
+        source,
+        destination,
+        session_id,
+        ChannelId::Pub,
+        msg_type,
+        payload,
+        family,
+    )
+    .expect("queue subscribe");
+}
 
 // Queue domain tier 3 system benchmarks using stress
 //
@@ -127,6 +169,33 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
         }
+    });
+}
+
+#[stress_test]
+fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
+    ctx.set_elements(10);
+    ctx.tag("scenario", "publish_fanout");
+
+    let (router, family, source, _inbox) = setup_queue_sink();
+    let route = "queue://bench/system/fanout";
+    let publish_route = Route::new(route);
+
+    for session_id in 2..18 {
+        subscribe_queue(&router, family, &source, route, session_id, route);
+    }
+
+    let publish_event = DomainPublishEvent::new(
+        family,
+        publish_route.clone(),
+        Bytes::from_static(b"queue fanout payload"),
+    );
+
+    ctx.measure(|| {
+        let _ = router.route(Envelope::new(
+            RouteAddress::new(family, publish_route.clone()),
+            publish_event.clone(),
+        ));
     });
 }
 

@@ -42,6 +42,8 @@ pub struct ActiveKvTx {
     pub bound_area: String,
     /// Resource (table) this transaction is bound to
     pub bound_resource: String,
+    /// Cached realm/area/resource prefix for scoped-key encoding
+    pub scoped_prefix: Vec<u8>,
     /// Resolved column family for this transaction
     pub column_family: ColumnFamilyId,
     /// Midge transaction handle
@@ -162,6 +164,7 @@ impl KvActor {
             Ok(tx) => {
                 let tx_id = self.next_tx_id;
                 self.next_tx_id += 1;
+                let scoped_prefix = Self::realm_resource_prefix(&realm, &area, &resource);
 
                 tracing::trace!(
                     "KvActor assigning transaction ID: {}, next_tx_id is now: {}",
@@ -175,6 +178,7 @@ impl KvActor {
                         bound_realm: realm,
                         bound_area: area,
                         bound_resource: resource,
+                        scoped_prefix,
                         column_family: cf,
                         tx,
                         write_options,
@@ -234,21 +238,16 @@ impl KvActor {
 
         // Per CLIENT_SPEC: resource is implicit from transaction context.
         // If resource is provided, validate it matches; if empty, use bound_resource.
-        let resource = if resource.is_empty() {
-            active.bound_resource.clone()
-        } else if resource != active.bound_resource {
+        if !resource.is_empty() && resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        } else {
-            resource
-        };
+        }
 
-        let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
@@ -281,21 +280,16 @@ impl KvActor {
 
         // Per CLIENT_SPEC: resource is implicit from transaction context.
         // If resource is provided, validate it matches; if empty, use bound_resource.
-        let resource = if resource.is_empty() {
-            active.bound_resource.clone()
-        } else if resource != active.bound_resource {
+        if !resource.is_empty() && resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        } else {
-            resource
-        };
+        }
 
-        let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
 
         match active.tx.put(scoped_key, value.to_vec(), None) {
             Ok(()) => KvResponse::PutOk,
@@ -321,22 +315,17 @@ impl KvActor {
 
         // Per CLIENT_SPEC: resource is implicit from transaction context.
         // If resource is provided, validate it matches; if empty, use bound_resource.
-        let resource = if resource.is_empty() {
-            active.bound_resource.clone()
-        } else if resource != active.bound_resource {
+        if !resource.is_empty() && resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        } else {
-            resource
-        };
+        }
 
         // Check if key exists first
-        let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(_)) => {
@@ -375,21 +364,16 @@ impl KvActor {
 
         // Per CLIENT_SPEC: resource is implicit from transaction context.
         // If resource is provided, validate it matches; if empty, use bound_resource.
-        let resource = if resource.is_empty() {
-            active.bound_resource.clone()
-        } else if resource != active.bound_resource {
+        if !resource.is_empty() && resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        } else {
-            resource
-        };
+        }
 
-        let realm = active.bound_realm.clone();
-        let scoped_key = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
 
         match active.tx.delete(scoped_key) {
             Ok(()) => KvResponse::DeleteOk,
@@ -415,18 +399,14 @@ impl KvActor {
 
         // Per CLIENT_SPEC: resource is implicit from transaction context.
         // If resource is provided, validate it matches; if empty, use bound_resource.
-        let resource = if resource.is_empty() {
-            active.bound_resource.clone()
-        } else if resource != active.bound_resource {
+        if !resource.is_empty() && resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        } else {
-            resource
-        };
+        }
 
         // Validate range
         if start >= end {
@@ -435,9 +415,8 @@ impl KvActor {
             };
         }
 
-        let realm = active.bound_realm.clone();
-        let scoped_start = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &start);
-        let scoped_end = Self::encode_scoped_key(&realm, &active.bound_area, &resource, &end);
+        let scoped_start = Self::encode_scoped_key(&active.scoped_prefix, &start);
+        let scoped_end = Self::encode_scoped_key(&active.scoped_prefix, &end);
 
         match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => KvResponse::DeleteRangeOk,
@@ -462,30 +441,25 @@ impl KvActor {
 
         // Per CLIENT_SPEC: resource is implicit from transaction context.
         // If resource is provided, validate it matches; if empty, use bound_resource.
-        let resource = if resource.is_empty() {
-            active.bound_resource.clone()
-        } else if resource != active.bound_resource {
+        if !resource.is_empty() && resource != active.bound_resource {
             return KvResponse::Error {
                 error: KvError::TxScopeViolation {
                     expected: active.bound_resource.clone(),
                     actual: resource,
                 },
             };
-        } else {
-            resource
-        };
+        }
 
-        let realm = active.bound_realm.clone();
-        let prefix = Self::realm_resource_prefix(&realm, &active.bound_area, &resource);
+        let prefix = active.scoped_prefix.clone();
         let start_key = query
             .start
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&realm, &active.bound_area, &resource, k))
+            .map(|k| Self::encode_scoped_key(&prefix, k))
             .unwrap_or_else(|| prefix.clone());
         let end_key = query
             .end
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&realm, &active.bound_area, &resource, k))
+            .map(|k| Self::encode_scoped_key(&prefix, k))
             .unwrap_or_else(|| Self::prefix_range_end(&prefix));
 
         // Build Midge Query
@@ -507,12 +481,7 @@ impl KvActor {
                 let mut items = Vec::new();
 
                 while let Some((key, value)) = iterator.next() {
-                    let user_key = match Self::strip_scoped_prefix(
-                        &realm,
-                        &active.bound_area,
-                        &resource,
-                        &key,
-                    ) {
+                    let user_key = match Self::strip_scoped_prefix(&prefix, &key) {
                         Some(k) => k,
                         None => continue,
                     };
@@ -573,22 +542,15 @@ impl KvActor {
         Ok(route_family.id())
     }
 
-    fn encode_scoped_key(realm: &str, area: &str, resource: &str, user_key: &[u8]) -> Vec<u8> {
-        let mut out = Self::realm_resource_prefix(realm, area, resource);
+    fn encode_scoped_key(prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(prefix.len() + user_key.len());
+        out.extend_from_slice(prefix);
         out.extend_from_slice(user_key);
         out
     }
 
-    fn strip_scoped_prefix(
-        realm: &str,
-        area: &str,
-        resource: &str,
-        scoped_key: &[u8],
-    ) -> Option<Vec<u8>> {
-        let prefix = Self::realm_resource_prefix(realm, area, resource);
-        scoped_key
-            .strip_prefix(prefix.as_slice())
-            .map(|rest| rest.to_vec())
+    fn strip_scoped_prefix(prefix: &[u8], scoped_key: &[u8]) -> Option<Vec<u8>> {
+        scoped_key.strip_prefix(prefix).map(|rest| rest.to_vec())
     }
 
     fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {

@@ -6,26 +6,10 @@ use std::time::{Duration, Instant};
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
-// Simple message type for benchmarking
 #[derive(Clone)]
 #[allow(dead_code)]
 struct TestMessage {
     value: u64,
-}
-
-fn bench_message_id_generation(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hotpath_envelope");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("messageid_new", |b| {
-        b.iter(|| {
-            // ONLY hot path - atomic counter increment
-            let _id = black_box(MessageId::new());
-        })
-    });
-
-    group.finish();
 }
 
 fn bench_envelope_creation(c: &mut Criterion) {
@@ -171,78 +155,6 @@ fn bench_envelope_with_causation(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_deadline_checking(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/queue/acme/app/tasks"),
-    );
-
-    // Create envelopes with different deadline states
-    let not_expired = Envelope::new(dest.clone(), TestMessage { value: 1 })
-        .with_deadline(Instant::now() + Duration::from_secs(3600));
-
-    let expired = Envelope::new(dest.clone(), TestMessage { value: 2 })
-        .with_deadline(Instant::now() - Duration::from_secs(1));
-
-    let no_deadline = Envelope::new(dest, TestMessage { value: 3 });
-
-    let mut group = c.benchmark_group("hotpath_envelope");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("is_expired_not_expired", |b| {
-        b.iter(|| {
-            // ONLY hot path - deadline check (should be false)
-            let _result = black_box(not_expired.is_expired());
-        })
-    });
-
-    group.bench_function("is_expired_expired", |b| {
-        b.iter(|| {
-            // ONLY hot path - deadline check (should be true)
-            let _result = black_box(expired.is_expired());
-        })
-    });
-
-    group.bench_function("is_expired_no_deadline", |b| {
-        b.iter(|| {
-            // ONLY hot path - deadline check (None case)
-            let _result = black_box(no_deadline.is_expired());
-        })
-    });
-
-    group.finish();
-}
-
-fn bench_envelope_metadata_extraction(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
-    let source = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/rpc/acme/app/client"),
-    );
-    let dest = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("ftz://1/rpc/acme/app/server"),
-    );
-    let envelope = Envelope::from_route(source, dest, TestMessage { value: 500 })
-        .with_deadline(Instant::now() + Duration::from_secs(30))
-        .with_causation(MessageId::new());
-
-    let mut group = c.benchmark_group("hotpath_envelope");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("metadata_extraction", |b| {
-        b.iter(|| {
-            // ONLY hot path - clone metadata without consuming envelope
-            let _metadata = black_box(envelope.metadata());
-        })
-    });
-
-    group.finish();
-}
-
 fn bench_type_erasure_overhead(c: &mut Criterion) {
     // Pre-built pool: small and large message variants
     let small_pool: Vec<(RouteAddress, TestMessage)> = (0..4)
@@ -299,13 +211,10 @@ criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier1();
     targets =
-        bench_message_id_generation,
         bench_envelope_creation,
         bench_envelope_from_route,
         bench_envelope_with_deadline,
         bench_envelope_with_causation,
-        bench_deadline_checking,
-        bench_envelope_metadata_extraction,
         bench_type_erasure_overhead
 }
 criterion_main!(benches);

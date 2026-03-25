@@ -5,23 +5,6 @@ use std::time::Duration;
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
-fn bench_timer_id_creation(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hotpath_context");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("timer_id_new", |b| {
-        let mut counter = 0u64;
-        b.iter(|| {
-            // ONLY hot path - TimerId creation
-            counter += 1;
-            let _id = black_box(TimerId::new(counter));
-        })
-    });
-
-    group.finish();
-}
-
 fn bench_timer_manager_schedule_once(c: &mut Criterion) {
     // Setup OUTSIDE benchmark
     let delay = Duration::from_secs(30);
@@ -240,7 +223,6 @@ criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier1();
     targets =
-        bench_timer_id_creation,
         bench_timer_manager_schedule_once,
         bench_timer_manager_schedule_repeat,
         bench_timer_manager_cancel,

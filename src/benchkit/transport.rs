@@ -114,6 +114,18 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build QUEUE SUBSCRIBE frame (msg_type 207)
+pub fn build_queue_subscribe(route_pattern: &str) -> Vec<u8> {
+    // Wire format: [string pattern]
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(207, &buf);
+    builder.build()
+}
+
 /// Parse NOTICE response
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
@@ -429,6 +441,17 @@ pub fn build_stream_last(route: &str) -> Vec<u8> {
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(605, &buf);
+    builder.build()
+}
+
+/// Build STREAM SUBSCRIBE frame (msg_type 607)
+pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(607, &buf);
     builder.build()
 }
 

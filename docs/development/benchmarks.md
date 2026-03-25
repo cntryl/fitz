@@ -50,14 +50,14 @@ Benchmarks are organized in four tiers. Use the shared config and naming below.
 
 | Tier       | Kind        | Tool      | Location                         | Scope                                                                                                                                     |
 | ---------- | ----------- | --------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tier 1** | Hotpath     | Criterion | `benches/tier1_hotpath_*.rs`     | Pure sync internals (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging). Target: &lt;1s, &lt;100ns–10µs per op. |
+| **Tier 1** | Hotpath     | Criterion | `benches/tier1_hotpath_*.rs`     | Pure sync internals (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging). Target: stable medians; avoid headline results below 0.05µs. |
 | **Tier 2** | Subsystem   | Criterion | `benches/tier2_subsystem_*.rs`   | Scheduler, mailbox, subscriptions, TLV pipeline. Target: &lt;3s.                                                                          |
 | **Tier 3** | System      | Stress    | `benches/tier3_system_*.rs`      | One bench per domain (kv, lease, notice, queue, rpc, schedule, stream). In-process actor + test engine, no network. Target: &lt;10s.      |
 | **Tier 4** | Integration | Stress    | `benches/tier4_integration_*.rs` | Same domains; full stack (direct → encoded → TCP → WebSocket → multiclient). Target: identify E2E performance cliffs.                     |
 
 ```
 benches/
-├── config.rs              # Shared Criterion config (use criterion_config())
+├── criterion_config.rs    # Shared Criterion config (use criterion_config_for_tier1/2())
 ├── stress_config.rs       # Stress BENCH_RUNS / BENCH_WARMUP
 ├── tier1_hotpath_matcher.rs
 ├── tier1_hotpath_tlv.rs
@@ -90,7 +90,7 @@ benches/
 ### Organization Principles
 
 - **One file per subsystem/domain** - Tier1/2: one module per file; Tier3/4: one domain per file.
-- **Shared config** - Tier1/2 use `benches/config.rs` (`criterion_config()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
+- **Shared config** - Tier1/2 use `benches/criterion_config.rs` (`criterion_config_for_tier1()` / `criterion_config_for_tier2()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
 - **Clear naming** - Files follow `tierN_{hotpath|subsystem|system|integration}_{name}.rs`.
 - **Logical grouping** - Related benchmarks in the same file; use a single Criterion group name per file (e.g. `hotpath_routing`) and `Throughput::Elements(N)` for comparability.
 
@@ -101,7 +101,11 @@ benches/
 Every benchmark should follow the AAA (Arrange-Act-Assert) pattern:
 
 ```rust
-use criterion::{black_box, Criterion, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+
+#[path = "criterion_config.rs"]
+mod criterion_config;
+
 fn bench_router_match_1k_routes(c: &mut Criterion) {
     // Arrange: Setup (outside b.iter for minimal overhead)
     let router = setup_router_with_routes(1000);
@@ -109,7 +113,11 @@ fn bench_router_match_1k_routes(c: &mut Criterion) {
         .map(|i| format!("notice://realm{}/area/resource", i))
         .collect();
 
-    c.bench_function("router_match_1k_routes", |b| {
+    let mut group = c.benchmark_group("hotpath_router");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("router_match_1k_routes", |b| {
         let mut idx = 0;
         b.iter(|| {
             // Act: The operation being measured
@@ -119,16 +127,11 @@ fn bench_router_match_1k_routes(c: &mut Criterion) {
             black_box(matches)
         });
     });
-}
-fn configure_criterion() -> Criterion {
-    Criterion::default()
-        .sample_size(10)
-        .warm_up_time(std::time::Duration::from_millis(200))
-        .measurement_time(std::time::Duration::from_secs(1))
+    group.finish();
 }
 criterion_group! {
     name = benches;
-    config = configure_criterion();
+    config = criterion_config::criterion_config_for_tier1();
     targets = bench_router_match_1k_routes
 }
 criterion_main!(benches);
@@ -197,53 +200,23 @@ authz_tenant_isolation_check     // Tenant isolation verification
 
 ### Criterion (Tier 1 and 2)
 
-All Criterion benchmarks use the shared config from `benches/config.rs` via `config::criterion_config()`. Do not define a local `configure_criterion()`; use the shared one.
+All Criterion benchmarks use the shared config from `benches/criterion_config.rs`. Do not define a local `configure_criterion()`; use the shared helper so the report stays comparable across files.
 
-**Fast mode (CI / quick iteration):** Set `BENCH_QUICK=1` to reduce sample size and measurement time:
+Current shared settings:
 
-- `BENCH_QUICK=1`: warmup 200ms, measurement 1s, sample_size 10
-- Default: warmup 500ms, measurement 2s, sample_size 50
+- `warm_up_time`: 2s
+- `measurement_time`: 5s
+- `sample_size`: 100
+- `noise_threshold`: 0.02
 
-Example: `BENCH_QUICK=1 cargo bench -- tier1_hotpath_routing`
+Practical rules:
 
-### Fast Iteration (Default)
+- Do not benchmark trivial getters, clones, or ID constructors on their own.
+- If a measured op is below about 0.05 us median, fold it into a larger workflow or exclude it from the headline report.
+- Use `black_box()` on inputs, but do not use it to hide fake work.
+- Keep setup outside `b.iter()` or `iter_batched()`.
 
-For daily development work (when not using BENCH_QUICK), the shared config gives:
-
-- sample_size 50, warm_up 500ms, measurement 2s
-  **Target runtime:** 1-3 seconds per benchmark (per function)
-
-### Release Profiling
-
-For detailed performance analysis:
-
-```rust
-fn configure_criterion() -> Criterion {
-    Criterion::default()
-        .sample_size(100)
-        .warm_up_time(Duration::from_secs(3))
-        .measurement_time(Duration::from_secs(10))
-        .noise_threshold(0.01)
-}
-```
-
-**Target runtime:** 10-30 seconds per benchmark
-
-### Heavy Benchmarks
-
-For system-level benchmarks (CI only):
-
-```rust
-#[cfg(feature = "perf")]
-fn configure_criterion() -> Criterion {
-    Criterion::default()
-        .sample_size(50)
-        .warm_up_time(Duration::from_secs(5))
-        .measurement_time(Duration::from_secs(20))
-}
-```
-
-**Target runtime:** 20-60 seconds per benchmark
+The benchmark summary is median-first. Mean is still recorded, but the headline tables and regression checks use median latency or throughput.
 
 ### Stress configuration (Tier 3 and 4)
 
@@ -255,6 +228,7 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 | `BENCH_WARMUP` | Number of warmup runs before measurement   | 1       |
 
 - **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `scripts/benchmark_summary.py` is elements/time, so N must match what the closure does.
+- **Minimum runtime:** Aim for at least 3s of measured work per scenario. The summary script flags shorter stress runs as invalid because they do not provide stable enough medians.
 - **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `scripts/benchmark_summary.py` after `cargo bench` (Criterion) and stress bench binaries to produce `target/bench_summary.md`.
 
 For CI, you can reduce total time by setting `BENCH_RUNS=3` (or lower) when running the full tier3/tier4 suite.
@@ -485,11 +459,10 @@ end_to_end_publish_subscribe_1m
 #### Quick iteration during development:
 
 ```bash
-# Fast mode via env (uses benches/config.rs quick settings)
-BENCH_QUICK=1 cargo bench
+# Run a single benchmark for a faster feedback loop
+cargo bench --bench tier1_hotpath_routing
 
 # Or run a single tier / benchmark
-cargo bench --bench tier1_hotpath_routing
 cargo bench -- tier1_hotpath
 ```
 
@@ -519,13 +492,13 @@ cargo watch -x "bench --bench tier1_hotpath_routing"
 
 ### CI Pipeline
 
-The repository CI includes a **benchmarks** job that runs all Criterion and stress benches with `BENCH_QUICK=1` and `BENCH_RUNS=3`, then runs `scripts/benchmark_summary.py` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
+The repository CI includes a **benchmarks** job that runs all Criterion benches with the shared Criterion config and stress benches with `BENCH_RUNS=3`, then runs `scripts/benchmark_summary.py` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
 
 #### Pull Request Checks:
 
 ```bash
-# Criterion with fast config
-BENCH_QUICK=1 cargo bench --no-fail-fast
+# Criterion with the shared config
+cargo bench --no-fail-fast
 
 # Stress with reduced runs (optional)
 BENCH_RUNS=3 cargo bench --bench tier3_system_kv
@@ -578,13 +551,13 @@ start target/criterion/report/index.html  # Windows
 
 ### Criterion file template (Tier 1 / Tier 2)
 
-Use shared config from `benches/config.rs`; do not define a local `configure_criterion()`.
+Use shared config from `benches/criterion_config.rs`; do not define a local `configure_criterion()`.
 
 ```rust
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 
-#[path = "config.rs"]
-mod config;
+#[path = "criterion_config.rs"]
+mod criterion_config;
 
 fn bench_my_operation(c: &mut Criterion) {
     // Arrange: all setup outside b.iter()
@@ -606,7 +579,7 @@ fn bench_my_operation(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = config::criterion_config();
+    config = criterion_config::criterion_config_for_tier1();
     targets = bench_my_operation
 }
 criterion_main!(benches);

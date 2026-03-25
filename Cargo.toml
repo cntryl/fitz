@@ -7,6 +7,10 @@ description = "The messaging layer your system was missing"
 repository = "https://github.com/cntryl/fitz"
 keywords = ["database", "kv", "lsm", "embedded", "storage"]
 categories = ["message-broker"]
+
+[profile.release]
+lto = true
+codegen-units = 1
  
 [dependencies]
 tokio = { version = "1", features = ["full"] }
