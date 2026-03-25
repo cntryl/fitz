@@ -64,8 +64,8 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         group.throughput(Throughput::Elements(records as u64));
         let bench_name = format!("decode_all_{}B_{}recs", size, records);
         group.bench_function(&bench_name, |b| {
+            let decoder = TlvDecoder::new();
             b.iter(|| {
-                let decoder = TlvDecoder::new();
                 // Ensure result escapes to black_box so it can't be optimized away
                 black_box(decoder.decode_all(&data).unwrap());
             })
@@ -74,10 +74,10 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         // decode-by-iter-loop but reuse a preallocated Vec to avoid Vec growth allocations
         let bench_name = format!("decode_iter_reuse_{}B_{}recs", size, records);
         group.bench_function(&bench_name, |b| {
+            let decoder = TlvDecoder::new();
             // pre-allocate outside hot path
             let mut out: Vec<TlvRecord> = Vec::with_capacity(records);
             b.iter(|| {
-                let decoder = TlvDecoder::new();
                 out.clear();
                 // iterate by using decode_one repeatedly
                 let mut offset = 0usize;
@@ -110,8 +110,8 @@ fn bench_tlv_decode_single_record(c: &mut Criterion) {
 
         let bench_name = format!("decode_one_{}B", size);
         group.bench_function(&bench_name, |b| {
+            let decoder = TlvDecoder::new();
             b.iter(|| {
-                let decoder = TlvDecoder::new();
                 black_box(decoder.decode_one(black_box(&data)).unwrap());
             })
         });

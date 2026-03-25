@@ -112,11 +112,8 @@ fn bench_timer_manager_fired_timers_with_fired(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - timers that have already fired
     let mut tm = TimerManager::new();
     for _ in 0..10 {
-        tm.schedule_once(Duration::from_millis(1)); // Will fire immediately
+        tm.schedule_once(Duration::from_nanos(1));
     }
-
-    // Let timers expire before benchmark
-    std::thread::sleep(Duration::from_millis(10));
 
     let mut group = c.benchmark_group("hotpath_context");
     group.sampling_mode(SamplingMode::Flat);
@@ -197,10 +194,7 @@ fn bench_timer_manager_scaling(c: &mut Criterion) {
 fn bench_timer_manager_repeating_reschedule(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - repeating timer that fires
     let mut tm = TimerManager::new();
-    let _timer_id = tm.schedule_repeat(Duration::from_millis(1), Duration::from_millis(1000));
-
-    // Let timer fire once
-    std::thread::sleep(Duration::from_millis(10));
+    let _timer_id = tm.schedule_repeat(Duration::from_nanos(1), Duration::from_millis(1000));
 
     let mut group = c.benchmark_group("hotpath_context");
     group.sampling_mode(SamplingMode::Flat);

@@ -1,4 +1,4 @@
-﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
@@ -26,16 +26,22 @@ impl Actor for SpawnActor {
 /// Full spawn cost (mailbox + router register + thread::spawn). High variance is expected from OS scheduling.
 fn bench_scheduler_spawn(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_scheduler");
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     let scheduler = Arc::new(Scheduler::new(1));
-    let address = test_address(1, "/bench/spawn");
+    let addresses: Vec<_> = (0..16)
+        .map(|i| test_address(1, &format!("/bench/spawn/{}", i)))
+        .collect();
 
-    scheduler.spawn(SpawnActor, address.clone(), 100);
+    scheduler.spawn(SpawnActor, addresses[0].clone(), 100);
 
     group.bench_function("spawn_single_actor", |b| {
+        let mut idx = 0usize;
         b.iter(|| {
-            scheduler.spawn(SpawnActor, black_box(address.clone()), 100);
+            let address = addresses[idx % addresses.len()].clone();
+            idx = (idx + 1) % addresses.len();
+            scheduler.spawn(SpawnActor, black_box(address), 100);
         })
     });
 
@@ -45,15 +51,19 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
 /// Registration only (no thread). Isolates router + mailbox cost from thread creation.
 fn bench_scheduler_register_only(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_scheduler");
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     let scheduler = Arc::new(Scheduler::new(1));
     let router = scheduler.router();
+    let addresses: Vec<_> = (0..64)
+        .map(|i| test_address(1, &format!("/bench/reg/{}", i)))
+        .collect();
 
     group.bench_function("register_only", |b| {
         let mut idx = 0u64;
         b.iter(|| {
-            let address = test_address(1, &format!("/bench/reg/{}", idx));
+            let address = addresses[(idx as usize) % addresses.len()].clone();
             idx = idx.wrapping_add(1);
             let mailbox = Mailbox::new(100);
             router.register(black_box(address), Arc::new(mailbox));
@@ -65,6 +75,7 @@ fn bench_scheduler_register_only(c: &mut Criterion) {
 
 fn bench_scheduler_spawn_cross_family(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_scheduler");
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
     // Setup: Create scheduler ONCE, precompute addresses

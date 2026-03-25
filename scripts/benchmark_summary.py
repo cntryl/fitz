@@ -1,781 +1,932 @@
 #!/usr/bin/env python3
 """
-Produce CSV and Markdown summaries for Criterion benchmarks and stress tests,
-plus a rubric-aware performance scorecard from config/perf_targets.json.
+Produce comprehensive CSV and Markdown summaries of Criterion benchmarks and stress tests.
+
+- Criterion: extracts mean, CI, std_dev, relative_stddev from target/criterion
+- Stress: extracts duration, throughput (elements/ns), scenario tags from target/stress
+
+Stress output path: run stress bench binaries first, e.g.:
+  cargo bench --bench tier3_system_kv
+  cargo bench --bench tier4_integration_kv
+  ...
+Then cntryl-stress writes results under target/stress/<bench_name>/ (e.g. latest.json).
+This script expects target/stress/<suite_dir>/latest.json per suite.
+
+Flags high variance when relative_stddev > 0.10 (10%).
+Also writes human-friendly mean_us and mean_ms columns assuming nanoseconds.
 """
-from __future__ import annotations
-
-from collections import defaultdict
 from pathlib import Path
-import csv
 import json
+import csv
+import math
+import statistics
+from collections import Counter, defaultdict
+
+CRITERION_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'criterion'
+STRESS_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'stress'
+TARGET_ROOT = Path(__file__).resolve().parents[1] / 'target'
+OUT_CSV = CRITERION_ROOT / 'benchmark_summary.csv'
+OUT_MD = TARGET_ROOT / 'bench_summary.md'
+STRESS_CSV = STRESS_ROOT / 'stress_summary.csv'
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CRITERION_ROOT = REPO_ROOT / "target" / "criterion"
-STRESS_ROOT = REPO_ROOT / "target" / "stress"
-TARGET_ROOT = REPO_ROOT / "target"
-PERF_TARGETS_PATH = REPO_ROOT / "config" / "perf_targets.json"
+def load_csv_rows(path: Path):
+    if not path.exists():
+        return []
 
-OUT_CSV = CRITERION_ROOT / "benchmark_summary.csv"
-OUT_MD = TARGET_ROOT / "bench_summary.md"
-STRESS_CSV = STRESS_ROOT / "stress_summary.csv"
-PERF_SCORECARD_JSON = TARGET_ROOT / "perf_scorecard.json"
-PERF_SCORECARD_MD = TARGET_ROOT / "perf_scorecard.md"
-
-SCOREBOARD_SPECS = [
-    {
-        "id": "engine_core",
-        "title": "Engine Core",
-        "target_class": "engine_core",
-        "budget_group": None,
-        "product_surface": True,
-    },
-    {
-        "id": "service_budget/direct_api",
-        "title": "Service Budget: Direct API",
-        "target_class": "service_budget",
-        "budget_group": "direct_api",
-        "product_surface": True,
-    },
-    {
-        "id": "service_budget/transport",
-        "title": "Service Budget: Transport",
-        "target_class": "service_budget",
-        "budget_group": "transport",
-        "product_surface": True,
-    },
-    {
-        "id": "service_budget/contention",
-        "title": "Service Budget: Contention",
-        "target_class": "service_budget",
-        "budget_group": "contention",
-        "product_surface": True,
-    },
-    {
-        "id": "internal_explainer",
-        "title": "Internal Explainers",
-        "target_class": "internal_explainer",
-        "budget_group": None,
-        "product_surface": False,
-    },
-]
+    with path.open('r', newline='', encoding='utf-8') as f:
+        return list(csv.DictReader(f))
 
 
-def load_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+def parse_float(value):
+    if value in (None, '', 'NA'):
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
-def format_optional_float(value, places: int = 6) -> str:
+def percentile(values, fraction):
+    if not values:
+        return None
+
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+
+    position = (len(ordered) - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    if lower == upper:
+        return ordered[lower]
+
+    lower_value = ordered[lower]
+    upper_value = ordered[upper]
+    return lower_value + (upper_value - lower_value) * (position - lower)
+
+
+def variance_band(rel_stddev):
+    if rel_stddev is None:
+        return 'unknown'
+    if rel_stddev <= 0.05:
+        return 'stable'
+    if rel_stddev <= 0.10:
+        return 'acceptable'
+    if rel_stddev <= 0.20:
+        return 'noisy'
+    return 'untrustworthy'
+
+
+def latency_bucket(mean_ns):
+    if mean_ns < 10_000:
+        return '<10us'
+    if mean_ns < 100_000:
+        return '10-100us'
+    if mean_ns < 1_000_000:
+        return '100us-1ms'
+    return '>1ms'
+
+
+def format_delta(value):
     if value is None:
-        return "NA"
-    return f"{value:.{places}f}"
+        return 'NA'
+    sign = '+' if value >= 0 else ''
+    return f'{sign}{value:.1f}%'
 
 
-def format_optional_percent(value, places: int = 2) -> str:
-    if value is None:
-        return "n/a"
-    return f"{value:.{places}f}%"
+def summarize_deltas(changes, lower_is_better=True, threshold=0.05):
+    improved = 0
+    regressed = 0
+    unchanged = 0
+    new = 0
+    missing = 0
+    movers = []
+
+    for item in changes:
+        delta = item.get('delta_pct')
+        if delta is None:
+            new += 1
+            continue
+        if item.get('baseline_only'):
+            missing += 1
+            continue
+
+        movers.append(item)
+        if lower_is_better:
+            if delta <= -threshold:
+                improved += 1
+            elif delta >= threshold:
+                regressed += 1
+            else:
+                unchanged += 1
+        else:
+            if delta >= threshold:
+                improved += 1
+            elif delta <= -threshold:
+                regressed += 1
+            else:
+                unchanged += 1
+
+    return {
+        'improved': improved,
+        'regressed': regressed,
+        'unchanged': unchanged,
+        'new': new,
+        'missing': missing,
+        'movers': movers,
+    }
 
 
-def format_optional_scalar(value) -> str:
-    if value is None:
-        return "n/a"
-    return str(value)
+def is_finite_number(value):
+    return isinstance(value, (int, float)) and math.isfinite(value)
 
 
-def format_duration_ns(duration_ns: float) -> str:
-    if duration_ns >= 1e6:
-        return f"{duration_ns / 1e6:.2f}ms"
-    if duration_ns >= 1e3:
-        return f"{duration_ns / 1e3:.2f}us"
-    return f"{duration_ns:.0f}ns"
+MIN_REASONABLE_CRITERION_MEAN_NS = 1.0
+MAX_REASONABLE_CRITERION_MEAN_NS = 1e12
+MAX_REASONABLE_STRESS_THROUGHPUT_OPS_PER_S = 1e9
 
+# ============================================================================
+# CRITERION BENCHMARKS
+# ============================================================================
+entries = []
+stress_skipped = []
+criterion_skipped = []
+if not CRITERION_ROOT.exists():
+    pass  # skip criterion section
+else:
+    for p in CRITERION_ROOT.rglob('new/estimates.json'):
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text())
+        except Exception as e:
+            print(f"skipping {p} (read error): {e}")
+            continue
+        # Determine benchmark id as path relative to ROOT, omit trailing '/new/estimates.json'
+        benchmark = str(p.relative_to(CRITERION_ROOT).parent.parent)
+        mean = data.get('mean', {}).get('point_estimate')
+        ci = data.get('mean', {}).get('confidence_interval', {})
+        ci_lower = ci.get('lower_bound')
+        ci_upper = ci.get('upper_bound')
+        stddev = data.get('std_dev', {}).get('point_estimate')
+        # fallback: some Criterion variants place std_dev under 'std_dev' or in same level
+        if mean is None:
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'missing mean estimate',
+                'file': str(p),
+            })
+            continue
+        if not is_finite_number(mean):
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'non-finite mean estimate',
+                'file': str(p),
+            })
+            continue
+        if mean <= 0:
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'non-positive mean estimate',
+                'file': str(p),
+            })
+            continue
+        if mean < MIN_REASONABLE_CRITERION_MEAN_NS:
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': f'mean below {MIN_REASONABLE_CRITERION_MEAN_NS:.0f} ns sanity bound',
+                'file': str(p),
+            })
+            continue
+        if mean > MAX_REASONABLE_CRITERION_MEAN_NS:
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': f'mean above {MAX_REASONABLE_CRITERION_MEAN_NS:.0e} ns sanity bound',
+                'file': str(p),
+            })
+            continue
+        if stddev is not None and not is_finite_number(stddev):
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'non-finite std dev',
+                'file': str(p),
+            })
+            continue
+        if stddev is not None and stddev < 0:
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'negative std dev',
+                'file': str(p),
+            })
+            continue
+        if ci_lower is not None and not is_finite_number(ci_lower):
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'non-finite confidence interval lower bound',
+                'file': str(p),
+            })
+            continue
+        if ci_upper is not None and not is_finite_number(ci_upper):
+            criterion_skipped.append({
+                'benchmark': benchmark,
+                'reason': 'non-finite confidence interval upper bound',
+                'file': str(p),
+            })
+            continue
+        rel_stddev = None
+        if stddev is not None and mean != 0:
+            rel_stddev = stddev / mean
+        high_variance = False
+        if rel_stddev is not None:
+            high_variance = rel_stddev > 0.10
+        # Skip legacy/stale Criterion entries (e.g. old "schedule_system_scan_and_fire" 222ms row)
+        if 'schedule_system_scan_and_fire' in benchmark:
+            continue
+        # assume raw numbers are nanoseconds and provide converted columns
+        mean_us = mean / 1e3
+        mean_ms = mean / 1e6
+        entries.append({
+            'benchmark': benchmark,
+            'mean': mean,
+            'mean_ci_lower': ci_lower,
+            'mean_ci_upper': ci_upper,
+            'std_dev': stddev,
+            'rel_stddev': rel_stddev,
+            'high_variance': high_variance,
+            'mean_us': mean_us,
+            'mean_ms': mean_ms,
+            'file': str(p)
+        })
 
-def suite_sort_key(name: str):
-    if name.startswith("tier1_"):
+# Write Criterion CSV (skip if criterion dir missing; create parent so write never errors)
+if CRITERION_ROOT.exists():
+    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['benchmark','mean','mean_ci_lower','mean_ci_upper','std_dev','rel_stddev','high_variance','mean_us(assume_ns)','mean_ms(assume_ns)','file'])
+        for e in sorted(entries, key=lambda x: x['mean']):
+            writer.writerow([
+                e['benchmark'],
+                f"{e['mean']:.6f}" if isinstance(e['mean'], float) else e['mean'],
+                f"{e['mean_ci_lower']:.6f}" if isinstance(e['mean_ci_lower'], float) else e['mean_ci_lower'],
+                f"{e['mean_ci_upper']:.6f}" if isinstance(e['mean_ci_upper'], float) else e['mean_ci_upper'],
+                f"{e['std_dev']:.6f}" if isinstance(e['std_dev'], float) else e['std_dev'],
+                f"{e['rel_stddev']:.6f}" if isinstance(e['rel_stddev'], float) else e['rel_stddev'],
+                str(e['high_variance']),
+                f"{e['mean_us']:.6f}",
+                f"{e['mean_ms']:.6f}",
+                e['file']
+            ])
+
+# Derive suite (first path component) for each Criterion entry for per-suite grouping
+# Path can use / or \ depending on OS
+for e in entries:
+    parts = e['benchmark'].replace('\\', '/').split('/')
+    e['suite'] = parts[0] if parts else 'other'
+
+# Write a small Markdown summary: top 10 fastest and slowest, and high-variance list
+sorted_by_mean = sorted(entries, key=lambda x: x['mean'])
+fastest = sorted_by_mean[:10]
+slowest = sorted_by_mean[-10:][::-1]
+high_var = [e for e in entries if e['high_variance']]
+
+# Group Criterion entries by suite (tier) for per-suite summaries
+criterion_suites = {}
+for e in entries:
+    suite_name = e['suite']
+    if suite_name not in criterion_suites:
+        criterion_suites[suite_name] = []
+    criterion_suites[suite_name].append(e)
+# Sort suite names: tier1_* first, then tier2_*, then rest alphabetically
+def suite_sort_key(name):
+    if name.startswith('tier1_'):
         return (0, name)
-    if name.startswith("tier2_"):
+    if name.startswith('tier2_'):
         return (1, name)
     return (2, name)
+criterion_suite_order = sorted(criterion_suites.keys(), key=suite_sort_key)
 
-
-def collect_criterion_entries():
-    entries = []
-    if not CRITERION_ROOT.exists():
-        return entries
-
-    for estimates_path in CRITERION_ROOT.rglob("new/estimates.json"):
-        if not estimates_path.exists():
-            continue
-        try:
-            data = load_json(estimates_path)
-        except Exception as exc:  # pragma: no cover
-            print(f"skipping {estimates_path} (read error): {exc}")
-            continue
-
-        benchmark = str(estimates_path.relative_to(CRITERION_ROOT).parent.parent)
-        if "schedule_system_scan_and_fire" in benchmark:
-            continue
-
-        mean = data.get("mean", {}).get("point_estimate")
-        if mean is None:
-            continue
-
-        ci = data.get("mean", {}).get("confidence_interval", {})
-        std_dev = data.get("std_dev", {}).get("point_estimate")
-        rel_stddev = None
-        if std_dev is not None and mean != 0:
-            rel_stddev = std_dev / mean
-
-        entries.append(
-            {
-                "benchmark": benchmark,
-                "suite": benchmark.replace("\\", "/").split("/")[0],
-                "mean": mean,
-                "mean_ci_lower": ci.get("lower_bound"),
-                "mean_ci_upper": ci.get("upper_bound"),
-                "std_dev": std_dev,
-                "rel_stddev": rel_stddev,
-                "high_variance": rel_stddev is not None and rel_stddev > 0.10,
-                "mean_us": mean / 1e3,
-                "mean_ms": mean / 1e6,
-                "file": str(estimates_path),
-            }
-        )
-
-    return entries
-
-
-def write_criterion_csv(entries):
-    if not CRITERION_ROOT.exists():
-        return
-
-    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with OUT_CSV.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "benchmark",
-                "mean",
-                "mean_ci_lower",
-                "mean_ci_upper",
-                "std_dev",
-                "rel_stddev",
-                "high_variance",
-                "mean_us(assume_ns)",
-                "mean_ms(assume_ns)",
-                "file",
-            ]
-        )
-        for entry in sorted(entries, key=lambda item: item["mean"]):
-            writer.writerow(
-                [
-                    entry["benchmark"],
-                    format_optional_float(entry["mean"]),
-                    format_optional_float(entry["mean_ci_lower"]),
-                    format_optional_float(entry["mean_ci_upper"]),
-                    format_optional_float(entry["std_dev"]),
-                    format_optional_float(entry["rel_stddev"]),
-                    str(entry["high_variance"]),
-                    format_optional_float(entry["mean_us"]),
-                    format_optional_float(entry["mean_ms"]),
-                    entry["file"],
-                ]
-            )
-
-
-def collect_stress_entries():
-    entries = []
-    if not STRESS_ROOT.exists():
-        return entries
-
-    for suite_dir in sorted(STRESS_ROOT.glob("*/")):
+# ============================================================================
+# STRESS TESTS
+# ============================================================================
+stress_entries = []
+if STRESS_ROOT.exists():
+    for suite_dir in sorted(STRESS_ROOT.glob('*/')):
         if not suite_dir.is_dir():
             continue
-
-        latest_json = suite_dir / "latest.json"
+        latest_json = suite_dir / 'latest.json'
         if not latest_json.exists():
             continue
-
         try:
-            data = load_json(latest_json)
-        except Exception as exc:  # pragma: no cover
-            print(f"skipping {latest_json} (read error): {exc}")
+            data = json.loads(latest_json.read_text())
+        except Exception as e:
+            print(f"skipping {latest_json} (read error): {e}")
             continue
 
-        suite = data.get("suite", suite_dir.name)
-        for result in data.get("results", []):
-            duration = result.get("duration")
-            elements = result.get("elements")
-            if duration is None or elements in (None, 0):
+        suite = data.get('suite', suite_dir.name)
+        results = data.get('results', [])
+
+        for result in results:
+            name = result.get('name', '')
+            duration = result.get('duration')
+            elements = result.get('elements')
+            all_runs = result.get('all_runs', [duration] if duration else [])
+            tags = result.get('tags', {})
+            scenario = tags.get('scenario', 'unknown')
+
+            if duration is None:
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'missing duration',
+                    'file': str(latest_json),
+                })
+                continue
+            if elements is None:
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'missing elements count',
+                    'file': str(latest_json),
+                })
+                continue
+            if not is_finite_number(duration):
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'non-finite duration',
+                    'file': str(latest_json),
+                })
+                continue
+            if not is_finite_number(elements):
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'non-finite elements count',
+                    'file': str(latest_json),
+                })
+                continue
+            if duration <= 0:
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'non-positive duration',
+                    'file': str(latest_json),
+                })
+                continue
+            if elements <= 0:
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'non-positive elements count',
+                    'file': str(latest_json),
+                })
                 continue
 
-            all_runs = result.get("all_runs") or [duration]
-            tags = result.get("tags", {})
-            scenario = tags.get("scenario", "unknown")
-            layer = tags.get("layer")
-            throughput_ops_per_ns = elements / duration if duration > 0 else 0.0
-            per_op_ns = duration / elements if elements > 0 else 0.0
+            # Compute statistics
+            throughput_ops_per_ns = elements / duration if duration > 0 else 0
+            throughput_ops_per_us = throughput_ops_per_ns * 1e3
+            throughput_ops_per_ms = throughput_ops_per_ns * 1e6
+            throughput_ops_per_s = throughput_ops_per_ns * 1e9
 
+            if not is_finite_number(throughput_ops_per_s):
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': 'non-finite throughput',
+                    'file': str(latest_json),
+                })
+                continue
+            if throughput_ops_per_s > MAX_REASONABLE_STRESS_THROUGHPUT_OPS_PER_S:
+                stress_skipped.append({
+                    'suite': suite,
+                    'name': name,
+                    'scenario': scenario,
+                    'reason': f'throughput above {MAX_REASONABLE_STRESS_THROUGHPUT_OPS_PER_S:.0e} ops/sec sanity bound',
+                    'file': str(latest_json),
+                })
+                continue
+
+            duration_us = duration / 1e3
+            duration_ms = duration / 1e6
+            per_op_ns = duration / elements if elements > 0 else 0
+            per_op_us = per_op_ns / 1e3
+
+            # Variance across runs
             if len(all_runs) > 1:
-                average_run = sum(all_runs) / len(all_runs)
-                variance = sum((run - average_run) ** 2 for run in all_runs) / len(all_runs)
-                stddev_runs = variance ** 0.5
-                rel_stddev_runs = stddev_runs / average_run if average_run > 0 else 0.0
+                avg_run = sum(all_runs) / len(all_runs)
+                variance = sum((x - avg_run) ** 2 for x in all_runs) / len(all_runs)
+                stddev = variance ** 0.5
+                rel_stddev_runs = stddev / avg_run if avg_run > 0 else 0
             else:
-                stddev_runs = 0.0
-                rel_stddev_runs = 0.0
+                stddev = 0
+                rel_stddev_runs = 0
 
-            entries.append(
-                {
-                    "suite": suite,
-                    "name": result.get("name", ""),
-                    "scenario": scenario,
-                    "layer": layer,
-                    "duration_ns": duration,
-                    "duration_us": duration / 1e3,
-                    "duration_ms": duration / 1e6,
-                    "elements": elements,
-                    "per_op_ns": per_op_ns,
-                    "per_op_us": per_op_ns / 1e3,
-                    "throughput_ops_per_ns": throughput_ops_per_ns,
-                    "throughput_ops_per_us": throughput_ops_per_ns * 1e3,
-                    "throughput_ops_per_ms": throughput_ops_per_ns * 1e6,
-                    "throughput_ops_per_s": throughput_ops_per_ns * 1e9,
-                    "num_runs": len(all_runs),
-                    "stddev_runs": stddev_runs,
-                    "rel_stddev_runs": rel_stddev_runs,
-                    "file": str(latest_json),
-                }
-            )
+            stress_entries.append({
+                'suite': suite,
+                'name': name,
+                'scenario': scenario,
+                'layer': tags.get('layer'),  # tier4: direct/tcp/websocket/multiclient
+                'duration_ns': duration,
+                'duration_us': duration_us,
+                'duration_ms': duration_ms,
+                'elements': elements,
+                'per_op_ns': per_op_ns,
+                'per_op_us': per_op_us,
+                'throughput_ops_per_ns': throughput_ops_per_ns,
+                'throughput_ops_per_us': throughput_ops_per_us,
+                'throughput_ops_per_ms': throughput_ops_per_ms,
+                'throughput_ops_per_s': throughput_ops_per_s,
+                'num_runs': len(all_runs),
+                'stddev_runs': stddev,
+                'rel_stddev_runs': rel_stddev_runs,
+                'file': str(latest_json)
+            })
 
-    return entries
+previous_criterion_rows = load_csv_rows(OUT_CSV)
+previous_stress_rows = load_csv_rows(STRESS_CSV)
 
+criterion_by_benchmark = {entry['benchmark']: entry for entry in entries}
+criterion_means = [entry['mean'] for entry in entries]
+criterion_variance_bands = Counter(variance_band(entry['rel_stddev']) for entry in entries)
+criterion_latency_bands = Counter(latency_bucket(entry['mean']) for entry in entries)
+criterion_suite_groups = defaultdict(list)
+for entry in entries:
+    criterion_suite_groups[entry['suite']].append(entry)
 
-def write_stress_csv(entries):
-    if not STRESS_ROOT.exists():
-        return
+criterion_comparisons = []
+for benchmark, entry in criterion_by_benchmark.items():
+    baseline = next((row for row in previous_criterion_rows if row.get('benchmark') == benchmark), None)
+    baseline_mean = parse_float(baseline.get('mean')) if baseline else None
+    delta_pct = None
+    if baseline_mean and baseline_mean > 0:
+        delta_pct = ((entry['mean'] - baseline_mean) / baseline_mean) * 100.0
+    criterion_comparisons.append({
+        'benchmark': benchmark,
+        'mean': entry['mean'],
+        'baseline_mean': baseline_mean,
+        'delta_pct': delta_pct,
+        'variance_band': variance_band(entry['rel_stddev']),
+        'rel_stddev': entry['rel_stddev'],
+        'suite': entry['suite'],
+    })
 
-    STRESS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with STRESS_CSV.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "suite",
-                "name",
-                "scenario",
-                "layer",
-                "duration_ms",
-                "elements",
-                "per_op_us",
-                "throughput_ops_per_s",
-                "runs",
-                "stddev_runs_ns",
-                "rel_stddev_runs",
-                "file",
-            ]
-        )
-        for entry in sorted(entries, key=lambda item: item["throughput_ops_per_s"], reverse=True):
-            writer.writerow(
-                [
-                    entry["suite"],
-                    entry["name"],
-                    entry["scenario"],
-                    entry["layer"] or "",
-                    f"{entry['duration_ms']:.2f}",
-                    entry["elements"],
-                    f"{entry['per_op_us']:.6f}",
-                    f"{entry['throughput_ops_per_s']:.2f}",
-                    entry["num_runs"],
-                    f"{entry['stddev_runs']:.2f}",
-                    f"{entry['rel_stddev_runs']:.6f}" if entry["rel_stddev_runs"] else "NA",
-                    entry["file"],
-                ]
-            )
+criterion_missing = [
+    row for row in previous_criterion_rows
+    if row.get('benchmark') not in criterion_by_benchmark
+]
 
+criterion_delta_summary = summarize_deltas(criterion_comparisons, lower_is_better=True)
+criterion_delta_summary['missing'] = len(criterion_missing)
+criterion_delta_summary['tracked'] = len(criterion_comparisons)
+criterion_delta_summary['skipped'] = len(criterion_skipped)
+criterion_delta_summary['baseline_total'] = len(previous_criterion_rows)
+criterion_delta_summary['median'] = statistics.median(criterion_means) if criterion_means else None
+criterion_delta_summary['p90'] = percentile(criterion_means, 0.90)
+criterion_delta_summary['fastest'] = min(entries, key=lambda x: x['mean']) if entries else None
+criterion_delta_summary['slowest'] = max(entries, key=lambda x: x['mean']) if entries else None
+criterion_delta_summary['noisiest'] = sorted(entries, key=lambda x: x['rel_stddev'] or -1, reverse=True)[:5]
+criterion_delta_summary['slowest_top'] = sorted(entries, key=lambda x: x['mean'], reverse=True)[:5]
+criterion_comparison_map = {item['benchmark']: item for item in criterion_comparisons}
 
-def write_bench_summary(criterion_entries, stress_entries):
-    sorted_by_mean = sorted(criterion_entries, key=lambda item: item["mean"])
-    fastest = sorted_by_mean[:10]
-    slowest = sorted_by_mean[-10:][::-1]
-    high_variance = [entry for entry in criterion_entries if entry["high_variance"]]
+stress_by_key = {
+    (entry['suite'], entry['name'], entry['scenario']): entry
+    for entry in stress_entries
+}
+previous_stress_by_name = defaultdict(list)
+for row in previous_stress_rows:
+    previous_stress_by_name[row.get('name')].append(row)
+stress_throughputs = [entry['throughput_ops_per_s'] for entry in stress_entries]
+stress_variance_bands = Counter(variance_band(entry['rel_stddev_runs']) for entry in stress_entries)
+stress_suite_groups = defaultdict(list)
+stress_layer_groups = defaultdict(list)
+for entry in stress_entries:
+    stress_suite_groups[entry['suite']].append(entry)
+    if entry.get('layer'):
+        stress_layer_groups[entry['layer']].append(entry)
 
-    criterion_suites = defaultdict(list)
-    for entry in criterion_entries:
-        criterion_suites[entry["suite"]].append(entry)
-
-    stress_suites = defaultdict(list)
-    for entry in stress_entries:
-        stress_suites[entry["suite"]].append(entry)
-
-    OUT_MD.parent.mkdir(parents=True, exist_ok=True)
-    with OUT_MD.open("w", encoding="utf-8") as handle:
-        handle.write("# Benchmark & Stress Test Summary\n\n")
-        handle.write("Generated from Criterion benchmarks and stress tests.\n\n")
-
-        handle.write("# Criterion Benchmarks\n\n")
-        handle.write("Note: mean_us / mean_ms assume raw numbers are in nanoseconds.\n\n")
-
-        handle.write("## Top 10 fastest (by mean)\n\n")
-        handle.write("| rank | benchmark | mean | mean_ms | mean_us | std_dev | rel_stddev |\n")
-        handle.write("|---:|---|---:|---:|---:|---:|---:|\n")
-        for index, entry in enumerate(fastest, 1):
-            handle.write(
-                f"| {index} | {entry['benchmark']} | {entry['mean']:.6f} | {entry['mean_ms']:.6f} | "
-                f"{entry['mean_us']:.6f} | {format_optional_float(entry['std_dev'])} | "
-                f"{format_optional_float(entry['rel_stddev'])} |\n"
-            )
-
-        handle.write("\n## Top 10 slowest (by mean)\n\n")
-        handle.write("| rank | benchmark | mean | mean_ms | mean_us | std_dev | rel_stddev |\n")
-        handle.write("|---:|---|---:|---:|---:|---:|---:|\n")
-        for index, entry in enumerate(slowest, 1):
-            handle.write(
-                f"| {index} | {entry['benchmark']} | {entry['mean']:.6f} | {entry['mean_ms']:.6f} | "
-                f"{entry['mean_us']:.6f} | {format_optional_float(entry['std_dev'])} | "
-                f"{format_optional_float(entry['rel_stddev'])} |\n"
-            )
-
-        handle.write("\n## High variance benchmarks (rel_stddev > 0.10)\n\n")
-        if not high_variance:
-            handle.write("None detected.\n")
-        else:
-            handle.write("| benchmark | mean | std_dev | rel_stddev |\n")
-            handle.write("|---|---:|---:|---:|\n")
-            for entry in sorted(high_variance, key=lambda item: item["rel_stddev"] or 0.0, reverse=True):
-                handle.write(
-                    f"| {entry['benchmark']} | {entry['mean']:.6f} | {format_optional_float(entry['std_dev'])} | "
-                    f"{format_optional_float(entry['rel_stddev'])} |\n"
-                )
-
-        handle.write("\n## Per-Suite Results (Criterion)\n\n")
-        for suite_name in sorted(criterion_suites, key=suite_sort_key):
-            suite_entries = sorted(criterion_suites[suite_name], key=lambda item: item["mean"])
-            total_mean_ns = sum(entry["mean"] for entry in suite_entries)
-            count = len(suite_entries)
-            average_ns = total_mean_ns / count if count else 0.0
-
-            handle.write(f"### {suite_name}\n\n")
-            handle.write(
-                f"**Benchmarks**: {count} | **Avg mean**: {average_ns / 1e3:.3f} us "
-                f"(total {total_mean_ns / 1e6:.2f} ms)\n\n"
-            )
-            handle.write("| benchmark | mean_ns | mean_us | mean_ms | std_dev | rel_stddev |\n")
-            handle.write("|---|---:|---:|---:|---:|---:|\n")
-            for entry in suite_entries:
-                benchmark_short = entry["benchmark"].replace("\\", "/").split("/", 1)[-1]
-                handle.write(
-                    f"| {benchmark_short} | {entry['mean']:.2f} | {entry['mean_us']:.4f} | "
-                    f"{entry['mean_ms']:.6f} | {format_optional_float(entry['std_dev'], 4)} | "
-                    f"{format_optional_float(entry['rel_stddev'], 4)} |\n"
-                )
-            handle.write("\n")
-
-        handle.write("\n# Stress Tests\n\n")
-        if not stress_entries:
-            handle.write("No stress test results found.\n")
-            return
-
-        handle.write("Ordered by throughput (highest first).\n\n")
-        handle.write("## Per-Suite Results (Stress)\n\n")
-        for suite_name in sorted(stress_suites):
-            suite_entries = stress_suites[suite_name]
-            total_duration = sum(entry["duration_ns"] for entry in suite_entries)
-            total_elements = sum(entry["elements"] for entry in suite_entries)
-            total_throughput = (total_elements / total_duration) * 1e9 if total_duration > 0 else 0.0
-            has_layer = any(entry.get("layer") for entry in suite_entries)
-
-            handle.write(f"### {suite_name}\n\n")
-            handle.write(
-                f"**Total**: {total_elements} ops in {format_duration_ns(total_duration)} = "
-                f"{total_throughput:.0f} ops/sec\n\n"
-            )
-            if has_layer:
-                handle.write("| scenario | layer | ops | duration | per_op_us | ops/sec |\n")
-                handle.write("|---|---|---:|---:|---:|---:|\n")
-                for entry in sorted(suite_entries, key=lambda item: item["throughput_ops_per_s"], reverse=True):
-                    handle.write(
-                        f"| {entry['scenario']} | {entry['layer'] or 'n/a'} | {entry['elements']} | "
-                        f"{format_duration_ns(entry['duration_ns'])} | {entry['per_op_us']:.3f} | "
-                        f"{entry['throughput_ops_per_s']:.0f} |\n"
-                    )
-            else:
-                handle.write("| scenario | ops | duration | per_op_us | ops/sec |\n")
-                handle.write("|---|---:|---:|---:|---:|\n")
-                for entry in sorted(suite_entries, key=lambda item: item["throughput_ops_per_s"], reverse=True):
-                    handle.write(
-                        f"| {entry['scenario']} | {entry['elements']} | "
-                        f"{format_duration_ns(entry['duration_ns'])} | {entry['per_op_us']:.3f} | "
-                        f"{entry['throughput_ops_per_s']:.0f} |\n"
-                    )
-            handle.write("\n")
-
-
-def build_target_name(target_key: str, target: dict) -> str:
-    if target.get("kind") == "criterion":
-        return target_key.split("criterion:", 1)[1]
-
-    parts = [target.get("suite", "unknown"), target.get("scenario", "unknown")]
-    if target.get("layer"):
-        parts.append(target["layer"])
-    return " / ".join(parts)
-
-
-def get_target_measurement(target_key: str, target: dict, criterion_entries, stress_entries):
-    if target.get("kind") == "criterion":
-        for entry in criterion_entries:
-            if f"criterion:{entry['benchmark']}" == target_key:
-                return {
-                    "current_mean_us": entry["mean_us"],
-                    "rel_stddev": entry["rel_stddev"],
-                    "source": entry["file"],
-                }
-        return None
-
-    for entry in stress_entries:
-        key = f"stress:{entry['suite']}|{entry['scenario']}"
-        if entry.get("layer"):
-            key = f"{key}|{entry['layer']}"
-        if key == target_key:
-            return {
-                "current_mean_us": entry["per_op_us"],
-                "rel_stddev": entry["rel_stddev_runs"],
-                "source": entry["file"],
-                "throughput_ops_per_s": entry["throughput_ops_per_s"],
-            }
-    return None
-
-
-def gap_pct(current_mean_us, target_mean_us):
-    if current_mean_us is None or target_mean_us in (None, 0):
-        return None
-    return ((current_mean_us - target_mean_us) / target_mean_us) * 100.0
-
-
-def test_target_actionable(target: dict, measurement) -> bool:
-    gating = target.get("gating")
-    if gating == "hard":
-        return True
-    if gating == "variance_gated":
-        if not measurement:
-            return False
-        max_rel_stddev = target.get("max_rel_stddev")
-        rel_stddev = measurement.get("rel_stddev")
-        if max_rel_stddev is None or rel_stddev is None:
-            return False
-        return rel_stddev <= max_rel_stddev
-    return False
-
-
-def build_target_results(criterion_entries, stress_entries):
-    perf_targets = load_json(PERF_TARGETS_PATH)
-    target_results = []
-
-    for target_key in sorted(perf_targets.get("targets", {})):
-        target = perf_targets["targets"][target_key]
-        measurement = get_target_measurement(target_key, target, criterion_entries, stress_entries)
-        current_mean_us = measurement.get("current_mean_us") if measurement else None
-        rel_stddev = measurement.get("rel_stddev") if measurement else None
-        actionable = test_target_actionable(target, measurement)
-        operational_gap = gap_pct(current_mean_us, target.get("operational_target"))
-        stretch_gap = gap_pct(current_mean_us, target.get("stretch_target"))
-        meets_operational = (
-            current_mean_us is not None
-            and target.get("operational_target") is not None
-            and current_mean_us <= target["operational_target"]
-        )
-        meets_stretch = (
-            current_mean_us is not None
-            and target.get("stretch_target") is not None
-            and current_mean_us <= target["stretch_target"]
-        )
-
-        if target.get("gating") == "informational":
-            status = "informational"
-        elif not measurement:
-            status = "missing_measurement"
-        elif target.get("gating") == "variance_gated" and not actionable:
-            status = "variance_blocked"
-        elif meets_operational:
-            status = "operational_met"
-        elif meets_stretch:
-            status = "stretch_met"
-        else:
-            status = "operational_miss"
-
-        target_results.append(
-            {
-                "target_key": target_key,
-                "name": build_target_name(target_key, target),
-                "kind": target.get("kind"),
-                "domain": target.get("domain", "internal"),
-                "suite": target.get("suite"),
-                "scenario": target.get("scenario"),
-                "layer": target.get("layer"),
-                "target_class": target.get("target_class"),
-                "budget_group": target.get("budget_group"),
-                "gating": target.get("gating"),
-                "max_rel_stddev": target.get("max_rel_stddev"),
-                "actionable": actionable,
-                "measured": measurement is not None,
-                "status": status,
-                "current_mean_us": current_mean_us,
-                "rel_stddev": rel_stddev,
-                "throughput_ops_per_s": measurement.get("throughput_ops_per_s") if measurement else None,
-                "source": measurement.get("source") if measurement else None,
-                "operational_target": target.get("operational_target"),
-                "stretch_target": target.get("stretch_target"),
-                "operational_gap_pct": operational_gap,
-                "stretch_gap_pct": stretch_gap,
-                "meets_operational": meets_operational,
-                "meets_stretch": meets_stretch,
-                "note": target.get("note"),
-            }
-        )
-
-    return perf_targets, target_results
-
-
-def scoreboard_rows(target_results, target_class: str, budget_group):
-    rows = []
-    for row in target_results:
-        if row["target_class"] != target_class:
-            continue
-        if budget_group is not None and row.get("budget_group") != budget_group:
-            continue
-        if budget_group is None and row.get("budget_group") not in (None, ""):
-            continue
-        rows.append(row)
-    return rows
-
-
-def select_worst_miss(rows):
-    misses = [
-        row
-        for row in rows
-        if row["actionable"] and row["measured"] and not row["meets_operational"] and row["operational_gap_pct"] is not None
-    ]
-    if not misses:
-        return None
-
-    misses.sort(
-        key=lambda row: (
-            row["operational_gap_pct"],
-            row["stretch_gap_pct"] if row["stretch_gap_pct"] is not None else float("-inf"),
-            row["current_mean_us"] if row["current_mean_us"] is not None else float("-inf"),
-            row["target_key"],
+stress_comparisons = []
+for key, entry in stress_by_key.items():
+    baseline = next(
+        (
+            row for row in previous_stress_rows
+            if row.get('suite') == entry['suite']
+            and row.get('name') == entry['name']
+            and row.get('scenario') == entry['scenario']
         ),
-        reverse=True,
+        None,
     )
-    return misses[0]
+    if baseline is None:
+        matches = previous_stress_by_name.get(entry['name'], [])
+        baseline = matches[0] if matches else None
+    baseline_throughput = parse_float(baseline.get('throughput_ops_per_s')) if baseline else None
+    delta_pct = None
+    if baseline_throughput and baseline_throughput > 0:
+        delta_pct = ((entry['throughput_ops_per_s'] - baseline_throughput) / baseline_throughput) * 100.0
+    stress_comparisons.append({
+        'suite': entry['suite'],
+        'name': entry['name'],
+        'scenario': entry['scenario'],
+        'throughput_ops_per_s': entry['throughput_ops_per_s'],
+        'baseline_throughput_ops_per_s': baseline_throughput,
+        'delta_pct': delta_pct,
+        'variance_band': variance_band(entry['rel_stddev_runs']),
+        'rel_stddev_runs': entry['rel_stddev_runs'],
+        'layer': entry.get('layer'),
+    })
+
+stress_missing = [
+    row for row in previous_stress_rows
+    if (row.get('suite'), row.get('name'), row.get('scenario')) not in stress_by_key
+]
+
+stress_delta_summary = summarize_deltas(stress_comparisons, lower_is_better=False)
+stress_delta_summary['missing'] = len(stress_missing)
+stress_delta_summary['tracked'] = len(stress_comparisons)
+stress_delta_summary['skipped'] = len(stress_skipped)
+stress_delta_summary['baseline_total'] = len(previous_stress_rows)
+stress_delta_summary['median'] = statistics.median(stress_throughputs) if stress_throughputs else None
+stress_delta_summary['p90'] = percentile(stress_throughputs, 0.90)
+stress_delta_summary['best'] = max(stress_entries, key=lambda x: x['throughput_ops_per_s']) if stress_entries else None
+stress_delta_summary['worst'] = min(stress_entries, key=lambda x: x['throughput_ops_per_s']) if stress_entries else None
+stress_delta_summary['noisiest'] = sorted(stress_entries, key=lambda x: x['rel_stddev_runs'] or -1, reverse=True)[:5]
+stress_delta_summary['best_layer'] = None
+if stress_layer_groups:
+    stress_delta_summary['best_layer'] = max(
+        ((layer, sum(item['throughput_ops_per_s'] for item in items) / len(items)) for layer, items in stress_layer_groups.items()),
+        key=lambda pair: pair[1],
+    )
+stress_comparison_map = {
+    (item['suite'], item['name'], item['scenario']): item for item in stress_comparisons
+}
+
+# Write Stress CSV (skip if stress dir missing)
+if STRESS_ROOT.exists():
+    STRESS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with STRESS_CSV.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['suite', 'name', 'scenario', 'duration_ms', 'elements', 'per_op_us', 'throughput_ops_per_s', 'runs', 'stddev_runs_ns', 'rel_stddev_runs', 'file'])
+        for e in sorted(stress_entries, key=lambda x: x['throughput_ops_per_s'], reverse=True):
+            writer.writerow([
+                e['suite'],
+                e['name'],
+                e['scenario'],
+                f"{e['duration_ms']:.2f}",
+                e['elements'],
+                f"{e['per_op_us']:.6f}",
+                f"{e['throughput_ops_per_s']:.2f}",
+                e['num_runs'],
+                f"{e['stddev_runs']:.2f}",
+                f"{e['rel_stddev_runs']:.6f}" if e['rel_stddev_runs'] else "NA",
+                e['file']
+            ])
+
+def mean_or_none(values):
+    return statistics.mean(values) if values else None
 
 
-def build_scoreboard_summary(spec: dict, rows):
-    actionable_rows = [row for row in rows if row["actionable"]]
-    total_actionable = len(actionable_rows)
-    operational_met = sum(1 for row in actionable_rows if row["meets_operational"])
-    stretch_met = sum(1 for row in actionable_rows if row["meets_stretch"])
-    missing_measurements = sum(1 for row in actionable_rows if not row["measured"])
-    worst_miss_row = select_worst_miss(rows)
+def fmt_ns(value):
+    if value is None:
+        return 'NA'
+    return f'{value:.0f}'
 
-    return {
-        "id": spec["id"],
-        "title": spec["title"],
-        "target_class": spec["target_class"],
-        "budget_group": spec["budget_group"],
-        "total_targets": len(rows),
-        "total_actionable": total_actionable,
-        "missing_measurements": missing_measurements,
-        "operational_met": operational_met,
-        "stretch_met": stretch_met,
-        "operational_attainment_pct": (operational_met / total_actionable * 100.0) if total_actionable else None,
-        "stretch_attainment_pct": (stretch_met / total_actionable * 100.0) if total_actionable else None,
-        "worst_gap_pct": worst_miss_row["operational_gap_pct"] if worst_miss_row else None,
-        "worst_miss": worst_miss_row,
-        "pass": (operational_met == total_actionable) if total_actionable else True,
+
+def fmt_us(value):
+    if value is None:
+        return 'NA'
+    return f'{value / 1e3:.3f}'
+
+
+def fmt_ms(value):
+    if value is None:
+        return 'NA'
+    return f'{value / 1e6:.3f}'
+
+
+def fmt_ops(value):
+    if value is None:
+        return 'NA'
+    return f'{value:.0f}'
+
+
+def fmt_ratio(value):
+    if value is None:
+        return 'NA'
+    return f'{value:.2f}x'
+
+
+def stress_label(item):
+    scenario = item.get('scenario')
+    if scenario and scenario != 'unknown':
+        return scenario
+
+    name = item.get('name', '')
+    if '::' in name:
+        return name.split('::')[-1]
+
+    return name or 'unknown'
+
+
+def verdict_for_summary(criterion_summary, stress_summary):
+    noisy_criterion = criterion_summary['criterion_bands']['noisy'] + criterion_summary['criterion_bands']['untrustworthy']
+    noisy_stress = stress_summary['stress_bands']['noisy'] + stress_summary['stress_bands']['untrustworthy']
+    regressions = criterion_summary['regressed'] + stress_summary['regressed']
+
+    if regressions == 0 and noisy_criterion == 0 and noisy_stress == 0:
+        return 'stable'
+    if noisy_criterion > 0 or noisy_stress > 0:
+        return 'mixed and noisy'
+    return 'mixed'
+
+
+OUT_MD.parent.mkdir(parents=True, exist_ok=True)
+with OUT_MD.open('w', encoding='utf-8') as f:
+    criterion_variance_counts = criterion_variance_bands
+    stress_variance_counts = stress_variance_bands
+
+    criterion_summary = {
+        'count': len(entries),
+        'suites': len(criterion_suite_groups),
+        'median': criterion_delta_summary['median'],
+        'p90': criterion_delta_summary['p90'],
+        'best': criterion_delta_summary['fastest'],
+        'worst': criterion_delta_summary['slowest'],
+        'noisiest': criterion_delta_summary['noisiest'],
+        'slowest_top': criterion_delta_summary['slowest_top'],
+        'criterion_bands': criterion_variance_counts,
+        'improved': criterion_delta_summary['improved'],
+        'regressed': criterion_delta_summary['regressed'],
+        'unchanged': criterion_delta_summary['unchanged'],
+        'new': criterion_delta_summary['new'],
+        'missing': criterion_delta_summary['missing'],
+        'skipped': criterion_delta_summary['skipped'],
+    }
+    stress_summary = {
+        'count': len(stress_entries),
+        'suites': len(stress_suite_groups),
+        'median': stress_delta_summary['median'],
+        'p90': stress_delta_summary['p90'],
+        'best': stress_delta_summary['best'],
+        'worst': stress_delta_summary['worst'],
+        'noisiest': stress_delta_summary['noisiest'],
+        'stress_bands': stress_variance_counts,
+        'improved': stress_delta_summary['improved'],
+        'regressed': stress_delta_summary['regressed'],
+        'unchanged': stress_delta_summary['unchanged'],
+        'new': stress_delta_summary['new'],
+        'missing': stress_delta_summary['missing'],
+        'skipped': stress_delta_summary['skipped'],
     }
 
+    verdict = verdict_for_summary(criterion_summary, stress_summary)
+    criterion_median = criterion_summary['median']
+    criterion_p90 = criterion_summary['p90']
+    stress_median = stress_summary['median']
+    stress_p90 = stress_summary['p90']
 
-def build_product_summary(scoreboards, target_results):
-    product_ids = [spec["id"] for spec in SCOREBOARD_SPECS if spec["product_surface"]]
-    product_rows = [row for row in target_results if row["actionable"] and row["target_class"] in {"engine_core", "service_budget"}]
-    operational_met = sum(1 for row in product_rows if row["meets_operational"])
-    stretch_met = sum(1 for row in product_rows if row["meets_stretch"])
-    worst_miss_row = select_worst_miss(product_rows)
+    f.write('# Benchmark & Stress Test Summary\n\n')
+    f.write('Generated from Criterion benchmarks and stress tests.\n\n')
 
-    engine_core = scoreboards["engine_core"]
-    direct_api = scoreboards["service_budget/direct_api"]
-    transport = scoreboards["service_budget/transport"]
-    contention = scoreboards["service_budget/contention"]
+    f.write('## Executive Summary\n\n')
+    f.write(f'- Verdict: {verdict}.\n')
+    f.write(f'- Criterion benchmarks: {criterion_summary["count"]} across {criterion_summary["suites"]} suites.\n')
+    f.write(f'- Stress scenarios: {stress_summary["count"]} across {stress_summary["suites"]} suites.\n')
+    f.write(f'- Skipped results: criterion {criterion_summary["skipped"]}, stress {stress_summary["skipped"]}.\n')
+    if criterion_median is not None:
+        f.write(f'- Criterion median latency: {fmt_us(criterion_median)} us; p90: {fmt_us(criterion_p90)} us.\n')
+    if stress_median is not None:
+        f.write(f'- Stress median throughput: {fmt_ops(stress_median)} ops/sec; p90: {fmt_ops(stress_p90)} ops/sec.\n')
+    f.write(f'- Criterion variance bands: stable {criterion_summary["criterion_bands"]["stable"]}, acceptable {criterion_summary["criterion_bands"]["acceptable"]}, noisy {criterion_summary["criterion_bands"]["noisy"]}, untrustworthy {criterion_summary["criterion_bands"]["untrustworthy"]}.\n')
+    f.write(f'- Stress variance bands: stable {stress_summary["stress_bands"]["stable"]}, acceptable {stress_summary["stress_bands"]["acceptable"]}, noisy {stress_summary["stress_bands"]["noisy"]}, untrustworthy {stress_summary["stress_bands"]["untrustworthy"]}.\n')
+    f.write(f'- Baseline delta coverage: criterion improved {criterion_summary["improved"]}, regressed {criterion_summary["regressed"]}, new {criterion_summary["new"]}, missing {criterion_summary["missing"]}; stress improved {stress_summary["improved"]}, regressed {stress_summary["regressed"]}, new {stress_summary["new"]}, missing {stress_summary["missing"]}.\n')
+    if criterion_summary['best'] is not None:
+        f.write(f'- Fastest criterion benchmark: {criterion_summary["best"]["benchmark"]} at {fmt_us(criterion_summary["best"]["mean"])} us.\n')
+    if criterion_summary['worst'] is not None:
+        f.write(f'- Slowest criterion benchmark: {criterion_summary["worst"]["benchmark"]} at {fmt_us(criterion_summary["worst"]["mean"])} us.\n')
+    if stress_summary['best'] is not None:
+        f.write(f'- Best stress scenario: {stress_label(stress_summary["best"])} in {stress_summary["best"]["suite"]} at {fmt_ops(stress_summary["best"]["throughput_ops_per_s"])} ops/sec.\n')
+    if stress_summary['worst'] is not None:
+        f.write(f'- Weakest stress scenario: {stress_label(stress_summary["worst"])} in {stress_summary["worst"]["suite"]} at {fmt_ops(stress_summary["worst"]["throughput_ops_per_s"])} ops/sec.\n')
 
-    total_actionable = len(product_rows)
-    return {
-        "scoreboard_ids": product_ids,
-        "total_actionable": total_actionable,
-        "missing_measurements": sum(1 for row in product_rows if not row["measured"]),
-        "operational_met": operational_met,
-        "stretch_met": stretch_met,
-        "operational_attainment_pct": (operational_met / total_actionable * 100.0) if total_actionable else None,
-        "stretch_attainment_pct": (stretch_met / total_actionable * 100.0) if total_actionable else None,
-        "worst_gap_pct": worst_miss_row["operational_gap_pct"] if worst_miss_row else None,
-        "worst_miss": worst_miss_row,
-        "engine_core_pass": engine_core["pass"],
-        "service_budget": {
-            "direct_api_pass": direct_api["pass"],
-            "transport_pass": transport["pass"],
-            "contention_pass": contention["pass"],
-        },
-        "product_pass": engine_core["pass"] and direct_api["pass"] and transport["pass"] and contention["pass"],
-    }
+    f.write('\n## Key Findings\n\n')
+    criterion_bucket_line = ', '.join(f'{bucket}={count}' for bucket, count in sorted(criterion_latency_bands.items(), key=lambda item: item[0]))
+    stress_noisy_labels = ', '.join(f"{item['suite']}:{stress_label(item)}" for item in stress_summary['noisiest'])
+    f.write(f'- Criterion latency shape: {criterion_bucket_line}.\n')
+    f.write(f'- Criterion noisiest benches: {", ".join(item["benchmark"] for item in criterion_summary["noisiest"])}.\n')
+    f.write(f'- Stress noisiest scenarios: {stress_noisy_labels}.\n')
+    if stress_delta_summary.get('best_layer') is not None:
+        layer_name, layer_mean = stress_delta_summary['best_layer']
+        f.write(f'- Best average transport layer: {layer_name} at {fmt_ops(layer_mean)} ops/sec.\n')
 
-
-def write_perf_scorecard_md(scorecard):
-    lines = [
-        "# Performance Scorecard",
-        "",
-        "Generated from current benchmark outputs and config/perf_targets.json.",
-        "",
-        "Informational targets are excluded from attainment percentages. Variance-gated targets only count when their current rel_stddev is at or below max_rel_stddev.",
-        "",
-        "## Product Summary",
-        "",
-        f"- engine_core_pass: `{str(scorecard['product_summary']['engine_core_pass']).lower()}`",
-        f"- service_budget.direct_api_pass: `{str(scorecard['product_summary']['service_budget']['direct_api_pass']).lower()}`",
-        f"- service_budget.transport_pass: `{str(scorecard['product_summary']['service_budget']['transport_pass']).lower()}`",
-        f"- service_budget.contention_pass: `{str(scorecard['product_summary']['service_budget']['contention_pass']).lower()}`",
-        f"- product_pass: `{str(scorecard['product_summary']['product_pass']).lower()}`",
-        "",
-        "| scoreboard | class | budget group | total actionable | missing | operational met | stretch met | operational attainment | stretch attainment | pass | worst gap pct | worst miss |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---|",
-    ]
-
-    for spec in SCOREBOARD_SPECS:
-        board = scorecard["scoreboards"][spec["id"]]
-        worst_name = board["worst_miss"]["name"] if board["worst_miss"] else "none"
-        lines.append(
-            f"| {board['title']} | {board['target_class']} | {board['budget_group'] or 'n/a'} | "
-            f"{board['total_actionable']} | {board['missing_measurements']} | {board['operational_met']} | "
-            f"{board['stretch_met']} | {format_optional_percent(board['operational_attainment_pct'])} | "
-            f"{format_optional_percent(board['stretch_attainment_pct'])} | "
-            f"`{str(board['pass']).lower()}` | {format_optional_percent(board['worst_gap_pct'])} | {worst_name} |"
-        )
-
-    product = scorecard["product_summary"]
-    product_worst = product["worst_miss"]["name"] if product["worst_miss"] else "none"
-    lines.extend(
-        [
-            "",
-            "| summary | total actionable | missing | operational met | stretch met | operational attainment | stretch attainment | worst gap pct | worst miss |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
-            f"| product surface | {product['total_actionable']} | {product['missing_measurements']} | {product['operational_met']} | {product['stretch_met']} | "
-            f"{format_optional_percent(product['operational_attainment_pct'])} | {format_optional_percent(product['stretch_attainment_pct'])} | "
-            f"{format_optional_percent(product['worst_gap_pct'])} | {product_worst} |",
-            "",
-            "## Internal Explainers",
-            "",
-            "Internal explainers are advisory. They never flip `product_pass`, but they stay visible to explain product-surface movement.",
-            "",
-        ]
-    )
-
-    internal = scorecard["scoreboards"]["internal_explainer"]
-    if internal["worst_miss"]:
-        internal_worst = internal["worst_miss"]
-        lines.extend(
-            [
-                f"- Worst advisory miss: `{internal_worst['name']}`",
-                f"- Operational gap: `{format_optional_percent(internal_worst['operational_gap_pct'])}`",
-                f"- Current mean: `{format_optional_scalar(round(internal_worst['current_mean_us'], 6) if internal_worst['current_mean_us'] is not None else None)} us`",
-                "",
-            ]
-        )
+    f.write('\n## Risk Areas\n\n')
+    risky_criterion = [item for item in criterion_comparisons if item['variance_band'] in ('noisy', 'untrustworthy')]
+    risky_stress = [item for item in stress_comparisons if item['variance_band'] in ('noisy', 'untrustworthy')]
+    if risky_criterion:
+        top_criterion_risk = ', '.join(item['benchmark'] for item in sorted(risky_criterion, key=lambda x: x['rel_stddev'] or -1, reverse=True)[:5])
+        f.write(f'- Criterion instability needs review: {top_criterion_risk}.\n')
     else:
-        lines.extend(["- No actionable advisory misses.", ""])
-
-    visibility_rows = scorecard["visibility_only"]["targets"]
-    lines.extend(
-        [
-            "## Visibility Only",
-            "",
-            "These targets stay visible in reports but are excluded from attainment rollups and hotspot selection.",
-            "",
-        ]
-    )
-
-    if not visibility_rows:
-        lines.append("None.")
+        f.write('- Criterion instability looks contained.\n')
+    if risky_stress:
+        top_stress_risk = ', '.join(f"{item['suite']}:{stress_label(item)}" for item in sorted(risky_stress, key=lambda x: x['rel_stddev_runs'] or -1, reverse=True)[:5])
+        f.write(f'- Stress instability needs review: {top_stress_risk}.\n')
     else:
-        lines.extend(
-            [
-                "| target | class | budget group | gating | note |",
-                "|---|---|---|---|---|",
-            ]
+        f.write('- Stress instability looks contained.\n')
+    if criterion_missing or stress_missing:
+        f.write(f'- Missing baseline entries: criterion {len(criterion_missing)}, stress {len(stress_missing)}.\n')
+    if criterion_skipped or stress_skipped:
+        f.write('- Validation filtered invalid or implausible measurements from the main tables; see Skipped Results below.\n')
+
+    f.write('\n## Skipped Results\n\n')
+    if criterion_skipped:
+        f.write('### Criterion\n\n')
+        f.write('| benchmark | reason | file |\n')
+        f.write('|---|---|---|\n')
+        for item in criterion_skipped:
+            f.write(f"| {item['benchmark']} | {item['reason']} | {item['file']} |\n")
+        f.write('\n')
+    else:
+        f.write('### Criterion\n\nNo Criterion results were skipped.\n\n')
+
+    if stress_skipped:
+        f.write('### Stress\n\n')
+        f.write('| suite | scenario | reason | file |\n')
+        f.write('|---|---|---|---|\n')
+        for item in stress_skipped:
+            f.write(f"| {item['suite']} | {stress_label(item)} | {item['reason']} | {item['file']} |\n")
+        f.write('\n')
+    else:
+        f.write('### Stress\n\nNo stress results were skipped.\n\n')
+
+    f.write('\n## Criterion Benchmarks\n\n')
+    f.write('### Distribution\n\n')
+    f.write('| bucket | count | share |\n')
+    f.write('|---|---:|---:|\n')
+    total_criterion = len(entries) or 1
+    for bucket in ['<10us', '10-100us', '100us-1ms', '>1ms']:
+        count = criterion_latency_bands.get(bucket, 0)
+        f.write(f'| {bucket} | {count} | {count / total_criterion:.1%} |\n')
+
+    f.write('\n### Variance Bands\n\n')
+    f.write('| band | count | share |\n')
+    f.write('|---|---:|---:|\n')
+    total_variance = len(entries) or 1
+    for band in ['stable', 'acceptable', 'noisy', 'untrustworthy']:
+        count = criterion_variance_counts.get(band, 0)
+        f.write(f'| {band} | {count} | {count / total_variance:.1%} |\n')
+
+    f.write('\n### Baseline Comparison\n\n')
+    if previous_criterion_rows:
+        f.write('| outcome | count |\n')
+        f.write('|---|---:|\n')
+        for label in ['improved', 'regressed', 'unchanged', 'new', 'missing']:
+            f.write(f'| {label} | {criterion_summary[label]} |\n')
+        f.write('\n')
+        f.write('| benchmark | current_us | baseline_us | delta | variance |\n')
+        f.write('|---|---:|---:|---:|---|\n')
+        movers = sorted(
+            [item for item in criterion_comparisons if item['delta_pct'] is not None],
+            key=lambda item: abs(item['delta_pct']),
+            reverse=True,
+        )[:10]
+        for item in movers:
+            f.write(
+                f"| {item['benchmark']} | {fmt_us(item['mean'])} | {fmt_us(item['baseline_mean'])} | {format_delta(item['delta_pct'])} | {item['variance_band']} |\n"
+            )
+    else:
+        f.write('No previous Criterion CSV found, so deltas are unavailable.\n')
+
+    f.write('\n### Suite Snapshots\n\n')
+    f.write('| suite | count | median_us | p90_us | max_us | unstable | slowest 3 | noisiest 3 |\n')
+    f.write('|---|---:|---:|---:|---:|---:|---|---|\n')
+    for suite_name in criterion_suite_order:
+        suite_entries = criterion_suite_groups[suite_name]
+        suite_means = [item['mean'] for item in suite_entries]
+        suite_median = statistics.median(suite_means) if suite_means else None
+        suite_p90 = percentile(suite_means, 0.90)
+        suite_max = max(suite_means) if suite_means else None
+        unstable = sum(1 for item in suite_entries if item['rel_stddev'] is not None and item['rel_stddev'] > 0.10)
+        slowest_names = ', '.join(
+            item['benchmark'].replace('\\', '/').split('/', 1)[-1]
+            for item in sorted(suite_entries, key=lambda item: item['mean'], reverse=True)[:3]
         )
-        for row in visibility_rows:
-            lines.append(
-                f"| {row['name']} | {row['target_class']} | {row.get('budget_group') or 'n/a'} | {row['gating']} | {row.get('note') or ''} |"
+        noisiest_names = ', '.join(
+            item['benchmark'].replace('\\', '/').split('/', 1)[-1]
+            for item in sorted(suite_entries, key=lambda item: item['rel_stddev'] or -1, reverse=True)[:3]
+        )
+        f.write(
+            f"| {suite_name} | {len(suite_entries)} | {fmt_us(suite_median)} | {fmt_us(suite_p90)} | {fmt_us(suite_max)} | {unstable} | {slowest_names} | {noisiest_names} |\n"
+        )
+
+    f.write('\n### Detailed Criterion Tables\n\n')
+    for suite_name in criterion_suite_order:
+        suite_entries = sorted(criterion_suite_groups[suite_name], key=lambda item: item['mean'])
+        f.write(f'#### {suite_name}\n\n')
+        f.write('| benchmark | current_us | baseline_delta | variance |\n')
+        f.write('|---|---:|---:|---|\n')
+        for item in suite_entries:
+            comparison = criterion_comparison_map.get(item['benchmark'], {})
+            f.write(
+                f"| {item['benchmark'].replace('\\', '/').split('/', 1)[-1]} | {fmt_us(item['mean'])} | {format_delta(comparison.get('delta_pct'))} | {item['variance_band'] if 'variance_band' in item else variance_band(item['rel_stddev'])} |\n"
+            )
+        f.write('\n')
+
+    f.write('## Stress Tests\n\n')
+    if stress_entries:
+        f.write('### Distribution\n\n')
+        f.write('| band | count | share |\n')
+        f.write('|---|---:|---:|\n')
+        total_stress = len(stress_entries) or 1
+        for band in ['stable', 'acceptable', 'noisy', 'untrustworthy']:
+            count = stress_variance_counts.get(band, 0)
+            f.write(f'| {band} | {count} | {count / total_stress:.1%} |\n')
+
+        f.write('\n### Transport Comparison\n\n')
+        if stress_layer_groups:
+            layer_throughputs = {
+                layer: statistics.mean(item['throughput_ops_per_s'] for item in items)
+                for layer, items in stress_layer_groups.items()
+            }
+            best_layer_name, best_layer_throughput = max(layer_throughputs.items(), key=lambda item: item[1])
+            f.write('| layer | scenarios | avg_ops_per_sec | ratio_to_best |\n')
+            f.write('|---|---:|---:|---:|\n')
+            for layer_name, throughput in sorted(layer_throughputs.items(), key=lambda item: item[1], reverse=True):
+                scenarios = len(stress_layer_groups[layer_name])
+                ratio = throughput / best_layer_throughput if best_layer_throughput else None
+                f.write(f'| {layer_name} | {scenarios} | {fmt_ops(throughput)} | {fmt_ratio(ratio)} |\n')
+
+            f.write('\n')
+            direct_layer = layer_throughputs.get('direct')
+            if direct_layer:
+                for layer_name, throughput in sorted(layer_throughputs.items(), key=lambda item: item[1], reverse=True):
+                    if layer_name == 'direct':
+                        continue
+                    slowdown = direct_layer / throughput if throughput else None
+                    f.write(f'- {layer_name} averages {fmt_ratio(slowdown)} versus direct transport.\n')
+        else:
+            f.write('No layer metadata was recorded for these stress scenarios.\n')
+
+        f.write('\n### Baseline Comparison\n\n')
+        if previous_stress_rows:
+            f.write('| outcome | count |\n')
+            f.write('|---|---:|\n')
+            for label in ['improved', 'regressed', 'unchanged', 'new', 'missing']:
+                f.write(f'| {label} | {stress_summary[label]} |\n')
+            f.write('\n')
+            f.write('| suite | scenario | current_ops_per_sec | baseline_ops_per_sec | delta | variance |\n')
+            f.write('|---|---|---:|---:|---:|---|\n')
+            movers = sorted(
+                [item for item in stress_comparisons if item['delta_pct'] is not None],
+                key=lambda item: abs(item['delta_pct']),
+                reverse=True,
+            )[:10]
+            for item in movers:
+                f.write(
+                    f"| {item['suite']} | {stress_label(item)} | {fmt_ops(item['throughput_ops_per_s'])} | {fmt_ops(item['baseline_throughput_ops_per_s'])} | {format_delta(item['delta_pct'])} | {item['variance_band']} |\n"
+                )
+        else:
+            f.write('No previous stress CSV found, so deltas are unavailable.\n')
+
+        f.write('\n### Suite Snapshots\n\n')
+        f.write('| suite | count | median_ops_per_sec | p90_ops_per_sec | best | worst | unstable |\n')
+        f.write('|---|---:|---:|---:|---|---|---:|\n')
+        for suite_name in sorted(stress_suite_groups.keys()):
+            suite_tests = stress_suite_groups[suite_name]
+            throughputs = [item['throughput_ops_per_s'] for item in suite_tests]
+            median_tp = statistics.median(throughputs) if throughputs else None
+            p90_tp = percentile(throughputs, 0.90)
+            best_item = max(suite_tests, key=lambda item: item['throughput_ops_per_s'])
+            worst_item = min(suite_tests, key=lambda item: item['throughput_ops_per_s'])
+            unstable = sum(1 for item in suite_tests if item['rel_stddev_runs'] is not None and item['rel_stddev_runs'] > 0.10)
+            f.write(
+                f"| {suite_name} | {len(suite_tests)} | {fmt_ops(median_tp)} | {fmt_ops(p90_tp)} | {stress_label(best_item)} | {stress_label(worst_item)} | {unstable} |\n"
             )
 
-    PERF_SCORECARD_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        f.write('\n### Detailed Stress Tables\n\n')
+        for suite_name in sorted(stress_suite_groups.keys()):
+            suite_tests = sorted(stress_suite_groups[suite_name], key=lambda item: item['throughput_ops_per_s'], reverse=True)
+            f.write(f'#### {suite_name}\n\n')
+            f.write('| scenario | layer | ops_per_sec | baseline_delta | variance | runs |\n')
+            f.write('|---|---|---:|---:|---|---:|\n')
+            for item in suite_tests:
+                comparison = stress_comparison_map.get((item['suite'], item['name'], item['scenario']), {})
+                f.write(
+                    f"| {stress_label(item)} | {item.get('layer') or 'NA'} | {fmt_ops(item['throughput_ops_per_s'])} | {format_delta(comparison.get('delta_pct'))} | {item['variance_band'] if 'variance_band' in item else variance_band(item['rel_stddev_runs'])} | {item['num_runs']} |\n"
+                )
+            f.write('\n')
+    else:
+        f.write('## Stress Tests\n\nNo stress test results found.\n')
 
-
-def write_perf_scorecard(target_results, perf_targets):
-    scoreboards = {}
-    for spec in SCOREBOARD_SPECS:
-        rows = scoreboard_rows(target_results, spec["target_class"], spec["budget_group"])
-        scoreboards[spec["id"]] = build_scoreboard_summary(spec, rows)
-
-    visibility_only = [row for row in target_results if row["gating"] == "informational"]
-    variance_blocked = [row for row in target_results if row["status"] == "variance_blocked"]
-
-    scorecard = {
-        "version": perf_targets.get("version"),
-        "baseline": perf_targets.get("baseline", {}),
-        "generated_files": {
-            "criterion_csv": str(OUT_CSV),
-            "stress_csv": str(STRESS_CSV),
-            "benchmark_summary_md": str(OUT_MD),
-        },
-        "scoreboards": scoreboards,
-        "product_summary": build_product_summary(scoreboards, target_results),
-        "internal_explainer": scoreboards["internal_explainer"],
-        "visibility_only": {
-            "count": len(visibility_only),
-            "targets": visibility_only,
-        },
-        "variance_blocked": {
-            "count": len(variance_blocked),
-            "targets": variance_blocked,
-        },
-        "target_results": target_results,
-    }
-
-    PERF_SCORECARD_JSON.write_text(json.dumps(scorecard, indent=2) + "\n", encoding="utf-8")
-    write_perf_scorecard_md(scorecard)
-
-
-def main():
-    criterion_entries = collect_criterion_entries()
-    stress_entries = collect_stress_entries()
-
-    write_criterion_csv(criterion_entries)
-    write_stress_csv(stress_entries)
-    write_bench_summary(criterion_entries, stress_entries)
-
-    if PERF_TARGETS_PATH.exists():
-        perf_targets, target_results = build_target_results(criterion_entries, stress_entries)
-        write_perf_scorecard(target_results, perf_targets)
-
-    if CRITERION_ROOT.exists():
-        print(f"Wrote {OUT_CSV} (criterion) with {len(criterion_entries)} entries.")
-    if STRESS_ROOT.exists():
-        print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
-    print(f"Wrote {OUT_MD} (unified summary).")
-    if PERF_TARGETS_PATH.exists():
-        print(f"Wrote {PERF_SCORECARD_JSON} (rubric scorecard).")
-        print(f"Wrote {PERF_SCORECARD_MD} (rubric scorecard markdown).")
-
-
-if __name__ == "__main__":
-    main()
+if CRITERION_ROOT.exists():
+    print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
+if STRESS_ROOT.exists():
+    print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
+print(f"Wrote {OUT_MD} (summary).")

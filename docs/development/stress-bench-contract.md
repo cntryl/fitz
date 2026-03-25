@@ -29,8 +29,38 @@ This document defines the contract for Tier 3 and Tier 4 benchmarks using the `c
 
 - Never measure setup, teardown, or frame construction.
 - Never use `black_box` as a substitute for real work.
+- Never `return` early from `ctx.measure`. If the measured work can fail, record the failure in a local flag or result and assert after the closure so the timer still covers the full intended work.
 - Scenario names in `ctx.tag` must match what appears in the stress results output.
 - Each test must be independently runnable and deterministic.
+
+### Early-return trap
+
+Wrong:
+
+```rust
+ctx.measure(|| {
+	let response = actor.handle(request);
+	let tx_id = match response {
+		Ok(tx_id) => tx_id,
+		Err(_) => return,
+	};
+	actor.commit(tx_id);
+});
+```
+
+Correct:
+
+```rust
+ctx.measure(|| {
+	let response = actor.handle(request);
+	assert!(response.is_ok(), "benchmark setup must not fail");
+
+	let tx_id = response.unwrap();
+	actor.commit(tx_id);
+});
+```
+
+The wrong pattern leaves `ctx.set_elements(n)` counted while the measured work disappears, which produces inflated ops/sec and breaks the report.
 
 ## Reference examples
 

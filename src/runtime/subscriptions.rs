@@ -67,7 +67,9 @@ struct SegmentInterner {
 
 impl SegmentInterner {
     fn new() -> Self {
-        Self { ids: AHashMap::new() }
+        Self {
+            ids: AHashMap::new(),
+        }
     }
 
     #[inline]
@@ -510,7 +512,9 @@ impl SubscriptionIndex {
         for segment in parsed.iter() {
             match segment {
                 PatternSegment::Literal(value) => {
-                    compiled.push(CompiledPatternSegment::Exact(self.segment_interner.intern(value)));
+                    compiled.push(CompiledPatternSegment::Exact(
+                        self.segment_interner.intern(value),
+                    ));
                 }
                 PatternSegment::Star => compiled.push(CompiledPatternSegment::Star),
                 PatternSegment::DoubleStar => compiled.push(CompiledPatternSegment::DoubleStar),
@@ -541,7 +545,8 @@ impl SubscriptionIndex {
         &self,
         route_segments: &[&str],
     ) -> SmallVec<[CompiledRouteSegment; 8]> {
-        let mut compiled = SmallVec::<[CompiledRouteSegment; 8]>::with_capacity(route_segments.len());
+        let mut compiled =
+            SmallVec::<[CompiledRouteSegment; 8]>::with_capacity(route_segments.len());
         for segment in route_segments {
             compiled.push(CompiledRouteSegment {
                 exact_id: self.segment_interner.lookup(segment),

@@ -26,10 +26,10 @@ fn bench_pipeline_iter_route_fanout(c: &mut Criterion) {
             let name = format!("iter_{}B_{}subs", size, nsub);
             // mux capacity large enough to never fail
             let mut mux = Mux::new(records);
+            let decoder = TlvDecoder::new();
             group.throughput(Throughput::Elements(records as u64));
             group.bench_function(&name, |b| {
                 b.iter(|| {
-                    let decoder = TlvDecoder::new();
                     // decode via iterator and route_ref with simulated fanout
                     for res in decoder.iter(black_box(&data)) {
                         let (mt, slice) = res.unwrap();
@@ -69,10 +69,10 @@ fn bench_pipeline_decode_into_route_fanout(c: &mut Criterion) {
         for &nsub in &subs {
             let name = format!("into_{}B_{}subs", size, nsub);
             let mut mux = Mux::new(records);
+            let decoder = TlvDecoder::new();
             group.throughput(Throughput::Elements(records as u64));
             group.bench_function(&name, |b| {
                 b.iter(|| {
-                    let decoder = TlvDecoder::new();
                     for res in decoder.iter(black_box(&data)) {
                         let (mt, slice) = res.unwrap();
                         let cref = mux.route_ref(mt, slice).unwrap();
