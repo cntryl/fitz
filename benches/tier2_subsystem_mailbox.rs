@@ -15,10 +15,7 @@ impl Actor for MessageActor {
 
 fn bench_mailbox_send(c: &mut Criterion) {
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("/bench/mailbox".to_string()),
-    );
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/mailbox"));
     let actor_ref = scheduler.spawn(MessageActor, address, 10000);
 
     let mut group = c.benchmark_group("subsystem_mailbox");
@@ -40,10 +37,7 @@ fn bench_mailbox_send(c: &mut Criterion) {
 /// other load to reduce noise.
 fn bench_mailbox_capacity(c: &mut Criterion) {
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("/bench/capacity".to_string()),
-    );
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/capacity"));
     let actor_ref = scheduler.spawn(MessageActor, address, 1000);
 
     let mut group = c.benchmark_group("subsystem_mailbox");

@@ -29,7 +29,7 @@ impl Actor for CounterActor {
 fn bench_send_to_other(c: &mut Criterion) {
     // Setup OUTSIDE benchmark - create scheduler and spawn actor
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/ping".to_string()));
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/ping"));
     let actor_ref = scheduler.spawn(PingActor, address, 1000);
 
     let mut group = c.benchmark_group("hotpath_actor_messaging");
@@ -51,10 +51,7 @@ fn bench_send_to_self(c: &mut Criterion) {
     let count_clone = count.clone();
 
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("/bench/counter".to_string()),
-    );
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/counter"));
     let actor_ref = scheduler.spawn(CounterActor { count: count_clone }, address, 10000);
 
     let mut group = c.benchmark_group("hotpath_actor_messaging");
@@ -74,7 +71,7 @@ fn bench_send_to_self(c: &mut Criterion) {
 fn bench_message_overhead(c: &mut Criterion) {
     // Measure pure ActorRef clone overhead
     let scheduler = Scheduler::new(1);
-    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/ping".to_string()));
+    let address = RouteAddress::new(RouteFamily::new(1), Route::new("/bench/ping"));
     let actor_ref = scheduler.spawn(PingActor, address, 1000);
 
     let mut group = c.benchmark_group("hotpath_actor_messaging");

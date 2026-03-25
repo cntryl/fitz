@@ -55,6 +55,7 @@ crossbeam-queue = "0.3"
 crossbeam-skiplist = "0.1"
 crossbeam-channel = "0.5"
 fxhash = "0.2"
+ahash = "0.8"
 num_cpus = "1.15"
 dashmap = "5"
 parking_lot = "0.12"
@@ -78,6 +79,7 @@ cntryl-stress = "0.2"
 serial_test = "0.5"
 tempfile = "3"
 rand = "0.8"
+proptest = "1"
 
 # Tier 1: Hot Path (Infrastructure - Pure sync internals, <1s, <100ns-10µs ops)
 [[bench]]
