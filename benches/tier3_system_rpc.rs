@@ -164,7 +164,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"rpc request payload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -191,7 +191,7 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"streaming request");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -220,7 +220,7 @@ fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"scaling payload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -249,7 +249,7 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"scaling payload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -276,7 +276,7 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"concurrent request");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         for _ in 0..ITERS {
             dispatch_request(
                 &router,
@@ -302,7 +302,7 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(ROUTE_STR, b"mixed workload");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         for _ in 0..10 {
             dispatch_request(
                 &router,
@@ -320,3 +320,4 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

@@ -49,7 +49,7 @@ fn should_complete_system_create(ctx: &mut StressContext) {
     let (routes, crons, payloads) = precompute_data(1000);
 
     let mut idx = 0;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _response = actor.handle(ScheduleMessage::Create {
             route: routes[idx % routes.len()].clone(),
             cron: crons[idx % crons.len()].clone(),
@@ -77,7 +77,7 @@ fn should_complete_system_cancel(ctx: &mut StressContext) {
     }
 
     let mut idx = 0;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _response = actor.handle(ScheduleMessage::Cancel {
             route: routes[idx % routes.len()].clone(),
         });
@@ -102,7 +102,7 @@ fn should_complete_system_list_10_schedules(ctx: &mut StressContext) {
         });
     }
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _response = actor.handle(ScheduleMessage::List {
             offset: 0,
             limit: 0,
@@ -127,7 +127,7 @@ fn should_complete_system_list_100_schedules(ctx: &mut StressContext) {
         });
     }
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _response = actor.handle(ScheduleMessage::List {
             offset: 0,
             limit: 0,
@@ -152,7 +152,7 @@ fn should_complete_system_list_1000_schedules(ctx: &mut StressContext) {
         });
     }
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _response = actor.handle(ScheduleMessage::List {
             offset: 0,
             limit: 0,
@@ -178,7 +178,7 @@ fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
     }
 
     let mut idx = 100;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         // CREATE
         let _r1 = actor.handle(ScheduleMessage::Create {
             route: routes[idx % routes.len()].clone(),
@@ -225,7 +225,7 @@ fn should_complete_system_scan_and_fire_100_schedules(ctx: &mut StressContext) {
         });
     }
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _fired = actor.scan_and_fire();
     });
     ctx.set_elements(100 * iterations as u64);
@@ -247,7 +247,7 @@ fn should_complete_system_scan_and_fire_1000_schedules(ctx: &mut StressContext) 
         });
     }
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _fired = actor.scan_and_fire();
     });
     ctx.set_elements(1000 * iterations as u64);
@@ -269,10 +269,11 @@ fn should_complete_system_scan_and_fire_10000_schedules(ctx: &mut StressContext)
         });
     }
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _fired = actor.scan_and_fire();
     });
     ctx.set_elements(10000 * iterations as u64);
 }
 
 stress_main!();
+

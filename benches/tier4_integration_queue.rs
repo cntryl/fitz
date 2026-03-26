@@ -1,4 +1,4 @@
-﻿//! Queue domain tier 4 integration benchmarks using stress
+//! Queue domain tier 4 integration benchmarks using stress
 //!
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
@@ -48,7 +48,7 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         actor.receive(
             QueueMessage::Send {
                 family_id: family,
@@ -72,7 +72,7 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let enqueue_frame = build_queue_enqueue(route, b"msg");
     let family = RouteFamily::new(1);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let mut parser = TlvFrameParser::new(&enqueue_frame);
         let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
         let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
@@ -95,7 +95,7 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&enqueue_frame, 2000))
             .expect("enqueue response");
@@ -121,7 +121,7 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&enqueue_frame, 2000))
             .expect("enqueue response");
@@ -152,7 +152,7 @@ fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -168,3 +168,4 @@ fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

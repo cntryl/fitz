@@ -34,7 +34,7 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
             realm: "tier4".to_string(),
@@ -75,7 +75,7 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let begin_frame = begin_frame.clone();
         let mut parser = TlvFrameParser::new(&begin_frame);
         let (msg_type, payload) = parser.next_field().expect("begin field");
@@ -116,7 +116,7 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&begin_frame, 2000))
             .expect("begin response");
@@ -155,7 +155,7 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&begin_frame, 2000))
             .expect("begin response");
@@ -200,7 +200,7 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -224,3 +224,4 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
 }
 
 stress_main!();
+

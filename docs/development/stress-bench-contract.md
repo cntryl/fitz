@@ -8,7 +8,7 @@ This document defines the contract for Tier 3 and Tier 4 benchmarks using the `c
 - All setup (actor creation, subscriptions, pre-population, payload construction) goes **OUTSIDE** `ctx.measure`.
 - Only the operation being measured goes **INSIDE** `ctx.measure`.
 - `ctx.set_elements(n)` must reflect the **actual number of meaningful operations** inside the measure block.
-- Each scenario should run long enough to be statistically useful; aim for at least 3s of measured work before the report accepts it.
+- Each scenario should target 5s of measured work per run; runs shorter than 3s are invalid and should not be treated as authoritative.
 - Every scenario must exercise **real actor logic** — no `black_box` on counters, no fake loops, no measuring `pending_count()`.
 - If testing fanout, actually subscribe real sinks and publish real messages.
 - If testing scan_and_fire, schedules must actually be due to fire — bypass or reset the dedup window so fires actually occur.

@@ -3,7 +3,7 @@
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
 //! Layers: direct, encoded (codec decode path), tcp, websocket, multiclient (concurrent).
-//! RPC tier4 tests full request → worker dispatch → response over the wire where applicable.
+//! RPC tier4 tests full request -> worker dispatch -> response over the wire where applicable.
 
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
@@ -126,7 +126,7 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
     let request_frame = build_rpc_request(SERVICE_ROUTE, b"ping");
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &requester_source,
@@ -153,7 +153,7 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let request_frame = build_rpc_request(SERVICE_ROUTE, b"ping");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let request_frame = request_frame.clone();
         let mut parser = TlvFrameParser::new(&request_frame);
         let (msg_type, payload) = parser.next_field().expect("one field");
@@ -230,7 +230,7 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(requester_client.request(&request_frame, 2000))
             .expect("request response");
@@ -303,7 +303,7 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(requester_client.request(&request_frame, 2000))
             .expect("request response");
@@ -336,7 +336,7 @@ fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let frame = subscribe_frame.clone();
         let results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
@@ -356,3 +356,4 @@ fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

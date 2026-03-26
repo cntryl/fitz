@@ -58,7 +58,7 @@ Benchmarks are organized in four tiers. Use the shared config and naming below.
 ```
 benches/
 ├── criterion_config.rs    # Shared Criterion config (use criterion_config_for_tier1/2())
-├── stress_config.rs       # Stress BENCH_RUNS / BENCH_WARMUP
+├── stress_config.rs       # Stress run configuration helper
 ├── tier1_hotpath_matcher.rs
 ├── tier1_hotpath_tlv.rs
 ├── tier1_hotpath_mux.rs
@@ -220,18 +220,19 @@ The benchmark summary is median-first. Mean is still recorded, but the headline 
 
 ### Stress configuration (Tier 3 and 4)
 
-Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configuration is via environment variables (see `benches/stress_config.rs`):
+Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configuration is passed after `--` to the bench command (see `benches/stress_config.rs`):
 
-| Variable       | Meaning                                    | Default |
+| Argument       | Meaning                                    | Default |
 | -------------- | ------------------------------------------ | ------- |
-| `BENCH_RUNS`   | Number of measurement runs per stress test | 5       |
-| `BENCH_WARMUP` | Number of warmup runs before measurement   | 1       |
+| `--runs <N>`   | Number of measurement runs per stress test | 5       |
+| `--warmup <N>` | Number of warmup runs before measurement   | 1       |
 
 - **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `scripts/benchmark_summary.py` is elements/time, so N must match what the closure does.
-- **Minimum runtime:** Aim for at least 3s of measured work per scenario. The summary script flags shorter stress runs as invalid because they do not provide stable enough medians.
+- **Minimum runtime:** Aim for 5s of measured work per scenario. Runs shorter than 3s are invalid, and the summary script flags them as such because they do not provide stable enough medians.
 - **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `scripts/benchmark_summary.py` after `cargo bench` (Criterion) and stress bench binaries to produce `target/bench_summary.md`.
+- **Full refresh:** Use `python scripts/run_stress_benches.py` to run every tier 3 / tier 4 stress suite with the authoritative policy and regenerate the summary in one step.
 
-For CI, you can reduce total time by setting `BENCH_RUNS=3` (or lower) when running the full tier3/tier4 suite.
+For CI, you can reduce total time by passing `-- --runs 5 --warmup 1` (or lower only if you are intentionally collecting provisional data) when running the full tier3/tier4 suite.
 
 ### Stress benchmark contract (Tier 3/4)
 
@@ -481,7 +482,7 @@ cargo bench -- hotpath_routing
 cargo bench --bench tier3_system_kv
 cargo bench --bench tier4_integration_kv
 # Optional: fewer runs for faster feedback
-BENCH_RUNS=3 cargo bench --bench tier4_integration_kv
+cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
 ```
 
 #### Watch mode for TDD:
@@ -492,7 +493,7 @@ cargo watch -x "bench --bench tier1_hotpath_routing"
 
 ### CI Pipeline
 
-The repository CI includes a **benchmarks** job that runs all Criterion benches with the shared Criterion config and stress benches with `BENCH_RUNS=3`, then runs `scripts/benchmark_summary.py` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
+The repository CI includes a **benchmarks** job that runs all Criterion benches with the shared Criterion config and stress benches with `--runs 5 --warmup 1`, then runs `scripts/benchmark_summary.py` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
 
 #### Pull Request Checks:
 
@@ -501,8 +502,8 @@ The repository CI includes a **benchmarks** job that runs all Criterion benches 
 cargo bench --no-fail-fast
 
 # Stress with reduced runs (optional)
-BENCH_RUNS=3 cargo bench --bench tier3_system_kv
-BENCH_RUNS=3 cargo bench --bench tier4_integration_kv
+cargo bench --bench tier3_system_kv -- --runs 5 --warmup 1
+cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
 ```
 
 #### Nightly Performance Runs:

@@ -60,7 +60,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, Bytes::from_static(b"event").as_ref());
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &source,
@@ -91,7 +91,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&begin_frame, 2000))
             .expect("begin response");
@@ -123,7 +123,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&begin_frame, 2000))
             .expect("begin response");
@@ -160,7 +160,7 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -179,3 +179,4 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

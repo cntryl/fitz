@@ -71,7 +71,7 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         .take(50)
         .map(|p| (p.clone(), None))
         .collect();
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
@@ -104,7 +104,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         )
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_mixed);
         let _ = actor.handle_receive(1, Some(10));
     });
@@ -141,7 +141,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     drop(pre_actor);
 
     // Measure: Recover actor from populated store
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _actor = QueueActor::new(
             RouteFamily::new(1),
             queue_key.clone(),
@@ -163,7 +163,7 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
@@ -190,7 +190,7 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         Bytes::from_static(b"queue fanout payload"),
     );
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = router.route(Envelope::new(
             RouteAddress::new(family, publish_route.clone()),
             publish_event.clone(),
@@ -200,3 +200,4 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

@@ -65,7 +65,7 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     );
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -92,7 +92,7 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     );
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -119,7 +119,7 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     );
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -136,3 +136,4 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

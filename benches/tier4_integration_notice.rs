@@ -54,7 +54,7 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     );
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -80,18 +80,24 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let mut client = runtime
+    let mut subscriber = runtime
         .block_on(TestClient::new(server.tcp_addr))
-        .expect("connect tcp");
+        .expect("connect tcp subscriber");
+    let mut publisher = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp publisher");
 
     runtime
-        .block_on(client.request(&subscribe_frame, 2000))
+        .block_on(subscriber.request(&subscribe_frame, 2000))
         .expect("subscribe response");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        runtime
+            .block_on(publisher.send_frame(&publish_frame))
+            .expect("publish frame");
         let response = runtime
-            .block_on(client.request(&publish_frame, 2000))
-            .expect("publish response");
+            .block_on(subscriber.recv_frame(2000))
+            .expect("publish notification");
         let (_msg_type, _status, _data) = parse_notice_response(&response);
     });
     ctx.set_elements(iterations as u64);
@@ -107,21 +113,30 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let mut client = runtime
+    let mut subscriber = runtime
         .block_on(TestWebSocketClient::connect(&format!(
             "ws://{}",
             server.ws_addr
         )))
-        .expect("connect ws");
+        .expect("connect ws subscriber");
+    let mut publisher = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws publisher");
 
     runtime
-        .block_on(client.request(&subscribe_frame, 2000))
+        .block_on(subscriber.request(&subscribe_frame, 2000))
         .expect("subscribe response");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        runtime
+            .block_on(publisher.send_frame(&publish_frame))
+            .expect("publish frame");
         let response = runtime
-            .block_on(client.request(&publish_frame, 2000))
-            .expect("publish response");
+            .block_on(subscriber.recv_frame(2000))
+            .expect("publish notification");
         let (_msg_type, _status, _data) = parse_notice_response(&response);
     });
     ctx.set_elements(iterations as u64);
@@ -137,7 +152,7 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let clients: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
+    let subscribers: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
         .map(|_| {
             let c = runtime
                 .block_on(TestWebSocketClient::connect(&format!(
@@ -149,8 +164,15 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
         })
         .collect();
 
+    let mut publisher = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws publisher");
+
     let sub = subscribe_frame.clone();
-    runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+    runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
         let arc = arc.clone();
         let f = sub.clone();
         async move {
@@ -159,15 +181,17 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
         }
     })));
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let publish_frame = publish_frame.clone();
+        runtime
+            .block_on(publisher.send_frame(&publish_frame))
+            .expect("publish frame");
         let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+            runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
                 let arc = arc.clone();
-                let frame = publish_frame.clone();
                 async move {
                     let mut c = arc.lock().await;
-                    let response = c.request(&frame, 2000).await.expect("publish");
+                    let response = c.recv_frame(2000).await.expect("publish notification");
                     let _ = parse_notice_response(&response);
                 }
             })));
@@ -176,3 +200,4 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

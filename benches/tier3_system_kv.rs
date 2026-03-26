@@ -21,7 +21,7 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         // Begin transaction
         let response = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -61,7 +61,7 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
     let store = create_test_engine_with_cfs(vec![1, 2]);
     let mut actor = KvActor::new(store);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         // Begin on family 1
         let response1 = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -126,7 +126,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let mut actor = KvActor::new(store);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         // Three families accessed sequentially
         for family_id in 1..=3 {
             let response = actor.handle(KvMessage::Begin {
@@ -194,7 +194,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
     actor.handle(KvMessage::Rollback { tx_id });
 
     // Measure: read-only on f1, write on f2
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         // Read-only transaction on family 1
         let response1 = actor.handle(KvMessage::Begin {
             route_family: RouteFamily::new(1),
@@ -252,3 +252,4 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
 }
 
 stress_main!();
+

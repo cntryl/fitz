@@ -52,7 +52,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
         &mut actor_ctx,
     );
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         actor.receive(
             ScheduleMessage::Create {
                 route: "schedule://tier4/job1".to_string(),
@@ -84,7 +84,7 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
         .expect("warmup create response");
     let _ = parse_schedule_response(&warmup);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&create_frame, 2000))
             .expect("create response");
@@ -115,7 +115,7 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
         .expect("warmup create response");
     let _ = parse_schedule_response(&warmup);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let response = runtime
             .block_on(client.request(&create_frame, 2000))
             .expect("create response");
@@ -160,7 +160,7 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
         }
     })));
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(3), || {
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
                 let arc = arc.clone();
@@ -184,3 +184,4 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
 }
 
 stress_main!();
+
