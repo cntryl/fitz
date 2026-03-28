@@ -80,7 +80,7 @@ While the wire protocol requires routes in every message for self-contained oper
 
 ```python
 # begin() returns a Transaction object
-tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
+tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync)
 
 # Transaction methods hide route repetition
 tx.put(b"key", b"value")      # Simple API
@@ -147,13 +147,13 @@ tx.put(b"key", b"value")  # ❌ Server must remember route from BEGIN
 
 ```python
 # Sequential within a transaction (one tx at a time)
-with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
+with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync) as tx:
     tx.put(b"key", b"value")
     tx.commit()
 
 # BUT: Multiple transactions to different resources run in PARALLEL
-tx_users = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
-tx_posts = client.kv_begin("kv://prod/app/posts", TxMode.ReadWrite)
+tx_users = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync)
+tx_posts = client.kv_begin("kv://prod/app/posts", TxMode.ReadWrite, Durability.Sync)
 # Both active simultaneously, on same KV channel to different actor instances
 tx_users.put(b"u1", b"alice")
 tx_posts.put(b"p1", b"hello")
@@ -167,7 +167,7 @@ msg_id_2 = client.queue_enqueue("queue://prod/app/events", b"event1")
 
 # Cross-domain multiplexing (different channels run in parallel)
 notice_sub = client.notice_subscribe("notice://prod/app/*")
-tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
+tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync)
 # Now client can receive notifications while KV transaction is in flight
 # (they're on different channels)
 ```
@@ -176,8 +176,8 @@ tx = client.kv_begin("kv://prod/app/users", TxMode.ReadWrite)
 
 ```rust
 // Multiple transactions to different resources in parallel
-let mut tx_users = client.kv_begin("kv://prod/app/users", TxMode::ReadWrite)?;
-let mut tx_posts = client.kv_begin("kv://prod/app/posts", TxMode::ReadWrite)?;
+let mut tx_users = client.kv_begin("kv://prod/app/users", TxMode::ReadWrite, Durability::Sync)?;
+let mut tx_posts = client.kv_begin("kv://prod/app/posts", TxMode::ReadWrite, Durability::Sync)?;
 
 // Both can be active simultaneously
 tx_users.put(b"key", b"value")?;
@@ -191,8 +191,8 @@ tx_posts.commit()?;
 
 ```go
 // Multiple concurrent transactions to different resources
-tx1, _ := client.KvBegin("kv://prod/app/users", TxModeReadWrite)
-tx2, _ := client.KvBegin("kv://prod/app/posts", TxModeReadWrite)
+tx1, _ := client.KvBegin("kv://prod/app/users", TxModeReadWrite, DurabilitySync)
+tx2, _ := client.KvBegin("kv://prod/app/posts", TxModeReadWrite, DurabilitySync)
 defer tx1.Rollback()  // Safe cleanup
 defer tx2.Rollback()  // Safe cleanup
 
@@ -207,8 +207,8 @@ tx2.Commit()  // Clears rollback flag
 
 ```javascript
 // Parallel transactions to different resources (same channel / KV domain)
-const tx_users = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
-const tx_posts = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite);
+const tx_users = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync);
+const tx_posts = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite, Durability.Sync);
 
 await Promise.all([
   tx_users.put(Buffer.from("key"), Buffer.from("alice")),
@@ -261,7 +261,7 @@ Different domains run on independent logical channels. A single client connectio
 
 ```javascript
 // All four domains active at the same time
-const kv_tx = client.kvBegin("kv://prod/app/data", TxMode.ReadWrite);
+const kv_tx = client.kvBegin("kv://prod/app/data", TxMode.ReadWrite, Durability.Sync);
 const queue_msg = client.queueEnqueue("queue://prod/app/tasks", payload);
 const notice_sub = client.noticeSubscribe("notice://prod/app/*");
 const rpc_call = client.rpcRequest("rpc://prod/app/svc", reply_route, correlation_id, payload);
@@ -286,8 +286,8 @@ Within a single domain, you can have multiple concurrent operations to **differe
 **KV Example:**
 ```javascript
 // Two transactions to different resources (users vs posts)
-const tx_users = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
-const tx_posts = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite);
+const tx_users = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync);
+const tx_posts = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite, Durability.Sync);
 
 // Both can execute concurrently (different actor instances)
 await Promise.all([
@@ -327,7 +327,7 @@ However, **MULTIPLE transactions can be parallelized** (see Level 2).
 **KV: One Transaction (Sequential):**
 ```javascript
 // ✅ CORRECT - operations on SAME transaction are sequential
-const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync);
 await tx.put(b"k1", b"v1");      // Request 1 → Response 1
 await tx.put(b"k2", b"v2");      // Request 2 → Response 2 (after Request 1 completes)
 await tx.commit();                // Request 3 → Response 3 (after Request 2 completes)
@@ -336,7 +336,7 @@ await tx.commit();                // Request 3 → Response 3 (after Request 2 c
 **❌ WRONG - Parallel calls on SAME transaction:**
 ```javascript
 // DO NOT DO THIS - multiple parallel operations on same tx_id
-const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
+const tx = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync);
 await Promise.all([
   tx.put(b"k1", b"v1"),  // ❌ These would interleave incorrectly
   tx.put(b"k2", b"v2"),  // ❌ Same tx_id cannot have concurrent calls
@@ -346,8 +346,8 @@ await Promise.all([
 **✅ CORRECT - Multiple transactions in parallel:**
 ```javascript
 // DO THIS INSTEAD - different transactions to different resources
-const tx1 = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite);
-const tx2 = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite);
+const tx1 = client.kvBegin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync);
+const tx2 = client.kvBegin("kv://prod/app/posts", TxMode.ReadWrite, Durability.Sync);
 await Promise.all([
   tx1.put(b"k1", b"v1"),   // ✅ Different tx_id, can be parallel
   tx2.put(b"k1", b"v1"),   // ✅ Different tx_id, can be parallel
@@ -1196,7 +1196,7 @@ A request is valid **only if**:
 **Domains requiring concrete routes only (no wildcards):**
 - **KV:** All operations use concrete routes only (`kv://realm/area/resource`)
 - **Lease:** All operations use concrete routes only (`lease://realm/area/resource`)
-- **Schedule:** All operations use concrete routes only (`schedule://realm/area/resource`)
+- **Schedule:** `CREATE`, `CANCEL`, `SUBSCRIBE`, and `UNSUBSCRIBE` use concrete routes only (`schedule://realm/area/resource/operation`)
 
 **Pattern matching semantics:**
 - `*` matches exactly one path segment
@@ -1278,16 +1278,18 @@ A request is valid **only if**:
 
 **Valid Route Shapes:**
 
-- `schedule://{realm}/{area}`
-- `schedule://{realm}/{area}/{resource}`
-- `schedule://{realm}/{area}/*`
+- concrete route: `schedule://{realm}/{area}/{resource}/{operation}`
+- list selector: `schedule://{realm}/{area}/{resource}/{operation}`
+- list selector: `schedule://{realm}/{area}/{resource}/*`
+- list selector: `schedule://{realm}/{area}/*`
+- list selector: `schedule://{realm}/**`
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
   | -------- | ----------------------------------------------- |
-  | `CREATE` | `{realm}/{area}/{resource}` |
-  | `CANCEL` | `{realm}/{area}/{resource}` |
-  | `LIST` | `{realm}/{area}`, `{realm}/{area}/*` |
-  | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
+  | `CREATE` | `{realm}/{area}/{resource}/{operation}` |
+  | `CANCEL` | `{realm}/{area}/{resource}/{operation}` |
+  | `LIST` | exact 4-part route, `{realm}/{area}/{resource}/*`, `{realm}/{area}/*`, `{realm}/**` |
+  | `SUBSCRIBE` | `{realm}/{area}/{resource}/{operation}` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
   **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST, SUBSCRIBE, UNSUBSCRIBE as documented in the wire format section. LIST is fully documented with streaming protocol.
@@ -1758,14 +1760,14 @@ Clients MUST:
 
 ```rust
 // ✅ CORRECT - explicit transaction lifecycle
-let tx_id = client.begin(KvBeginRequest { route, mode })?;
+let tx_id = client.begin(KvBeginRequest { route, mode, durability })?;
 client.put(KvPutRequest { tx_id, key, value })?;
 client.get(KvGetRequest { tx_id, key })?;
 client.commit(KvCommitRequest { tx_id })?;
 
 // ✅ CORRECT - multiple concurrent transactions to different resources
-let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode })?;
-let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode })?;
+let tx1 = client.begin(KvBeginRequest { route: "kv://prod/app/users", mode, durability })?;
+let tx2 = client.begin(KvBeginRequest { route: "kv://prod/app/posts", mode, durability })?;
 // Both tx1 and tx2 active simultaneously
 client.put(KvPutRequest { tx_id: tx1, key, value })?;
 client.put(KvPutRequest { tx_id: tx2, key, value })?;
@@ -1773,7 +1775,7 @@ client.commit(KvCommitRequest { tx_id: tx1 })?;
 client.commit(KvCommitRequest { tx_id: tx2 })?;
 
 // ❌ WRONG - parallel operations on SAME transaction
-let tx = client.begin(KvBeginRequest { route, mode })?;
+let tx = client.begin(KvBeginRequest { route, mode, durability })?;
 // DO NOT DO THIS:
 // futures::join_all(vec![
 //   client.put(KvPutRequest { tx_id: tx, key: "k1", value: "v1" }),
@@ -1900,7 +1902,7 @@ response2 = future2.wait()  # Matched by uuid2
 ```python
 # KV, Notice, Queue, etc. are sequential within domain
 # But concurrent across domains
-kv_tx = client.kv_begin(route, mode)  # Blocks on KV channel
+kv_tx = client.kv_begin(route, mode, durability)  # Blocks on KV channel
 notice_sub = client.notice_subscribe(pattern)  # Queued on Notice channel (concurrent)
 # KV transaction continues on KV channel while Notice processes on Notice channel
 ```
@@ -2710,6 +2712,10 @@ Commit notification (one or more records committed):
   "event": "committed",
   "first_resource_offset": <u64>,
   "last_resource_offset": <u64>,
+  "first_area_offset": <u64>,
+  "last_area_offset": <u64>,
+  "first_realm_offset": <u64>,
+  "last_realm_offset": <u64>,
   "batch_size": <u32>
 }
 ```
@@ -3485,7 +3491,7 @@ value = tx.get(b"user:123")
 tx.commit()
 
 # Context manager pattern (Python)
-with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite) as tx:
+with client.kv_begin("kv://prod/app/users", TxMode.ReadWrite, Durability.Sync) as tx:
     tx.put(b"key", b"value")
     tx.commit()  # Or auto-commit on __exit__
 ```
@@ -4135,14 +4141,14 @@ Client MUST continue reading until `has_entry=0`.
 
 ```python (notification-only model)
 client.schedule_create(
-    route="schedule://prod/app/reminders",
+    route="schedule://prod/app/reminders/send",
     cron="0 9 * * 1",  # Every Monday at 9 AM
     payload=b"weekly-reminder-config"
 )
 
 # Subscribe to schedule notifications
 client.schedule_subscribe(
-    route_pattern="schedule://prod/app/*"
+    route="schedule://prod/app/reminders/send"
 )
 
 # Receive notification when schedule fires (Message Type 705)
@@ -4153,8 +4159,7 @@ schedules = client.schedule_list()
 
 # Cancel schedule
 client.schedule_cancel(
-    route="schedule://prod/app/reminders",
-    schedule_id=schedule_id
+    route="schedule://prod/app/reminders/send"
 )
 ```uses route as identity:
 
@@ -4175,7 +4180,7 @@ client.schedule_cancel(
 
 When a schedule fires, the broker performs **one action**:
 
-**SCHEDULE_NOTIFY (705):** The broker emits a `SCHEDULE_NOTIFY` message to all clients subscribed to the schedule's route pattern via `SCHEDULE_SUBSCRIBE (703)`. The notification contains the schedule's configured payload bytes.
+**SCHEDULE_NOTIFY (705):** The broker emits a `SCHEDULE_NOTIFY` message to all clients subscribed to the schedule's exact route via `SCHEDULE_SUBSCRIBE (703)`. The notification contains the schedule's configured payload bytes.
 
 **Client observability:** Clients observe schedule execution by subscribing to schedule routes via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when schedules fire.
 
@@ -4212,11 +4217,11 @@ When a schedule fires, the broker performs **one action**:
 - invalid cron expression rejected with 7002
 #### Schedule SUBSCRIBE (703)
 
-Subscribe to schedule fire notifications for a route pattern.
+Subscribe to schedule fire notifications for an exact schedule route.
 
 ```
-[u32 BE]  route_pattern_len
-[bytes]   route_pattern (supports * wildcard)
+[u32 BE]  route_len
+[bytes]   route
 Response (status=0):
   [u8]     0
   [u8]     1
@@ -4227,23 +4232,23 @@ Response (status=1):
   [bytes]  error_msg
 ```
 
-**Pattern Examples:**
-- `schedule://realm/area/resource` — specific schedule fires
-- `schedule://realm/area/*` — area-level (all schedules in area)
+**Route Example:**
+- `schedule://realm/area/resource/operation` — specific schedule fires
 
 **Semantics:**
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
-- Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
-- Client is responsible for local multiplexing when multiple handlers share the same pattern
-- When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with subscription_id and payload; the client matches notifications to the pattern they subscribed with
+- Idempotent: re-subscribing to the same route returns the same `subscription_id`
+- Client is responsible for local multiplexing when multiple handlers share the same route
+- Wildcard schedule subscribe is invalid; use `LIST` selectors for discovery instead
+- When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with subscription_id and payload; the client matches notifications to the route they subscribed with
 
 #### Schedule UNSUBSCRIBE (704)
 
 Unsubscribe from schedule fire notifications.
 
 ```
-[u32 BE]  route_pattern_len
-[bytes]   route_pattern
+[u32 BE]  route_len
+[bytes]   route
 Response (status=0):
   [u8]     0
 Response (status=1):
@@ -4253,8 +4258,8 @@ Response (status=1):
 ```
 
 **Design Notes:**
-- Client sends the original pattern string used in SUBSCRIBE
-- Idempotent: unsubscribing a non-existent pattern returns success
+- Client sends the original exact route string used in SUBSCRIBE
+- Idempotent: unsubscribing a non-existent route returns success
 
 #### Schedule NOTIFY (705) — Server to Client
 
@@ -4267,7 +4272,7 @@ Server pushes a schedule fire notification to a subscriber.
 ```
 
 **Design Notes:**
-- `subscription_id` tells the client which subscription matched; the subscription already identifies the route pattern
+- `subscription_id` tells the client which subscription matched; the subscription already identifies the exact route
 - Payload is the raw payload bytes configured when the schedule was created
 - Client demultiplexes to local handlers registered for that `subscription_id`
 - Delivery is best-effort; notifications may be dropped under backpressure

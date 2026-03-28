@@ -172,6 +172,7 @@ impl AdminReadModel {
             item.realm == schedule.realm
                 && item.area == schedule.area
                 && item.resource == schedule.resource
+                && item.operation == schedule.operation
         }) {
             // Fast path for idempotent create/upsert calls: avoid rewriting
             // the admin model when durable schedule identity is unchanged.
@@ -189,13 +190,16 @@ impl AdminReadModel {
         realm: String,
         area: String,
         resource: String,
+        operation: String,
         cron: String,
     ) {
         let mut schedules = self.schedules.write();
-        if let Some(existing) = schedules
-            .iter_mut()
-            .find(|item| item.realm == realm && item.area == area && item.resource == resource)
-        {
+        if let Some(existing) = schedules.iter_mut().find(|item| {
+            item.realm == realm
+                && item.area == area
+                && item.resource == resource
+                && item.operation == operation
+        }) {
             if existing.cron == cron && existing.enabled {
                 return;
             }
@@ -209,6 +213,7 @@ impl AdminReadModel {
                 realm,
                 area,
                 resource,
+                operation,
                 cron,
                 next_run: Utc::now().to_rfc3339(),
                 last_run: None,
@@ -218,10 +223,13 @@ impl AdminReadModel {
         }
     }
 
-    pub fn remove_schedule(&self, realm: &str, area: &str, resource: &str) {
+    pub fn remove_schedule(&self, realm: &str, area: &str, resource: &str, operation: &str) {
         let mut schedules = self.schedules.write();
         schedules.retain(|item| {
-            !(item.realm == realm && item.area == area && item.resource == resource)
+            !(item.realm == realm
+                && item.area == area
+                && item.resource == resource
+                && item.operation == operation)
         });
     }
 

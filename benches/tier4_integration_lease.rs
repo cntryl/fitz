@@ -152,4 +152,3 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

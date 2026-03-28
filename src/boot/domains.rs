@@ -1019,6 +1019,7 @@ pub struct RpcDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
+    metrics: Option<crate::observability::metrics::MetricsCollector>,
 }
 
 impl RpcDomainSink {
@@ -1035,7 +1036,16 @@ impl RpcDomainSink {
             router,
             admin_read_model,
             active: AtomicBool::new(true),
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        metrics: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     pub fn stop(&self) {
@@ -1170,8 +1180,14 @@ impl MailboxSink for RpcDomainSink {
                 (Some(RpcResponseMsg::Ok { data: vec![] }), true)
             }
             RpcMessage::Request(req) => {
+                let lock_start = std::time::Instant::now();
                 let route_key = req.route.as_str().to_string();
                 let mut state = self.state.lock();
+                let lock_time_us = lock_start.elapsed().as_micros() as u64;
+                if let Some(ref metrics) = self.metrics {
+                    metrics.histogram_observe_us("rpc_dispatch_state_lock_us", lock_time_us);
+                    metrics.counter_inc("rpc_requests_total");
+                }
 
                 // Find a worker via round-robin — clone the addr to avoid borrow conflict
                 let worker_addr = state.workers.get(&route_key).and_then(|workers| {
@@ -1193,6 +1209,10 @@ impl MailboxSink for RpcDomainSink {
                         req.correlation_id,
                         (frame_ctx.session_id, *envelope.destination().family()),
                     );
+
+                    if let Some(ref metrics) = self.metrics {
+                        metrics.gauge_set("rpc_pending_requests", state.pending.len() as u64);
+                    }
 
                     let (worker_route_family, worker_session_id) = {
                         let worker = &state.workers[&route_key][pick];
@@ -1348,7 +1368,15 @@ impl MailboxSink for RpcDomainSink {
             }
         };
         if should_sync_admin_snapshot {
-            self.sync_admin_snapshot();
+            #[cfg(not(feature = "bench-no-snapshot"))]
+            {
+                let snapshot_start = std::time::Instant::now();
+                self.sync_admin_snapshot();
+                let snapshot_time_us = snapshot_start.elapsed().as_micros() as u64;
+                if let Some(ref metrics) = self.metrics {
+                    metrics.histogram_observe_us("rpc_admin_snapshot_us", snapshot_time_us);
+                }
+            }
         }
 
         if let Some(response) = response {
@@ -2217,6 +2245,8 @@ struct StreamRouteState {
 struct StreamWriteState {
     routes: HashMap<String, StreamRouteState>,
     sessions: HashMap<u64, PendingStreamSession>,
+    next_area_offsets: HashMap<(String, String), u64>,
+    next_realm_offsets: HashMap<String, u64>,
 }
 
 /// Stream domain sink: append-only streaming operations with subscription tracking
@@ -2257,6 +2287,8 @@ impl StreamDomainSink {
             write_state: Mutex::new(StreamWriteState {
                 routes: HashMap::new(),
                 sessions: HashMap::new(),
+                next_area_offsets: HashMap::new(),
+                next_realm_offsets: HashMap::new(),
             }),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
@@ -2336,6 +2368,67 @@ impl StreamDomainSink {
         encoder.put_u64(record.offset);
         encoder.put_bytes(record.body.as_ref());
         encoder.finish()
+    }
+
+    fn allocate_commit_offsets(
+        state: &mut StreamWriteState,
+        route: &str,
+        first_resource_offset: u64,
+        batch_size: usize,
+    ) -> (u64, u64, u64, u64) {
+        let batch_size = batch_size as u64;
+
+        if let Some((realm, area, _resource)) = parse_route_triplet(route) {
+            let area_key = (realm.clone(), area);
+            let first_area_offset = *state.next_area_offsets.entry(area_key.clone()).or_insert(0);
+            let first_realm_offset = *state.next_realm_offsets.entry(realm.clone()).or_insert(0);
+
+            let next_area_offset = first_area_offset.saturating_add(batch_size);
+            let next_realm_offset = first_realm_offset.saturating_add(batch_size);
+            state.next_area_offsets.insert(area_key, next_area_offset);
+            state.next_realm_offsets.insert(realm, next_realm_offset);
+
+            return (
+                first_area_offset,
+                next_area_offset.saturating_sub(1),
+                first_realm_offset,
+                next_realm_offset.saturating_sub(1),
+            );
+        }
+
+        let last_resource_offset = first_resource_offset
+            .saturating_add(batch_size)
+            .saturating_sub(1);
+        (
+            first_resource_offset,
+            last_resource_offset,
+            first_resource_offset,
+            last_resource_offset,
+        )
+    }
+
+    fn encode_stream_commit_notify_payload(
+        first_resource_offset: u64,
+        last_resource_offset: u64,
+        first_area_offset: u64,
+        last_area_offset: u64,
+        first_realm_offset: u64,
+        last_realm_offset: u64,
+        batch_size: usize,
+    ) -> bytes::Bytes {
+        bytes::Bytes::from(
+            serde_json::json!({
+                "event": "committed",
+                "first_resource_offset": first_resource_offset,
+                "last_resource_offset": last_resource_offset,
+                "first_area_offset": first_area_offset,
+                "last_area_offset": last_area_offset,
+                "first_realm_offset": first_realm_offset,
+                "last_realm_offset": last_realm_offset,
+                "batch_size": batch_size,
+            })
+            .to_string(),
+        )
     }
 
     fn encode_stream_metadata_summary(first_offset: u64, last_offset: u64, count: u64) -> Vec<u8> {
@@ -2705,15 +2798,16 @@ impl MailboxSink for StreamDomainSink {
                 let commit_notify = state.sessions.remove(&session_id).map(|session| {
                     let batch_size = session.records.len();
                     let route_key = session.route.clone();
-                    let route_state = state
-                        .routes
-                        .entry(route_key.clone())
-                        .or_insert_with(|| StreamRouteState {
-                            next_offset: 0,
-                            records: Vec::new(),
-                            last_data: Vec::new(),
-                            metadata_data: Vec::new(),
-                        });
+                    let route_state =
+                        state
+                            .routes
+                            .entry(route_key.clone())
+                            .or_insert_with(|| StreamRouteState {
+                                next_offset: 0,
+                                records: Vec::new(),
+                                last_data: Vec::new(),
+                                metadata_data: Vec::new(),
+                            });
                     let first_offset = route_state.next_offset;
                     let mut committed = Vec::with_capacity(batch_size);
                     let mut current_offset = route_state.next_offset;
@@ -2746,10 +2840,26 @@ impl MailboxSink for StreamDomainSink {
                     }
 
                     let last_offset = current_offset.saturating_sub(1);
-                    let payload = bytes::Bytes::from(format!(
-                        "{{\"first_resource_offset\":{},\"last_resource_offset\":{},\"batch_size\":{}}}",
-                        first_offset, last_offset, batch_size
-                    ));
+                    let (
+                        first_area_offset,
+                        last_area_offset,
+                        first_realm_offset,
+                        last_realm_offset,
+                    ) = Self::allocate_commit_offsets(
+                        &mut state,
+                        &route_key,
+                        first_offset,
+                        batch_size,
+                    );
+                    let payload = Self::encode_stream_commit_notify_payload(
+                        first_offset,
+                        last_offset,
+                        first_area_offset,
+                        last_area_offset,
+                        first_realm_offset,
+                        last_realm_offset,
+                        batch_size,
+                    );
                     (crate::runtime::routing::Route::new(route_key), payload)
                 });
                 (
@@ -3954,12 +4064,14 @@ impl MailboxSink for ScheduleDomainSink {
                 realm: String,
                 area: String,
                 resource: String,
+                operation: String,
                 cron: String,
             },
             Remove {
                 realm: String,
                 area: String,
                 resource: String,
+                operation: String,
             },
         }
 
@@ -3987,13 +4099,16 @@ impl MailboxSink for ScheduleDomainSink {
                     match actor.create_schedule(route, cron, payload) {
                         Ok(changed) => {
                             if changed {
-                                if let Some((realm, area, resource)) =
-                                    parse_route_triplet(&route_for_admin)
+                                if let Ok(route_parts) =
+                                    crate::domains::schedule::protocol::parse_concrete_schedule_route(
+                                        &route_for_admin,
+                                    )
                                 {
                                     admin_update = Some(ScheduleAdminUpdate::Upsert {
-                                        realm,
-                                        area,
-                                        resource,
+                                        realm: route_parts.realm,
+                                        area: route_parts.area,
+                                        resource: route_parts.resource,
+                                        operation: route_parts.operation,
                                         cron: cron_for_admin,
                                     });
                                 }
@@ -4008,13 +4123,16 @@ impl MailboxSink for ScheduleDomainSink {
                     match actor.delete_schedule(route) {
                         Ok(removed) => {
                             if removed {
-                                if let Some((realm, area, resource)) =
-                                    parse_route_triplet(&route_for_admin)
+                                if let Ok(route_parts) =
+                                    crate::domains::schedule::protocol::parse_concrete_schedule_route(
+                                        &route_for_admin,
+                                    )
                                 {
                                     admin_update = Some(ScheduleAdminUpdate::Remove {
-                                        realm,
-                                        area,
-                                        resource,
+                                        realm: route_parts.realm,
+                                        area: route_parts.area,
+                                        resource: route_parts.resource,
+                                        operation: route_parts.operation,
                                     });
                                 }
                             }
@@ -4037,56 +4155,64 @@ impl MailboxSink for ScheduleDomainSink {
                     session_id,
                     subscriber,
                 } => {
-                    let fam_id = family_id.as_u64();
-
-                    let mut families = self.sub_families.lock();
-                    let state = families
-                        .entry(fam_id)
-                        .or_insert_with(|| ScheduleFamilyState {
-                            subscriptions: Vec::new(),
-                        });
-
-                    // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
-                    let existing_sub_id = state
-                        .subscriptions
-                        .iter()
-                        .find(|s| {
-                            s.session_id == session_id && s.pattern.route() == pattern.as_str()
-                        })
-                        .map(|s| s.subscription_id);
-
-                    let _sub_id = if let Some(id) = existing_sub_id {
-                        tracing::debug!(
-                            domain = "schedule",
-                            session = session_id,
-                            subscription_id = id,
-                            pattern = pattern.as_str(),
-                            "Schedule subscription already exists (idempotent)"
-                        );
-                        id
+                    if let Err(error) =
+                        crate::domains::schedule::protocol::validate_concrete_schedule_route(
+                            pattern.as_str(),
+                        )
+                    {
+                        ScheduleResponse::Error(error)
                     } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        let pat = crate::runtime::matcher::Pattern::new(pattern.as_str());
+                        let fam_id = family_id.as_u64();
 
-                        state.subscriptions.push(ScheduleSubscription {
-                            pattern: pat,
-                            session_id,
-                            subscription_id: new_id,
-                            subscriber,
-                        });
+                        let mut families = self.sub_families.lock();
+                        let state = families
+                            .entry(fam_id)
+                            .or_insert_with(|| ScheduleFamilyState {
+                                subscriptions: Vec::new(),
+                            });
 
-                        tracing::debug!(
-                            domain = "schedule",
-                            session = session_id,
-                            subscription_id = new_id,
-                            pattern = pattern.as_str(),
-                            "Schedule subscription added"
-                        );
-                        new_id
-                    };
+                        // Idempotent: if (session_id, pattern) already exists, return existing subscription_id
+                        let existing_sub_id = state
+                            .subscriptions
+                            .iter()
+                            .find(|s| {
+                                s.session_id == session_id && s.pattern.route() == pattern.as_str()
+                            })
+                            .map(|s| s.subscription_id);
 
-                    ScheduleResponse::SubscribeOk {
-                        subscription_id: _sub_id,
+                        let _sub_id = if let Some(id) = existing_sub_id {
+                            tracing::debug!(
+                                domain = "schedule",
+                                session = session_id,
+                                subscription_id = id,
+                                pattern = pattern.as_str(),
+                                "Schedule subscription already exists (idempotent)"
+                            );
+                            id
+                        } else {
+                            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                            let pat = crate::runtime::matcher::Pattern::new(pattern.as_str());
+
+                            state.subscriptions.push(ScheduleSubscription {
+                                pattern: pat,
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            });
+
+                            tracing::debug!(
+                                domain = "schedule",
+                                session = session_id,
+                                subscription_id = new_id,
+                                pattern = pattern.as_str(),
+                                "Schedule subscription added"
+                            );
+                            new_id
+                        };
+
+                        ScheduleResponse::SubscribeOk {
+                            subscription_id: _sub_id,
+                        }
                     }
                 }
                 ScheduleMessage::Unsubscribe {
@@ -4095,14 +4221,23 @@ impl MailboxSink for ScheduleDomainSink {
                     session_id,
                     ..
                 } => {
-                    let fam_id = family_id.as_u64();
-                    let mut families = self.sub_families.lock();
-                    if let Some(state) = families.get_mut(&fam_id) {
-                        state.subscriptions.retain(|s| {
-                            !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
-                        });
+                    if let Err(error) =
+                        crate::domains::schedule::protocol::validate_concrete_schedule_route(
+                            pattern.as_str(),
+                        )
+                    {
+                        ScheduleResponse::Error(error)
+                    } else {
+                        let fam_id = family_id.as_u64();
+                        let mut families = self.sub_families.lock();
+                        if let Some(state) = families.get_mut(&fam_id) {
+                            state.subscriptions.retain(|s| {
+                                !(s.session_id == session_id
+                                    && s.pattern.route() == pattern.as_str())
+                            });
+                        }
+                        ScheduleResponse::Ok
                     }
-                    ScheduleResponse::Ok
                 }
                 ScheduleMessage::UnsubscribeAll { session_id, .. } => {
                     self.unsubscribe_all(session_id);
@@ -4117,18 +4252,20 @@ impl MailboxSink for ScheduleDomainSink {
                     realm,
                     area,
                     resource,
+                    operation,
                     cron,
                 } => {
                     self.admin_read_model
-                        .upsert_schedule_fields(realm, area, resource, cron);
+                        .upsert_schedule_fields(realm, area, resource, operation, cron);
                 }
                 ScheduleAdminUpdate::Remove {
                     realm,
                     area,
                     resource,
+                    operation,
                 } => {
                     self.admin_read_model
-                        .remove_schedule(&realm, &area, &resource);
+                        .remove_schedule(&realm, &area, &resource, &operation);
                 }
             }
         }
@@ -4428,6 +4565,44 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_encode_stream_commit_notify_payload_with_full_offset_metadata() {
+        let payload =
+            StreamDomainSink::encode_stream_commit_notify_payload(10, 11, 20, 21, 30, 31, 2);
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&payload).expect("stream commit payload should be valid JSON");
+
+        assert_eq!(decoded["event"], "committed");
+        assert_eq!(decoded["first_resource_offset"], 10);
+        assert_eq!(decoded["last_resource_offset"], 11);
+        assert_eq!(decoded["first_area_offset"], 20);
+        assert_eq!(decoded["last_area_offset"], 21);
+        assert_eq!(decoded["first_realm_offset"], 30);
+        assert_eq!(decoded["last_realm_offset"], 31);
+        assert_eq!(decoded["batch_size"], 2);
+    }
+
+    #[test]
+    fn should_allocate_area_and_realm_offsets_per_scope() {
+        let mut state = StreamWriteState {
+            routes: HashMap::new(),
+            sessions: HashMap::new(),
+            next_area_offsets: HashMap::new(),
+            next_realm_offsets: HashMap::new(),
+        };
+
+        let first =
+            StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/app/users", 0, 2);
+        let second =
+            StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/app/orders", 0, 1);
+        let third =
+            StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/ops/logs", 0, 1);
+
+        assert_eq!(first, (0, 1, 0, 1));
+        assert_eq!(second, (2, 2, 2, 2));
+        assert_eq!(third, (0, 0, 3, 3));
     }
 
     #[test]

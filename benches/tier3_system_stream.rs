@@ -242,4 +242,3 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

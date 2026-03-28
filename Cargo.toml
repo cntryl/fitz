@@ -159,6 +159,11 @@ harness = false
 path = "benches/tier3_system_kv.rs"
 
 [[bench]]
+name = "tier3_system_rpc_diagnostics"
+harness = false
+path = "benches/tier3_system_rpc_diagnostics.rs"
+
+[[bench]]
 name = "tier3_system_lease"
 harness = false
 path = "benches/tier3_system_lease.rs"
@@ -223,3 +228,8 @@ path = "benches/tier4_integration_schedule.rs"
 name = "tier4_integration_stream"
 harness = false
 path = "benches/tier4_integration_stream.rs"
+
+[features]
+# Feature flag to skip admin snapshot syncing in RPC domain for benchmarking
+# Helps identify if snapshot overhead is the dominant bottleneck in scaling collapse
+bench-no-snapshot = []

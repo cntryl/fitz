@@ -1,5 +1,6 @@
 use crate::domains::schedule::protocol::{
-    CronSchedule, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
+    validate_concrete_schedule_route, CronSchedule, ScheduleDef, ScheduleListEntry,
+    ScheduleMessage, ScheduleResponse,
 };
 use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
 use crate::prelude::Actor;
@@ -122,6 +123,8 @@ impl ScheduleActor {
         cron: String,
         payload: Bytes,
     ) -> Result<bool, String> {
+        validate_concrete_schedule_route(&route)?;
+
         let now = Instant::now();
         let (previous_next_fire_ms, previous_list_index) = self
             .schedules
@@ -191,6 +194,8 @@ impl ScheduleActor {
 
     /// Delete a schedule by route
     pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
+        validate_concrete_schedule_route(&route)?;
+
         let Some(removed_def) = self.schedules.remove(&route) else {
             return Ok(false);
         };

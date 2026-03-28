@@ -276,4 +276,3 @@ fn should_complete_system_scan_and_fire_10000_schedules(ctx: &mut StressContext)
 }
 
 stress_main!();
-

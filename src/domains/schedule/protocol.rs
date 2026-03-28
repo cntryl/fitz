@@ -3,6 +3,46 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConcreteScheduleRoute {
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub operation: String,
+}
+
+pub fn parse_concrete_schedule_route(route: &str) -> Result<ConcreteScheduleRoute, String> {
+    let Some((scheme, path)) = route.split_once("://") else {
+        return Err(
+            "schedule route must be schedule://{realm}/{area}/{resource}/{operation}".to_string(),
+        );
+    };
+    if scheme != "schedule" {
+        return Err("schedule route scheme must be schedule".to_string());
+    }
+
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() != 4 || parts.iter().any(|part| part.is_empty()) {
+        return Err(
+            "schedule route must be schedule://{realm}/{area}/{resource}/{operation}".to_string(),
+        );
+    }
+    if parts.iter().any(|part| *part == "*" || *part == "**") {
+        return Err("schedule route must not contain wildcards".to_string());
+    }
+
+    Ok(ConcreteScheduleRoute {
+        realm: parts[0].to_string(),
+        area: parts[1].to_string(),
+        resource: parts[2].to_string(),
+        operation: parts[3].to_string(),
+    })
+}
+
+pub fn validate_concrete_schedule_route(route: &str) -> Result<(), String> {
+    parse_concrete_schedule_route(route).map(|_| ())
+}
+
 /// Schedule operation messages
 #[derive(Debug, Clone)]
 pub enum ScheduleMessage {
@@ -512,7 +552,7 @@ mod tests {
     #[test]
     fn should_create_schedule_def() {
         // Arrange
-        let route = "schedule://acme/jobs/backup".to_string();
+        let route = "schedule://acme/jobs/backup/run".to_string();
         let cron = "0 */6 * * *".to_string();
         let payload = Bytes::from("backup data");
 
@@ -531,7 +571,34 @@ mod tests {
         };
 
         // Assert
-        assert_eq!(def.route, "schedule://acme/jobs/backup");
+        assert_eq!(def.route, "schedule://acme/jobs/backup/run");
+    }
+
+    #[test]
+    fn should_parse_concrete_schedule_route_given_valid_route() {
+        let route = parse_concrete_schedule_route("schedule://acme/billing/invoice/send").unwrap();
+
+        assert_eq!(route.realm, "acme");
+        assert_eq!(route.area, "billing");
+        assert_eq!(route.resource, "invoice");
+        assert_eq!(route.operation, "send");
+    }
+
+    #[test]
+    fn should_reject_concrete_schedule_route_given_missing_operation() {
+        let err = parse_concrete_schedule_route("schedule://acme/billing/invoice").unwrap_err();
+
+        assert_eq!(
+            err,
+            "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
+        );
+    }
+
+    #[test]
+    fn should_reject_concrete_schedule_route_given_wildcard() {
+        let err = parse_concrete_schedule_route("schedule://acme/billing/*/send").unwrap_err();
+
+        assert_eq!(err, "schedule route must not contain wildcards");
     }
 }
 

@@ -12,7 +12,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_schedule_create("schedule://test/jobs/daily", "0 0 * * *", b"backup");
+    let frame = build_schedule_create("schedule://test/jobs/daily/run", "0 0 * * *", b"backup");
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
@@ -41,14 +41,15 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let create_frame = build_schedule_create("schedule://test/jobs/hourly", "0 * * * *", b"task");
+    let create_frame =
+        build_schedule_create("schedule://test/jobs/hourly/run", "0 * * * *", b"task");
     let _ = client
         .send_and_receive(&create_frame, 2000)
         .await
         .expect("create");
 
     // Act
-    let cancel_frame = build_schedule_cancel("schedule://test/jobs/hourly");
+    let cancel_frame = build_schedule_cancel("schedule://test/jobs/hourly/run");
     let response = client
         .send_and_receive(&cancel_frame, 2000)
         .await
@@ -78,7 +79,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_schedule_create("schedule://test/bad", "invalid cron", b"task");
+    let frame = build_schedule_create("schedule://test/jobs/bad/run", "invalid cron", b"task");
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
@@ -107,7 +108,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_schedule_cancel("schedule://test/nonexistent");
+    let frame = build_schedule_cancel("schedule://test/jobs/nonexistent/run");
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
@@ -140,7 +141,7 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
     let payload = b"important-task-data-123";
-    let frame = build_schedule_create("schedule://test/preserve", "*/5 * * * *", payload);
+    let frame = build_schedule_create("schedule://test/jobs/preserve/run", "*/5 * * * *", payload);
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
@@ -171,7 +172,8 @@ where
     let mut client = C::connect(server).await.expect("connect");
 
     // Act - Create multiple schedules
-    let frame1 = build_schedule_create("schedule://test/daily", "0 0 * * *", b"daily-task");
+    let frame1 =
+        build_schedule_create("schedule://test/jobs/daily/run", "0 0 * * *", b"daily-task");
     let response1 = client
         .send_and_receive(&frame1, 2000)
         .await
@@ -180,7 +182,11 @@ where
     let (_msg_type, status1, _data) = parse_schedule_response(&response1);
     assert_eq!(status1, 0);
 
-    let frame2 = build_schedule_create("schedule://test/hourly", "0 * * * *", b"hourly-task");
+    let frame2 = build_schedule_create(
+        "schedule://test/jobs/hourly/run",
+        "0 * * * *",
+        b"hourly-task",
+    );
     let response2 = client
         .send_and_receive(&frame2, 2000)
         .await
@@ -189,7 +195,11 @@ where
     let (_msg_type, status2, _data) = parse_schedule_response(&response2);
     assert_eq!(status2, 0);
 
-    let frame3 = build_schedule_create("schedule://test/weekly", "0 0 * * 0", b"weekly-task");
+    let frame3 = build_schedule_create(
+        "schedule://test/jobs/weekly/run",
+        "0 0 * * 0",
+        b"weekly-task",
+    );
     let response3 = client
         .send_and_receive(&frame3, 2000)
         .await
@@ -229,9 +239,9 @@ where
         ("30 2 * * *", "at 2:30 AM"),
     ];
 
-    for (cron, _desc) in cron_expressions {
+    for (index, (cron, _desc)) in cron_expressions.into_iter().enumerate() {
         let frame = build_schedule_create(
-            &format!("schedule://test/cron-{}", cron.replace(" ", "-")),
+            &format!("schedule://test/cron/expr-{index}/run"),
             cron,
             b"payload",
         );
@@ -266,7 +276,7 @@ where
     let mut client = C::connect(server).await.expect("connect");
 
     // Act - Create first schedule
-    let create1 = build_schedule_create("schedule://test/seq1", "0 0 * * *", b"task1");
+    let create1 = build_schedule_create("schedule://test/jobs/seq1/run", "0 0 * * *", b"task1");
     let response1 = client
         .send_and_receive(&create1, 2000)
         .await
@@ -276,7 +286,7 @@ where
     assert_eq!(status1, 0);
 
     // Act - Cancel first schedule
-    let cancel1 = build_schedule_cancel("schedule://test/seq1");
+    let cancel1 = build_schedule_cancel("schedule://test/jobs/seq1/run");
     let response_cancel1 = client
         .send_and_receive(&cancel1, 2000)
         .await
@@ -286,7 +296,7 @@ where
     assert_eq!(status_cancel1, 0);
 
     // Act - Create second schedule
-    let create2 = build_schedule_create("schedule://test/seq2", "0 * * * *", b"task2");
+    let create2 = build_schedule_create("schedule://test/jobs/seq2/run", "0 * * * *", b"task2");
     let response2 = client
         .send_and_receive(&create2, 2000)
         .await
@@ -296,7 +306,7 @@ where
     assert_eq!(status2, 0);
 
     // Act - Cancel second schedule
-    let cancel2 = build_schedule_cancel("schedule://test/seq2");
+    let cancel2 = build_schedule_cancel("schedule://test/jobs/seq2/run");
     let response_cancel2 = client
         .send_and_receive(&cancel2, 2000)
         .await

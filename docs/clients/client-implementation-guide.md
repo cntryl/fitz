@@ -99,23 +99,25 @@ await client.kvCommit(txId);
 **Good API:**
 ```typescript
 // ✅ Transaction object encapsulates state
-const tx = await client.kv.begin("kv://prod/users");
+const tx = await client.kv.begin("kv://prod/users", {
+  durability: "Sync",
+});
 await tx.put("user:123", "alice");
 await tx.commit();
 ```
 
-### 4. Default to Safe Behavior
+### 4. Make Durability Explicit
 
 **Bad API:**
 ```rust
-// ❌ Unsafe default
-let tx = client.begin("kv://prod/users"); // Defaults to buffered (data loss risk)
+// ❌ Hidden durability choice
+let tx = client.begin("kv://prod/users");
 ```
 
 **Good API:**
 ```rust
-// ✅ Safe default
-let tx = client.begin("kv://prod/users"); // Defaults to Sync (durable)
+// ✅ Caller chooses durability
+let tx = client.begin("kv://prod/users", Durability::Sync);
 ```
 
 ### 5. Fail Fast, Fail Clear
@@ -409,7 +411,7 @@ async def main():
         await client.connect(jwt="your-token")
         
         # KV transaction
-        async with await client.kv.begin("kv://prod/users") as tx:
+        async with await client.kv.begin("kv://prod/users", durability="Sync") as tx:
             await tx.put("user:123", b"alice")
             await tx.commit()  # Auto-commit on context exit
 
@@ -1387,7 +1389,7 @@ async def test_kv_transaction_lifecycle():
         await client.connect(jwt=TEST_JWT)
         
         # Begin transaction
-        tx = await client.kv.begin("kv://test/app/users")
+        tx = await client.kv.begin("kv://test/app/users", durability="Sync")
         assert tx.tx_id > 0
         
         # Put data
@@ -1397,7 +1399,7 @@ async def test_kv_transaction_lifecycle():
         await tx.commit()
         
         # Verify persistence
-        tx2 = await client.kv.begin("kv://test/app/users")
+        tx2 = await client.kv.begin("kv://test/app/users", durability="Sync")
         result = await tx2.get("user:123")
         assert isinstance(result, GetResult.Found)
         assert result.value == b"alice"
@@ -1543,7 +1545,7 @@ class ResilientSubscription:
 **Problem:**
 ```go
 // User has to manage tx_id manually
-txID, _ := client.KV.Begin(ctx, "kv://prod/users")
+txID, _ := client.KV.Begin(ctx, "kv://prod/users", fitz.KVDurabilitySync)
 client.KV.Put(ctx, txID, "key", value)  // Easy to use wrong tx_id
 client.KV.Commit(ctx, txID)
 ```
@@ -1551,7 +1553,7 @@ client.KV.Commit(ctx, txID)
 **Solution:**
 ```go
 // Transaction object encapsulates state
-tx, _ := client.KV.Begin(ctx, "kv://prod/users")
+tx, _ := client.KV.Begin(ctx, "kv://prod/users", fitz.KVDurabilitySync)
 tx.Put(ctx, "key", value)  // tx_id is internal
 tx.Commit(ctx)
 ```

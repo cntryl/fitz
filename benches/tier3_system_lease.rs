@@ -249,4 +249,3 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

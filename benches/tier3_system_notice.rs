@@ -136,4 +136,3 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

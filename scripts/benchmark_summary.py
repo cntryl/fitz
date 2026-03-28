@@ -20,6 +20,7 @@ import json
 import csv
 import math
 import os
+import re
 import statistics
 import platform
 import subprocess
@@ -31,6 +32,7 @@ CRITERION_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'criterion'
 STRESS_ROOT = Path(__file__).resolve().parents[1] / 'target' / 'stress'
 TARGET_ROOT = Path(__file__).resolve().parents[1] / 'target'
 BASELINE_FILE = Path(__file__).resolve().parents[1] / 'config' / 'bench_baseline.json'
+PERF_TARGETS_FILE = Path(__file__).resolve().parents[1] / 'config' / 'perf_targets.json'
 CURRENT_RESULTS_FILE = TARGET_ROOT / 'bench_results.json'
 OUT_CSV = CRITERION_ROOT / 'benchmark_summary.csv'
 OUT_MD = TARGET_ROOT / 'bench_summary.md'
@@ -1480,6 +1482,539 @@ def build_environment_block():
     ]
 
 
+def load_perf_targets():
+    manifest = load_json_data(PERF_TARGETS_FILE)
+    if not isinstance(manifest, dict):
+        return {}
+    targets = manifest.get('targets')
+    if not isinstance(targets, dict):
+        return {}
+    return targets
+
+
+def normalize_token(value):
+    return (value or '').strip().lower().replace('_', '-')
+
+
+def describe_record(record):
+    if record.get('kind') == 'criterion':
+        return record.get('benchmark') or 'unknown-benchmark'
+    layer = record.get('layer') or record.get('transport')
+    if layer:
+        return f"{record.get('suite', 'unknown-suite')} / {record.get('scenario', 'unknown-scenario')} / {layer}"
+    return f"{record.get('suite', 'unknown-suite')} / {record.get('scenario', 'unknown-scenario')}"
+
+
+def record_confidence(record):
+    if record.get('directional_delta_pct') is None:
+        return ('low', 0.30)
+    if record.get('comparison_eligible'):
+        return ('high', 1.00)
+    if record.get('risk_reason') in {'noisy', 'insufficient_data'}:
+        return ('low', 0.35)
+    current_stability = record.get('current_stability') or record.get('stability')
+    baseline_stability = record.get('baseline_stability')
+    if current_stability in COMPARABLE_STABILITY_BANDS and (baseline_stability in COMPARABLE_STABILITY_BANDS or baseline_stability is None):
+        return ('medium', 0.65)
+    return ('low', 0.40)
+
+
+def record_metric_text(record, key):
+    value = record.get(key)
+    if value is None:
+        return 'NA'
+    if record.get('kind') == 'criterion':
+        return f'{value:.0f} ns'
+    return f'{value:.0f} ops/s'
+
+
+def parse_numeric_token(token):
+    if token is None:
+        return None
+    value = token.strip().lower()
+    suffix_factor = 1.0
+    if value.endswith('kb'):
+        suffix_factor = 1024.0
+        value = value[:-2]
+    elif value.endswith('mb'):
+        suffix_factor = 1024.0 * 1024.0
+        value = value[:-2]
+    elif value.endswith('b'):
+        suffix_factor = 1.0
+        value = value[:-1]
+    elif value.endswith('k'):
+        suffix_factor = 1000.0
+        value = value[:-1]
+    elif value.endswith('m'):
+        suffix_factor = 1000_000.0
+        value = value[:-1]
+    try:
+        return float(value) * suffix_factor
+    except ValueError:
+        return None
+
+
+def extract_sweep_descriptor(text):
+    if not text:
+        return None
+    patterns = [
+        ('concurrency', r'(?P<prefix>scaling|concurrency|clients?)_(?P<value>\d+[a-zA-Z]*)'),
+        ('subscriber_count', r'(?P<prefix>subscribers?|subscriber_count)_(?P<value>\d+[a-zA-Z]*)'),
+        ('payload_size', r'(?P<prefix>payload|message|msg)_(?P<value>\d+[a-zA-Z]*)'),
+        ('route_depth', r'(?P<prefix>depth)_(?P<value>\d+[a-zA-Z]*)'),
+        ('fanout_size', r'(?P<prefix>fanout)_(?P<value>\d+[a-zA-Z]*)'),
+        ('batch_size', r'(?P<prefix>batch|batch_size)_(?P<value>\d+[a-zA-Z]*)'),
+        ('list_size', r'(?P<prefix>list)_(?P<value>\d+[a-zA-Z]*)'),
+    ]
+    lowered = text.lower()
+    for parameter, pattern in patterns:
+        match = re.search(pattern, lowered)
+        if not match:
+            continue
+        numeric_value = parse_numeric_token(match.group('value'))
+        if numeric_value is None:
+            continue
+        return {
+            'parameter': parameter,
+            'prefix': match.group('prefix'),
+            'value': numeric_value,
+            'value_label': match.group('value'),
+        }
+    return None
+
+
+def detect_sweep_groups(stress_records):
+    groups = defaultdict(list)
+    for entry in stress_records:
+        scenario_text = entry.get('scenario') or ''
+        name_text = entry.get('name') or ''
+        descriptor = extract_sweep_descriptor(scenario_text) or extract_sweep_descriptor(name_text)
+        if not descriptor:
+            continue
+        throughput = benchmark_throughput_ops_per_s(entry)
+        if throughput is None or throughput <= 0:
+            continue
+        stem_source = scenario_text or name_text
+        if stem_source:
+            pattern = rf"{re.escape(descriptor['prefix'])}_{re.escape(descriptor['value_label'].lower())}"
+            sweep_stem = re.sub(pattern, f"{descriptor['prefix']}_*", stem_source.lower(), count=1)
+        else:
+            sweep_stem = descriptor['prefix']
+        group_key = '|'.join([
+            entry.get('suite', 'unknown-suite'),
+            descriptor['parameter'],
+            descriptor['prefix'],
+            sweep_stem,
+        ])
+        groups[group_key].append({
+            'suite': entry.get('suite'),
+            'name': entry.get('name'),
+            'scenario': entry.get('scenario'),
+            'parameter': descriptor['parameter'],
+            'parameter_value': descriptor['value'],
+            'parameter_label': descriptor['value_label'],
+            'throughput': throughput,
+            'rel_stddev': entry.get('rel_stddev_runs'),
+            'runs': entry.get('num_runs'),
+            'status': entry.get('status'),
+        })
+
+    output = []
+    for group_key, points in groups.items():
+        dedup = {}
+        for point in points:
+            dedup[point['parameter_value']] = point
+        ordered = sorted(dedup.values(), key=lambda item: item['parameter_value'])
+        if len(ordered) < 2:
+            continue
+
+        cliffs = []
+        previous = None
+        for point in ordered:
+            point['delta_vs_previous_pct'] = None
+            point['cliff'] = False
+            point['cliff_reasons'] = []
+            if previous is not None and previous['throughput'] > 0:
+                delta_pct = ((point['throughput'] - previous['throughput']) / previous['throughput']) * 100.0
+                point['delta_vs_previous_pct'] = delta_pct
+
+                throughput_drop = delta_pct <= -25.0
+                parameter_ratio = point['parameter_value'] / previous['parameter_value'] if previous['parameter_value'] > 0 else None
+                cost_ratio = previous['throughput'] / point['throughput'] if point['throughput'] > 0 else None
+                superlinear_growth = bool(
+                    parameter_ratio and parameter_ratio > 1.0 and cost_ratio and cost_ratio > (parameter_ratio * 1.35)
+                )
+
+                previous_var = previous.get('rel_stddev') or 0.0
+                current_var = point.get('rel_stddev') or 0.0
+                variance_spike = current_var >= (previous_var * 1.8) and (current_var - previous_var) >= 0.05
+                variance_drop_combo = variance_spike and delta_pct < 0
+
+                if throughput_drop:
+                    point['cliff_reasons'].append('adjacent_drop_gt_25pct')
+                if superlinear_growth:
+                    point['cliff_reasons'].append('superlinear_cost_growth')
+                if variance_drop_combo:
+                    point['cliff_reasons'].append('variance_spike_with_drop')
+
+                if point['cliff_reasons']:
+                    point['cliff'] = True
+                    cliffs.append({
+                        'group_key': group_key,
+                        'parameter': point['parameter'],
+                        'from_label': previous['parameter_label'],
+                        'to_label': point['parameter_label'],
+                        'from_value': previous['parameter_value'],
+                        'to_value': point['parameter_value'],
+                        'delta_pct': delta_pct,
+                        'reasons': point['cliff_reasons'],
+                        'suite': point['suite'],
+                        'name': point['name'],
+                        'scenario': point['scenario'],
+                    })
+            previous = point
+
+        output.append({
+            'group_key': group_key,
+            'title': f"{ordered[0]['suite']} / {ordered[0]['name']} ({ordered[0]['parameter']})",
+            'parameter': ordered[0]['parameter'],
+            'points': ordered,
+            'cliffs': cliffs,
+        })
+
+    output.sort(key=lambda group: group['title'])
+    return output
+
+
+def collect_noise_warnings(criterion_records, stress_records):
+    warnings = []
+
+    insufficient = [row for row in stress_records if row.get('status') == 'insufficient_data']
+    for row in sorted(insufficient, key=lambda item: item.get('num_runs', 0))[:12]:
+        warnings.append(
+            f"{row.get('suite')} / {row.get('scenario')}: insufficient data ({row.get('num_runs', 0)} run(s), need >=5)."
+        )
+
+    noisy_criterion = [row for row in criterion_records if variance_band(row.get('rel_stddev')) in {'noisy', 'untrustworthy'}]
+    for row in sorted(noisy_criterion, key=lambda item: item.get('rel_stddev') or 0.0, reverse=True)[:8]:
+        rel_stddev = (row.get('rel_stddev') or 0.0) * 100.0
+        warnings.append(f"{row.get('benchmark')}: unstable variance ({rel_stddev:.1f}% RSD).")
+
+    noisy_stress = [row for row in stress_records if variance_band(row.get('rel_stddev_runs')) in {'noisy', 'untrustworthy'}]
+    for row in sorted(noisy_stress, key=lambda item: item.get('rel_stddev_runs') or 0.0, reverse=True)[:8]:
+        rel_stddev = (row.get('rel_stddev_runs') or 0.0) * 100.0
+        warnings.append(f"{row.get('suite')} / {row.get('scenario')}: unstable variance ({rel_stddev:.1f}% RSD).")
+
+    large_batch = [row for row in stress_records if (row.get('batch_size') or 0) >= 50_000_000]
+    for row in sorted(large_batch, key=lambda item: item.get('batch_size') or 0, reverse=True)[:8]:
+        warnings.append(f"{row.get('suite')} / {row.get('scenario')}: suspicious batch size {row.get('batch_size'):,}.")
+
+    unrealistic_throughput = [
+        row for row in stress_records
+        if (row.get('median_throughput_ops_per_s') or 0) >= 50_000_000
+    ]
+    for row in sorted(unrealistic_throughput, key=lambda item: item.get('median_throughput_ops_per_s') or 0, reverse=True)[:8]:
+        warnings.append(
+            f"{row.get('suite')} / {row.get('scenario')}: throughput {fmt_ops_short(row.get('median_throughput_ops_per_s'))} ops/s may be unrealistic."
+        )
+
+    if not warnings:
+        warnings.append('No major measurement warnings detected in current data.')
+
+    return warnings
+
+
+def stress_perf_target_metadata(record, perf_targets):
+    suite = normalize_token(record.get('suite')).replace('-', '_')
+    scenario = normalize_token(record.get('scenario')).replace('-', '_')
+    layer = normalize_token(record.get('layer') or record.get('transport')).replace('-', '_')
+    keys = [f'stress:{suite}|{scenario}']
+    if layer:
+        keys.insert(0, f'stress:{suite}|{scenario}|{layer}')
+    for key in keys:
+        if key in perf_targets:
+            return perf_targets[key]
+    return {}
+
+
+def infer_investigation_area(label):
+    lowered = label.lower()
+    if 'rpc' in lowered and ('scaling' in lowered or 'concurrency' in lowered):
+        return 'Inspect RPC scheduler fairness, mailbox depth, and contention hotspots.'
+    if 'depth' in lowered or 'matcher' in lowered:
+        return 'Inspect matcher path complexity and route-pattern indexing strategy.'
+    if 'subscriber' in lowered or 'fanout' in lowered:
+        return 'Inspect subscription index fanout and delivery batching policy.'
+    if 'payload' in lowered or 'stream' in lowered:
+        return 'Inspect payload parsing/copy path and read-scan batching boundaries.'
+    if 'batch' in lowered:
+        return 'Inspect benchmark batching assumptions vs per-op accounting.'
+    if 'concurrency' in lowered or 'scaling' in lowered:
+        return 'Inspect lock contention, shard balance, and queue backpressure thresholds.'
+    return 'Inspect hot path with focused profiling (flamegraph + allocation + lock contention).'
+
+
+def rank_optimization_targets(regressions, sweep_groups, warning_lines, perf_targets):
+    buckets = defaultdict(lambda: {
+        'score': 0.0,
+        'regressions': 0,
+        'cliffs': 0,
+        'warnings': 0,
+        'hotpath': 0,
+        'confidence_weights': [],
+    })
+
+    for record in regressions:
+        label = describe_record(record)
+        bucket = buckets[label]
+        delta = abs(record.get('directional_delta_pct') or 0.0)
+        bucket['score'] += delta * 1.5
+        bucket['regressions'] += 1
+
+        conf_label, conf_weight = record_confidence(record)
+        bucket['confidence_weights'].append(conf_weight)
+        if conf_label == 'high':
+            bucket['score'] += 5.0
+
+        if record.get('kind') == 'criterion' and 'hotpath' in normalize_token(record.get('benchmark')):
+            bucket['hotpath'] += 1
+            bucket['score'] += 6.0
+
+        if record.get('kind') == 'stress':
+            target_meta = stress_perf_target_metadata(record, perf_targets)
+            gating = normalize_token(target_meta.get('gating'))
+            target_class = normalize_token(target_meta.get('target_class'))
+            if gating == 'hard':
+                bucket['score'] += 12.0
+            elif gating == 'soft':
+                bucket['score'] += 6.0
+            if target_class == 'engine_core':
+                bucket['score'] += 10.0
+            elif target_class == 'service_budget':
+                bucket['score'] += 6.0
+
+    for group in sweep_groups:
+        for cliff in group['cliffs']:
+            label = f"{cliff['suite']} / {cliff['scenario']}"
+            bucket = buckets[label]
+            bucket['cliffs'] += 1
+            bucket['score'] += 22.0 + abs(cliff.get('delta_pct') or 0.0) * 0.3
+            bucket['confidence_weights'].append(0.75)
+
+    for warning in warning_lines:
+        prefix = warning.split(':', 1)[0].strip()
+        if '/' not in prefix:
+            continue
+        bucket = buckets[prefix]
+        bucket['warnings'] += 1
+        bucket['score'] += 4.0
+        bucket['confidence_weights'].append(0.45)
+
+    ranked = []
+    for label, bucket in buckets.items():
+        conf = statistics.mean(bucket['confidence_weights']) if bucket['confidence_weights'] else 0.35
+        adjusted_score = bucket['score'] * conf
+        ranked.append({
+            'label': label,
+            'score': adjusted_score,
+            'confidence': conf,
+            'regressions': bucket['regressions'],
+            'cliffs': bucket['cliffs'],
+            'warnings': bucket['warnings'],
+            'hotpath': bucket['hotpath'],
+            'investigation': infer_investigation_area(label),
+        })
+
+    ranked.sort(key=lambda item: (item['score'], item['regressions'], item['cliffs'], item['warnings']), reverse=True)
+    return ranked[:3]
+
+
+def build_report():
+    generated_at = utc_timestamp()
+    commit_hash = git_commit_hash()
+
+    current_criterion_records = [build_criterion_result(entry, commit_hash, generated_at) for entry in entries]
+    current_stress_records = [build_stress_result(entry, commit_hash, generated_at) for entry in stress_entries]
+    current_authoritative = current_run_authoritative(current_criterion_records, current_stress_records)
+
+    comparison_records = []
+    if baseline_available:
+        for record in criterion_comparisons + stress_comparisons:
+            delta = record.get('directional_delta_pct')
+            if delta is None:
+                continue
+            comparison_records.append(record)
+
+    regressions = sorted(
+        [record for record in comparison_records if (record.get('directional_delta_pct') or 0.0) < 0.0],
+        key=lambda item: item.get('directional_delta_pct') or 0.0,
+    )
+    improvements = sorted(
+        [record for record in comparison_records if (record.get('directional_delta_pct') or 0.0) > 0.0],
+        key=lambda item: item.get('directional_delta_pct') or 0.0,
+        reverse=True,
+    )
+
+    sweep_groups = detect_sweep_groups(stress_entries)
+    cliffs = []
+    for group in sweep_groups:
+        cliffs.extend(group['cliffs'])
+    cliffs.sort(key=lambda item: item.get('delta_pct') or 0.0)
+
+    noise_warnings = collect_noise_warnings(entries, stress_entries)
+    perf_targets = load_perf_targets()
+    optimization_targets = rank_optimization_targets(regressions, sweep_groups, noise_warnings, perf_targets)
+
+    comparison_summary = {
+        'performance_changes': len(comparison_records),
+        'improved': len(improvements),
+        'regressions': len(regressions),
+        'critical': len([record for record in regressions if (record.get('directional_delta_pct') or 0.0) <= -CRITICAL_REGRESSION_PCT]),
+        'stability_regressions': 0,
+        'stability_improvements': 0,
+        'new': 0,
+        'missing': 0,
+        'risk_areas': len(noise_warnings),
+        'authoritative': current_authoritative,
+        'baseline_available': baseline_available,
+    }
+
+    current_manifest = build_result_manifest(
+        current_criterion_records,
+        current_stress_records,
+        comparison_summary,
+        generated_at,
+        commit_hash,
+    )
+    save_json_data(CURRENT_RESULTS_FILE, current_manifest)
+
+    if current_authoritative and not comparison_summary['critical']:
+        save_json_data(
+            BASELINE_FILE,
+            {
+                'schema_version': 1,
+                'generated_at': current_manifest['generated_at'],
+                'commit_hash': current_manifest['commit_hash'],
+                'policy': current_manifest['policy'],
+                'criterion': current_criterion_records,
+                'stress': current_stress_records,
+                'source': 'authoritative promotion',
+            },
+        )
+
+    OUT_MD.parent.mkdir(parents=True, exist_ok=True)
+    with OUT_MD.open('w', encoding='utf-8') as f:
+        f.write('# Fitz Benchmark Optimization Diagnostics\n\n')
+        f.write(f'- generated_at: {generated_at}\n')
+        f.write(f'- commit: {commit_hash or "unknown"}\n')
+        f.write(f'- baseline_available: {str(baseline_available).lower()}\n')
+        f.write(f'- criterion_rows: {len(entries)}\n')
+        f.write(f'- stress_rows: {len(stress_entries)}\n\n')
+
+        write_section(f, 'Top Regressions', [])
+        if not baseline_available:
+            f.write('- No baseline available; regression ranking is unavailable.\n\n')
+        elif not regressions:
+            f.write('- No negative directional deltas detected.\n\n')
+        else:
+            write_table(
+                f,
+                ['target', 'delta', 'baseline', 'current', 'confidence', 'status'],
+                [
+                    [
+                        describe_record(record),
+                        comparison_display_delta(record),
+                        record_metric_text(record, 'baseline_value'),
+                        record_metric_text(record, 'current_value'),
+                        record_confidence(record)[0],
+                        record.get('risk_reason') or 'ok',
+                    ]
+                    for record in regressions[:15]
+                ],
+            )
+
+        write_section(f, 'Top Improvements', [])
+        if not baseline_available:
+            f.write('- No baseline available; improvement ranking is unavailable.\n\n')
+        elif not improvements:
+            f.write('- No positive directional deltas detected.\n\n')
+        else:
+            write_table(
+                f,
+                ['target', 'delta', 'baseline', 'current', 'confidence', 'status'],
+                [
+                    [
+                        describe_record(record),
+                        comparison_display_delta(record),
+                        record_metric_text(record, 'baseline_value'),
+                        record_metric_text(record, 'current_value'),
+                        record_confidence(record)[0],
+                        record.get('risk_reason') or 'ok',
+                    ]
+                    for record in improvements[:15]
+                ],
+            )
+
+        write_section(f, 'Suspected Cliffs', [])
+        if not cliffs:
+            f.write('- No sweep cliffs detected from current stress scenarios.\n\n')
+        else:
+            cliff_rows = []
+            for cliff in cliffs[:20]:
+                cliff_rows.append([
+                    f"{cliff['suite']} / {cliff['scenario']}",
+                    cliff['parameter'],
+                    f"{cliff['from_label']} -> {cliff['to_label']}",
+                    f"{cliff['delta_pct']:.1f}%",
+                    ','.join(cliff['reasons']),
+                ])
+            write_table(f, ['target', 'parameter', 'transition', 'delta', 'reasons'], cliff_rows)
+
+        write_section(f, 'Noise / Measurement Warnings', [])
+        for warning in noise_warnings:
+            f.write(f'- {warning}\n')
+        f.write('\n')
+
+        write_section(f, 'Next Optimization Targets', [])
+        if not optimization_targets:
+            f.write('- No ranked targets generated; missing regressions/cliffs/warnings.\n\n')
+        else:
+            for idx, target in enumerate(optimization_targets, start=1):
+                reason = (
+                    f"regressions={target['regressions']}, cliffs={target['cliffs']}, "
+                    f"warnings={target['warnings']}, confidence={target['confidence']:.2f}"
+                )
+                f.write(f'{idx}. {target["label"]}\n')
+                f.write(f'   reason: {reason}\n')
+                f.write(f'   suggested investigation area: {target["investigation"]}\n\n')
+
+        write_section(f, 'Scaling Diagnostics', [])
+        if not sweep_groups:
+            f.write('- No sweep-style parameter scenarios detected (concurrency/payload/depth/fanout/batch/subscribers).\n\n')
+        else:
+            for group in sweep_groups:
+                f.write(f"### {group['title']}\n\n")
+                rows = []
+                for point in group['points']:
+                    delta_text = 'NA' if point['delta_vs_previous_pct'] is None else f"{point['delta_vs_previous_pct']:+.1f}%"
+                    rows.append([
+                        f"{point['parameter']}={point['parameter_label']}",
+                        fmt_ops_short(point['throughput']),
+                        delta_text,
+                        'yes' if point['cliff'] else 'no',
+                        variance_band(point.get('rel_stddev')),
+                        str(point.get('runs') or 'NA'),
+                    ])
+                write_table(f, ['parameter', 'throughput', 'delta vs previous', 'cliff flag', 'variance', 'run count'], rows)
+
+    if CRITERION_ROOT.exists():
+        print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
+    if STRESS_ROOT.exists():
+        print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
+    print(f"Wrote {OUT_MD} (summary).")
+    return 1 if comparison_summary['critical'] else 0
+
+
 def build_methodology_block():
     return [
         '- Criterion is used for microbench tuning only.',
@@ -1644,329 +2179,6 @@ def build_summary_counts(items, variance_key):
     acceptable = sum(1 for item in items if variance_band(item[variance_key]) == 'acceptable')
     unstable = sum(1 for item in items if variance_band(item[variance_key]) in {'noisy', 'untrustworthy'})
     return stable, acceptable, unstable
-
-
-def build_report():
-    criterion_bands = Counter(variance_band(entry['rel_stddev']) for entry in entries)
-    stress_bands = stress_stability_bands
-
-    criterion_summary = {
-        'count': len(entries),
-        'suites': len(criterion_suite_groups),
-        'median': criterion_delta_summary['median'],
-        'p90': criterion_delta_summary['p90'],
-        'best': criterion_delta_summary['fastest'],
-        'meaningful_best': criterion_delta_summary.get('meaningful_fastest'),
-        'worst': criterion_delta_summary['slowest'],
-        'criterion_bands': criterion_bands,
-        'improved': criterion_delta_summary['improved'],
-        'regressed': criterion_delta_summary['regressed'],
-        'unchanged': criterion_delta_summary['unchanged'],
-        'new': criterion_delta_summary['new'],
-        'missing': criterion_delta_summary['missing'],
-    }
-
-    stress_summary = {
-        'count': len(stress_entries),
-        'suites': len(stress_suite_groups),
-        'median': stress_delta_summary['median'],
-        'p90': stress_delta_summary['p90'],
-        'best': stress_delta_summary['best'],
-        'worst': stress_delta_summary['worst'],
-        'stress_bands': stress_bands,
-        'improved': stress_delta_summary['improved'],
-        'regressed': stress_delta_summary['regressed'],
-        'unchanged': stress_delta_summary['unchanged'],
-        'new': stress_delta_summary['new'],
-        'missing': stress_delta_summary['missing'],
-    }
-
-    all_comparisons = []
-    for item in criterion_comparisons:
-        if item['delta_pct'] is not None:
-            all_comparisons.append({**item, 'kind': 'criterion', 'lower_is_better': True})
-    for item in stress_comparisons:
-        if item['delta_pct'] is not None:
-            all_comparisons.append({**item, 'kind': 'stress', 'lower_is_better': False})
-
-    key_improvements = []
-    key_regressions = []
-    for item in all_comparisons:
-        delta = item['delta_pct']
-        if item['kind'] == 'criterion':
-            if delta <= -10.0:
-                key_improvements.append(item)
-            elif delta >= 10.0:
-                key_regressions.append(item)
-        else:
-            if delta >= 10.0:
-                key_improvements.append(item)
-            elif delta <= -10.0:
-                key_regressions.append(item)
-
-    key_improvements.sort(key=lambda item: abs(item['delta_pct']), reverse=True)
-    key_regressions.sort(key=lambda item: abs(item['delta_pct']), reverse=True)
-
-    trend_counts = {
-        'improved': criterion_summary['improved'] + stress_summary['improved'],
-        'regressed': criterion_summary['regressed'] + stress_summary['regressed'],
-        'unchanged': criterion_summary['unchanged'] + stress_summary['unchanged'],
-    }
-
-    regression_flag = any(
-        (item['lower_is_better'] and item['delta_pct'] >= 15.0) or
-        (not item['lower_is_better'] and item['delta_pct'] <= -15.0)
-        for item in all_comparisons
-    )
-
-    comparison_records = [
-        {**record, 'classification': comparison_severity(record)}
-        for record in criterion_comparisons + stress_comparisons
-    ]
-    authoritative_comparisons = [record for record in comparison_records if record.get('comparison_eligible')]
-    performance_changes = [record for record in authoritative_comparisons if record.get('classification') != 'new']
-    improved_changes = [record for record in performance_changes if record.get('classification') == 'improved']
-    unchanged_changes = [record for record in performance_changes if record.get('classification') == 'unchanged']
-    regression_changes = [record for record in performance_changes if record.get('classification') in {'warning', 'alert', 'critical'}]
-    critical_regressions = [record for record in comparison_records if record.get('classification') == 'critical']
-    stability_changes = [
-        {**record, 'stability_delta': compare_stability(record.get('current_stability'), record.get('baseline_stability'))}
-        for record in authoritative_comparisons
-        if record.get('baseline_stability') is not None and record.get('current_stability') is not None
-    ]
-    stability_regressions = [record for record in stability_changes if record.get('stability_delta') == 'regressed']
-    stability_improvements = [record for record in stability_changes if record.get('stability_delta') == 'improved']
-    new_scenarios = [record for record in comparison_records if comparison_is_new(record)]
-    missing_scenarios = [record for record in comparison_records if comparison_is_missing(record)]
-    risk_areas = [record for record in comparison_records if comparison_is_risk_area(record)]
-
-    generated_at = utc_timestamp()
-    commit_hash = git_commit_hash()
-    current_criterion_records = [build_criterion_result(entry, commit_hash, generated_at) for entry in entries]
-    current_stress_records = [build_stress_result(entry, commit_hash, generated_at) for entry in stress_entries]
-    current_authoritative = current_run_authoritative(current_criterion_records, current_stress_records)
-    comparison_summary = {
-        'performance_changes': len(performance_changes),
-        'improved': len(improved_changes),
-        'unchanged': len(unchanged_changes),
-        'regressions': len(regression_changes),
-        'critical': len(critical_regressions),
-        'stability_regressions': len(stability_regressions),
-        'stability_improvements': len(stability_improvements),
-        'new': len(new_scenarios),
-        'missing': len(missing_scenarios),
-        'risk_areas': len(risk_areas),
-        'authoritative': current_authoritative,
-        'baseline_available': baseline_available,
-    }
-
-    current_manifest = build_result_manifest(
-        current_criterion_records,
-        current_stress_records,
-        comparison_summary,
-        generated_at,
-        commit_hash,
-    )
-    save_json_data(CURRENT_RESULTS_FILE, current_manifest)
-
-    promoted_criterion = previous_criterion_rows
-    promoted_stress = previous_stress_rows
-    if current_authoritative and not critical_regressions:
-        promoted_criterion = current_criterion_records
-        promoted_stress = current_stress_records
-        save_json_data(
-            BASELINE_FILE,
-            {
-                'schema_version': 1,
-                'generated_at': current_manifest['generated_at'],
-                'commit_hash': current_manifest['commit_hash'],
-                'policy': current_manifest['policy'],
-                'criterion': promoted_criterion,
-                'stress': promoted_stress,
-                'source': 'authoritative promotion',
-            },
-        )
-
-    env_lines = build_environment_block()
-    methodology_lines = build_methodology_block()
-    authoritative_stress_count = sum(1 for entry in stress_entries if stress_throughput_status(entry) == 'authoritative')
-    executive_summary_lines = build_executive_summary(baseline_available, authoritative_stress_count, len(stress_entries))
-
-    microbench_counts = {
-        'stable': criterion_bands.get('stable', 0),
-        'noisy': criterion_bands.get('noisy', 0) + criterion_bands.get('acceptable', 0),
-        'untrustworthy': criterion_bands.get('untrustworthy', 0),
-    }
-
-    stress_stable = stress_bands.get('stable', 0)
-    stress_acceptable = stress_bands.get('acceptable', 0)
-    stress_unstable = stress_bands.get('noisy', 0) + stress_bands.get('untrustworthy', 0)
-    stress_insufficient = stress_bands.get('insufficient_data', 0)
-    stress_invalid = stress_bands.get('invalid_for_throughput', 0)
-    provisional_count = sum(1 for entry in stress_entries if stress_throughput_status(entry) != 'authoritative')
-
-    microbench_rows = build_microbench_rows(entries)
-    domain_tables = build_domain_rows([item for item in stress_entries if item.get('suite', '').startswith('tier3') or item.get('suite', '').startswith('system')])
-    transport_rows = build_transport_rows([item for item in stress_entries if item.get('layer') in {'direct', 'tcp', 'websocket'}])
-
-    OUT_MD.parent.mkdir(parents=True, exist_ok=True)
-    with OUT_MD.open('w', encoding='utf-8') as f:
-        f.write(fitz_report_title() + '\n\n')
-
-        write_section(f, 'Environment', env_lines)
-        write_section(f, 'Methodology', methodology_lines)
-        write_section(f, 'Executive Summary', [f'- {line}' for line in executive_summary_lines])
-
-        if baseline_available:
-            performance_rows = [comparison_row(record) for record in sorted(performance_changes, key=comparison_sort_key)[:15]]
-            performance_lines = [
-                f'- authoritative comparisons: {len(performance_changes)}',
-                f'- improved: {len(improved_changes)}',
-                f'- unchanged: {len(unchanged_changes)}',
-                f'- regressions: {len(regression_changes)}',
-            ]
-            write_section(f, 'Performance Changes', performance_lines)
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], performance_rows)
-
-            regression_rows = [comparison_row(record) for record in sorted(regression_changes, key=comparison_sort_key)[:15]]
-            regression_lines = [
-                f'- critical regressions: {len(critical_regressions)}',
-                f'- warning/alert regressions: {len(regression_changes)}',
-            ]
-            if critical_regressions:
-                regression_lines.append('- critical regressions require investigation before baseline promotion.')
-            write_section(f, 'Regressions', regression_lines)
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], regression_rows)
-
-            stability_rows = [comparison_row(record) for record in sorted(stability_changes, key=lambda record: (stability_rank(record.get('baseline_stability')), stability_rank(record.get('current_stability')), comparison_label(record)))[:15]]
-            stability_lines = [
-                f'- stability improvements: {len(stability_improvements)}',
-                f'- stability regressions: {len(stability_regressions)}',
-            ]
-            write_section(f, 'Stability Changes', stability_lines)
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], stability_rows)
-
-            new_rows = [comparison_row(record) for record in sorted(new_scenarios, key=comparison_sort_key)[:15]]
-            write_section(f, 'New Scenarios', [f'- {len(new_scenarios)} new scenario(s) detected.'])
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], new_rows)
-
-            missing_rows = [comparison_row(record) for record in sorted(missing_scenarios, key=comparison_sort_key)[:15]]
-            write_section(f, 'Missing Scenarios', [f'- {len(missing_scenarios)} baseline scenario(s) were not present in the current authoritative run.'])
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], missing_rows)
-
-            risk_rows = [comparison_row(record) for record in sorted(risk_areas, key=comparison_sort_key)[:15]]
-            risk_lines = [
-                f'- {len(risk_areas)} scenario(s) are noisy, insufficient_data, or otherwise require review.',
-                f'- threshold for noisy risk: {NOISY_RISK_PERCENT:.0f}% directional change.',
-            ]
-            write_section(f, 'Risk Areas', risk_lines)
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], risk_rows)
-        else:
-            write_section(
-                f,
-                'Baseline Status',
-                [
-                    '- No tracked baseline exists yet, so this report is a first-run snapshot.',
-                    '- Comparison sections are intentionally suppressed until config/bench_baseline.json is created and promoted.',
-                ],
-            )
-            write_section(
-                f,
-                'Performance Changes',
-                ['- No tracked baseline exists yet; compare mode will activate after the first baseline promotion.'],
-            )
-            write_table(f, ['item', 'kind', 'delta', 'baseline', 'current', 'status', 'baseline stability', 'current stability'], [])
-
-        improvement_lines = [
-            f'- {item["benchmark"]}: {fmt_pct(item["delta_pct"])}' if item['kind'] == 'criterion'
-            else f'- {item["suite"]} / {stress_label(item)}: {fmt_pct(item["delta_pct"])}'
-            for item in key_improvements
-        ]
-        write_section(f, 'Key Improvements', bullet_or_none(improvement_lines, '- None above 10% in this run.'))
-
-        regression_lines = [
-            f'- {item["benchmark"]}: {fmt_pct(item["delta_pct"])}' if item['kind'] == 'criterion'
-            else f'- {item["suite"]} / {stress_label(item)}: {fmt_pct(item["delta_pct"])}'
-            for item in key_regressions
-        ]
-        if not regression_lines:
-            regression_lines = ['- None above 10% in this run.']
-        write_section(f, 'Regressions', regression_lines)
-
-        f.write('## System Throughput (Primary Signal)\n\n')
-        authoritative_count = authoritative_stress_count
-        provisional_count = len(stress_entries) - authoritative_count
-        if stress_entries:
-            f.write(
-                f'{authoritative_count} stress scenario(s) are authoritative; '
-                f'{provisional_count} remain provisional or invalid for throughput.\n\n'
-            )
-        else:
-            f.write('No stress scenarios were available in the latest run.\n\n')
-        for domain in ['KV', 'Queue', 'RPC', 'Stream', 'Lease', 'Schedule']:
-            write_subheader(f, domain)
-            write_table(
-                f,
-                ['scenario', 'batch_size', 'ops/sec', 'stability', 'status'],
-                domain_tables.get(domain, []) or [['No qualifying stress rows', 'NA', 'NA', 'insufficient_data', 'No scenario data available']]
-            )
-
-        f.write('## Transport Cost\n\n')
-        write_table(f, ['transport', 'ops/sec', 'overhead vs direct'], transport_rows or [['direct', 'NA', 'baseline'], ['tcp', 'NA', 'NA'], ['websocket', 'NA', 'NA']])
-
-        f.write('## Microbench Summary (Tuning Only)\n\n')
-        f.write(f'stable benches:\n{microbench_counts["stable"]}\n\n')
-        f.write(f'noisy benches:\n{microbench_counts["noisy"]}\n\n')
-        f.write(f'untrustworthy:\n{microbench_counts["untrustworthy"]}\n\n')
-        f.write('Criterion microbenchmarks remain useful for hotspot tuning but are not treated as system performance indicators.\n\n')
-        write_table(f, ['benchmark', 'median_us', 'stability'], microbench_rows or [['No meaningful hotpath results above 0.05 us', 'NA', 'stable']])
-
-        f.write('## Stability Summary\n\n')
-        f.write(f'total stress scenarios:\n{stress_summary["count"]}\n\n')
-        f.write(f'stable:\n{stress_stable}\n\n')
-        f.write(f'acceptable:\n{stress_acceptable}\n\n')
-        f.write(f'unstable:\n{stress_unstable}\n\n')
-        f.write(f'authoritative:\n{sum(1 for entry in stress_entries if stress_throughput_status(entry) == "authoritative")}\n\n')
-        f.write(f'insufficient_data:\n{stress_insufficient}\n\n')
-        f.write(f'invalid_for_throughput:\n{stress_invalid}\n\n')
-        if provisional_count:
-            f.write(f'Stress stability remains provisional because {provisional_count} scenario(s) are not yet authoritative.\n\n')
-        else:
-            f.write('Stress stability remains high with no observed runtime failures.\n\n')
-
-        f.write('## Trend Analysis\n\n')
-        f.write(f'improved:\n{trend_counts["improved"]}\n\n')
-        f.write(f'regressed:\n{trend_counts["regressed"]}\n\n')
-        f.write(f'unchanged:\n{trend_counts["unchanged"]}\n\n')
-        if regression_flag:
-            f.write('REGRESSION REQUIRES INVESTIGATION\n\n')
-        if critical_regressions:
-            f.write('CRITICAL REGRESSIONS DETECTED\n\n')
-
-        if not baseline_available:
-            f.write('Baseline promotion is pending because no tracked baseline exists yet.\n\n')
-        elif not current_authoritative:
-            f.write('Baseline promotion was skipped because the current run is not fully authoritative.\n\n')
-
-        interpretation_lines = [
-            'Fitz appears stable in the current run.',
-            'Fitz is not showing a convincing throughput regression in the available data.',
-            'Fitz is authoritative on any stress row that meets the 3 second floor and 5-run minimum; shorter runs are explicitly marked invalid or insufficient.',
-            'Nothing in this summary suggests an urgent runtime problem; the main concern is measurement rigor.',
-        ]
-        write_section(f, 'Interpretation', [f'- {line}' for line in interpretation_lines[:6]])
-
-        takeaway_lines = [
-            'Fitz demonstrates solid engineering behavior, but throughput claims should only be treated as authoritative when the stress run meets the minimum duration and run-count thresholds.',
-        ]
-        write_section(f, 'Takeaway', [f'- {line}' for line in takeaway_lines])
-
-    if CRITERION_ROOT.exists():
-        print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
-    if STRESS_ROOT.exists():
-        print(f"Wrote {STRESS_CSV} (stress) with {len(stress_entries)} entries.")
-    print(f"Wrote {OUT_MD} (summary).")
-    return 1 if critical_regressions else 0
 
 
 def main():

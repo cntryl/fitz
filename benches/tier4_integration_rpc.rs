@@ -356,4 +356,3 @@ fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

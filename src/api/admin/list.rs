@@ -288,6 +288,7 @@ pub struct ScheduleInfo {
     pub realm: String,
     pub area: String,
     pub resource: String,
+    pub operation: String,
     pub cron: String,
     pub next_run: String,
     pub last_run: Option<String>,
@@ -665,23 +666,15 @@ pub fn lease_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> LeaseResource
 }
 
 pub fn schedule_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> ScheduleResourceDetail {
-    let schedule = runtime
+    let schedules = runtime
         .schedule_list_schedules(Some(path.realm))
         .into_iter()
-        .find(|item| {
+        .filter(|item| {
             item.realm == path.realm && item.area == path.area && item.resource == path.resource
-        });
-    match schedule {
-        Some(item) => ScheduleResourceDetail {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-            enabled: item.enabled,
-            cron: Some(item.cron),
-            next_run: Some(item.next_run),
-            executions_total: item.executions_total,
-        },
-        None => ScheduleResourceDetail {
+        })
+        .collect::<Vec<_>>();
+    if schedules.is_empty() {
+        return ScheduleResourceDetail {
             realm: path.realm.to_string(),
             area: path.area.to_string(),
             resource: path.resource.to_string(),
@@ -689,7 +682,31 @@ pub fn schedule_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> ScheduleRe
             cron: None,
             next_run: None,
             executions_total: 0,
-        },
+        };
+    }
+
+    if schedules.len() == 1 {
+        let item = schedules.into_iter().next().expect("single schedule");
+        return ScheduleResourceDetail {
+            realm: item.realm,
+            area: item.area,
+            resource: item.resource,
+            enabled: item.enabled,
+            cron: Some(item.cron),
+            next_run: Some(item.next_run),
+            executions_total: item.executions_total,
+        };
+    }
+
+    let next_run = schedules.iter().map(|item| item.next_run.as_str()).min();
+    ScheduleResourceDetail {
+        realm: path.realm.to_string(),
+        area: path.area.to_string(),
+        resource: path.resource.to_string(),
+        enabled: schedules.iter().any(|item| item.enabled),
+        cron: None,
+        next_run: next_run.map(ToString::to_string),
+        executions_total: schedules.iter().map(|item| item.executions_total).sum(),
     }
 }
 

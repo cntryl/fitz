@@ -172,7 +172,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-ERGON-009 (T1)** The token/auth source MUST be expressed as a callable (function or interface), not a static string, so token refresh can be implemented by the caller without rebuilding the client.
 
-**REQ-ERGON-010 (T1)** Default values MUST be safe: KV transactions default to `ReadWrite` + `Sync` durability; stream sessions default to `Sync` durability. Buffered/ReadOnly modes MUST be opt-in.
+**REQ-ERGON-010 (T1)** Durability MUST be explicit: KV transactions and Stream commits MUST require the caller to choose `Buffered` or `Sync`. Clients MUST NOT hide durability behind an implicit default.
 
 ### T2 — Developer Convenience
 
@@ -453,7 +453,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-ERGON-007 | T1 | Ergonomics | KV Get: typed Found/NotFound result |
 | REQ-ERGON-008 | T1 | Ergonomics | Options/config pattern; not positional args |
 | REQ-ERGON-009 | T1 | Ergonomics | Token source is a callable, not a string |
-| REQ-ERGON-010 | T1 | Ergonomics | Safe defaults (Sync durability, ReadWrite mode) |
+| REQ-ERGON-010 | T1 | Ergonomics | Explicit KV/Stream durability; no implicit default |
 | REQ-ERGON-011 | T2 | Ergonomics | Domain clients as typed accessors on Client |
 | REQ-ERGON-012 | T2 | Ergonomics | Public API expressible as interfaces |
 | REQ-ERGON-013 | T2 | Ergonomics | RPC worker registration object with Deregister |

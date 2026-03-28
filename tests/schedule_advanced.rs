@@ -74,10 +74,18 @@ fn should_handle_multiple_schedules_with_different_frequencies() {
 
     // Create schedules with different frequencies
     let routes = vec![
-        ("schedule://acme/every-minute", "* * * * *", "freq-1"),
-        ("schedule://acme/every-hour", "0 * * * *", "freq-2"),
-        ("schedule://acme/daily", "0 0 * * *", "freq-3"),
-        ("schedule://acme/weekly", "0 0 * * 1", "freq-4"),
+        (
+            "schedule://acme/system/every-minute/run",
+            "* * * * *",
+            "freq-1",
+        ),
+        (
+            "schedule://acme/system/every-hour/run",
+            "0 * * * *",
+            "freq-2",
+        ),
+        ("schedule://acme/system/daily/run", "0 0 * * *", "freq-3"),
+        ("schedule://acme/system/weekly/run", "0 0 * * 1", "freq-4"),
     ];
 
     // Act
@@ -115,7 +123,7 @@ fn should_allow_creating_schedule_with_complex_cron() {
 
     // Act - Create schedule with complex cron (every 15 min on weekdays 9-17)
     let response = actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/business-hours-frequent".to_string(),
+        route: "schedule://acme/ops/business-hours-frequent/run".to_string(),
         cron: "*/15 9-17 * * 1-5".to_string(),
         payload: Bytes::from("complex-cron"),
     });
@@ -206,14 +214,14 @@ fn should_replace_schedule_preserving_ordering() {
 
     // Create initial schedule
     actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/job".to_string(),
+        route: "schedule://acme/jobs/job/run".to_string(),
         cron: "0 2 * * *".to_string(),
         payload: Bytes::from("v1"),
     });
 
     // Act - Replace with different cron
     let response = actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/job".to_string(),
+        route: "schedule://acme/jobs/job/run".to_string(),
         cron: "0 3 * * *".to_string(),
         payload: Bytes::from("v2"),
     });
@@ -245,20 +253,20 @@ fn should_maintain_independence_between_schedules() {
 
     // Create multiple schedules
     actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/job1".to_string(),
+        route: "schedule://acme/jobs/job1/run".to_string(),
         cron: "0 2 * * *".to_string(),
         payload: Bytes::from("job1"),
     });
 
     actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/job2".to_string(),
+        route: "schedule://acme/jobs/job2/run".to_string(),
         cron: "0 3 * * *".to_string(),
         payload: Bytes::from("job2"),
     });
 
     // Act - Cancel one schedule
     actor.handle(ScheduleMessage::Cancel {
-        route: "schedule://acme/job1".to_string(),
+        route: "schedule://acme/jobs/job1/run".to_string(),
     });
 
     // Assert - only job2 remains
@@ -269,7 +277,7 @@ fn should_maintain_independence_between_schedules() {
     match list_response {
         fitz::domains::schedule::ScheduleResponse::ListDefs { entries, .. } => {
             assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].route, "schedule://acme/job2");
+            assert_eq!(entries[0].route, "schedule://acme/jobs/job2/run");
         }
         _ => panic!("Expected ListDefs"),
     }

@@ -200,4 +200,3 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

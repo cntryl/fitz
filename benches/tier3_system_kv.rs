@@ -252,4 +252,3 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

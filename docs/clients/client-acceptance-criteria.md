@@ -262,13 +262,13 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-STREAM-004: Session-Based Writes
 
 **MUST** use session for durable write tracking
-**Given:** Client creates session with `Begin(realm, area, resource, durability=Sync)`  
+**Given:** Client creates session with `Begin(route, expected_offset=0)`  
 **When:**
 
 1. Server returns `session_id` (u64)
 2. Client sends `Append(session_id, payload="event1")`
 3. Client sends `Append(session_id, payload="event2")`
-4. Client sends `Commit(session_id)`
+4. Client sends `Commit(session_id, mode=Sync)`
    **Then:**
 
 - All appends are batched within session
@@ -296,7 +296,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 3. Another client commits events to that resource
    **Then:**
 
-- Client receives `STREAM_NOTIFY` (609) with event details
+- Client receives `STREAM_NOTIFY` (609) with `event="committed"` plus resource, area, realm offset ranges and `batch_size`
 - Subscription is session-scoped (lost on disconnect)
 
 ### AC-STREAM-011: Subscribe with area wildcard

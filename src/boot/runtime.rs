@@ -169,11 +169,20 @@ impl Default for BootConfig {
             .ok()
             .and_then(|v| v.parse::<bool>().ok())
             .unwrap_or(true);
+        let http_port = std::env::var("FITZ_HTTP_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(crate::prelude::DEFAULT_HTTP_PORT);
+        let tcp_port = std::env::var("FITZ_TCP_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(crate::prelude::DEFAULT_TCP_PORT);
+        let bind_addr = std::env::var("FITZ_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
 
         Self {
-            http_port: crate::prelude::DEFAULT_HTTP_PORT,
-            tcp_port: crate::prelude::DEFAULT_TCP_PORT,
-            bind_addr: "0.0.0.0".to_string(),
+            http_port,
+            tcp_port,
+            bind_addr,
             storage_mode: StorageMode::from_env(),
             auth_required,
             auth_config: crate::auth::AuthConfig::from_env(auth_required),

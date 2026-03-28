@@ -248,6 +248,7 @@ impl StreamActor {
         let route = self.commit_notification_route.clone();
 
         let payload_json = serde_json::json!({
+            "event": "committed",
             "first_resource_offset": response.first_resource_offset,
             "last_resource_offset": response.last_resource_offset,
             "first_area_offset": response.first_area_offset,

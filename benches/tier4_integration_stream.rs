@@ -179,4 +179,3 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

@@ -200,4 +200,3 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

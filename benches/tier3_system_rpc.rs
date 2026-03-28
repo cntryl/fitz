@@ -320,4 +320,3 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
 }
 
 stress_main!();
-

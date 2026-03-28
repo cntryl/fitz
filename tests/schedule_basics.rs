@@ -199,7 +199,7 @@ fn should_parse_cron_with_all_wildcards() {
 fn should_create_schedule_successfully() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/backup".to_string();
+    let route = "schedule://acme/jobs/backup/run".to_string();
     let cron = "0 2 * * *".to_string(); // Daily at 2 AM
     let payload = Bytes::from("backup-config");
 
@@ -222,7 +222,7 @@ fn should_create_schedule_successfully() {
 fn should_reject_invalid_cron_on_create() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/backup".to_string();
+    let route = "schedule://acme/jobs/backup/run".to_string();
     let cron = "60 0 * * *".to_string(); // Invalid: minute=60
     let payload = Bytes::from("data");
 
@@ -243,10 +243,31 @@ fn should_reject_invalid_cron_on_create() {
 }
 
 #[test]
+fn should_reject_legacy_three_segment_route_on_create() {
+    let mut actor = make_schedule_actor();
+
+    let response = actor.handle(ScheduleMessage::Create {
+        route: "schedule://acme/jobs/backup".to_string(),
+        cron: "0 0 * * *".to_string(),
+        payload: Bytes::from("legacy"),
+    });
+
+    match response {
+        ScheduleResponse::Error(error) => {
+            assert_eq!(
+                error,
+                "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
+            );
+        }
+        _ => panic!("Expected Error response for legacy schedule route"),
+    }
+}
+
+#[test]
 fn should_upsert_schedule_by_route() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/backup".to_string();
+    let route = "schedule://acme/jobs/backup/run".to_string();
 
     // Act - Create initial schedule and replace with new cron
     let response1 = actor.handle(ScheduleMessage::Create {
@@ -285,7 +306,7 @@ fn should_upsert_schedule_by_route() {
 fn should_keep_single_schedule_given_identical_create_upsert() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/backup".to_string();
+    let route = "schedule://acme/jobs/backup/run".to_string();
     let cron = "0 2 * * *".to_string();
     let payload = Bytes::from("config-v1");
 
@@ -326,7 +347,7 @@ fn should_keep_single_schedule_given_identical_create_upsert() {
 fn should_cancel_schedule_by_route() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/backup".to_string();
+    let route = "schedule://acme/jobs/backup/run".to_string();
 
     actor.handle(ScheduleMessage::Create {
         route: route.clone(),
@@ -359,13 +380,32 @@ fn should_cancel_schedule_by_route() {
 fn should_return_ok_when_canceling_nonexistent_schedule() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/nonexistent".to_string();
+    let route = "schedule://acme/jobs/nonexistent/run".to_string();
 
     // Act - Cancel schedule that doesn't exist
     let response = actor.handle(ScheduleMessage::Cancel { route });
 
     // Assert
     assert!(matches!(response, ScheduleResponse::Ok)); // Idempotent
+}
+
+#[test]
+fn should_reject_legacy_three_segment_route_on_cancel() {
+    let mut actor = make_schedule_actor();
+
+    let response = actor.handle(ScheduleMessage::Cancel {
+        route: "schedule://acme/jobs/backup".to_string(),
+    });
+
+    match response {
+        ScheduleResponse::Error(error) => {
+            assert_eq!(
+                error,
+                "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
+            );
+        }
+        _ => panic!("Expected Error response for legacy schedule route"),
+    }
 }
 
 // ========== LIST Operation Tests ==========
@@ -376,19 +416,19 @@ fn should_list_all_schedules() {
     let mut actor = make_schedule_actor();
 
     actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/jobs/backup".to_string(),
+        route: "schedule://acme/jobs/backup/run".to_string(),
         cron: "0 2 * * *".to_string(),
         payload: Bytes::from("backup"),
     });
 
     actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/jobs/cleanup".to_string(),
+        route: "schedule://acme/jobs/cleanup/run".to_string(),
         cron: "0 3 * * *".to_string(),
         payload: Bytes::from("cleanup"),
     });
 
     actor.handle(ScheduleMessage::Create {
-        route: "schedule://acme/jobs/report".to_string(),
+        route: "schedule://acme/jobs/report/run".to_string(),
         cron: "0 9 * * 1".to_string(), // Monday at 9 AM
         payload: Bytes::from("report"),
     });
@@ -406,9 +446,9 @@ fn should_list_all_schedules() {
 
             // Verify all routes present
             let routes: Vec<String> = entries.iter().map(|e| e.route.clone()).collect();
-            assert!(routes.contains(&"schedule://acme/jobs/backup".to_string()));
-            assert!(routes.contains(&"schedule://acme/jobs/cleanup".to_string()));
-            assert!(routes.contains(&"schedule://acme/jobs/report".to_string()));
+            assert!(routes.contains(&"schedule://acme/jobs/backup/run".to_string()));
+            assert!(routes.contains(&"schedule://acme/jobs/cleanup/run".to_string()));
+            assert!(routes.contains(&"schedule://acme/jobs/report/run".to_string()));
         }
         _ => panic!("Expected ListDefs response"),
     }
@@ -440,7 +480,7 @@ fn should_list_empty_when_no_schedules() {
 fn should_preserve_payload_in_schedule() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let route = "schedule://acme/jobs/task".to_string();
+    let route = "schedule://acme/jobs/task/run".to_string();
     let payload = Bytes::from(vec![1, 2, 3, 4, 5, 0xFF, 0xAB, 0xCD]); // Binary data
 
     actor.handle(ScheduleMessage::Create {
@@ -471,7 +511,7 @@ fn should_preserve_payload_in_schedule() {
 fn should_handle_subscribe_operation() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let pattern = Route::new("schedule://acme/jobs/*");
+    let pattern = Route::new("schedule://acme/jobs/backup/run");
     let family = RouteFamily::new(1);
     let subscriber = RouteAddress::new(family, Route::new("session1"));
 
@@ -491,7 +531,7 @@ fn should_handle_subscribe_operation() {
 fn should_handle_unsubscribe_operation() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let pattern = Route::new("schedule://acme/jobs/*");
+    let pattern = Route::new("schedule://acme/jobs/backup/run");
     let family = RouteFamily::new(1);
     let subscriber = RouteAddress::new(family, Route::new("session1"));
 
