@@ -26,6 +26,8 @@ use tokio::sync::Mutex;
 fn should_complete_direct_append(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "append");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "single_append");
 
     let family = RouteFamily::new(1);
     let route = "stream://tier4/stream/direct/append";
@@ -80,7 +82,9 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_tcp_append(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "append");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "single_append");
 
     let route = "stream://tier4/stream/tcp/append";
     let begin_frame = build_stream_begin(route, 0);
@@ -91,25 +95,27 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let response = runtime
-            .block_on(client.request(&begin_frame, 2000))
-            .expect("begin response");
-        let (_msg_type, _status, data) = parse_stream_response(&response);
-        let session_id = parse_stream_session_id(&data).expect("session_id");
+    let begin_response = runtime
+        .block_on(client.request(&begin_frame, 2000))
+        .expect("begin response");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+    let append_frame = build_stream_append(session_id, b"event");
 
-        let append_frame = build_stream_append(session_id, b"event");
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = runtime
             .block_on(client.request(&append_frame, 2000))
             .expect("append response");
     });
-    ctx.set_elements(2 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_ws_append(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "append");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "single_append");
 
     let route = "stream://tier4/stream/ws/append";
     let begin_frame = build_stream_begin(route, 0);
@@ -123,25 +129,28 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let response = runtime
-            .block_on(client.request(&begin_frame, 2000))
-            .expect("begin response");
-        let (_msg_type, _status, data) = parse_stream_response(&response);
-        let session_id = parse_stream_session_id(&data).expect("session_id");
+    let begin_response = runtime
+        .block_on(client.request(&begin_frame, 2000))
+        .expect("begin response");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+    let append_frame = build_stream_append(session_id, b"event");
 
-        let append_frame = build_stream_append(session_id, b"event");
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = runtime
             .block_on(client.request(&append_frame, 2000))
             .expect("append response");
     });
-    ctx.set_elements(2 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_appends");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "10_clients_1_append_each");
+    ctx.tag("client_count", "10");
 
     let route = "stream://tier4/stream/multi/append";
     let begin_frame = build_stream_begin(route, 0);
@@ -160,18 +169,29 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         })
         .collect();
 
+    let append_frames: Vec<Vec<u8>> = runtime.block_on(futures::future::join_all(
+        clients.iter().map(|arc| {
+            let arc = arc.clone();
+            let begin = begin_frame.clone();
+            async move {
+                let mut c = arc.lock().await;
+                let response = c.request(&begin, 2000).await.expect("begin");
+                let (_msg_type, _status, data) = parse_stream_response(&response);
+                let session_id = parse_stream_session_id(&data).expect("session_id");
+                build_stream_append(session_id, b"event")
+            }
+        }),
+    ));
+
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+            runtime.block_on(futures::future::join_all(
+                clients.iter().zip(append_frames.iter()).map(|(arc, frame)| {
                 let arc = arc.clone();
-                let begin = begin_frame.clone();
+                let frame = frame.clone();
                 async move {
                     let mut c = arc.lock().await;
-                    let response = c.request(&begin, 2000).await.expect("begin");
-                    let (_msg_type, _status, data) = parse_stream_response(&response);
-                    let session_id = parse_stream_session_id(&data).expect("session_id");
-                    let append_frame = build_stream_append(session_id, b"event");
-                    c.request(&append_frame, 2000).await.expect("append");
+                    c.request(&frame, 2000).await.expect("append");
                 }
             })));
     });

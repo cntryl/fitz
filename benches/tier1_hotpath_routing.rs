@@ -12,7 +12,7 @@ fn bench_route_parsing(c: &mut Criterion) {
         "queue://staging/jobs".to_string(),
     ];
 
-    let _routes_3_segments = [
+    let routes_3_segments = [
         "rpc://acme/auth/users".to_string(),
         "notify://prod/events/orders".to_string(),
         "queue://staging/jobs/worker".to_string(),
@@ -24,7 +24,7 @@ fn bench_route_parsing(c: &mut Criterion) {
         "queue://staging/jobs/worker/process".to_string(),
     ];
 
-    let _routes_5_segments = [
+    let routes_5_segments = [
         "rpc://acme/auth/users/session/create".to_string(),
         "notify://prod/events/orders/items/added".to_string(),
         "queue://staging/jobs/worker/task/execute".to_string(),
@@ -51,10 +51,28 @@ fn bench_route_parsing(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("route_new_3_segments", |b| {
+        let mut idx = 0;
+        b.iter(|| {
+            let route_str = &routes_3_segments[idx % routes_3_segments.len()];
+            let _route = Route::new(black_box(route_str));
+            idx += 1;
+        })
+    });
+
     group.bench_function("route_new_4_segments", |b| {
         let mut idx = 0;
         b.iter(|| {
             let route_str = &routes_4_segments[idx % routes_4_segments.len()];
+            let _route = Route::new(black_box(route_str));
+            idx += 1;
+        })
+    });
+
+    group.bench_function("route_new_5_segments", |b| {
+        let mut idx = 0;
+        b.iter(|| {
+            let route_str = &routes_5_segments[idx % routes_5_segments.len()];
             let _route = Route::new(black_box(route_str));
             idx += 1;
         })

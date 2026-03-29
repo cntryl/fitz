@@ -22,23 +22,27 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[stress_test]
-fn should_complete_direct_acquire(ctx: &mut StressContext) {
+fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
-    ctx.tag("scenario", "acquire");
+    ctx.tag("scenario", "acquire_release");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "acquire_release");
 
     let family = RouteFamily::new(1);
+    let route = "lease://tier4/locks/primary";
+    let owner = "owner1";
     let router = Arc::new(Router::new());
     let sink = create_bench_lease_sink(router.clone());
     router.register_domain_pattern("lease", sink as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, 1);
-    let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
+    let acquire_frame = build_lease_acquire_immediate(route, owner, 30);
     let (msg_type, payload) = extract_single_tlv_field(&acquire_frame);
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &source,
-            "lease://tier4/locks/primary",
+            route,
             1,
             ChannelId::Lease,
             msg_type,
@@ -46,15 +50,34 @@ fn should_complete_direct_acquire(ctx: &mut StressContext) {
             family,
         )
         .expect("lease acquire");
+        let responses = inbox.drain();
+        let response = responses.last().expect("lease acquire response");
+        let token = parse_lease_token_response(response.payload.as_ref()).expect("lease token");
+
+        let release_frame = build_lease_release(route, owner, token);
+        let (release_msg_type, release_payload) = extract_single_tlv_field(&release_frame);
+        route_frame(
+            router.as_ref(),
+            &source,
+            route,
+            1,
+            ChannelId::Lease,
+            release_msg_type,
+            release_payload,
+            family,
+        )
+        .expect("lease release");
         let _ = inbox.drain();
     });
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(2 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "acquire_release");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "acquire_release");
 
     let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
 
@@ -82,7 +105,9 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "acquire_release");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "acquire_release");
 
     let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
 
@@ -113,7 +138,10 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", "concurrent_clients");
+    ctx.tag("scenario", "concurrent_acquire_release");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "10_clients_acquire_release");
+    ctx.tag("client_count", "10");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -148,7 +176,7 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
             }),
         ));
     });
-    ctx.set_elements(10 * iterations as u64);
+    ctx.set_elements(20 * iterations as u64);
 }
 
 stress_main!();

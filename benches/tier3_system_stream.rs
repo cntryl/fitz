@@ -106,6 +106,8 @@ fn subscribe_stream(context: &StreamBenchContext, route: &str, session_id: u64, 
 #[stress_test]
 fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     ctx.tag("scenario", "sustained_append");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "single_append");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/append/append";
@@ -122,6 +124,8 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     ctx.tag("scenario", "read_scan");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "100_events_scanned");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/read/read";
@@ -147,6 +151,8 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     ctx.tag("scenario", "batch_write");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "100_appends");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/batch/append";
@@ -165,6 +171,9 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
     ctx.tag("scenario", "multiarea_writes");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "10_appends");
+    ctx.tag("area_count", "10");
 
     let context = setup_stream_sink();
     let routes: Vec<String> = (0..10)
@@ -191,6 +200,9 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     ctx.tag("scenario", "publish_fanout");
+    ctx.tag("measurement_scope", "routed_fanout");
+    ctx.tag("batch_size", "10_commits");
+    ctx.tag("subscriber_count", "16");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/fanout/append";
@@ -221,6 +233,8 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     ctx.tag("scenario", "offset_tracking");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "single_last_read");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/offset/append";

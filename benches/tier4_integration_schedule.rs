@@ -33,6 +33,8 @@ fn make_schedule_ctx() -> Context<ScheduleActor> {
 fn should_complete_direct_create(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "create");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "single_create");
 
     let (db, _temp_dir) = create_local_bench_store();
     let mut actor = ScheduleActor::new(
@@ -68,7 +70,9 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_tcp_create(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "create");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "single_create");
 
     let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
 
@@ -96,7 +100,9 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_ws_create(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "create");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "single_create");
 
     let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
 
@@ -132,6 +138,9 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
 fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_creates");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "10_clients_1_create_each");
+    ctx.tag("client_count", "10");
 
     let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
 

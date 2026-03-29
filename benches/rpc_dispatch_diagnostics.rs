@@ -1,4 +1,4 @@
-//! RPC Domain Scaling Diagnostics Benchmark
+//! RPC dispatch diagnostics benchmark.
 //!
 //! Instruments the RPC dispatch hot path to identify bottlenecks:
 //! 1. Mutex state lock time (mutex contention)
@@ -7,12 +7,12 @@
 //!
 //! Run with:
 //! ```
-//! cargo bench --bench tier3_system_rpc_diagnostics -- --quiet
+//! cargo bench --bench rpc_dispatch_diagnostics -- --quiet
 //! ```
 //!
 //! To skip admin snapshots (helps identify if they're the bottleneck):
 //! ```
-//! cargo bench --bench tier3_system_rpc_diagnostics --features bench-no-snapshot -- --quiet
+//! cargo bench --bench rpc_dispatch_diagnostics --features bench-no-snapshot -- --quiet
 //! ```
 
 use bytes::Bytes;
@@ -223,7 +223,7 @@ fn report_metrics(worker_count: usize, metrics: &MetricsCollector) {
 }
 
 fn bench_rpc_dispatch_diagnostics(c: &mut Criterion) {
-    let mut group = c.benchmark_group("rpc_dispatch_diagnostics");
+    let mut group = c.benchmark_group("diagnostic_rpc_dispatch");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 

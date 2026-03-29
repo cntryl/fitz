@@ -26,6 +26,9 @@ use tokio::sync::Mutex;
 fn should_complete_direct_publish(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "publish");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "1");
 
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
@@ -73,7 +76,10 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_tcp_publish(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "publish");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame = build_notice_publish("notice://test/events", b"event");
@@ -92,13 +98,15 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
         .expect("subscribe response");
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        runtime
-            .block_on(publisher.send_frame(&publish_frame))
-            .expect("publish frame");
-        let response = runtime
+        let publish_response = runtime
+            .block_on(publisher.request(&publish_frame, 2000))
+            .expect("publish response");
+        let _ = parse_notice_response(&publish_response);
+
+        let notification = runtime
             .block_on(subscriber.recv_frame(2000))
             .expect("publish notification");
-        let (_msg_type, _status, _data) = parse_notice_response(&response);
+        let _ = parse_notice_response(&notification);
     });
     ctx.set_elements(iterations as u64);
 }
@@ -106,7 +114,10 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_ws_publish(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "publish");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame = build_notice_publish("notice://test/events", b"event");
@@ -131,21 +142,34 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
         .expect("subscribe response");
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        runtime
-            .block_on(publisher.send_frame(&publish_frame))
-            .expect("publish frame");
-        let response = runtime
+        let publish_response = runtime
+            .block_on(publisher.request(&publish_frame, 2000))
+            .expect("publish response");
+        let _ = parse_notice_response(&publish_response);
+
+        let notification = runtime
             .block_on(subscriber.recv_frame(2000))
             .expect("publish notification");
-        let (_msg_type, _status, _data) = parse_notice_response(&response);
+        let _ = parse_notice_response(&notification);
     });
     ctx.set_elements(iterations as u64);
+
+    runtime
+        .block_on(publisher.close())
+        .expect("close ws publisher gracefully");
+    runtime
+        .block_on(subscriber.close())
+        .expect("close ws subscriber gracefully");
 }
 
 #[stress_test]
-fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
+fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", "concurrent_publishers");
+    ctx.tag("scenario", "fanout_publish");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "1_publish_10_notifications");
+    ctx.tag("publisher_count", "1");
+    ctx.tag("subscriber_count", "10");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame = build_notice_publish("notice://test/events", b"event");
@@ -183,9 +207,11 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let publish_frame = publish_frame.clone();
-        runtime
-            .block_on(publisher.send_frame(&publish_frame))
-            .expect("publish frame");
+        let publish_response = runtime
+            .block_on(publisher.request(&publish_frame, 2000))
+            .expect("publish response");
+        let _ = parse_notice_response(&publish_response);
+
         let _results: Vec<_> =
             runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
                 let arc = arc.clone();
@@ -197,6 +223,17 @@ fn should_complete_multiclient_concurrent_publishes(ctx: &mut StressContext) {
             })));
     });
     ctx.set_elements(10 * iterations as u64);
+
+    runtime
+        .block_on(publisher.close())
+        .expect("close ws publisher gracefully");
+    let _closed: Vec<_> = runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
+        let arc = arc.clone();
+        async move {
+            let mut c = arc.lock().await;
+            c.close().await.expect("close ws subscriber gracefully");
+        }
+    })));
 }
 
 stress_main!();

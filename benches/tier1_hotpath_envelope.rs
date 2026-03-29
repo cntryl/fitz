@@ -33,7 +33,7 @@ fn bench_envelope_creation(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("envelope_new", |b| {
+    group.bench_function("owning_new_struct_payload", |b| {
         let mut idx = 0usize;
         b.iter(|| {
             let (d, m) = &pairs[idx % pairs.len()];
@@ -71,7 +71,7 @@ fn bench_envelope_from_route(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("envelope_from_route", |b| {
+    group.bench_function("owning_from_route_struct_payload", |b| {
         let mut idx = 0usize;
         b.iter(|| {
             let (src, dst, m) = &triples[idx % triples.len()];
@@ -108,7 +108,7 @@ fn bench_envelope_with_deadline(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("envelope_with_deadline", |b| {
+    group.bench_function("owning_new_with_deadline_struct_payload", |b| {
         let mut idx = 0usize;
         b.iter(|| {
             let (d, m) = &pairs[idx % pairs.len()];
@@ -142,7 +142,7 @@ fn bench_envelope_with_causation(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("envelope_with_causation", |b| {
+    group.bench_function("owning_new_with_causation_struct_payload", |b| {
         let mut idx = 0usize;
         b.iter(|| {
             let (d, m) = &pairs[idx % pairs.len()];
@@ -155,20 +155,14 @@ fn bench_envelope_with_causation(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_type_erasure_overhead(c: &mut Criterion) {
-    // Pre-built pool: small and large message variants
-    let small_pool: Vec<(RouteAddress, TestMessage)> = (0..4)
+fn bench_envelope_owning_heap_payload_sizes(c: &mut Criterion) {
+    let small_vec_pool: Vec<(RouteAddress, Vec<u64>)> = (0..4)
         .map(|i| {
             let dest = RouteAddress::new(
                 RouteFamily::new(1),
                 Route::new(format!("ftz://1/stream/acme/app/logs{}", i)),
             );
-            (
-                dest,
-                TestMessage {
-                    value: 1 + i as u64,
-                },
-            )
+            (dest, vec![1 + i as u64])
         })
         .collect();
     let large_msg = (0..100).collect::<Vec<u64>>();
@@ -186,16 +180,16 @@ fn bench_type_erasure_overhead(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("type_erasure_small_message", |b| {
+    group.bench_function("owning_new_vec_payload_1_u64", |b| {
         let mut idx = 0usize;
         b.iter(|| {
-            let (d, m) = &small_pool[idx % small_pool.len()];
+            let (d, m) = &small_vec_pool[idx % small_vec_pool.len()];
             idx += 1;
             let _envelope = Envelope::new(black_box(d.clone()), black_box(m.clone()));
         })
     });
 
-    group.bench_function("type_erasure_large_message", |b| {
+    group.bench_function("owning_new_vec_payload_100_u64", |b| {
         let mut idx = 0usize;
         b.iter(|| {
             let (d, m) = &large_pool[idx % large_pool.len()];
@@ -215,6 +209,6 @@ criterion_group! {
         bench_envelope_from_route,
         bench_envelope_with_deadline,
         bench_envelope_with_causation,
-        bench_type_erasure_overhead
+    bench_envelope_owning_heap_payload_sizes
 }
 criterion_main!(benches);

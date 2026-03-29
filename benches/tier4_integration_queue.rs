@@ -43,6 +43,8 @@ fn setup_queue_actor(
 fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "enqueue");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "single_enqueue");
 
     let route = "queue://tier4/queue/main/enqueue";
     let family = RouteFamily::new(1);
@@ -66,6 +68,8 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
 fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     ctx.tag("layer", "encoded");
     ctx.tag("scenario", "enqueue");
+    ctx.tag("measurement_scope", "encoded_inproc");
+    ctx.tag("batch_size", "single_enqueue");
 
     let route = "queue://tier4/queue/main/enqueue";
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
@@ -84,7 +88,9 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "enqueue");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "single_enqueue");
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
@@ -107,7 +113,9 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_ws_enqueue(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "enqueue");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "single_enqueue");
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
@@ -134,6 +142,9 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
 fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_enqueues");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "10_clients_1_enqueue_each");
+    ctx.tag("client_count", "10");
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");

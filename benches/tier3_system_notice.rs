@@ -57,6 +57,9 @@ fn setup_notice_sink(
 #[stress_test]
 fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     ctx.tag("scenario", "sustained_fanout");
+    ctx.tag("measurement_scope", "routed_fanout");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "1");
 
     let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/orders/*");
     let publish_frame = build_notice_publish(
@@ -84,6 +87,9 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     ctx.tag("scenario", "pattern_matching");
+    ctx.tag("measurement_scope", "routed_fanout");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "1");
 
     let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/**");
     let publish_frame = build_notice_publish(
@@ -111,6 +117,9 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     ctx.tag("scenario", "high_subscriber_count");
+    ctx.tag("measurement_scope", "routed_fanout");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "100");
 
     let (router, family, publisher_source) = setup_notice_sink(100, "notice://realm/area/orders/*");
     let publish_frame = build_notice_publish(

@@ -23,6 +23,34 @@ fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     index
 }
 
+fn make_subscription_batch(count: usize, id_offset: u64) -> Vec<(Route, SubscriptionId)> {
+    (0..count)
+        .map(|i| {
+            let pattern = match i % 4 {
+                0 => Route::new(format!("notify://realm/orders/create/{}", i)),
+                1 => Route::new(format!("notify://realm/orders/*/{}", i)),
+                2 => Route::new(format!("notify://realm/**/created/{}", i)),
+                _ => Route::new(format!("notify://realm/items/*/action/{}", i)),
+            };
+            (pattern, SubscriptionId(id_offset + i as u64))
+        })
+        .collect()
+}
+
+fn make_dense_match_batch(count: usize, id_offset: u64) -> Vec<(Route, SubscriptionId)> {
+    (0..count)
+        .map(|i| {
+            let pattern = match i % 4 {
+                0 => Route::new("notify://realm/orders/items/action"),
+                1 => Route::new("notify://realm/orders/items/*"),
+                2 => Route::new("notify://realm/orders/**"),
+                _ => Route::new("notify://realm/**/action"),
+            };
+            (pattern, SubscriptionId(id_offset + i as u64))
+        })
+        .collect()
+}
+
 /// Build index with fanout shape: many subscriptions, few matches
 fn make_index_fanout_sparse(sub_count: usize) -> (SubscriptionIndex, Route, RouteFamily) {
     let mut index = SubscriptionIndex::new();
@@ -312,6 +340,62 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_replace_batch_100(c: &mut Criterion) {
+    let family = RouteFamily::new(1);
+    let old_batch = make_subscription_batch(100, 0);
+    let new_batch = make_subscription_batch(100, 10_000);
+
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(200));
+    group.bench_function("replace_100_patterns", |b| {
+        b.iter_batched(
+            || {
+                let mut index = SubscriptionIndex::new();
+                index.insert_batch(family, &old_batch);
+                index
+            },
+            |mut index| {
+                for (pattern, subscription_id) in &old_batch {
+                    index.remove(family, black_box(pattern), *subscription_id);
+                }
+                index.insert_batch(family, black_box(&new_batch));
+            },
+            criterion::BatchSize::LargeInput,
+        )
+    });
+    group.finish();
+}
+
+fn bench_replace_then_dense_match_100(c: &mut Criterion) {
+    let family = RouteFamily::new(1);
+    let old_batch = make_dense_match_batch(100, 0);
+    let new_batch = make_dense_match_batch(100, 10_000);
+    let route = Route::new("notify://realm/orders/items/action");
+
+    let mut group = c.benchmark_group("subsystem_subscriptions");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(100));
+    group.bench_function("replace_100_patterns_then_dense_match", |b| {
+        b.iter_batched(
+            || {
+                let mut index = SubscriptionIndex::new();
+                index.insert_batch(family, &old_batch);
+                index
+            },
+            |mut index| {
+                for (pattern, subscription_id) in &old_batch {
+                    index.remove(family, black_box(pattern), *subscription_id);
+                }
+                index.insert_batch(family, black_box(&new_batch));
+                black_box(index.match_all_with_capacity(family, black_box(&route), 100));
+            },
+            criterion::BatchSize::LargeInput,
+        )
+    });
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier2();
@@ -328,6 +412,8 @@ criterion_group! {
         bench_match_depth_5,
         bench_match_depth_10,
         bench_remove_subscription,
-        bench_mixed_insert_remove_match
+        bench_mixed_insert_remove_match,
+        bench_replace_batch_100,
+        bench_replace_then_dense_match_100
 }
 criterion_main!(benches);

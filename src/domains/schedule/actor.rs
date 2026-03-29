@@ -452,6 +452,43 @@ impl ScheduleActor {
         fired
     }
 
+    /// Configure benchmark-ready schedule state without touching persistence.
+    #[doc(hidden)]
+    pub fn bench_prepare_scan(&mut self, ready_count: usize) {
+        let now = Instant::now();
+        let ready_limit = ready_count.min(self.list_entries.len());
+        let ready_ms = Self::instant_to_ms(now).saturating_sub(1);
+        let not_ready_time = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
+        let not_ready_ms = Self::instant_to_ms(not_ready_time);
+        let routes: Vec<_> = self
+            .list_entries
+            .iter()
+            .map(|entry| entry.route.clone())
+            .collect();
+
+        self.ready_heap.clear();
+
+        for (idx, route) in routes.into_iter().enumerate() {
+            if let Some(def) = self.schedules.get_mut(&route) {
+                let (next_fire_time, next_fire_ms) = if idx < ready_limit {
+                    (now, ready_ms)
+                } else {
+                    (not_ready_time, not_ready_ms)
+                };
+
+                def.next_fire_time = next_fire_time;
+                def.next_fire_ms = next_fire_ms;
+                def.storage_key = ScheduleStore::encode_key(next_fire_ms, &route);
+                def.index_key = ScheduleStore::encode_index_key(&route);
+                self.ready_heap.push((Reverse(next_fire_ms), route));
+            }
+        }
+
+        self.last_scan_time = now
+            .checked_sub(self.scan_dedup_window + Duration::from_millis(1))
+            .unwrap_or(now);
+    }
+
     /// Convert a target `Instant` into an approximate UNIX epoch timestamp (ms).
     ///
     /// `Instant` is monotonic and not directly epoch-based, so we anchor to "now"

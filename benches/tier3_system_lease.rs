@@ -111,6 +111,8 @@ fn acquire_token(
 #[stress_test]
 fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     ctx.tag("scenario", "single_route_intensive");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "acquire_release");
 
     let (router, family, source, inbox) = setup_lease_sink();
     let routes: Vec<String> = (0..100)
@@ -132,12 +134,14 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
         );
         idx = (idx + 1) % routes.len();
     });
-    ctx.set_elements(100 * iterations as u64);
+    ctx.set_elements(2 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     ctx.tag("scenario", "dual_route_concurrent");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "single_renew");
 
     let (router, family, source, inbox) = setup_lease_sink();
     let route1 = "lease://realm/area1/lock1/renew";
@@ -174,12 +178,14 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
         }
         phase += 1;
     });
-    ctx.set_elements(100 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     ctx.tag("scenario", "triple_route_contention");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "single_query");
 
     let (router, family, source, inbox) = setup_lease_sink();
     let routes = [
@@ -203,12 +209,14 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
         let _ = request(&router, family, &source, &inbox, route, 403, payload);
         phase += 1;
     });
-    ctx.set_elements(100 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     ctx.tag("scenario", "mixed_operations_high_load");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "single_mixed_op");
 
     let (router, family, source, inbox) = setup_lease_sink();
     let route = "lease://realm/area/lock1/mixed";
@@ -245,7 +253,7 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
         }
         phase += 1;
     });
-    ctx.set_elements(3 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 stress_main!();

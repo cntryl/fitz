@@ -576,8 +576,13 @@ mod tests {
 
     #[test]
     fn should_parse_concrete_schedule_route_given_valid_route() {
-        let route = parse_concrete_schedule_route("schedule://acme/billing/invoice/send").unwrap();
+        // Arrange
+        let input = "schedule://acme/billing/invoice/send";
 
+        // Act
+        let route = parse_concrete_schedule_route(input).unwrap();
+
+        // Assert
         assert_eq!(route.realm, "acme");
         assert_eq!(route.area, "billing");
         assert_eq!(route.resource, "invoice");
@@ -586,8 +591,13 @@ mod tests {
 
     #[test]
     fn should_reject_concrete_schedule_route_given_missing_operation() {
-        let err = parse_concrete_schedule_route("schedule://acme/billing/invoice").unwrap_err();
+        // Arrange
+        let input = "schedule://acme/billing/invoice";
 
+        // Act
+        let err = parse_concrete_schedule_route(input).unwrap_err();
+
+        // Assert
         assert_eq!(
             err,
             "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"

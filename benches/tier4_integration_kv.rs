@@ -30,6 +30,8 @@ use tokio::sync::Mutex;
 fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
     ctx.tag("scenario", "transaction_sequence");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "3_ops");
 
     let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
@@ -65,6 +67,8 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
 fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     ctx.tag("layer", "encoded");
     ctx.tag("scenario", "transaction_sequence");
+    ctx.tag("measurement_scope", "encoded_inproc");
+    ctx.tag("batch_size", "3_ops");
 
     let route = "kv://tier4/kv/encoded";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -103,7 +107,9 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "transaction_sequence");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "3_ops");
 
     let route = "kv://tier4/kv/tcp";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -139,7 +145,9 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "transaction_sequence");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "3_ops");
 
     let route = "kv://tier4/kv/ws";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -179,6 +187,9 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
 fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
     ctx.tag("scenario", "concurrent_transactions");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "10_clients_3_ops_each");
+    ctx.tag("client_count", "10");
 
     let route = "kv://tier4/kv/multiclient";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -220,7 +231,7 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
                 }
             })));
     });
-    ctx.set_elements(50 * iterations as u64);
+    ctx.set_elements(30 * iterations as u64);
 }
 
 stress_main!();

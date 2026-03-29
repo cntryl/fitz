@@ -38,52 +38,69 @@ fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
     (routes, crons, payloads)
 }
 
-fn bench_scan_and_fire_100(c: &mut Criterion) {
-    let (routes, crons, payloads) = precompute_data(100);
+fn populate_actor(
+    actor: &mut ScheduleActor,
+    routes: &[String],
+    crons: &[String],
+    payloads: &[Bytes],
+) {
+    for i in 0..routes.len() {
+        actor.handle(ScheduleMessage::Create {
+            route: routes[i].clone(),
+            cron: crons[i].clone(),
+            payload: payloads[i].clone(),
+        });
+    }
+}
 
-    let mut group = c.benchmark_group("schedule_scan_and_fire");
+fn bench_scan_shapes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_schedule_scan");
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(100));
 
-    group.bench_function("scan_and_fire_100", |b| {
-        b.iter_batched(
-            || {
-                let mut actor = create_test_actor();
-                for i in 0..100 {
-                    actor.handle(ScheduleMessage::Create {
-                        route: routes[i].clone(),
-                        cron: crons[i].clone(),
-                        payload: payloads[i].clone(),
-                    });
-                }
-                actor
-            },
-            |mut actor| {
-                black_box(actor.scan_and_fire());
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    for count in [100usize, 1000usize] {
+        let (routes, crons, payloads) = precompute_data(count);
+        group.throughput(Throughput::Elements(count as u64));
+        let partial_ready = (count / 10).max(1);
 
-    group.bench_function("scan_and_fire_100_cpu_only", |b| {
-        b.iter_batched(
-            || {
-                let mut actor = create_test_actor();
-                for i in 0..100 {
-                    actor.handle(ScheduleMessage::Create {
-                        route: routes[i].clone(),
-                        cron: crons[i].clone(),
-                        payload: payloads[i].clone(),
-                    });
-                }
-                actor
-            },
-            |mut actor| {
-                black_box(actor.scan_and_fire_cpu_only());
-            },
-            BatchSize::SmallInput,
-        )
-    });
+        for (label, ready_count) in [
+            ("none_ready", 0usize),
+            ("partial_ready", partial_ready),
+            ("all_ready", count),
+        ] {
+            group.bench_function(format!("scan_{}_{}_mixed_crons", label, count), |b| {
+                b.iter_batched(
+                    || {
+                        let mut actor = create_test_actor();
+                        populate_actor(&mut actor, &routes, &crons, &payloads);
+                        actor.bench_prepare_scan(ready_count);
+                        actor
+                    },
+                    |mut actor| {
+                        black_box(actor.scan_and_fire());
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+
+            group.bench_function(
+                format!("scan_cpu_only_{}_{}_mixed_crons", label, count),
+                |b| {
+                    b.iter_batched(
+                        || {
+                            let mut actor = create_test_actor();
+                            populate_actor(&mut actor, &routes, &crons, &payloads);
+                            actor.bench_prepare_scan(ready_count);
+                            actor
+                        },
+                        |mut actor| {
+                            black_box(actor.scan_and_fire_cpu_only());
+                        },
+                        BatchSize::SmallInput,
+                    )
+                },
+            );
+        }
+    }
 
     group.finish();
 }
@@ -91,6 +108,6 @@ fn bench_scan_and_fire_100(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier2();
-    targets = bench_scan_and_fire_100
+    targets = bench_scan_shapes
 }
 criterion_main!(benches);

@@ -158,6 +158,9 @@ fn service_workers(router: &Arc<Router>, family: RouteFamily, workers: &[WorkerH
 fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "sustained_dispatch");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "1000_roundtrips");
+    ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 100)];
@@ -185,6 +188,9 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
 fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "response_streaming");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "1000_roundtrips");
+    ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 101)];
@@ -212,6 +218,9 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
 fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
     const ITERS: u64 = 500;
     ctx.tag("scenario", "scaling_64");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "500_roundtrips");
+    ctx.tag("worker_count", "64");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers: Vec<WorkerHandle> = (0..64)
@@ -241,6 +250,9 @@ fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
 fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
     const ITERS: u64 = 200;
     ctx.tag("scenario", "scaling_256");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "200_roundtrips");
+    ctx.tag("worker_count", "256");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers: Vec<WorkerHandle> = (0..256)
@@ -270,6 +282,9 @@ fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
 fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "concurrent_tracking");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "1000_roundtrips");
+    ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 102)];
@@ -296,6 +311,9 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
     ctx.tag("scenario", "mixed_workload");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "10_roundtrips");
+    ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 103)];

@@ -244,14 +244,17 @@ fn should_reject_invalid_cron_on_create() {
 
 #[test]
 fn should_reject_legacy_three_segment_route_on_create() {
+    // Arrange
     let mut actor = make_schedule_actor();
 
+    // Act
     let response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/backup".to_string(),
         cron: "0 0 * * *".to_string(),
         payload: Bytes::from("legacy"),
     });
 
+    // Assert
     match response {
         ScheduleResponse::Error(error) => {
             assert_eq!(
@@ -391,12 +394,15 @@ fn should_return_ok_when_canceling_nonexistent_schedule() {
 
 #[test]
 fn should_reject_legacy_three_segment_route_on_cancel() {
+    // Arrange
     let mut actor = make_schedule_actor();
 
+    // Act
     let response = actor.handle(ScheduleMessage::Cancel {
         route: "schedule://acme/jobs/backup".to_string(),
     });
 
+    // Assert
     match response {
         ScheduleResponse::Error(error) => {
             assert_eq!(

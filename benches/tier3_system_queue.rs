@@ -1,8 +1,9 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_queue_subscribe, create_bench_queue_actor, create_bench_queue_sink,
-    extract_single_tlv_field, register_session_counting_sink, route_frame, CountingSink,
+    build_queue_dequeue, build_queue_enqueue, build_queue_subscribe, create_bench_queue_actor,
+    create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
+    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
 };
 use fitz::domains::queue::{QueueActor, QueueKey};
 use fitz::protocol::frame::ChannelId;
@@ -24,6 +25,38 @@ fn setup_queue_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<CountingSi
     (router, family, source, inbox)
 }
 
+fn setup_queue_request_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink = create_bench_queue_sink(router.clone());
+    router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
+    let (source, inbox) = register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
+    (router, family, source, inbox)
+}
+
+fn request_queue(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    source: &RouteAddress,
+    inbox: &Arc<FrameQueueSink>,
+    destination: &str,
+    msg_type: u16,
+    payload: Bytes,
+) -> usize {
+    route_frame(
+        router.as_ref(),
+        source,
+        destination,
+        CLIENT_SESSION_ID,
+        ChannelId::Sub,
+        msg_type,
+        payload,
+        family,
+    )
+    .expect("queue request");
+    inbox.drain().len()
+}
+
 fn subscribe_queue(
     router: &Arc<Router>,
     family: RouteFamily,
@@ -39,7 +72,7 @@ fn subscribe_queue(
         source,
         destination,
         session_id,
-        ChannelId::Pub,
+        ChannelId::Sub,
         msg_type,
         payload,
         family,
@@ -58,6 +91,8 @@ fn subscribe_queue(
 #[stress_test]
 fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     ctx.tag("scenario", "sustained_load");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("batch_size", "50_enqueue_50_receive");
 
     // Setup: Create actor and precompute payloads outside measurement
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
@@ -83,6 +118,8 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
     ctx.tag("scenario", "mixed_workload");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("batch_size", "100_enqueue_10_receive");
 
     // Setup: Create actor and precompute payloads outside measurement
     let mut actor = create_bench_queue_actor("bench", "system", "queue", Some(3));
@@ -108,12 +145,14 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         let _ = actor.handle_send_batch(&batch_mixed);
         let _ = actor.handle_receive(1, Some(10));
     });
-    ctx.set_elements(100 * iterations as u64); // 70 + 20 + 10 enqueues
+    ctx.set_elements(110 * iterations as u64); // 100 enqueue + up to 10 reserve
 }
 
 #[stress_test]
 fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     ctx.tag("scenario", "cold_start_recovery");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("batch_size", "100_recovered_messages");
 
     // Setup: Create store and pre-populate with messages
     let queue_key = QueueKey {
@@ -156,6 +195,8 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     ctx.tag("scenario", "high_contention");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("batch_size", "50_enqueue_50_receive");
 
     // Setup: One actor (one hot queue), same batch pattern as sustained_load for comparable throughput
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
@@ -173,8 +214,47 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
 }
 
 #[stress_test]
+fn should_complete_routed_enqueue_dequeue_sequence(ctx: &mut StressContext) {
+    ctx.tag("scenario", "routed_enqueue_dequeue");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("batch_size", "enqueue_dequeue");
+
+    let (router, family, source, inbox) = setup_queue_request_sink();
+    let route = "queue://bench/system/live";
+    let enqueue_frame = build_queue_enqueue(route, b"routed queue payload");
+    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+    let dequeue_frame = build_queue_dequeue(route);
+    let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = request_queue(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            enqueue_msg_type,
+            enqueue_payload.clone(),
+        );
+        let _ = request_queue(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            dequeue_msg_type,
+            dequeue_payload.clone(),
+        );
+    });
+    ctx.set_elements(2 * iterations as u64);
+}
+
+#[stress_test]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     ctx.tag("scenario", "publish_fanout");
+    ctx.tag("measurement_scope", "routed_fanout");
+    ctx.tag("batch_size", "single_publish");
+    ctx.tag("subscriber_count", "16");
 
     let (router, family, source, _inbox) = setup_queue_sink();
     let route = "queue://bench/system/fanout";
@@ -196,7 +276,7 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
             publish_event.clone(),
         ));
     });
-    ctx.set_elements(10 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 stress_main!();

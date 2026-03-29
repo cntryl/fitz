@@ -119,7 +119,10 @@ fn service_worker(
 #[stress_test]
 fn should_complete_direct_request(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
-    ctx.tag("scenario", "request");
+    ctx.tag("scenario", "request_response");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "single_roundtrip");
+    ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox, worker_source, worker_inbox) =
         setup_rpc_sink();
@@ -147,7 +150,10 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_encoded_request(ctx: &mut StressContext) {
     ctx.tag("layer", "encoded");
-    ctx.tag("scenario", "request");
+    ctx.tag("scenario", "request_response");
+    ctx.tag("measurement_scope", "encoded_inproc");
+    ctx.tag("batch_size", "single_roundtrip");
+    ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox, worker_source, worker_inbox) =
         setup_rpc_sink();
@@ -177,7 +183,10 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_tcp_request_response(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "request_response");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "single_roundtrip");
+    ctx.tag("worker_count", "1");
 
     let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
     let request_frame = build_rpc_request("rpc://tier4/service", b"ping");
@@ -244,7 +253,10 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_ws_request_response(ctx: &mut StressContext) {
     ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "network_roundtrip");
+    ctx.tag("scenario", "request_response");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "single_roundtrip");
+    ctx.tag("worker_count", "1");
 
     let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
     let request_frame = build_rpc_request("rpc://tier4/service", b"ping");
@@ -317,12 +329,28 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
 #[stress_test]
 fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
     ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", "concurrent_subscribe");
+    ctx.tag("scenario", "concurrent_requests");
+    ctx.tag("measurement_scope", "ws_multiclient_e2e");
+    ctx.tag("batch_size", "10_clients_1_roundtrip_each");
+    ctx.tag("client_count", "10");
+    ctx.tag("worker_count", "1");
 
     let subscribe_frame = build_rpc_subscribe("rpc://tier4/worker");
+    let request_frame = build_rpc_request("rpc://tier4/service", b"ping");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
+
+    let mut worker_client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect worker ws");
+    runtime
+        .block_on(worker_client.send_frame(&subscribe_frame))
+        .expect("subscribe");
+    let _ = runtime.block_on(worker_client.recv_frame(2000));
 
     let clients: Vec<std::sync::Arc<tokio::sync::Mutex<TestWebSocketClient>>> = (0..10)
         .map(|_| {
@@ -336,23 +364,54 @@ fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let frame = subscribe_frame.clone();
-        let results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
-                let arc = arc.clone();
-                let f = frame.clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    c.send_frame(&f).await?;
-                    c.recv_frame(2000).await
+    let worker_handle = {
+        let rt = shared_bench_runtime();
+        rt.spawn(async move {
+            loop {
+                let frame = match worker_client.recv_frame(5000).await {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+                let mut parser = TlvFrameParser::new(&frame);
+                if let Some((msg_type, payload)) = parser.next_field() {
+                    if msg_type == 302 {
+                        let frame_ctx = FrameContext::new(
+                            0,
+                            ChannelId::Rpc,
+                            MessageType::new(302),
+                            Bytes::from(payload.clone()),
+                            RouteFamily::new(1),
+                        );
+                        if let Ok(RpcMessage::Request(req)) =
+                            parse_request(&frame_ctx, &payload, RouteFamily::new(1))
+                        {
+                            let resp_frame =
+                                build_rpc_response_frame(req.correlation_id, &req.body);
+                            let ack_frame = build_rpc_ack_frame(req.correlation_id);
+                            let _ = worker_client.send_frame(&resp_frame).await;
+                            let _ = worker_client.send_frame(&ack_frame).await;
+                        }
+                    }
                 }
-            })));
-        for r in results {
-            let _ = r.expect("request");
-        }
+            }
+        })
+    };
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let frame = request_frame.clone();
+        runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+            let arc = arc.clone();
+            let f = frame.clone();
+            async move {
+                let mut c = arc.lock().await;
+                let response = c.request(&f, 2000).await.expect("request");
+                let _ = parse_rpc_response(&response);
+            }
+        })));
     });
     ctx.set_elements(10 * iterations as u64);
+
+    worker_handle.abort();
 }
 
 stress_main!();
