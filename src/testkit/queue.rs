@@ -24,11 +24,12 @@ pub fn create_test_queue_actor(
     };
 
     let store = super::stream::create_test_db();
-    QueueActor::new(
+    QueueActor::new_with_write_options(
         RouteFamily::new(0), // CF=0 for Midge test limitation
         queue_key,
         store,
         max_attempts,
         crate::utils::idempotency::global_dedup_store(),
+        cntryl_midge::WriteOptions::best_effort(),
     )
 }

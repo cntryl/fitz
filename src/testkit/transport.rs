@@ -99,7 +99,20 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        let domains = crate::boot::domains::setup(&router, &store, &runtime.admin_read_model())?;
+        let queue_write_options = if matches!(
+            &boot_config.storage_mode,
+            crate::boot::runtime::StorageMode::Memory
+        ) {
+            cntryl_midge::WriteOptions::best_effort()
+        } else {
+            cntryl_midge::WriteOptions::buffered()
+        };
+        let domains = crate::boot::domains::setup(
+            &router,
+            &store,
+            &runtime.admin_read_model(),
+            queue_write_options,
+        )?;
         runtime.attach_domains(Arc::new(domains));
 
         // Mark domains ready

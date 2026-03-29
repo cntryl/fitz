@@ -78,6 +78,13 @@ struct QueueRecord {
     visible_at_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoredRecordLayout {
+    EmbeddedHeader,
+    SplitHeaderBody,
+    LegacyKey,
+}
+
 impl QueueRecord {
     #[inline]
     fn loaded(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
@@ -282,6 +289,11 @@ pub struct QueueActor {
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,
 
+    /// Commit policy for queue mutations.
+    /// Durable stores use buffered commits; explicitly ephemeral stores can use
+    /// best-effort commits to avoid WAL work that cannot survive process exit.
+    commit_write_options: cntryl_midge::WriteOptions,
+
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
 
@@ -308,6 +320,9 @@ pub struct QueueActor {
     /// Bounded in-memory message metadata cache (durable backing is Midge).
     records: FastMap<MessageId, QueueRecord>,
 
+    /// Storage layout cache aligned with `records`.
+    record_layouts: FastMap<MessageId, StoredRecordLayout>,
+
     /// FIFO eviction order for the bounded metadata cache.
     record_cache_fifo: VecDeque<MessageId>,
 
@@ -332,6 +347,9 @@ pub struct QueueActor {
 
     /// Authoritative delayed index entries keyed by message ID.
     persisted_delayed: FastMap<MessageId, u64>,
+
+    /// Cached minimum delayed visibility across `persisted_delayed`.
+    persisted_next_delayed_visibility_ms: Option<u64>,
 
     /// Whether a valid persisted index marker is already stored for this queue.
     index_meta_written: bool,
@@ -381,7 +399,7 @@ impl QueueActor {
     const BODY_CACHE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
     const BODY_CACHE_FIFO_SLACK_MULTIPLIER: usize = 2;
 
-    /// Create a new queue actor. Persistence mode is locked to buffered-only (throughput-first).
+    /// Create a new queue actor using buffered commits for durable stores.
     pub fn new(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -389,17 +407,37 @@ impl QueueActor {
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::with_clock(
+        Self::new_with_write_options(
+            family,
+            queue_key,
+            store,
+            max_attempts,
+            dedup_store,
+            cntryl_midge::WriteOptions::buffered(),
+        )
+    }
+
+    /// Create a new queue actor with explicit commit policy selection.
+    pub fn new_with_write_options(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        max_attempts: Option<u32>,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+        commit_write_options: cntryl_midge::WriteOptions,
+    ) -> Self {
+        Self::with_clock_and_write_options(
             family,
             queue_key,
             store,
             Box::new(SystemClock),
             max_attempts,
             dedup_store,
+            commit_write_options,
         )
     }
 
-    /// Create a new queue actor with a custom clock (for testing). Persistence is locked to buffered-only.
+    /// Create a new queue actor with a custom clock (for testing) using buffered commits.
     pub fn with_clock(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -407,6 +445,27 @@ impl QueueActor {
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+    ) -> Self {
+        Self::with_clock_and_write_options(
+            family,
+            queue_key,
+            store,
+            clock,
+            max_attempts,
+            dedup_store,
+            cntryl_midge::WriteOptions::buffered(),
+        )
+    }
+
+    /// Create a new queue actor with a custom clock and explicit commit policy.
+    pub fn with_clock_and_write_options(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        clock: Box<dyn Clock>,
+        max_attempts: Option<u32>,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+        commit_write_options: cntryl_midge::WriteOptions,
     ) -> Self {
         let now = Instant::now();
 
@@ -421,6 +480,7 @@ impl QueueActor {
             delayed_index_prefix: Self::delayed_index_prefix(&queue_key),
             queue_key,
             store,
+            commit_write_options,
             next_id: 1,
             next_id_limit: 1,
             ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
@@ -429,6 +489,7 @@ impl QueueActor {
             ready_count: 0,
             next_ready_shard: 0,
             records: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
+            record_layouts: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
             record_cache_fifo: VecDeque::with_capacity(128),
             body_cache: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
             body_cache_fifo: VecDeque::with_capacity(Self::BODY_CACHE_LIMIT),
@@ -437,6 +498,7 @@ impl QueueActor {
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
             persisted_delayed: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
+            persisted_next_delayed_visibility_ms: None,
             index_meta_written: false,
             recovery_path: RecoveryPath::Empty,
             pending_publish: None,
@@ -759,14 +821,62 @@ impl QueueActor {
     }
 
     fn min_persisted_delayed_visibility_ms(&self) -> Option<u64> {
-        self.persisted_delayed.values().copied().min()
+        self.persisted_next_delayed_visibility_ms
     }
 
     fn min_persisted_delayed_visibility_ms_excluding(&self, excluded: MessageId) -> Option<u64> {
-        self.persisted_delayed
-            .iter()
-            .filter_map(|(&id, &visible_at_ms)| (id != excluded).then_some(visible_at_ms))
-            .min()
+        if self.persisted_delayed.get(&excluded).copied()
+            != self.persisted_next_delayed_visibility_ms
+        {
+            return self.persisted_next_delayed_visibility_ms;
+        }
+
+        self.persisted_delayed.iter().filter_map(|(&id, &visible_at_ms)| {
+            (id != excluded).then_some(visible_at_ms)
+        })
+        .min()
+    }
+
+    fn recompute_persisted_delayed_visibility_ms(&mut self) {
+        self.persisted_next_delayed_visibility_ms = self.persisted_delayed.values().copied().min();
+    }
+
+    fn insert_persisted_delayed(&mut self, id: MessageId, visible_at_ms: u64) {
+        self.persisted_delayed.insert(id, visible_at_ms);
+        self.persisted_next_delayed_visibility_ms = Some(
+            self.persisted_next_delayed_visibility_ms
+                .map(|current| current.min(visible_at_ms))
+                .unwrap_or(visible_at_ms),
+        );
+    }
+
+    fn remove_persisted_delayed(&mut self, id: MessageId) -> Option<u64> {
+        let removed = self.persisted_delayed.remove(&id);
+        if removed == self.persisted_next_delayed_visibility_ms {
+            self.recompute_persisted_delayed_visibility_ms();
+        }
+        removed
+    }
+
+    fn clear_persisted_delayed(&mut self) {
+        self.persisted_delayed.clear();
+        self.persisted_next_delayed_visibility_ms = None;
+    }
+
+    fn delete_record_for_layout(
+        txn: &mut cntryl_midge::Transaction,
+        layout: StoredRecordLayout,
+        header_key: Vec<u8>,
+        body_key: Vec<u8>,
+        legacy_key: Vec<u8>,
+    ) -> cntryl_midge::MidgeResult<()> {
+        match layout {
+            StoredRecordLayout::EmbeddedHeader => txn.delete(header_key),
+            StoredRecordLayout::SplitHeaderBody => txn
+                .delete(header_key)
+                .and_then(|_| txn.delete(body_key)),
+            StoredRecordLayout::LegacyKey => txn.delete(legacy_key),
+        }
     }
 
     fn staged_ready_count_after_mutation(
@@ -927,7 +1037,7 @@ impl QueueActor {
             shard.clear();
         }
         self.persisted_ready_count = 0;
-        self.persisted_delayed.clear();
+        self.clear_persisted_delayed();
     }
 
     fn push_range_into(shards: &mut [VecDeque<ReadyRange>], shard: usize, range: ReadyRange) {
@@ -1141,10 +1251,11 @@ impl QueueActor {
         }
     }
 
-    fn cache_record(&mut self, id: MessageId, record: QueueRecord) {
+    fn cache_record(&mut self, id: MessageId, record: QueueRecord, layout: StoredRecordLayout) {
         if self.records.insert(id, record).is_none() {
             self.record_cache_fifo.push_back(id);
         }
+        self.record_layouts.insert(id, layout);
 
         self.compact_record_cache_fifo_if_needed();
 
@@ -1153,11 +1264,13 @@ impl QueueActor {
                 break;
             };
             self.records.remove(&evicted_id);
+            self.record_layouts.remove(&evicted_id);
         }
     }
 
     fn evict_cached_record(&mut self, id: MessageId) {
         self.records.remove(&id);
+        self.record_layouts.remove(&id);
         self.compact_record_cache_fifo_if_needed();
     }
 
@@ -1316,7 +1429,10 @@ impl QueueActor {
         Ok(QueueRecord::metadata_only(attempts, visible_at_ms))
     }
 
-    fn load_record_metadata_from_store(&self, id: MessageId) -> Result<QueueRecord, String> {
+    fn load_record_metadata_from_store(
+        &self,
+        id: MessageId,
+    ) -> Result<(QueueRecord, StoredRecordLayout), String> {
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
         let legacy_key = self.cached_legacy_message_key(id);
@@ -1326,13 +1442,20 @@ impl QueueActor {
             .map_err(|e| format!("Failed to begin read tx for message {}: {:?}", id, e))?;
 
         match txn.get(&header_key) {
-            Ok(Some(bytes)) => Self::decode_record_header(&bytes),
+            Ok(Some(bytes)) => {
+                let layout = if bytes.len() >= 16 {
+                    StoredRecordLayout::EmbeddedHeader
+                } else {
+                    StoredRecordLayout::SplitHeaderBody
+                };
+                Self::decode_record_header(&bytes).map(|record| (record, layout))
+            }
             Ok(None) => match txn.get(&legacy_key) {
                 Ok(Some(bytes)) => {
                     let record = Self::decode_legacy_record(bytes)?;
-                    Ok(QueueRecord::metadata_only(
-                        record.attempts,
-                        record.visible_at_ms,
+                    Ok((
+                        QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
+                        StoredRecordLayout::LegacyKey,
                     ))
                 }
                 Ok(None) => Err(format!("Message {} disappeared from storage", id)),
@@ -1380,7 +1503,10 @@ impl QueueActor {
         }
     }
 
-    fn load_record_for_receive_from_store(&self, id: MessageId) -> Result<QueueRecord, String> {
+    fn load_record_for_receive_from_store(
+        &self,
+        id: MessageId,
+    ) -> Result<(QueueRecord, StoredRecordLayout), String> {
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
@@ -1394,15 +1520,14 @@ impl QueueActor {
             Ok(Some(header_bytes)) => {
                 if header_bytes.len() >= 16 {
                     if let Ok(record) = Self::decode_legacy_record(header_bytes.clone()) {
-                        return Ok(record);
+                        return Ok((record, StoredRecordLayout::EmbeddedHeader));
                     }
                 }
                 let header = Self::decode_record_header(&header_bytes)?;
                 match txn.get(&body_key) {
-                    Ok(Some(body_bytes)) => Ok(QueueRecord::loaded(
-                        body_bytes,
-                        header.attempts,
-                        header.visible_at_ms,
+                    Ok(Some(body_bytes)) => Ok((
+                        QueueRecord::loaded(body_bytes, header.attempts, header.visible_at_ms),
+                        StoredRecordLayout::SplitHeaderBody,
                     )),
                     Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
                     Err(e) => Err(format!("Failed to read message body {}: {:?}", id, e)),
@@ -1410,7 +1535,9 @@ impl QueueActor {
             }
             Err(e) => Err(format!("Failed to read message {}: {:?}", id, e)),
             Ok(None) => match txn.get(&legacy_key) {
-                Ok(Some(bytes)) => Self::decode_legacy_record(bytes),
+                Ok(Some(bytes)) => {
+                    Self::decode_legacy_record(bytes).map(|record| (record, StoredRecordLayout::LegacyKey))
+                }
                 Ok(None) => Err(format!("Message {} disappeared from storage", id)),
                 Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
             },
@@ -1448,7 +1575,7 @@ impl QueueActor {
         }
 
         let start = Instant::now();
-        let record = self.load_record_for_receive_from_store(id)?;
+        let (record, layout) = self.load_record_for_receive_from_store(id)?;
         Self::observe_elapsed_us(obs::METRIC_QUEUE_RECEIVE_HYDRATE_LATENCY, start);
         let body = record
             .body
@@ -1457,6 +1584,7 @@ impl QueueActor {
         self.cache_record(
             id,
             QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
+            layout,
         );
         self.cache_body(id, body.clone());
         Ok((body, record.attempts))
@@ -1572,7 +1700,7 @@ impl QueueActor {
         // Commit with buffered mode for high throughput
         // The store will sync periodically, maintaining durability without per-operation cost
         let commit_start = Instant::now();
-        if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
+        if let Err(e) = txn.commit(self.commit_write_options) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
@@ -1586,7 +1714,7 @@ impl QueueActor {
         }
 
         // Cache record in memory for fast reserve path
-        self.cache_record(id, record);
+        self.cache_record(id, record, StoredRecordLayout::EmbeddedHeader);
         self.cache_body(id, cached_body);
 
         // Update in-memory queues
@@ -1596,7 +1724,7 @@ impl QueueActor {
         } else {
             self.delayed
                 .push(Reverse(DelayedMessage { id, visible_at }));
-            self.persisted_delayed.insert(id, visible_at_ms);
+            self.insert_persisted_delayed(id, visible_at_ms);
         }
         if !self.index_meta_written {
             self.index_meta_written = true;
@@ -1734,7 +1862,7 @@ impl QueueActor {
         }
 
         let commit_start = Instant::now();
-        if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
+        if let Err(e) = txn.commit(self.commit_write_options) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {:?}", e),
             };
@@ -1746,7 +1874,7 @@ impl QueueActor {
             self.next_id_limit = limit;
         }
         for (id, record, cached_body, visible_at) in post_commit {
-            self.cache_record(id, record);
+            self.cache_record(id, record, StoredRecordLayout::EmbeddedHeader);
             self.cache_body(id, cached_body);
             if visible_at <= now_instant {
                 self.push_ready(id);
@@ -1759,7 +1887,7 @@ impl QueueActor {
             self.push_persisted_ready(id);
         }
         for (id, visible_at_ms) in staged_delayed {
-            self.persisted_delayed.insert(id, visible_at_ms);
+            self.insert_persisted_delayed(id, visible_at_ms);
         }
         if !self.index_meta_written {
             self.index_meta_written = true;
@@ -1961,11 +2089,20 @@ impl QueueActor {
         // Remove inflight entry
         self.inflight.remove(&id);
 
-        let stored_record = self
-            .records
-            .get(&id)
-            .cloned()
-            .or_else(|| self.load_record_metadata_from_store(id).ok());
+        let (stored_record, stored_layout) = if let Some(record) = self.records.get(&id).cloned() {
+            (
+                Some(record),
+                self.record_layouts
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
+            )
+        } else {
+            match self.load_record_metadata_from_store(id) {
+                Ok((record, layout)) => (Some(record), layout),
+                Err(_) => (None, StoredRecordLayout::EmbeddedHeader),
+            }
+        };
         let persisted_ready_mutation =
             Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
         let removing_delayed = self.persisted_delayed.contains_key(&id);
@@ -1994,37 +2131,13 @@ impl QueueActor {
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
             Ok(mut txn) => {
-                let has_split_record = match txn.get(&header_key) {
-                    Ok(Some(_)) => true,
-                    Ok(None) => false,
-                    Err(e) => {
-                        eprintln!("WARN: Failed to inspect message {} in txn: {:?}", id, e);
-                        false
-                    }
-                };
-                let has_body_key = if has_split_record {
-                    match txn.get(&body_key) {
-                        Ok(Some(_)) => true,
-                        Ok(None) => false,
-                        Err(e) => {
-                            eprintln!("WARN: Failed to inspect body {} in txn: {:?}", id, e);
-                            false
-                        }
-                    }
-                } else {
-                    false
-                };
-
-                let delete_result = if has_split_record {
-                    let delete_header = txn.delete(header_key);
-                    if has_body_key {
-                        delete_header.and_then(|_| txn.delete(body_key))
-                    } else {
-                        delete_header
-                    }
-                } else {
-                    txn.delete(legacy_key)
-                };
+                let delete_result = Self::delete_record_for_layout(
+                    &mut txn,
+                    stored_layout,
+                    header_key,
+                    body_key,
+                    legacy_key,
+                );
 
                 if let Err(e) = delete_result {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
@@ -2113,7 +2226,7 @@ impl QueueActor {
                     }
 
                     // Use buffered writes for throughput (queues represent intent, not events of record)
-                    if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
+                    if let Err(e) = txn.commit(self.commit_write_options) {
                         eprintln!(
                             "WARN: Failed to commit delete txn for message {}: {:?}",
                             id, e
@@ -2122,7 +2235,7 @@ impl QueueActor {
                         if let Some((shard, mutation)) = persisted_ready_mutation {
                             self.apply_ready_index_mutation(shard, mutation);
                         }
-                        self.persisted_delayed.remove(&id);
+                        self.remove_persisted_delayed(id);
                     }
                 }
             }
@@ -2171,11 +2284,17 @@ impl QueueActor {
         let body_key = self.cached_body_key(id);
         let legacy_key = self.cached_legacy_message_key(id);
 
-        let mut record = if let Some(cached) = self.records.get(&id) {
-            cached.clone()
+        let (mut record, record_layout) = if let Some(cached) = self.records.get(&id) {
+            (
+                cached.clone(),
+                self.record_layouts
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
+            )
         } else {
             match self.load_record_metadata_from_store(id) {
-                Ok(record) => record,
+                Ok((record, layout)) => (record, layout),
                 Err(e) => {
                     eprintln!(
                         "WARN: Failed to load message {} during redelivery: {}",
@@ -2332,7 +2451,7 @@ impl QueueActor {
                         }
 
                         let update_start = Instant::now();
-                        if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
+                        if let Err(e) = txn.commit(self.commit_write_options) {
                             eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
                         } else {
                             Self::observe_elapsed_us(
@@ -2342,7 +2461,7 @@ impl QueueActor {
                             if let Some((shard, mutation)) = persisted_ready_mutation {
                                 self.apply_ready_index_mutation(shard, mutation);
                             }
-                            self.persisted_delayed.remove(&id);
+                            self.remove_persisted_delayed(id);
                         }
                     }
 
@@ -2430,7 +2549,7 @@ impl QueueActor {
                     );
                 } else {
                     let update_start = Instant::now();
-                    if let Err(e) = txn.commit(cntryl_midge::WriteOptions::buffered()) {
+                    if let Err(e) = txn.commit(self.commit_write_options) {
                         eprintln!(
                             "WARN: Failed to commit retry txn for message {}: {:?}",
                             id, e
@@ -2455,6 +2574,7 @@ impl QueueActor {
         self.cache_record(
             id,
             QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
+            record_layout,
         );
 
         // Re-enqueue to ready queue (back of queue for FIFO)
@@ -2510,23 +2630,26 @@ impl QueueActor {
             self.next_delayed_deadline = now + Duration::from_secs(3600); // 1 hour
         }
     }
+
+    /// Process only the timer and delayed-message work that is actually due.
+    pub fn process_due_work(&mut self) {
+        let now = self.clock.now_instant();
+
+        if now >= self.next_expiration_deadline {
+            self.process_expired_timers();
+        }
+
+        if now >= self.next_delayed_deadline {
+            self.process_delayed_messages();
+        }
+    }
 }
 
 impl Actor for QueueActor {
     type Message = QueueMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        let now = self.clock.now_instant();
-
-        // Deferred timer processing: only process if deadline has passed
-        if now >= self.next_expiration_deadline {
-            self.process_expired_timers();
-        }
-
-        // Deferred delayed message processing: only process if deadline has passed
-        if now >= self.next_delayed_deadline {
-            self.process_delayed_messages();
-        }
+        self.process_due_work();
 
         let response = match msg {
             QueueMessage::Send {
@@ -2785,7 +2908,7 @@ impl QueueActor {
                     reason: "Malformed queue delayed index key".to_string(),
                 };
             };
-            self.persisted_delayed.insert(id, visible_at_ms);
+            self.insert_persisted_delayed(id, visible_at_ms);
             scanned_delayed_count += 1;
             scanned_next_delayed = Some(
                 scanned_next_delayed
@@ -2902,7 +3025,7 @@ impl QueueActor {
         )
         .map_err(|e| format!("Failed to write queue index meta: {:?}", e))?;
 
-        txn.commit(cntryl_midge::WriteOptions::buffered())
+        txn.commit(self.commit_write_options)
             .map_err(|e| format!("Failed to commit queue index rebuild: {:?}", e))?;
         self.index_meta_written = true;
         Ok(())
@@ -2984,7 +3107,7 @@ impl QueueActor {
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
                 self.delayed
                     .push(Reverse(DelayedMessage { id, visible_at }));
-                self.persisted_delayed.insert(id, record.visible_at_ms);
+                self.insert_persisted_delayed(id, record.visible_at_ms);
                 if visible_at < self.next_delayed_deadline {
                     self.next_delayed_deadline = visible_at;
                 }
@@ -3010,7 +3133,7 @@ impl QueueActor {
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
                 self.delayed
                     .push(Reverse(DelayedMessage { id, visible_at }));
-                self.persisted_delayed.insert(id, record.visible_at_ms);
+                self.insert_persisted_delayed(id, record.visible_at_ms);
                 if visible_at < self.next_delayed_deadline {
                     self.next_delayed_deadline = visible_at;
                 }

@@ -159,11 +159,6 @@ harness = false
 path = "benches/tier3_system_kv.rs"
 
 [[bench]]
-name = "rpc_dispatch_diagnostics"
-harness = false
-path = "benches/rpc_dispatch_diagnostics.rs"
-
-[[bench]]
 name = "tier3_system_lease"
 harness = false
 path = "benches/tier3_system_lease.rs"

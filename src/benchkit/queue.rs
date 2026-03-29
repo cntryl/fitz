@@ -4,10 +4,11 @@ use super::storage::{create_bench_store, create_local_bench_store};
 use crate::domains::queue::{QueueActor, QueueKey};
 use crate::runtime::routing::RouteFamily;
 
-/// Create a QueueActor for benchmarking with buffered writes
+/// Create a QueueActor for benchmarking with ephemeral in-memory commits.
 ///
 /// Creates an actor with in-memory storage suitable for performance testing.
-/// All queues use buffered writes (intent, not events).
+/// In-memory engines are already ephemeral, so the queue can use best-effort
+/// commits to avoid WAL work that cannot survive process exit.
 ///
 /// # Arguments
 /// * `realm` - Realm name for the queue
@@ -29,12 +30,13 @@ pub fn create_bench_queue_actor(
     };
 
     let store = create_bench_store();
-    QueueActor::new(
+    QueueActor::new_with_write_options(
         family,
         queue_key,
         store,
         max_attempts,
         crate::utils::idempotency::global_dedup_store(),
+        cntryl_midge::WriteOptions::best_effort(),
     )
 }
 

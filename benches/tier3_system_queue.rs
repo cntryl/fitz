@@ -1,20 +1,56 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_queue_dequeue, build_queue_enqueue, build_queue_subscribe, create_bench_queue_actor,
-    create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
-    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
+    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
+    build_queue_subscribe, create_bench_queue_actor, create_bench_queue_sink,
+    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
+    route_frame, CountingSink, FrameQueueSink,
 };
-use fitz::domains::queue::{QueueActor, QueueKey};
+use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse, ReservedMessage};
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::DomainPublishEvent;
 use fitz::testkit::create_test_engine_with_cfs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const CLIENT_SESSION_ID: u64 = 1;
+const RECEIVE_BATCH_SIZE: usize = 50;
+
+#[derive(Clone)]
+struct BenchClock {
+    start_instant: Instant,
+    base_epoch_ms: u64,
+    elapsed_ns: Arc<AtomicU64>,
+}
+
+impl BenchClock {
+    fn new() -> Self {
+        Self {
+            start_instant: Instant::now(),
+            base_epoch_ms: 1_700_000_000_000,
+            elapsed_ns: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn advance(&self, duration: Duration) {
+        self.elapsed_ns
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+    }
+}
+
+impl Clock for BenchClock {
+    fn now_instant(&self) -> Instant {
+        self.start_instant + Duration::from_nanos(self.elapsed_ns.load(Ordering::Relaxed))
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.base_epoch_ms + (self.elapsed_ns.load(Ordering::Relaxed) / 1_000_000)
+    }
+}
 
 fn setup_queue_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<CountingSink>) {
     let family = RouteFamily::new(1);
@@ -34,7 +70,7 @@ fn setup_queue_request_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<Fr
     (router, family, source, inbox)
 }
 
-fn request_queue(
+fn request_queue_response(
     router: &Arc<Router>,
     family: RouteFamily,
     source: &RouteAddress,
@@ -42,7 +78,7 @@ fn request_queue(
     destination: &str,
     msg_type: u16,
     payload: Bytes,
-) -> usize {
+) -> Bytes {
     route_frame(
         router.as_ref(),
         source,
@@ -54,7 +90,11 @@ fn request_queue(
         family,
     )
     .expect("queue request");
-    inbox.drain().len()
+    inbox
+        .drain()
+        .last()
+        .map(|frame| frame.payload.clone())
+        .expect("queue response")
 }
 
 fn subscribe_queue(
@@ -80,54 +120,244 @@ fn subscribe_queue(
     .expect("queue subscribe");
 }
 
-// Queue domain tier 3 system benchmarks using stress
-//
-// Sustained queue operations under realistic scenarios.
-// Tests enqueue, reserve, and complete operations at system scale.
-//
-// Each test measures a single operation with all setup/teardown outside the measurement loop.
-// Target: ops/sec via set_elements(count)
+fn assert_queue_success(response: &[u8]) {
+    assert_eq!(
+        response.first().copied(),
+        Some(0),
+        "expected queue success response"
+    );
+}
+
+fn parse_received_messages(response: &[u8]) -> Vec<(u64, u64)> {
+    assert_queue_success(response);
+    assert!(response.len() >= 5, "queue receive response too short");
+
+    let message_count = u32::from_be_bytes([response[1], response[2], response[3], response[4]]);
+    let mut offset = 5usize;
+    let mut messages = Vec::with_capacity(message_count as usize);
+
+    for _ in 0..message_count {
+        assert!(
+            response.len() >= offset + 20,
+            "queue receive message metadata too short"
+        );
+        let id = u64::from_be_bytes([
+            response[offset],
+            response[offset + 1],
+            response[offset + 2],
+            response[offset + 3],
+            response[offset + 4],
+            response[offset + 5],
+            response[offset + 6],
+            response[offset + 7],
+        ]);
+        offset += 8;
+
+        let token = u64::from_be_bytes([
+            response[offset],
+            response[offset + 1],
+            response[offset + 2],
+            response[offset + 3],
+            response[offset + 4],
+            response[offset + 5],
+            response[offset + 6],
+            response[offset + 7],
+        ]);
+        offset += 8;
+
+        let body_len = u32::from_be_bytes([
+            response[offset],
+            response[offset + 1],
+            response[offset + 2],
+            response[offset + 3],
+        ]) as usize;
+        offset += 4;
+
+        assert!(response.len() >= offset + body_len, "queue receive body truncated");
+        offset += body_len;
+        messages.push((id, token));
+    }
+
+    messages
+}
+
+fn parse_single_received_message(response: &[u8]) -> (u64, u64) {
+    let mut messages = parse_received_messages(response);
+    assert_eq!(messages.len(), 1, "expected exactly one received queue message");
+    messages.pop().expect("single queue message")
+}
+
+fn receive_single_message(actor: &mut QueueActor) -> ReservedMessage {
+    match actor.handle_receive(30, Some(1)) {
+        QueueResponse::Received { mut messages } => {
+            assert_eq!(messages.len(), 1, "expected a single reserved message");
+            messages.pop().expect("reserved message")
+        }
+        other => panic!("expected received message, got {:?}", other),
+    }
+}
+
+fn receive_batch_messages(actor: &mut QueueActor, batch_size: usize) -> Vec<ReservedMessage> {
+    match actor.handle_receive(30, Some(batch_size)) {
+        QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), batch_size, "expected a full receive batch");
+            messages
+        }
+        other => panic!("expected received batch, got {:?}", other),
+    }
+}
+
+fn ack_reserved_messages(actor: &mut QueueActor, messages: Vec<ReservedMessage>) {
+    for message in messages {
+        let response = actor.handle_ack(message.id, message.token);
+        assert_eq!(response, QueueResponse::Acked);
+    }
+}
+
+#[stress_test]
+fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
+    ctx.tag("scenario", "enqueue_isolated");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "enqueue");
+    ctx.tag("batch_size", "single_enqueue");
+
+    let payload = Bytes::from_static(b"enqueue isolated message");
+    let mut actors: Vec<QueueActor> = (0..64)
+        .map(|queue| create_bench_queue_actor("bench", "enqueue", &format!("queue{queue}"), None))
+        .collect();
+    let mut actor_index = 0usize;
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        let response = actors[actor_index].handle_send(payload.clone(), None);
+        assert!(matches!(response, QueueResponse::Sent { .. }));
+        actor_index = (actor_index + 1) % actors.len();
+    });
+    ctx.set_elements(iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_capacity_receive_batch_cleanup(ctx: &mut StressContext) {
+    ctx.tag("scenario", "receive_batch_cleanup");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "receive");
+    ctx.tag("cache_state", "warm");
+    ctx.tag("batch_size", "50_enqueue_1_receive_50_ack_cleanup");
+
+    let mut actor = create_bench_queue_actor("bench", "receive", "queue", None);
+    let payload = Bytes::from_static(b"receive batch cleanup message");
+    let batch: Vec<(Bytes, Option<u64>)> = (0..RECEIVE_BATCH_SIZE)
+        .map(|_| (payload.clone(), None))
+        .collect();
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        let response = actor.handle_send_batch(&batch);
+        assert!(matches!(response, QueueResponse::SentBatch { .. }));
+
+        let messages = receive_batch_messages(&mut actor, RECEIVE_BATCH_SIZE);
+        ack_reserved_messages(&mut actor, messages);
+    });
+    ctx.set_elements(((RECEIVE_BATCH_SIZE as u64) * 2 + 1) * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
+    ctx.tag("scenario", "ack_roundtrip");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "ack");
+    ctx.tag("cache_state", "warm");
+    ctx.tag("batch_size", "1_enqueue_1_receive_1_ack");
+
+    let mut actor = create_bench_queue_actor("bench", "ack", "queue", None);
+    let payload = Bytes::from_static(b"ack roundtrip message");
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        let response = actor.handle_send(payload.clone(), None);
+        assert!(matches!(response, QueueResponse::Sent { .. }));
+
+        let message = receive_single_message(&mut actor);
+        let response = actor.handle_ack(message.id, message.token);
+        assert_eq!(response, QueueResponse::Acked);
+    });
+    ctx.set_elements(3 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
+    ctx.tag("scenario", "extend_roundtrip");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "extend");
+    ctx.tag("cache_state", "warm");
+    ctx.tag("batch_size", "1_enqueue_1_receive_1_extend_1_ack");
+
+    let mut actor = create_bench_queue_actor("bench", "extend", "queue", None);
+    let payload = Bytes::from_static(b"extend roundtrip message");
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        let response = actor.handle_send(payload.clone(), None);
+        assert!(matches!(response, QueueResponse::Sent { .. }));
+
+        let message = receive_single_message(&mut actor);
+        let response = actor.handle_extend(message.id, message.token, 60);
+        assert_eq!(response, QueueResponse::Extended);
+
+        let response = actor.handle_ack(message.id, message.token);
+        assert_eq!(response, QueueResponse::Acked);
+    });
+    ctx.set_elements(4 * iterations as u64);
+}
 
 #[stress_test]
 fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     ctx.tag("scenario", "sustained_load");
     ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "enqueue_receive");
     ctx.tag("batch_size", "50_enqueue_50_receive");
 
-    // Setup: Create actor and precompute payloads outside measurement
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"sustained load message");
-
-    // Precompute 50 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
-
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads
         .iter()
         .take(50)
         .map(|p| (p.clone(), None))
         .collect();
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
         }
     });
-    ctx.set_elements(100 * iterations as u64); // 50 enqueue + 50 reserve
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
-    ctx.tag("scenario", "mixed_workload");
+    ctx.tag("scenario", "mixed_steady_state");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "100_enqueue_10_receive");
+    ctx.tag("operation", "enqueue_receive_ack");
+    ctx.tag("batch_size", "100_enqueue_100_receive_100_ack");
 
-    // Setup: Create actor and precompute payloads outside measurement
-    let mut actor = create_bench_queue_actor("bench", "system", "queue", Some(3));
+    let clock = BenchClock::new();
+    let queue_key = QueueKey {
+        family: RouteFamily::new(1),
+        realm: "bench".to_string(),
+        area: "system".to_string(),
+        resource: "queue".to_string(),
+    };
+    let store = create_test_engine_with_cfs(vec![1]);
+    let mut actor = QueueActor::with_clock_and_write_options(
+        RouteFamily::new(1),
+        queue_key,
+        store,
+        Box::new(clock.clone()),
+        Some(3),
+        fitz::utils::idempotency::global_dedup_store(),
+        cntryl_midge::WriteOptions::best_effort(),
+    );
     let payload = Bytes::from_static(b"mixed workload message");
 
-    // Precompute 100 payload instances to avoid clones in hot path
     let payloads: Vec<Bytes> = (0..100).map(|_| payload.clone()).collect();
-
     let batch_mixed: Vec<(Bytes, Option<u64>)> = payloads
         .iter()
         .take(70)
@@ -141,20 +371,44 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         )
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_mixed);
-        let _ = actor.handle_receive(1, Some(10));
+
+        let immediate = match actor.handle_receive(30, Some(80)) {
+            QueueResponse::Received { messages } => messages,
+            other => panic!("expected received immediate batch, got {:?}", other),
+        };
+        assert_eq!(immediate.len(), 80);
+        for message in immediate {
+            let response = actor.handle_ack(message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+        }
+
+        clock.advance(Duration::from_secs(6));
+        actor.process_delayed_messages();
+
+        let delayed = match actor.handle_receive(30, Some(20)) {
+            QueueResponse::Received { messages } => messages,
+            other => panic!("expected received delayed batch, got {:?}", other),
+        };
+        assert_eq!(delayed.len(), 20);
+        for message in delayed {
+            let response = actor.handle_ack(message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+        }
     });
-    ctx.set_elements(110 * iterations as u64); // 100 enqueue + up to 10 reserve
+    ctx.set_elements(300 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     ctx.tag("scenario", "cold_start_recovery");
     ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "recover");
+    ctx.tag("cache_state", "recovered");
     ctx.tag("batch_size", "100_recovered_messages");
 
-    // Setup: Create store and pre-populate with messages
     let queue_key = QueueKey {
         family: RouteFamily::new(1),
         realm: "bench".to_string(),
@@ -164,7 +418,6 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
 
     let store = create_test_engine_with_cfs(vec![1]);
 
-    // Pre-populate with 100 messages
     let mut pre_actor = QueueActor::new(
         RouteFamily::new(1),
         queue_key.clone(),
@@ -179,8 +432,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     }
     drop(pre_actor);
 
-    // Measure: Recover actor from populated store
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         let _actor = QueueActor::new(
             RouteFamily::new(1),
             queue_key.clone(),
@@ -189,45 +441,147 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
             fitz::utils::idempotency::global_dedup_store(),
         );
     });
-    ctx.set_elements(100 * iterations as u64); // 100 messages recovered
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     ctx.tag("scenario", "high_contention");
     ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "enqueue_receive");
     ctx.tag("batch_size", "50_enqueue_50_receive");
 
-    // Setup: One actor (one hot queue), same batch pattern as sustained_load for comparable throughput
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"contention message");
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
-    let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
+    let batch_50: Vec<(Bytes, Option<u64>)> =
+        payloads.iter().map(|p| (p.clone(), None)).collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
         }
     });
-    ctx.set_elements(100 * iterations as u64); // 50 enqueue + 50 reserve on one hot queue
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_routed_enqueue_dequeue_sequence(ctx: &mut StressContext) {
-    ctx.tag("scenario", "routed_enqueue_dequeue");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "enqueue_dequeue");
+fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
+    ctx.tag("scenario", "routed_enqueue_sustained");
+    ctx.tag("measurement_scope", "routed_sink");
+    ctx.tag("operation", "enqueue");
+    ctx.tag("batch_size", "single_enqueue");
 
     let (router, family, source, inbox) = setup_queue_request_sink();
-    let route = "queue://bench/system/live";
-    let enqueue_frame = build_queue_enqueue(route, b"routed queue payload");
+    let routes: Vec<String> = (0..64)
+        .map(|queue| format!("queue://bench/system/enqueue{queue}"))
+        .collect();
+    let enqueue_frames: Vec<(u16, Bytes)> = routes
+        .iter()
+        .map(|route| {
+            let frame = build_queue_enqueue(route, b"routed enqueue payload");
+            extract_single_tlv_field(&frame)
+        })
+        .collect();
+    let mut route_index = 0usize;
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        let route = &routes[route_index];
+        let (msg_type, payload) = &enqueue_frames[route_index];
+        let response = request_queue_response(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            *msg_type,
+            payload.clone(),
+        );
+        assert_queue_success(&response);
+        route_index = (route_index + 1) % routes.len();
+    });
+    ctx.set_elements(iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
+    ctx.tag("scenario", "routed_receive_batch_cleanup");
+    ctx.tag("measurement_scope", "routed_sink");
+    ctx.tag("operation", "receive");
+    ctx.tag("batch_size", "50_enqueue_1_receive_50_ack_cleanup");
+
+    let (router, family, source, inbox) = setup_queue_request_sink();
+    let route = "queue://bench/system/receive";
+    let enqueue_frame = build_queue_enqueue(route, b"routed receive payload");
+    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+    let receive_frame = build_queue_dequeue_batch(route, RECEIVE_BATCH_SIZE as u32);
+    let (receive_msg_type, receive_payload) = extract_single_tlv_field(&receive_frame);
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..RECEIVE_BATCH_SIZE {
+            let response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                enqueue_msg_type,
+                enqueue_payload.clone(),
+            );
+            assert_queue_success(&response);
+        }
+
+        let receive_response = request_queue_response(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            receive_msg_type,
+            receive_payload.clone(),
+        );
+        let messages = parse_received_messages(&receive_response);
+        assert_eq!(
+            messages.len(),
+            RECEIVE_BATCH_SIZE,
+            "expected a full routed receive batch"
+        );
+
+        for (message_id, token) in messages {
+            let ack_frame = build_queue_complete(route, message_id, token);
+            let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+            let ack_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                ack_msg_type,
+                ack_payload,
+            );
+            assert_queue_success(&ack_response);
+        }
+    });
+    ctx.set_elements(((RECEIVE_BATCH_SIZE as u64) * 2 + 1) * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
+    ctx.tag("scenario", "routed_ack_roundtrip");
+    ctx.tag("measurement_scope", "routed_sink");
+    ctx.tag("operation", "ack");
+    ctx.tag("batch_size", "1_enqueue_1_receive_1_ack");
+
+    let (router, family, source, inbox) = setup_queue_request_sink();
+    let route = "queue://bench/system/ack";
+    let enqueue_frame = build_queue_enqueue(route, b"routed ack payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
     let dequeue_frame = build_queue_dequeue(route);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _ = request_queue(
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        let enqueue_response = request_queue_response(
             &router,
             family,
             &source,
@@ -236,7 +590,9 @@ fn should_complete_routed_enqueue_dequeue_sequence(ctx: &mut StressContext) {
             enqueue_msg_type,
             enqueue_payload.clone(),
         );
-        let _ = request_queue(
+        assert_queue_success(&enqueue_response);
+
+        let dequeue_response = request_queue_response(
             &router,
             family,
             &source,
@@ -245,14 +601,29 @@ fn should_complete_routed_enqueue_dequeue_sequence(ctx: &mut StressContext) {
             dequeue_msg_type,
             dequeue_payload.clone(),
         );
+        let (message_id, token) = parse_single_received_message(&dequeue_response);
+
+        let ack_frame = build_queue_complete(route, message_id, token);
+        let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+        let ack_response = request_queue_response(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            ack_msg_type,
+            ack_payload,
+        );
+        assert_queue_success(&ack_response);
     });
-    ctx.set_elements(2 * iterations as u64);
+    ctx.set_elements(3 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     ctx.tag("scenario", "publish_fanout");
     ctx.tag("measurement_scope", "routed_fanout");
+    ctx.tag("operation", "notify");
     ctx.tag("batch_size", "single_publish");
     ctx.tag("subscriber_count", "16");
 
@@ -270,7 +641,7 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         Bytes::from_static(b"queue fanout payload"),
     );
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         let _ = router.route(Envelope::new(
             RouteAddress::new(family, publish_route.clone()),
             publish_event.clone(),

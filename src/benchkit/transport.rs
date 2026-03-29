@@ -173,6 +173,36 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build QUEUE RESERVE frame (msg_type 202) with an explicit batch size.
+pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
+    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=1][u32 batch][u8 has_wait=0]
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
+    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&30_u64.to_be_bytes());
+    payload.push(1); // has_batch_size = true
+    payload.extend_from_slice(&batch_size.to_be_bytes());
+    payload.push(0); // has_wait = false
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(202, &payload);
+    builder.build()
+}
+
+/// Build QUEUE COMPLETE frame (msg_type 204)
+pub fn build_queue_complete(queue_name: &str, message_id: u64, token: u64) -> Vec<u8> {
+    // Wire format: [u32 route_len][route][u64 message_id][u64 lease_token]
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
+    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&message_id.to_be_bytes());
+    payload.extend_from_slice(&token.to_be_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(204, &payload);
+    builder.build()
+}
+
 /// Parse QUEUE response
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);

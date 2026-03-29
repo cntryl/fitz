@@ -1,0 +1,440 @@
+use super::parse_route_triplet;
+use crate::protocol::frame_context::FrameContext;
+use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use chrono::Utc;
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+
+struct NoticeSubscription {
+    pattern: crate::runtime::matcher::Pattern,
+    session_id: u64,
+    subscription_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+}
+
+struct NoticeFamilyState {
+    subscriptions: HashMap<u64, NoticeSubscription>,
+    index: crate::runtime::SubscriptionIndex,
+}
+
+pub struct NoticeDomainSink {
+    families: Mutex<HashMap<u64, NoticeFamilyState>>,
+    next_sub_id: AtomicU64,
+    router: Arc<Router>,
+    admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    active: AtomicBool,
+}
+
+impl NoticeDomainSink {
+    pub fn new(
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    ) -> Self {
+        Self {
+            families: Mutex::new(HashMap::new()),
+            next_sub_id: AtomicU64::new(1),
+            router,
+            admin_read_model,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+
+    fn sync_admin_snapshot(&self) {
+        let families = self.families.lock();
+        let mut subscriptions = Vec::new();
+        let mut routes: HashMap<String, usize> = HashMap::new();
+        for state in families.values() {
+            for subscription in state.subscriptions.values() {
+                let pattern = subscription.pattern.route().to_string();
+                if let Some((realm, _area, _resource)) = parse_route_triplet(&pattern) {
+                    subscriptions.push(crate::api::admin::NoticeSubscription {
+                        subscription_id: subscription.subscription_id,
+                        session_id: subscription.session_id.to_string(),
+                        realm,
+                        pattern: pattern.clone(),
+                        created_at: Utc::now().to_rfc3339(),
+                        notifications_received: 0,
+                    });
+                    *routes.entry(pattern).or_insert(0) += 1;
+                }
+            }
+        }
+        drop(families);
+        self.admin_read_model
+            .replace_notice_subscriptions(subscriptions);
+        self.admin_read_model.replace_notice_routes(
+            routes
+                .into_iter()
+                .map(|(route, subscribers)| crate::api::admin::NoticeRouteInfo {
+                    route,
+                    subscribers,
+                    publishes_total: 0,
+                    publishes_per_minute: 0.0,
+                })
+                .collect(),
+        );
+    }
+
+    fn handle_domain_publish(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+    ) -> Result<(), DeliveryError> {
+        let family_id = event.family_id.as_u64();
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let families = self.families.lock();
+        if let Some(state) = families.get(&family_id) {
+            let matches = state.index.match_all_with_capacity(
+                event.family_id,
+                &event.route,
+                state.subscriptions.len(),
+            );
+            for sub_id in matches {
+                if let Some(sub) = state.subscriptions.get(&sub_id.0) {
+                    let notify_payload = crate::protocol::notice_codec::encode_notify_into(
+                        sub.subscription_id,
+                        &event.route,
+                        &event.payload,
+                        &mut payload_encoder,
+                    );
+                    let notify_ctx = FrameContext::new(
+                        sub.session_id,
+                        crate::protocol::frame::ChannelId::Sub,
+                        crate::protocol::tlv::MessageType::new(504),
+                        bytes::Bytes::from(notify_payload),
+                        crate::runtime::routing::RouteFamily::from_u32(
+                            sub.subscriber.family().id(),
+                        ),
+                    );
+                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                    let _ = self.router.route(notify_envelope);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn unsubscribe_all_for_session(&self, session_id: u64) {
+        let mut families = self.families.lock();
+        for (family_id, state) in families.iter_mut() {
+            let removed_ids: Vec<u64> = state
+                .subscriptions
+                .iter()
+                .filter_map(|(sub_id, sub)| (sub.session_id == session_id).then_some(*sub_id))
+                .collect();
+            for sub_id in removed_ids {
+                if let Some(sub) = state.subscriptions.remove(&sub_id) {
+                    let pattern = crate::runtime::routing::Route::new(sub.pattern.route());
+                    state.index.remove(
+                        crate::runtime::routing::RouteFamily::new(*family_id),
+                        &pattern,
+                        crate::runtime::SubscriptionId(sub_id),
+                    );
+                }
+            }
+        }
+        tracing::debug!(
+            domain = "notice",
+            session = session_id,
+            "All notice subscriptions removed for session (disconnect cleanup)"
+        );
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        let families = self.families.lock();
+        families
+            .values()
+            .map(|state| state.subscriptions.len())
+            .sum()
+    }
+}
+
+impl MailboxSink for NoticeDomainSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            return self.handle_domain_publish(event);
+        }
+
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all_for_session(cleanup.session_id);
+            return Ok(());
+        }
+
+        tracing::debug!(
+            domain = "notice",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "Notice domain sink: received envelope"
+        );
+
+        let frame_ctx = match envelope.payload::<FrameContext>() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                tracing::warn!(domain = "notice", "Envelope payload was not FrameContext");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        tracing::debug!(
+            domain = "notice",
+            session = frame_ctx.session_id,
+            msg_type = frame_ctx.msg_type.as_u16(),
+            payload_len = frame_ctx.payload.len(),
+            "Notice: parsing request"
+        );
+
+        let notice_msg = match crate::protocol::notice_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+            crate::session::SessionId(frame_ctx.session_id),
+            if let Some(src) = envelope.source() {
+                src.clone()
+            } else {
+                crate::runtime::routing::RouteAddress::new(
+                    *envelope.destination().family(),
+                    crate::runtime::routing::Route::new(format!(
+                        "inbox://session/{}",
+                        frame_ctx.session_id
+                    )),
+                )
+            },
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
+                return Err(DeliveryError::ActorStopped);
+            }
+        };
+
+        use crate::domains::notice::protocol::NotificationMessage;
+        use crate::protocol::notice_codec::NoticeResponse;
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+
+        let (response_opt, should_sync_admin_snapshot) = match notice_msg {
+            NotificationMessage::Publish(pub_msg) => {
+                let family_id = pub_msg.family_id.as_u64();
+                let families = self.families.lock();
+                if let Some(state) = families.get(&family_id) {
+                    let route = pub_msg.route.clone();
+                    let matches = state.index.match_all_with_capacity(
+                        pub_msg.family_id,
+                        &route,
+                        state.subscriptions.len(),
+                    );
+                    for sub_id in matches {
+                        if let Some(sub) = state.subscriptions.get(&sub_id.0) {
+                            let notify_payload = crate::protocol::notice_codec::encode_notify_into(
+                                sub.subscription_id,
+                                &route,
+                                &pub_msg.payload,
+                                &mut payload_encoder,
+                            );
+                            let notify_ctx = FrameContext::new(
+                                sub.session_id,
+                                crate::protocol::frame::ChannelId::Sub,
+                                crate::protocol::tlv::MessageType::new(504),
+                                bytes::Bytes::from(notify_payload),
+                                crate::runtime::routing::RouteFamily::from_u32(
+                                    sub.subscriber.family().id(),
+                                ),
+                            );
+                            let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
+                            let _ = self.router.route(notify_envelope);
+                        }
+                    }
+                }
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    false,
+                )
+            }
+            NotificationMessage::Subscribe(sub_msg) => {
+                let family_id = sub_msg.family_id.as_u64();
+
+                let mut families = self.families.lock();
+                let state = families
+                    .entry(family_id)
+                    .or_insert_with(|| NoticeFamilyState {
+                        subscriptions: HashMap::new(),
+                        index: crate::runtime::SubscriptionIndex::new(),
+                    });
+
+                let existing_sub_id = state
+                    .subscriptions
+                    .values()
+                    .find(|s| {
+                        s.session_id == sub_msg.session_id.0
+                            && s.pattern.route() == sub_msg.pattern.as_str()
+                    })
+                    .map(|s| s.subscription_id);
+
+                if sub_msg.pattern.as_str().is_empty() {
+                    tracing::warn!(
+                        domain = "notice",
+                        session = sub_msg.session_id.0,
+                        "Rejected empty subscription pattern"
+                    );
+                    (
+                        Some(NoticeResponse::Error("empty pattern".to_string())),
+                        false,
+                    )
+                } else {
+                    let sub_id = if let Some(id) = existing_sub_id {
+                        tracing::debug!(
+                            domain = "notice",
+                            session = sub_msg.session_id.0,
+                            subscription_id = id,
+                            pattern = sub_msg.pattern.as_str(),
+                            "Notice subscription already exists (idempotent)"
+                        );
+                        id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
+
+                        state.index.insert(
+                            sub_msg.family_id,
+                            &sub_msg.pattern,
+                            crate::runtime::SubscriptionId(new_id),
+                        );
+                        state.subscriptions.insert(
+                            new_id,
+                            NoticeSubscription {
+                                pattern,
+                                session_id: sub_msg.session_id.0,
+                                subscription_id: new_id,
+                                subscriber: sub_msg.subscriber.clone(),
+                            },
+                        );
+
+                        tracing::debug!(
+                            domain = "notice",
+                            session = sub_msg.session_id.0,
+                            subscription_id = new_id,
+                            pattern = sub_msg.pattern.as_str(),
+                            "Notice subscription added"
+                        );
+                        new_id
+                    };
+
+                    (
+                        Some(NoticeResponse::Ok {
+                            subscription_id: Some(sub_id),
+                        }),
+                        true,
+                    )
+                }
+            }
+            NotificationMessage::Unsubscribe(unsub_msg) => {
+                let family_id = unsub_msg.family_id.as_u64();
+                let mut families = self.families.lock();
+                if let Some(state) = families.get_mut(&family_id) {
+                    let removed_ids: Vec<u64> = state
+                        .subscriptions
+                        .iter()
+                        .filter_map(|(sub_id, sub)| {
+                            (sub.session_id == unsub_msg.session_id.0
+                                && sub.pattern.route() == unsub_msg.pattern.as_str())
+                            .then_some(*sub_id)
+                        })
+                        .collect();
+                    for sub_id in removed_ids {
+                        if state.subscriptions.remove(&sub_id).is_some() {
+                            state.index.remove(
+                                unsub_msg.family_id,
+                                &unsub_msg.pattern,
+                                crate::runtime::SubscriptionId(sub_id),
+                            );
+                        }
+                    }
+                }
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    true,
+                )
+            }
+            NotificationMessage::UnsubscribeAll(unsub_all) => {
+                let session_id = unsub_all.session_id.0;
+                self.unsubscribe_all_for_session(session_id);
+                tracing::debug!(
+                    domain = "notice",
+                    session = session_id,
+                    "All subscriptions removed for session"
+                );
+                (
+                    Some(NoticeResponse::Ok {
+                        subscription_id: None,
+                    }),
+                    true,
+                )
+            }
+            NotificationMessage::Deliver(_) => (
+                Some(NoticeResponse::Ok {
+                    subscription_id: None,
+                }),
+                false,
+            ),
+        };
+        if should_sync_admin_snapshot {
+            self.sync_admin_snapshot();
+        }
+
+        if let Some(response) = response_opt {
+            let response_bytes = crate::protocol::notice_codec::encode_response_into(
+                &response,
+                &mut payload_encoder,
+            );
+            let response_ctx = FrameContext::new(
+                frame_ctx.session_id,
+                frame_ctx.channel_id,
+                crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                bytes::Bytes::from(response_bytes),
+                frame_ctx.route_family,
+            );
+            if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                let _ = self.router.route(response_envelope);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn should_create_notice_domain_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+
+        // Act
+        let sink = NoticeDomainSink::new(router, admin_read_model);
+
+        // Assert
+        assert!(sink.active.load(Ordering::Relaxed));
+    }
+}

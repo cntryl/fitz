@@ -47,7 +47,17 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_storage_ready();
 
     // Step 3: Register domain actors
-    let domains = domains::setup(&router, &store, &runtime.admin_read_model())?;
+    let queue_write_options = if matches!(&config.storage_mode, runtime::StorageMode::Memory) {
+        cntryl_midge::WriteOptions::best_effort()
+    } else {
+        cntryl_midge::WriteOptions::buffered()
+    };
+    let domains = domains::setup(
+        &router,
+        &store,
+        &runtime.admin_read_model(),
+        queue_write_options,
+    )?;
     runtime.attach_domains(std::sync::Arc::new(domains));
     tracing::info!("Domain actors registered");
 

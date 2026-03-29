@@ -150,6 +150,7 @@ pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
         create_bench_store(),
         router,
         crate::api::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::best_effort(),
     ))
 }
 

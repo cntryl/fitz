@@ -7,20 +7,49 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use criterion::black_box;
 use fitz::benchkit::{
-    build_rpc_request, build_rpc_subscribe, create_bench_rpc_sink, extract_single_tlv_field,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
+    create_bench_rpc_sink, extract_single_tlv_field, register_session_queue_sink, route_frame,
+    FrameQueueSink,
 };
-use fitz::domains::rpc::protocol::{RpcMessage, RpcResponse};
+use fitz::domains::rpc::protocol::RpcMessage;
 use fitz::protocol::frame::ChannelId;
-use fitz::protocol::rpc_codec::{encode_response_message, parse_request};
+use fitz::protocol::rpc_codec::parse_request;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
+use std::time::Duration;
 
 const ROUTE_STR: &str = "rpc://bench/system/route";
 const REQUESTER_SESSION_ID: u64 = 1;
+const REQUEST_FRAME_RING_SIZE: usize = 2048;
+const MULTI_ROUTE_REQUEST_FRAME_RING_SIZE: usize = 256;
+const MULTI_ROUTE_COUNT: usize = 64;
 
 type WorkerHandle = (u64, RouteAddress, Arc<FrameQueueSink>);
+
+struct RequestFrameRing {
+    frames: Vec<(u16, Bytes)>,
+    next: usize,
+}
+
+impl RequestFrameRing {
+    fn new(route: &str, payload: &[u8], count: usize) -> Self {
+        let frames = (0..count)
+            .map(|_| {
+                let frame = build_rpc_request(route, payload);
+                extract_single_tlv_field(&frame)
+            })
+            .collect();
+
+        Self { frames, next: 0 }
+    }
+
+    fn next_frame(&mut self) -> (u16, Bytes) {
+        let (msg_type, payload) = &self.frames[self.next];
+        self.next = (self.next + 1) % self.frames.len();
+        (*msg_type, payload.clone())
+    }
+}
 
 fn setup_rpc_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
     let family = RouteFamily::new(1);
@@ -32,14 +61,25 @@ fn setup_rpc_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSi
     (router, family, requester_source, requester_inbox)
 }
 
-fn register_worker(router: &Arc<Router>, family: RouteFamily, session_id: u64) -> WorkerHandle {
+fn build_route_set(route_count: usize) -> Vec<String> {
+    (0..route_count)
+        .map(|index| format!("rpc://bench/system/route/{index}"))
+        .collect()
+}
+
+fn register_worker_for_route(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    session_id: u64,
+    route: &str,
+) -> WorkerHandle {
     let (worker_source, worker_inbox) = register_session_queue_sink(router, family, session_id);
-    let subscribe_frame = build_rpc_subscribe(ROUTE_STR);
+    let subscribe_frame = build_rpc_subscribe(route);
     let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
     route_frame(
         router.as_ref(),
         &worker_source,
-        ROUTE_STR,
+        route,
         session_id,
         ChannelId::Rpc,
         msg_type,
@@ -51,17 +91,22 @@ fn register_worker(router: &Arc<Router>, family: RouteFamily, session_id: u64) -
     (session_id, worker_source, worker_inbox)
 }
 
-fn dispatch_request(
+fn register_worker(router: &Arc<Router>, family: RouteFamily, session_id: u64) -> WorkerHandle {
+    register_worker_for_route(router, family, session_id, ROUTE_STR)
+}
+
+fn dispatch_request_to_route(
     router: &Arc<Router>,
     family: RouteFamily,
     requester_source: &RouteAddress,
+    route: &str,
     request_msg_type: u16,
     request_payload: Bytes,
 ) {
     route_frame(
         router.as_ref(),
         requester_source,
-        ROUTE_STR,
+        route,
         REQUESTER_SESSION_ID,
         ChannelId::Rpc,
         request_msg_type,
@@ -71,9 +116,49 @@ fn dispatch_request(
     .expect("rpc request");
 }
 
-fn service_worker(
+fn dispatch_request(
     router: &Arc<Router>,
     family: RouteFamily,
+    requester_source: &RouteAddress,
+    request_msg_type: u16,
+    request_payload: Bytes,
+) {
+    dispatch_request_to_route(
+        router,
+        family,
+        requester_source,
+        ROUTE_STR,
+        request_msg_type,
+        request_payload,
+    );
+}
+
+fn route_worker_frame_to_route(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    worker_session_id: u64,
+    worker_source: &RouteAddress,
+    route: &str,
+    frame: Vec<u8>,
+) {
+    let (msg_type, payload) = extract_single_tlv_field(&frame);
+    route_frame(
+        router.as_ref(),
+        worker_source,
+        route,
+        worker_session_id,
+        ChannelId::Rpc,
+        msg_type,
+        payload,
+        family,
+    )
+    .expect("rpc worker frame");
+}
+
+fn service_worker_for_route(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    route: &str,
     worker_session_id: u64,
     worker_source: &RouteAddress,
     worker_inbox: &Arc<FrameQueueSink>,
@@ -94,14 +179,16 @@ fn service_worker(
                     if let Ok(RpcMessage::Request(request)) =
                         parse_request(&frame, &frame.payload, family)
                     {
-                        let response =
-                            RpcResponse::single(request.correlation_id, request.body.clone());
-                        dispatch_worker_response(
+                        route_worker_frame_to_route(
                             router,
                             family,
                             worker_session_id,
                             worker_source,
-                            Bytes::from(encode_response_message(&response)),
+                            route,
+                            build_rpc_response_frame(
+                                request.correlation_id,
+                                request.body.as_ref(),
+                            ),
                         );
                         responses += 1;
                     }
@@ -119,39 +206,293 @@ fn service_worker(
     responses
 }
 
-fn dispatch_worker_response(
+fn service_expected_worker(
     router: &Arc<Router>,
     family: RouteFamily,
-    worker_session_id: u64,
-    worker_source: &RouteAddress,
-    response_payload: Bytes,
-) {
-    route_frame(
-        router.as_ref(),
-        worker_source,
-        ROUTE_STR,
-        worker_session_id,
-        ChannelId::Rpc,
-        303,
-        response_payload,
-        family,
-    )
-    .expect("rpc response");
+    workers: &[WorkerHandle],
+    next_worker_index: &mut usize,
+) -> usize {
+    let (session_id, source, inbox) = &workers[*next_worker_index];
+    *next_worker_index = (*next_worker_index + 1) % workers.len();
+    service_worker_for_route(router, family, ROUTE_STR, *session_id, source, inbox)
 }
 
-fn service_workers(router: &Arc<Router>, family: RouteFamily, workers: &[WorkerHandle]) -> usize {
-    let mut total = 0usize;
-    loop {
-        let mut round = 0usize;
-        for (session_id, source, inbox) in workers {
-            round += service_worker(router, family, *session_id, source, inbox);
+fn service_worker_on_route(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    route: &str,
+    worker: &WorkerHandle,
+) -> usize {
+    let (session_id, source, inbox) = worker;
+    service_worker_for_route(router, family, route, *session_id, source, inbox)
+}
+
+fn cleanup_expected_worker_request_for_route(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    route: &str,
+    workers: &[WorkerHandle],
+    next_worker_index: &mut usize,
+) {
+    let (worker_session_id, worker_source, worker_inbox) = &workers[*next_worker_index];
+    *next_worker_index = (*next_worker_index + 1) % workers.len();
+
+    let correlation_id = worker_inbox
+        .drain()
+        .into_iter()
+        .find_map(|frame| match frame.msg_type.as_u16() {
+            302 => match parse_request(&frame, &frame.payload, family) {
+                Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
+                _ => None,
+            },
+            304 => None,
+            _ => None,
+        })
+        .expect("rpc dispatched request");
+
+    route_worker_frame_to_route(
+        router,
+        family,
+        *worker_session_id,
+        worker_source,
+        route,
+        build_rpc_ack_frame(correlation_id),
+    );
+}
+
+fn cleanup_expected_worker_request(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    workers: &[WorkerHandle],
+    next_worker_index: &mut usize,
+) {
+    cleanup_expected_worker_request_for_route(router, family, ROUTE_STR, workers, next_worker_index)
+}
+
+fn cleanup_worker_request_on_route(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    route: &str,
+    worker: &WorkerHandle,
+) {
+    let (worker_session_id, worker_source, worker_inbox) = worker;
+    let correlation_id = worker_inbox
+        .drain()
+        .into_iter()
+        .find_map(|frame| match frame.msg_type.as_u16() {
+            302 => match parse_request(&frame, &frame.payload, family) {
+                Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
+                _ => None,
+            },
+            304 => None,
+            _ => None,
+        })
+        .expect("rpc dispatched request");
+
+    route_worker_frame_to_route(
+        router,
+        family,
+        *worker_session_id,
+        worker_source,
+        route,
+        build_rpc_ack_frame(correlation_id),
+    );
+}
+
+fn measure_full_roundtrip_scaling(
+    ctx: &mut StressContext,
+    worker_count: usize,
+    per_iteration_requests: u64,
+    scenario: &'static str,
+) {
+    ctx.tag("scenario", scenario);
+    ctx.tag("measurement_scope", "routed_roundtrip");
+    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("batch_size", format!("{per_iteration_requests}_roundtrips"));
+    ctx.tag("worker_count", worker_count.to_string());
+
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let workers: Vec<WorkerHandle> = (0..worker_count)
+        .map(|index| register_worker(&router, family, 1_000 + index as u64))
+        .collect();
+    let mut request_ring = RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..per_iteration_requests {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
+            dispatch_request(
+                &router,
+                family,
+                &requester_source,
+                request_msg_type,
+                request_payload,
+            );
+            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
+            let _ = requester_inbox.drain();
         }
-        if round == 0 {
-            break;
+        black_box(&workers);
+    });
+    ctx.set_elements(per_iteration_requests * iterations as u64);
+}
+
+fn measure_dispatch_only_scaling(
+    ctx: &mut StressContext,
+    worker_count: usize,
+    per_iteration_requests: u64,
+    scenario: &'static str,
+) {
+    ctx.tag("scenario", scenario);
+    ctx.tag("measurement_scope", "routed_dispatch_only");
+    ctx.tag("operation", "dispatch_ack_cleanup");
+    ctx.tag("batch_size", format!("{per_iteration_requests}_dispatches"));
+    ctx.tag("worker_count", worker_count.to_string());
+
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let workers: Vec<WorkerHandle> = (0..worker_count)
+        .map(|index| register_worker(&router, family, 1_000 + index as u64))
+        .collect();
+    let mut request_ring = RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..per_iteration_requests {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
+            dispatch_request(
+                &router,
+                family,
+                &requester_source,
+                request_msg_type,
+                request_payload,
+            );
+            cleanup_expected_worker_request(&router, family, &workers, &mut next_worker_index);
+            let _ = requester_inbox.drain();
         }
-        total += round;
-    }
-    total
+        black_box(&workers);
+    });
+    ctx.set_elements(per_iteration_requests * iterations as u64);
+}
+
+fn measure_multi_route_full_roundtrip_scaling(
+    ctx: &mut StressContext,
+    route_count: usize,
+    per_iteration_requests: u64,
+    scenario: &'static str,
+) {
+    ctx.tag("scenario", scenario);
+    ctx.tag("measurement_scope", "routed_roundtrip");
+    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("batch_size", format!("{per_iteration_requests}_roundtrips"));
+    ctx.tag("worker_count", route_count.to_string());
+    ctx.tag("route_count", route_count.to_string());
+
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let routes = build_route_set(route_count);
+    let workers: Vec<WorkerHandle> = routes
+        .iter()
+        .enumerate()
+        .map(|(index, route)| {
+            register_worker_for_route(&router, family, 2_000 + index as u64, route)
+        })
+        .collect();
+    let mut request_rings: Vec<RequestFrameRing> = routes
+        .iter()
+        .map(|route| {
+            RequestFrameRing::new(
+                route,
+                b"multi route scaling payload",
+                MULTI_ROUTE_REQUEST_FRAME_RING_SIZE,
+            )
+        })
+        .collect();
+    let mut next_route_index = 0usize;
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..per_iteration_requests {
+            let route_index = next_route_index;
+            next_route_index = (next_route_index + 1) % routes.len();
+
+            let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+            dispatch_request_to_route(
+                &router,
+                family,
+                &requester_source,
+                &routes[route_index],
+                request_msg_type,
+                request_payload,
+            );
+            let _ = service_worker_on_route(
+                &router,
+                family,
+                &routes[route_index],
+                &workers[route_index],
+            );
+            let _ = requester_inbox.drain();
+        }
+        black_box((&routes, &workers));
+    });
+    ctx.set_elements(per_iteration_requests * iterations as u64);
+}
+
+fn measure_multi_route_dispatch_only_scaling(
+    ctx: &mut StressContext,
+    route_count: usize,
+    per_iteration_requests: u64,
+    scenario: &'static str,
+) {
+    ctx.tag("scenario", scenario);
+    ctx.tag("measurement_scope", "routed_dispatch_only");
+    ctx.tag("operation", "dispatch_ack_cleanup");
+    ctx.tag("batch_size", format!("{per_iteration_requests}_dispatches"));
+    ctx.tag("worker_count", route_count.to_string());
+    ctx.tag("route_count", route_count.to_string());
+
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let routes = build_route_set(route_count);
+    let workers: Vec<WorkerHandle> = routes
+        .iter()
+        .enumerate()
+        .map(|(index, route)| {
+            register_worker_for_route(&router, family, 3_000 + index as u64, route)
+        })
+        .collect();
+    let mut request_rings: Vec<RequestFrameRing> = routes
+        .iter()
+        .map(|route| {
+            RequestFrameRing::new(
+                route,
+                b"multi route scaling payload",
+                MULTI_ROUTE_REQUEST_FRAME_RING_SIZE,
+            )
+        })
+        .collect();
+    let mut next_route_index = 0usize;
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..per_iteration_requests {
+            let route_index = next_route_index;
+            next_route_index = (next_route_index + 1) % routes.len();
+
+            let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+            dispatch_request_to_route(
+                &router,
+                family,
+                &requester_source,
+                &routes[route_index],
+                request_msg_type,
+                request_payload,
+            );
+            cleanup_worker_request_on_route(
+                &router,
+                family,
+                &routes[route_index],
+                &workers[route_index],
+            );
+            let _ = requester_inbox.drain();
+        }
+        black_box((&routes, &workers));
+    });
+    ctx.set_elements(per_iteration_requests * iterations as u64);
 }
 
 #[stress_test]
@@ -159,24 +500,27 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "sustained_dispatch");
     ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "1000_roundtrips");
     ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 100)];
-    let request_frame = build_rpc_request(ROUTE_STR, b"rpc request payload");
-    let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"rpc request payload", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         for _ in 0..ITERS {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
                 &router,
                 family,
                 &requester_source,
                 request_msg_type,
-                request_payload.clone(),
+                request_payload,
             );
-            let _ = service_workers(&router, family, &workers);
+            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
             let _ = requester_inbox.drain();
         }
         black_box(&workers);
@@ -189,24 +533,27 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "response_streaming");
     ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "1000_roundtrips");
     ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 101)];
-    let request_frame = build_rpc_request(ROUTE_STR, b"streaming request");
-    let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"streaming request", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         for _ in 0..ITERS {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
                 &router,
                 family,
                 &requester_source,
                 request_msg_type,
-                request_payload.clone(),
+                request_payload,
             );
-            let _ = service_workers(&router, family, &workers);
+            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
             let _ = requester_inbox.drain();
         }
         black_box(&workers);
@@ -216,66 +563,44 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
-    const ITERS: u64 = 500;
-    ctx.tag("scenario", "scaling_64");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "500_roundtrips");
-    ctx.tag("worker_count", "64");
-
-    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
-    let workers: Vec<WorkerHandle> = (0..64)
-        .map(|i| register_worker(&router, family, 1_000 + i))
-        .collect();
-    let request_frame = build_rpc_request(ROUTE_STR, b"scaling payload");
-    let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
-
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        for _ in 0..ITERS {
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload.clone(),
-            );
-            let _ = service_workers(&router, family, &workers);
-            let _ = requester_inbox.drain();
-        }
-        black_box(&workers);
-    });
-    ctx.set_elements(ITERS * iterations as u64);
+    measure_full_roundtrip_scaling(ctx, 64, 500, "scaling_64_full_roundtrip");
 }
 
 #[stress_test]
 fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
-    const ITERS: u64 = 200;
-    ctx.tag("scenario", "scaling_256");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "200_roundtrips");
-    ctx.tag("worker_count", "256");
+    measure_full_roundtrip_scaling(ctx, 256, 200, "scaling_256_full_roundtrip");
+}
 
-    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
-    let workers: Vec<WorkerHandle> = (0..256)
-        .map(|i| register_worker(&router, family, 2_000 + i))
-        .collect();
-    let request_frame = build_rpc_request(ROUTE_STR, b"scaling payload");
-    let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
+#[stress_test]
+fn should_complete_multi_route_worker_pool_scaling_64_routes(ctx: &mut StressContext) {
+    measure_multi_route_full_roundtrip_scaling(
+        ctx,
+        MULTI_ROUTE_COUNT,
+        512,
+        "scaling_64_routes_full_roundtrip",
+    );
+}
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        for _ in 0..ITERS {
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload.clone(),
-            );
-            let _ = service_workers(&router, family, &workers);
-            let _ = requester_inbox.drain();
-        }
-        black_box(&workers);
-    });
-    ctx.set_elements(ITERS * iterations as u64);
+#[stress_test]
+fn should_complete_worker_pool_dispatch_only_scaling_64_workers(ctx: &mut StressContext) {
+    measure_dispatch_only_scaling(ctx, 64, 500, "scaling_64_dispatch_only");
+}
+
+#[stress_test]
+fn should_complete_worker_pool_dispatch_only_scaling_256_workers(ctx: &mut StressContext) {
+    measure_dispatch_only_scaling(ctx, 256, 200, "scaling_256_dispatch_only");
+}
+
+#[stress_test]
+fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
+    ctx: &mut StressContext,
+) {
+    measure_multi_route_dispatch_only_scaling(
+        ctx,
+        MULTI_ROUTE_COUNT,
+        512,
+        "scaling_64_routes_dispatch_only",
+    );
 }
 
 #[stress_test]
@@ -283,24 +608,27 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "concurrent_tracking");
     ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "1000_roundtrips");
     ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 102)];
-    let request_frame = build_rpc_request(ROUTE_STR, b"concurrent request");
-    let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"concurrent request", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         for _ in 0..ITERS {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
                 &router,
                 family,
                 &requester_source,
                 request_msg_type,
-                request_payload.clone(),
+                request_payload,
             );
-            let _ = service_workers(&router, family, &workers);
+            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
             let _ = requester_inbox.drain();
         }
         black_box(&workers);
@@ -312,24 +640,27 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
 fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
     ctx.tag("scenario", "mixed_workload");
     ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "10_roundtrips");
     ctx.tag("worker_count", "1");
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
     let workers = vec![register_worker(&router, family, 103)];
-    let request_frame = build_rpc_request(ROUTE_STR, b"mixed workload");
-    let (request_msg_type, request_payload) = extract_single_tlv_field(&request_frame);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"mixed workload", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         for _ in 0..10 {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
                 &router,
                 family,
                 &requester_source,
                 request_msg_type,
-                request_payload.clone(),
+                request_payload,
             );
-            let _ = service_workers(&router, family, &workers);
+            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
             let _ = requester_inbox.drain();
         }
         black_box(&workers);

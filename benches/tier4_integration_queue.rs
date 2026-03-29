@@ -3,7 +3,7 @@
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
 //! Tests four integration levels:
-//! 1. **Direct** - Domain actor + disk (no network) - baseline integration overhead
+//! 1. **Direct** - Domain actor in-process using the same in-memory storage mode as TestServer
 //! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
 //! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
 //! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
@@ -12,7 +12,7 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_queue_enqueue, create_local_bench_queue_actor, parse_queue_response, shared_bench_runtime,
+    build_queue_enqueue, create_bench_queue_actor, parse_queue_response, shared_bench_runtime,
 };
 use fitz::domains::queue::protocol::QueueMessage;
 use fitz::prelude::Actor;
@@ -32,7 +32,7 @@ fn setup_queue_actor(
     Context<fitz::domains::queue::QueueActor>,
 ) {
     let family = RouteFamily::new(1);
-    let (actor, _temp_dir) = create_local_bench_queue_actor("tier4", "queue", "main", None);
+    let actor = create_bench_queue_actor("tier4", "queue", "main", None);
     let router = Arc::new(Router::new());
     let addr = RouteAddress::new(family, Route::new(route));
     let ctx = Context::new(addr, router);
