@@ -339,6 +339,21 @@ fn assert_rpc_timeout_error_frame(frame: &[u8], expected_correlation_id: uuid::U
     assert_eq!(message, "Worker did not reply within timeout period");
 }
 
+fn assert_rpc_correlation_not_found_error_frame(frame: &[u8], expected_correlation_id: uuid::Uuid) {
+    let response = parse_rpc_response_delivery(frame).expect("parse rpc response delivery");
+    assert_eq!(response.correlation_id, expected_correlation_id);
+    assert_eq!(response.seq, 0);
+    assert!(response.stream_end);
+
+    let (code, message) =
+        fitz::protocol::rpc_codec::decode_error_body(&response.body).expect("parse rpc error body");
+    assert_eq!(
+        code,
+        fitz::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND
+    );
+    assert_eq!(message, "Correlation ID not found (orphaned response)");
+}
+
 async fn exercise_request_timeout_error_after_accept_tcp(server: &TestServer) {
     let worker_route = "rpc://test/services/timeout";
     let subscribe_frame = build_rpc_subscribe(worker_route);
@@ -404,6 +419,101 @@ async fn exercise_request_timeout_error_after_accept_ws(server: &TestServer) {
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
         parse_rpc_request_delivery(&delivered_request).expect("parse request delivery");
+
+    let timeout_error = caller.recv_frame(2000).await.expect("timeout error");
+    assert_rpc_timeout_error_frame(&timeout_error, delivered_request.correlation_id);
+
+    worker.close().await.expect("close worker");
+    caller.close().await.expect("close caller");
+}
+
+async fn exercise_wrong_correlation_error_after_accept_tcp(server: &TestServer) {
+    let worker_route = "rpc://test/services/correlation";
+    let subscribe_frame = build_rpc_subscribe(worker_route);
+    let request_frame = build_rpc_request(worker_route, "getUser", b"user-123");
+
+    let mut worker = TestClient::new(server.tcp_addr)
+        .await
+        .expect("connect worker");
+    worker
+        .send_frame(&subscribe_frame)
+        .await
+        .expect("subscribe worker");
+    let subscribe_response = worker.recv_frame(2000).await.expect("subscribe ack");
+    let (_msg_type, status, _data) = parse_rpc_response(&subscribe_response);
+    assert_eq!(status, 0);
+
+    let mut caller = TestClient::new(server.tcp_addr)
+        .await
+        .expect("connect caller");
+    caller
+        .send_frame(&request_frame)
+        .await
+        .expect("send request");
+    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
+    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
+    assert_eq!(status, 0);
+
+    let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
+    let delivered_request =
+        parse_rpc_request_delivery(&delivered_request).expect("parse request delivery");
+    let wrong_correlation_id = uuid::Uuid::new_v4();
+    assert_ne!(wrong_correlation_id, delivered_request.correlation_id);
+    let wrong_response_frame = build_rpc_response_delivery(wrong_correlation_id, 0, true, b"wrong");
+
+    worker
+        .send_frame(&wrong_response_frame)
+        .await
+        .expect("send wrong correlation response");
+
+    let correlation_error = worker.recv_frame(2000).await.expect("correlation error");
+    assert_rpc_correlation_not_found_error_frame(&correlation_error, wrong_correlation_id);
+
+    let timeout_error = caller.recv_frame(2000).await.expect("timeout error");
+    assert_rpc_timeout_error_frame(&timeout_error, delivered_request.correlation_id);
+}
+
+async fn exercise_wrong_correlation_error_after_accept_ws(server: &TestServer) {
+    let worker_route = "rpc://test/services/correlation";
+    let subscribe_frame = build_rpc_subscribe(worker_route);
+    let request_frame = build_rpc_request(worker_route, "getUser", b"user-123");
+
+    let mut worker = TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr))
+        .await
+        .expect("connect worker");
+    worker
+        .send_frame(&subscribe_frame)
+        .await
+        .expect("subscribe worker");
+    let subscribe_response = worker.recv_frame(2000).await.expect("subscribe ack");
+    let (_msg_type, status, _data) = parse_rpc_response(&subscribe_response);
+    assert_eq!(status, 0);
+
+    let mut caller = TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr))
+        .await
+        .expect("connect caller");
+    caller
+        .send_frame(&request_frame)
+        .await
+        .expect("send request");
+    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
+    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
+    assert_eq!(status, 0);
+
+    let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
+    let delivered_request =
+        parse_rpc_request_delivery(&delivered_request).expect("parse request delivery");
+    let wrong_correlation_id = uuid::Uuid::new_v4();
+    assert_ne!(wrong_correlation_id, delivered_request.correlation_id);
+    let wrong_response_frame = build_rpc_response_delivery(wrong_correlation_id, 0, true, b"wrong");
+
+    worker
+        .send_frame(&wrong_response_frame)
+        .await
+        .expect("send wrong correlation response");
+
+    let correlation_error = worker.recv_frame(2000).await.expect("correlation error");
+    assert_rpc_correlation_not_found_error_frame(&correlation_error, wrong_correlation_id);
 
     let timeout_error = caller.recv_frame(2000).await.expect("timeout error");
     assert_rpc_timeout_error_frame(&timeout_error, delivered_request.correlation_id);
@@ -633,4 +743,20 @@ async fn should_return_rpc_timeout_error_after_accept_ws() {
         .await
         .expect("start");
     exercise_request_timeout_error_after_accept_ws(&server).await;
+}
+
+#[tokio::test]
+async fn should_reject_wrong_correlation_response_after_accept_tcp() {
+    let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
+        .await
+        .expect("start");
+    exercise_wrong_correlation_error_after_accept_tcp(&server).await;
+}
+
+#[tokio::test]
+async fn should_reject_wrong_correlation_response_after_accept_ws() {
+    let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
+        .await
+        .expect("start");
+    exercise_wrong_correlation_error_after_accept_ws(&server).await;
 }

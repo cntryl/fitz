@@ -15,6 +15,7 @@ type RpcFastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 const RPC_BACKPRESSURE_ERROR: &str = "RPC backpressure: too many pending requests";
 const RPC_NO_WORKERS_ERROR: &str = "No workers registered for route";
 const RPC_WORKER_NOT_FOUND_ERROR: &str = "Worker disconnected or unregistered";
+const RPC_CORRELATION_NOT_FOUND_ERROR: &str = "Correlation ID not found (orphaned response)";
 const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
 const RPC_MAX_PENDING_REQUESTS: usize = 4096;
 const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
@@ -1249,6 +1250,23 @@ impl MailboxSink for RpcDomainSink {
                     self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
                     self.counter_inc("rpc_responses_missing_pending_total");
+                    let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+                        session_inbox_address(
+                            *envelope.destination().family(),
+                            frame_ctx.session_id,
+                        )
+                    });
+                    self.forward_pending_error_deliveries(
+                        vec![RpcPendingErrorDelivery {
+                            correlation_id: resp.correlation_id,
+                            caller_session_id: frame_ctx.session_id,
+                            caller_inbox_addr: worker_inbox_addr,
+                        }],
+                        crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
+                        RPC_CORRELATION_NOT_FOUND_ERROR,
+                        "rpc_correlation_errors_forwarded_total",
+                        "rpc_correlation_errors_dropped_total",
+                    );
                     tracing::warn!(
                         domain = "rpc",
                         correlation_id = %resp.correlation_id,
@@ -2133,6 +2151,98 @@ mod tests {
             error_response.body.as_ref(),
             crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
             RPC_WORKER_NOT_FOUND_ERROR,
+        );
+    }
+
+    #[test]
+    fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(
+            RpcDomainSink::new(router.clone(), admin_read_model)
+                .with_request_timeout(Duration::from_millis(250)),
+        );
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/operation");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let worker_source = session_inbox_address(family, 42);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let reply_sink = Arc::new(CaptureRpcFrameSink {
+            frames: reply_frames.clone(),
+        });
+        let worker_sink = Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        });
+        router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
+        router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker {
+                    addr: request_addr.clone(),
+                    inbox_addr: worker_source.clone(),
+                    session_id: 42,
+                });
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload,
+            family,
+        );
+        let orphan_correlation_id = uuid::Uuid::new_v4();
+        let orphan_response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::single(
+                orphan_correlation_id,
+                bytes::Bytes::from_static(b"wrong"),
+            ),
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            request_source,
+            request_addr.clone(),
+            request_ctx,
+        ))
+        .expect("deliver request");
+        sink.deliver(Envelope::from_route(
+            worker_source,
+            request_addr,
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(orphan_response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver orphan response");
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 1);
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 1);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+        let worker_frames = worker_frames.lock();
+        assert_eq!(worker_frames.len(), 2);
+        assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(worker_frames[1].msg_type.as_u16(), 303);
+        let error_response = parse_forwarded_rpc_response(&worker_frames[1]);
+        assert_eq!(error_response.correlation_id, orphan_correlation_id);
+        assert_eq!(error_response.seq, 0);
+        assert!(error_response.stream_end);
+        assert_rpc_code_error(
+            error_response.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
+            RPC_CORRELATION_NOT_FOUND_ERROR,
         );
     }
 

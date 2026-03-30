@@ -3234,7 +3234,7 @@ Every operation includes full context:
 - streaming response reassembled in order
 - request timeout returns error
 - multiple workers on same route handle requests
-- response with wrong correlation_id rejected
+- response with wrong correlation_id rejected with `6005 ERR_CORRELATION_NOT_FOUND`, while the original caller request remains pending until a valid response or timeout
 - backpressure error when buffer full
 
 ### KV Domain (Durable Key-Value)
