@@ -45,6 +45,13 @@ fn dispatch_session_cleanup(
     let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
     let _ = router.route(notice_envelope);
 
+    let rpc_addr = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new("rpc://cleanup"),
+    );
+    let rpc_envelope = crate::runtime::Envelope::new(rpc_addr, cleanup.clone());
+    let _ = router.route(rpc_envelope);
+
     let stream_addr = crate::runtime::routing::RouteAddress::new(
         route_family,
         crate::runtime::routing::Route::new("stream://cleanup"),
@@ -819,7 +826,7 @@ impl Ingress for RuntimeIngress {
                     tracing::debug!(
                         session_id = session_id,
                         route_family = route_family.id(),
-                        "Ingress: dispatched cleanup to KV, Notice, Stream, Schedule, Lease, and Queue domains"
+                        "Ingress: dispatched cleanup to KV, Notice, RPC, Stream, Schedule, Lease, and Queue domains"
                     );
                 }
                 Err(e) => {

@@ -68,9 +68,10 @@ impl DomainPublishEvent {
 
 /// Session cleanup event sent to domain sinks when a session disconnects.
 ///
-/// Routed to all subscribable domain sinks (Notice, Stream, Schedule) by the
-/// session manager's `on_close()` handler. Each domain sink removes all
-/// subscriptions associated with the given session_id.
+/// Routed by the session manager's `on_close()` handler to domain sinks that
+/// retain per-session state. Each sink removes or detaches session-owned
+/// subscriptions, workers, and other in-flight bookkeeping associated with the
+/// given session_id.
 #[derive(Debug, Clone)]
 pub struct SessionCleanup {
     /// Session being disconnected

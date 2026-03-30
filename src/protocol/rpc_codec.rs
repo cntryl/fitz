@@ -17,6 +17,8 @@ use uuid::Uuid;
 pub enum RpcResponseMsg {
     /// Operation succeeded with optional data
     Ok { data: Vec<u8> },
+    /// Operation failed with a numeric protocol error code and message
+    CodeError { code: u16, message: String },
     /// Operation failed with error message
     Error(String),
 }
@@ -84,6 +86,9 @@ pub fn encode_response_into(response: &RpcResponseMsg, enc: &mut PayloadEncoder)
             enc.put_u8(0); // success flag
             enc.put_bytes(data);
         }
+        RpcResponseMsg::CodeError { code, message } => {
+            return encode_error_body_into(*code, message, enc);
+        }
         RpcResponseMsg::Error(e) => {
             enc.put_u8(1); // error flag
             enc.put_string(e);
@@ -91,6 +96,41 @@ pub fn encode_response_into(response: &RpcResponseMsg, enc: &mut PayloadEncoder)
     }
 
     enc.finish()
+}
+
+/// Encode a standard RPC error body with numeric code and message.
+pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    encode_error_body_into(code, message, &mut enc)
+}
+
+/// Encode a standard RPC error body into a reusable payload encoder.
+pub fn encode_error_body_into(code: u16, message: &str, enc: &mut PayloadEncoder) -> Vec<u8> {
+    enc.clear();
+    enc.put_u8(1);
+    enc.put_u32(code as u32);
+    enc.put_string(message);
+    enc.finish()
+}
+
+/// Decode a standard RPC error body with numeric code and message.
+pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
+    let mut dec = PayloadDecoder::new(payload);
+    if dec.get_u8()? != 1 {
+        return Err("Payload is not an error envelope".to_string());
+    }
+
+    let code = dec.get_u32()?;
+    if code > u16::MAX as u32 {
+        return Err("Error code exceeds u16 range".to_string());
+    }
+
+    let message = dec.get_string()?;
+    if !dec.is_complete() {
+        return Err("Trailing data in error envelope".to_string());
+    }
+
+    Ok((code as u16, message))
 }
 
 // ===== Helper Parsers =====
@@ -207,16 +247,43 @@ pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWor
     encode_request_delivery_into(work_item, &mut enc)
 }
 
+/// Encode an RPC request payload directly from RpcRequest for dispatch to a worker.
+pub fn encode_request_into(request: &RpcRequest, enc: &mut PayloadEncoder) -> Vec<u8> {
+    encode_request_fields_into(
+        &request.correlation_id,
+        &request.route,
+        &request.reply_route,
+        &request.body,
+        enc,
+    )
+}
+
 /// Encode RPC REQUEST delivery using a reusable payload encoder.
 pub fn encode_request_delivery_into(
     work_item: &crate::domains::rpc::protocol::RpcWorkItem,
     enc: &mut PayloadEncoder,
 ) -> Vec<u8> {
+    encode_request_fields_into(
+        &work_item.correlation_id,
+        &work_item.route,
+        &work_item.reply_route,
+        &work_item.body,
+        enc,
+    )
+}
+
+fn encode_request_fields_into(
+    correlation_id: &Uuid,
+    route: &Route,
+    reply_route: &Route,
+    body: &[u8],
+    enc: &mut PayloadEncoder,
+) -> Vec<u8> {
     enc.clear();
-    enc.put_bytes(work_item.correlation_id.as_bytes());
-    enc.put_string(work_item.route.as_str());
-    enc.put_string(work_item.reply_route.as_str());
-    enc.put_bytes(&work_item.body);
+    enc.put_bytes(correlation_id.as_bytes());
+    enc.put_string(route.as_str());
+    enc.put_string(reply_route.as_str());
+    enc.put_bytes(body);
     enc.finish()
 }
 

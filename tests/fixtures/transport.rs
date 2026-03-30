@@ -596,6 +596,19 @@ pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build RPC UNSUBSCRIBE frame (msg_type 301) to unregister a worker
+pub fn build_rpc_unsubscribe(worker_addr: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(worker_addr.len() as u32);
+    buf.put_slice(worker_addr.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(301, &buf);
+    builder.build()
+}
+
 /// Build RPC REQUEST frame (msg_type 302)
 pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> {
     use bytes::BufMut;

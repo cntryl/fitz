@@ -51,6 +51,21 @@ impl RequestFrameRing {
     }
 }
 
+fn assert_requester_received_worker_responses(
+    frames: Vec<fitz::protocol::frame_context::FrameContext>,
+    expected_count: usize,
+) {
+    let response_count = frames
+        .into_iter()
+        .filter(|frame| frame.msg_type.as_u16() == 303)
+        .count();
+
+    assert_eq!(
+        response_count, expected_count,
+        "expected requester inbox to contain {expected_count} worker responses"
+    );
+}
+
 fn setup_rpc_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
@@ -327,7 +342,7 @@ fn measure_full_roundtrip_scaling(
                 request_payload,
             );
             let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            let _ = requester_inbox.drain();
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
         }
         black_box(&workers);
     });
@@ -426,7 +441,7 @@ fn measure_multi_route_full_roundtrip_scaling(
                 &routes[route_index],
                 &workers[route_index],
             );
-            let _ = requester_inbox.drain();
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
         }
         black_box((&routes, &workers));
     });
@@ -520,7 +535,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
                 request_payload,
             );
             let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            let _ = requester_inbox.drain();
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
         }
         black_box(&workers);
     });
@@ -528,9 +543,9 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
+fn should_complete_single_response_throughput(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
-    ctx.tag("scenario", "response_streaming");
+    ctx.tag("scenario", "single_response_throughput");
     ctx.tag("measurement_scope", "routed_system");
     ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "1000_roundtrips");
@@ -553,7 +568,7 @@ fn should_complete_response_streaming_throughput(ctx: &mut StressContext) {
                 request_payload,
             );
             let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            let _ = requester_inbox.drain();
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
         }
         black_box(&workers);
     });
@@ -603,9 +618,9 @@ fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
 }
 
 #[stress_test]
-fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
+fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
-    ctx.tag("scenario", "concurrent_tracking");
+    ctx.tag("scenario", "steady_state_tracking");
     ctx.tag("measurement_scope", "routed_system");
     ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "1000_roundtrips");
@@ -628,7 +643,7 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
                 request_payload,
             );
             let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            let _ = requester_inbox.drain();
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
         }
         black_box(&workers);
     });
@@ -636,8 +651,8 @@ fn should_complete_concurrent_request_tracking(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
-    ctx.tag("scenario", "mixed_workload");
+fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
+    ctx.tag("scenario", "short_roundtrip_batch");
     ctx.tag("measurement_scope", "routed_system");
     ctx.tag("operation", "dispatch_service_response_ack");
     ctx.tag("batch_size", "10_roundtrips");
@@ -660,7 +675,7 @@ fn should_complete_mixed_request_response_workflow(ctx: &mut StressContext) {
                 request_payload,
             );
             let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            let _ = requester_inbox.drain();
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
         }
         black_box(&workers);
     });
