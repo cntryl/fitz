@@ -50,7 +50,7 @@ tracing-appender = "0.2"
 opentelemetry = { version = "0.20", features = ["rt-tokio", "trace"] }
 opentelemetry-otlp = { version = "0.13", features = ["tonic"] }
 opentelemetry_sdk = { version = "0.20", features = ["rt-tokio"] }
-prometheus = { version = "0.13", optional = true }
+prometheus = { version = "0.14", optional = true }
 async-trait = "0.1"
 
 # Lock-free / concurrency crates used by lease service
