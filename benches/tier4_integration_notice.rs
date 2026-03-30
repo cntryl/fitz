@@ -227,13 +227,14 @@ fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     runtime
         .block_on(publisher.close())
         .expect("close ws publisher gracefully");
-    let _closed: Vec<_> = runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
-        let arc = arc.clone();
-        async move {
-            let mut c = arc.lock().await;
-            c.close().await.expect("close ws subscriber gracefully");
-        }
-    })));
+    let _closed: Vec<_> =
+        runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
+            let arc = arc.clone();
+            async move {
+                let mut c = arc.lock().await;
+                c.close().await.expect("close ws subscriber gracefully");
+            }
+        })));
 }
 
 stress_main!();

@@ -304,7 +304,8 @@ impl MailboxSink for NoticeDomainSink {
                         id
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        let pattern = crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
+                        let pattern =
+                            crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
 
                         state.index.insert(
                             sub_msg.family_id,

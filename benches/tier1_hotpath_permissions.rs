@@ -1,4 +1,4 @@
-﻿use criterion::{
+use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::auth::{Access, Permission};
@@ -79,12 +79,14 @@ fn bench_permission_compilation(c: &mut Criterion) {
 }
 
 fn bench_permission_allows_cache_hit(c: &mut Criterion) {
-    let exact_perms = SessionPermissions::from_permissions(parse_permissions(&EXACT_PERMISSION_RAW));
+    let exact_perms =
+        SessionPermissions::from_permissions(parse_permissions(&EXACT_PERMISSION_RAW));
     let wildcard_perms =
         SessionPermissions::from_permissions(parse_permissions(&WILDCARD_PERMISSION_RAW));
     let doublestar_perms =
         SessionPermissions::from_permissions(parse_permissions(&DOUBLESTAR_PERMISSION_RAW));
-    let large_perms = SessionPermissions::from_permissions(parse_permissions(&LARGE_PERMISSION_RAW));
+    let large_perms =
+        SessionPermissions::from_permissions(parse_permissions(&LARGE_PERMISSION_RAW));
     let allow_all = SessionPermissions::all();
     let deny_all = SessionPermissions::empty();
 
@@ -177,9 +179,7 @@ fn bench_permission_allows_cache_miss(c: &mut Criterion) {
 
     group.bench_function("allows_doublestar_deep_cache_miss", |b| {
         b.iter_batched(
-            || {
-                SessionPermissions::from_permissions(parse_permissions(&DOUBLESTAR_PERMISSION_RAW))
-            },
+            || SessionPermissions::from_permissions(parse_permissions(&DOUBLESTAR_PERMISSION_RAW)),
             |perms| {
                 black_box(perms.allows(black_box(&doublestar_route), black_box(Access::Write)));
             },

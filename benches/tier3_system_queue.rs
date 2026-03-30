@@ -173,7 +173,10 @@ fn parse_received_messages(response: &[u8]) -> Vec<(u64, u64)> {
         ]) as usize;
         offset += 4;
 
-        assert!(response.len() >= offset + body_len, "queue receive body truncated");
+        assert!(
+            response.len() >= offset + body_len,
+            "queue receive body truncated"
+        );
         offset += body_len;
         messages.push((id, token));
     }
@@ -183,7 +186,11 @@ fn parse_received_messages(response: &[u8]) -> Vec<(u64, u64)> {
 
 fn parse_single_received_message(response: &[u8]) -> (u64, u64) {
     let mut messages = parse_received_messages(response);
-    assert_eq!(messages.len(), 1, "expected exactly one received queue message");
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected exactly one received queue message"
+    );
     messages.pop().expect("single queue message")
 }
 
@@ -454,8 +461,7 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "system", "queue", None);
     let payload = Bytes::from_static(b"contention message");
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
-    let batch_50: Vec<(Bytes, Option<u64>)> =
-        payloads.iter().map(|p| (p.clone(), None)).collect();
+    let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
     let iterations = ctx.measure_for(Duration::from_secs(5), || {
         let _ = actor.handle_send_batch(&batch_50);

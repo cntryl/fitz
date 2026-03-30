@@ -323,14 +323,18 @@ impl MailboxSink for ScheduleDomainSink {
                         let fam_id = family_id.as_u64();
 
                         let mut families = self.sub_families.lock();
-                        let state = families.entry(fam_id).or_insert_with(|| ScheduleFamilyState {
-                            subscriptions: Vec::new(),
-                        });
+                        let state = families
+                            .entry(fam_id)
+                            .or_insert_with(|| ScheduleFamilyState {
+                                subscriptions: Vec::new(),
+                            });
 
                         let existing_sub_id = state
                             .subscriptions
                             .iter()
-                            .find(|s| s.session_id == session_id && s.pattern.route() == pattern.as_str())
+                            .find(|s| {
+                                s.session_id == session_id && s.pattern.route() == pattern.as_str()
+                            })
                             .map(|s| s.subscription_id);
 
                         let sub_id = if let Some(id) = existing_sub_id {
@@ -385,7 +389,8 @@ impl MailboxSink for ScheduleDomainSink {
                         let mut families = self.sub_families.lock();
                         if let Some(state) = families.get_mut(&fam_id) {
                             state.subscriptions.retain(|s| {
-                                !(s.session_id == session_id && s.pattern.route() == pattern.as_str())
+                                !(s.session_id == session_id
+                                    && s.pattern.route() == pattern.as_str())
                             });
                         }
                         ScheduleResponse::Ok

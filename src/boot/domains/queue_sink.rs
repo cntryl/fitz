@@ -670,15 +670,17 @@ impl MailboxSink for QueueDomainSink {
                         .subscriptions
                         .iter()
                         .filter_map(|(sub_id, sub)| {
-                            (sub.session_id == session_id && sub.pattern.route() == pattern.as_str())
-                                .then_some(*sub_id)
+                            (sub.session_id == session_id
+                                && sub.pattern.route() == pattern.as_str())
+                            .then_some(*sub_id)
                         })
                         .collect();
                     let removed_count = removed_ids.len();
                     for sub_id in removed_ids {
                         if let Some(sub) = state.subscriptions.remove(&sub_id) {
                             if sub.pattern.route().contains('*') {
-                                let pattern = crate::runtime::routing::Route::new(sub.pattern.route());
+                                let pattern =
+                                    crate::runtime::routing::Route::new(sub.pattern.route());
                                 state.index.remove(
                                     family_id,
                                     &pattern,
@@ -688,7 +690,9 @@ impl MailboxSink for QueueDomainSink {
                                     state.wildcard_subscription_count.saturating_sub(1);
                             } else {
                                 let route_key = sub.pattern.route().to_string();
-                                let is_empty = if let Some(route_ids) = state.exact_routes.get_mut(&route_key) {
+                                let is_empty = if let Some(route_ids) =
+                                    state.exact_routes.get_mut(&route_key)
+                                {
                                     route_ids.retain(|id| *id != sub_id);
                                     route_ids.is_empty()
                                 } else {
@@ -732,8 +736,8 @@ impl MailboxSink for QueueDomainSink {
             self.sync_admin_snapshot();
         }
 
-        if let Some(notify_route) =
-            availability_notify_route.filter(|_| self.subscription_count.load(Ordering::Relaxed) > 0)
+        if let Some(notify_route) = availability_notify_route
+            .filter(|_| self.subscription_count.load(Ordering::Relaxed) > 0)
         {
             tracing::info!(
                 domain = "queue",

@@ -1,4 +1,4 @@
-﻿use criterion::{
+use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::runtime::mailbox::Mailbox;
@@ -15,7 +15,10 @@ fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
 
-fn make_registration_batch(prefix: &str, count: usize) -> (Vec<RouteAddress>, Vec<Arc<dyn MailboxSink>>) {
+fn make_registration_batch(
+    prefix: &str,
+    count: usize,
+) -> (Vec<RouteAddress>, Vec<Arc<dyn MailboxSink>>) {
     let addresses = (0..count)
         .map(|i| test_address(1, &format!("{prefix}/{i}")))
         .collect();
@@ -25,11 +28,7 @@ fn make_registration_batch(prefix: &str, count: usize) -> (Vec<RouteAddress>, Ve
     (addresses, sinks)
 }
 
-fn register_all(
-    scheduler: &Scheduler,
-    addresses: &[RouteAddress],
-    sinks: &[Arc<dyn MailboxSink>],
-) {
+fn register_all(scheduler: &Scheduler, addresses: &[RouteAddress], sinks: &[Arc<dyn MailboxSink>]) {
     let router = scheduler.router();
     for (address, sink) in addresses.iter().zip(sinks) {
         router.register(address.clone(), Arc::clone(sink));
@@ -98,10 +97,9 @@ fn bench_scheduler_register_primary(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let scheduler = Scheduler::new(1);
-                scheduler.router().register(
-                    single_addresses[0].clone(),
-                    Arc::clone(&single_sinks[0]),
-                );
+                scheduler
+                    .router()
+                    .register(single_addresses[0].clone(), Arc::clone(&single_sinks[0]));
                 scheduler
             },
             |scheduler| {

@@ -169,8 +169,8 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         })
         .collect();
 
-    let append_frames: Vec<Vec<u8>> = runtime.block_on(futures::future::join_all(
-        clients.iter().map(|arc| {
+    let append_frames: Vec<Vec<u8>> =
+        runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
             let arc = arc.clone();
             let begin = begin_frame.clone();
             async move {
@@ -180,20 +180,22 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
                 let session_id = parse_stream_session_id(&data).expect("session_id");
                 build_stream_append(session_id, b"event")
             }
-        }),
-    ));
+        })));
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(
-                clients.iter().zip(append_frames.iter()).map(|(arc, frame)| {
-                let arc = arc.clone();
-                let frame = frame.clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    c.request(&frame, 2000).await.expect("append");
-                }
-            })));
+        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+            clients
+                .iter()
+                .zip(append_frames.iter())
+                .map(|(arc, frame)| {
+                    let arc = arc.clone();
+                    let frame = frame.clone();
+                    async move {
+                        let mut c = arc.lock().await;
+                        c.request(&frame, 2000).await.expect("append");
+                    }
+                }),
+        ));
     });
     ctx.set_elements(10 * iterations as u64);
 }

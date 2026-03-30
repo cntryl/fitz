@@ -127,7 +127,9 @@ impl RpcPendingTable {
     }
 
     fn remove_pending(&mut self, correlation_id: &uuid::Uuid) -> Option<usize> {
-        self.pending.remove(correlation_id).map(|_| self.pending.len())
+        self.pending
+            .remove(correlation_id)
+            .map(|_| self.pending.len())
     }
 
     fn len(&self) -> usize {
@@ -250,16 +252,16 @@ impl RpcDomainSink {
                     .workers
                     .iter()
                     .filter_map(|worker| {
-                        parse_route_quad(route.as_str()).map(|(realm, _area, _resource, _operation)| {
-                            crate::api::admin::RpcWorker {
+                        parse_route_quad(route.as_str()).map(
+                            |(realm, _area, _resource, _operation)| crate::api::admin::RpcWorker {
                                 session_id: worker.session_id.to_string(),
                                 realm,
                                 route: route.as_str().to_string(),
                                 registered_at: Utc::now().to_rfc3339(),
                                 requests_handled: 0,
                                 average_latency_ms: 0.0,
-                            }
-                        })
+                            },
+                        )
                     })
                     .collect::<Vec<_>>()
             })
@@ -268,13 +270,15 @@ impl RpcDomainSink {
             .pending
             .pending
             .iter()
-            .map(|(correlation_id, pending)| crate::api::admin::RpcPendingRequest {
-                correlation_id: correlation_id.to_string(),
-                route: format!("rpc://pending/session/{}", pending.caller_session_id),
-                submitted_at: Utc::now().to_rfc3339(),
-                age_seconds: 0,
-                worker_session_id: None,
-            })
+            .map(
+                |(correlation_id, pending)| crate::api::admin::RpcPendingRequest {
+                    correlation_id: correlation_id.to_string(),
+                    route: format!("rpc://pending/session/{}", pending.caller_session_id),
+                    submitted_at: Utc::now().to_rfc3339(),
+                    age_seconds: 0,
+                    worker_session_id: None,
+                },
+            )
             .collect();
         self.admin_read_model.replace_rpc_workers(workers);
         self.admin_read_model.replace_rpc_pending(pending);
@@ -389,7 +393,8 @@ impl MailboxSink for RpcDomainSink {
 
         use crate::domains::rpc::protocol::RpcMessage;
         use crate::protocol::rpc_codec::RpcResponseMsg;
-        let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         let (response, snapshot_policy) = match rpc_msg {
             RpcMessage::Subscribe { worker_addr } => {
@@ -429,13 +434,17 @@ impl MailboxSink for RpcDomainSink {
                 let state_hold_start = Instant::now();
                 let route_registry_lookup_start = Instant::now();
                 let route_exists = state.routes.contains_key(&req.route);
-                let route_registry_lookup_us = route_registry_lookup_start.elapsed().as_micros() as u64;
+                let route_registry_lookup_us =
+                    route_registry_lookup_start.elapsed().as_micros() as u64;
                 let mut worker_selection_us = 0_u64;
 
                 if !route_exists {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     drop(state);
-                    self.histogram_observe_us("rpc_route_registry_lookup_us", route_registry_lookup_us);
+                    self.histogram_observe_us(
+                        "rpc_route_registry_lookup_us",
+                        route_registry_lookup_us,
+                    );
                     self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
                     self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
@@ -450,7 +459,10 @@ impl MailboxSink for RpcDomainSink {
                 } else if state.pending.len() >= RPC_MAX_PENDING_REQUESTS {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     drop(state);
-                    self.histogram_observe_us("rpc_route_registry_lookup_us", route_registry_lookup_us);
+                    self.histogram_observe_us(
+                        "rpc_route_registry_lookup_us",
+                        route_registry_lookup_us,
+                    );
                     self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
                     self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
@@ -485,7 +497,10 @@ impl MailboxSink for RpcDomainSink {
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                         drop(state);
 
-                        self.histogram_observe_us("rpc_route_registry_lookup_us", route_registry_lookup_us);
+                        self.histogram_observe_us(
+                            "rpc_route_registry_lookup_us",
+                            route_registry_lookup_us,
+                        );
                         self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
                         self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
                         self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
@@ -498,11 +513,13 @@ impl MailboxSink for RpcDomainSink {
                             worker_route_family,
                             Route::new(format!("inbox://session/{}", worker_session_id)),
                         );
-                        let work_item = crate::domains::rpc::protocol::RpcWorkItem::from_request(&req);
-                        let request_payload = crate::protocol::rpc_codec::encode_request_delivery_into(
-                            &work_item,
-                            &mut payload_encoder,
-                        );
+                        let work_item =
+                            crate::domains::rpc::protocol::RpcWorkItem::from_request(&req);
+                        let request_payload =
+                            crate::protocol::rpc_codec::encode_request_delivery_into(
+                                &work_item,
+                                &mut payload_encoder,
+                            );
                         let request_forward_start = Instant::now();
 
                         let forward_ctx = FrameContext::new(
@@ -524,7 +541,10 @@ impl MailboxSink for RpcDomainSink {
                         } else {
                             self.counter_inc("rpc_requests_dispatched_total");
                         }
-                        self.histogram_observe_elapsed_us("rpc_request_forward_us", request_forward_start);
+                        self.histogram_observe_elapsed_us(
+                            "rpc_request_forward_us",
+                            request_forward_start,
+                        );
 
                         tracing::debug!(
                             domain = "rpc",
@@ -536,7 +556,10 @@ impl MailboxSink for RpcDomainSink {
                     } else {
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                         drop(state);
-                        self.histogram_observe_us("rpc_route_registry_lookup_us", route_registry_lookup_us);
+                        self.histogram_observe_us(
+                            "rpc_route_registry_lookup_us",
+                            route_registry_lookup_us,
+                        );
                         self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
                         self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
                         self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
@@ -562,7 +585,8 @@ impl MailboxSink for RpcDomainSink {
                 let caller_info = state
                     .pending
                     .pending_for_response(&resp.correlation_id, resp.stream_end);
-                let pending_route_lookup_us = pending_route_lookup_start.elapsed().as_micros() as u64;
+                let pending_route_lookup_us =
+                    pending_route_lookup_start.elapsed().as_micros() as u64;
                 let mut state_changed = false;
 
                 if let Some((caller_info, pending_len, removed_pending)) = caller_info {
@@ -577,7 +601,10 @@ impl MailboxSink for RpcDomainSink {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     drop(state);
 
-                    self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
+                    self.histogram_observe_us(
+                        "rpc_pending_route_lookup_us",
+                        pending_route_lookup_us,
+                    );
                     self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
 
@@ -610,7 +637,10 @@ impl MailboxSink for RpcDomainSink {
                             "Failed to forward response to requester"
                         );
                     }
-                    self.histogram_observe_elapsed_us("rpc_response_forward_us", response_forward_start);
+                    self.histogram_observe_elapsed_us(
+                        "rpc_response_forward_us",
+                        response_forward_start,
+                    );
 
                     let ack_forward_start = Instant::now();
                     let ack_payload = crate::protocol::rpc_codec::encode_ack_into(
@@ -651,7 +681,10 @@ impl MailboxSink for RpcDomainSink {
                 } else {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     drop(state);
-                    self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
+                    self.histogram_observe_us(
+                        "rpc_pending_route_lookup_us",
+                        pending_route_lookup_us,
+                    );
                     self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
                     self.counter_inc("rpc_responses_missing_pending_total");
@@ -670,7 +703,8 @@ impl MailboxSink for RpcDomainSink {
                 let state_hold_start = Instant::now();
                 let pending_route_remove_start = Instant::now();
                 let pending_len = state.pending.remove_pending(&correlation_id);
-                let pending_route_remove_us = pending_route_remove_start.elapsed().as_micros() as u64;
+                let pending_route_remove_us =
+                    pending_route_remove_start.elapsed().as_micros() as u64;
                 let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                 drop(state);
 
@@ -704,10 +738,8 @@ impl MailboxSink for RpcDomainSink {
         }
 
         if let Some(response) = response {
-            let response_bytes = crate::protocol::rpc_codec::encode_response_into(
-                &response,
-                &mut payload_encoder,
-            );
+            let response_bytes =
+                crate::protocol::rpc_codec::encode_response_into(&response, &mut payload_encoder);
             let response_ctx = FrameContext::new(
                 frame_ctx.session_id,
                 frame_ctx.channel_id,
@@ -780,8 +812,12 @@ mod tests {
         });
 
         // Act
-        let first = route_state.select_worker().map(|(_, session_id)| session_id);
-        let second = route_state.select_worker().map(|(_, session_id)| session_id);
+        let first = route_state
+            .select_worker()
+            .map(|(_, session_id)| session_id);
+        let second = route_state
+            .select_worker()
+            .map(|(_, session_id)| session_id);
 
         // Assert
         assert_eq!(first, Some(10));
@@ -855,11 +891,13 @@ mod tests {
         router.register(worker_inbox_addr, worker_sink as Arc<dyn MailboxSink>);
         {
             let mut state = sink.state.lock();
-            state.ensure_route_state(&request_route).register_worker(RpcWorker {
-                addr: RouteAddress::new(family, request_route.clone()),
-                session_id: 42,
-                route_family: family,
-            });
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker {
+                    addr: RouteAddress::new(family, request_route.clone()),
+                    session_id: 42,
+                    route_family: family,
+                });
             for _ in 0..RPC_MAX_PENDING_REQUESTS {
                 state.pending.track_pending(uuid::Uuid::new_v4(), 7, family);
             }
@@ -886,9 +924,13 @@ mod tests {
         let reply_frames = reply_frames.lock();
         assert_eq!(reply_frames.len(), 1);
         assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&reply_frames[0].payload);
+        let mut decoder =
+            crate::protocol::payload_codec::PayloadDecoder::new(&reply_frames[0].payload);
         assert_eq!(decoder.get_u8().expect("error flag"), 1);
-        assert_eq!(decoder.get_string_ref().expect("error message"), RPC_BACKPRESSURE_ERROR);
+        assert_eq!(
+            decoder.get_string_ref().expect("error message"),
+            RPC_BACKPRESSURE_ERROR
+        );
     }
 
     #[test]

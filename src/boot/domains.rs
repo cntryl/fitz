@@ -171,57 +171,74 @@ mod tests {
 
     #[test]
     fn should_create_domain_sinks() {
+        // Arrange
         let kv_sink = DomainSink::new("kv");
         let notice_sink = DomainSink::new("notice");
 
-        assert!(kv_sink.active.load(Ordering::Relaxed));
-        assert!(notice_sink.active.load(Ordering::Relaxed));
-
+        // Act
+        let kv_active = kv_sink.active.load(Ordering::Relaxed);
+        let notice_active = notice_sink.active.load(Ordering::Relaxed);
         kv_sink.stop();
-        assert!(!kv_sink.active.load(Ordering::Relaxed));
+        let kv_stopped = kv_sink.active.load(Ordering::Relaxed);
+
+        // Assert
+        assert!(kv_active);
+        assert!(notice_active);
+        assert!(!kv_stopped);
     }
 
     #[test]
     fn should_handle_delivery_when_active() {
+        // Arrange
         let sink = DomainSink::new("kv");
         let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
         let envelope = Envelope::new(address, vec![0u8; 10]);
 
+        // Act
         let result = sink.deliver(envelope);
 
+        // Assert
         assert!(result.is_ok());
     }
 
     #[test]
     fn should_reject_delivery_when_stopped() {
+        // Arrange
         let sink = DomainSink::new("kv");
         sink.stop();
 
         let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
         let envelope = Envelope::new(address, vec![0u8; 10]);
 
+        // Act
         let result = sink.deliver(envelope);
 
+        // Assert
         assert!(matches!(result, Err(DeliveryError::ActorStopped)));
     }
 
     #[test]
     fn should_handle_high_priority_delivery() {
+        // Arrange
         let sink = DomainSink::new("kv");
         let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
         let envelope = Envelope::new(address, vec![0u8; 10]);
 
+        // Act
         let result = sink.deliver_high_priority(envelope);
 
+        // Assert
         assert!(result.is_ok());
     }
 
     #[test]
     fn should_setup_all_seven_domains() {
+        // Arrange
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
+        // Act
         let result = setup(
             &router,
             &store,
@@ -229,6 +246,7 @@ mod tests {
             cntryl_midge::WriteOptions::best_effort(),
         );
 
+        // Assert
         assert!(result.is_ok());
     }
 }

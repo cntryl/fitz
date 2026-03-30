@@ -392,12 +392,13 @@ impl StreamDomainSink {
                             state.wildcard_subscription_count.saturating_sub(1);
                     } else {
                         let route_key = sub.pattern.route().to_string();
-                        let is_empty = if let Some(route_ids) = state.exact_routes.get_mut(&route_key) {
-                            route_ids.retain(|id| *id != sub_id);
-                            route_ids.is_empty()
-                        } else {
-                            false
-                        };
+                        let is_empty =
+                            if let Some(route_ids) = state.exact_routes.get_mut(&route_key) {
+                                route_ids.retain(|id| *id != sub_id);
+                                route_ids.is_empty()
+                            } else {
+                                false
+                            };
                         if is_empty {
                             state.exact_routes.remove(&route_key);
                         }
@@ -556,7 +557,8 @@ impl MailboxSink for StreamDomainSink {
             } => {
                 let mut state = self.write_state.lock();
                 let maybe_offset = state.sessions.get_mut(&session_id).map(|session| {
-                    let assigned_offset = session.initial_next_offset + session.records.len() as u64;
+                    let assigned_offset =
+                        session.initial_next_offset + session.records.len() as u64;
                     session.records.push(PendingStreamRecord { body });
                     assigned_offset
                 });
@@ -583,15 +585,16 @@ impl MailboxSink for StreamDomainSink {
                 let commit_notify = state.sessions.remove(&session_id).map(|session| {
                     let batch_size = session.records.len();
                     let route_key = session.route.clone();
-                    let route_state = state
-                        .routes
-                        .entry(route_key.clone())
-                        .or_insert_with(|| StreamRouteState {
-                            next_offset: 0,
-                            records: Vec::new(),
-                            last_data: Vec::new(),
-                            metadata_data: Vec::new(),
-                        });
+                    let route_state =
+                        state
+                            .routes
+                            .entry(route_key.clone())
+                            .or_insert_with(|| StreamRouteState {
+                                next_offset: 0,
+                                records: Vec::new(),
+                                last_data: Vec::new(),
+                                metadata_data: Vec::new(),
+                            });
                     let first_offset = route_state.next_offset;
                     let mut committed = Vec::with_capacity(batch_size);
                     let mut current_offset = route_state.next_offset;
@@ -629,7 +632,12 @@ impl MailboxSink for StreamDomainSink {
                         last_area_offset,
                         first_realm_offset,
                         last_realm_offset,
-                    ) = Self::allocate_commit_offsets(&mut state, &route_key, first_offset, batch_size);
+                    ) = Self::allocate_commit_offsets(
+                        &mut state,
+                        &route_key,
+                        first_offset,
+                        batch_size,
+                    );
                     let payload = Self::encode_stream_commit_notify_payload(
                         first_offset,
                         last_offset,
@@ -815,8 +823,9 @@ impl MailboxSink for StreamDomainSink {
                         .subscriptions
                         .iter()
                         .filter_map(|(sub_id, sub)| {
-                            (sub.session_id == session_id && sub.pattern.route() == pattern.as_str())
-                                .then_some(*sub_id)
+                            (sub.session_id == session_id
+                                && sub.pattern.route() == pattern.as_str())
+                            .then_some(*sub_id)
                         })
                         .collect();
                     for sub_id in removed_ids {
@@ -830,7 +839,9 @@ impl MailboxSink for StreamDomainSink {
                                 state.wildcard_subscription_count =
                                     state.wildcard_subscription_count.saturating_sub(1);
                             } else {
-                                let is_empty = if let Some(route_ids) = state.exact_routes.get_mut(pattern.as_str()) {
+                                let is_empty = if let Some(route_ids) =
+                                    state.exact_routes.get_mut(pattern.as_str())
+                                {
                                     route_ids.retain(|id| *id != sub_id);
                                     route_ids.is_empty()
                                 } else {
@@ -883,7 +894,8 @@ impl MailboxSink for StreamDomainSink {
                 route_family = frame_ctx.route_family.id(),
                 "Stream: commit triggered availability notification - CALLING handle_domain_publish"
             );
-            let event = crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
+            let event =
+                crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
             if let Err(e) = self.handle_domain_publish(&event) {
                 tracing::warn!(domain = "stream", error = ?e, "Stream: handle_domain_publish FAILED");
             } else {
@@ -952,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn should_allocate_area_and_realm_offsets_per_scope() {
+    fn should_allocate_area_offsets_per_area_given_multiple_stream_routes() {
         // Arrange
         let mut state = StreamWriteState {
             routes: HashMap::new(),
@@ -970,8 +982,38 @@ mod tests {
             StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/ops/logs", 0, 1);
 
         // Assert
-        assert_eq!(first, (0, 1, 0, 1));
-        assert_eq!(second, (2, 2, 2, 2));
-        assert_eq!(third, (0, 0, 3, 3));
+        assert_eq!(first.0, 0);
+        assert_eq!(first.1, 1);
+        assert_eq!(second.0, 2);
+        assert_eq!(second.1, 2);
+        assert_eq!(third.0, 0);
+        assert_eq!(third.1, 0);
+    }
+
+    #[test]
+    fn should_allocate_realm_offsets_per_realm_given_multiple_stream_routes() {
+        // Arrange
+        let mut state = StreamWriteState {
+            routes: HashMap::new(),
+            sessions: HashMap::new(),
+            next_area_offsets: HashMap::new(),
+            next_realm_offsets: HashMap::new(),
+        };
+
+        // Act
+        let first =
+            StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/app/users", 0, 2);
+        let second =
+            StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/app/orders", 0, 1);
+        let third =
+            StreamDomainSink::allocate_commit_offsets(&mut state, "stream://prod/ops/logs", 0, 1);
+
+        // Assert
+        assert_eq!(first.2, 0);
+        assert_eq!(first.3, 1);
+        assert_eq!(second.2, 2);
+        assert_eq!(second.3, 2);
+        assert_eq!(third.2, 3);
+        assert_eq!(third.3, 3);
     }
 }

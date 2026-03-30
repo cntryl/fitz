@@ -1,0 +1,143 @@
+use super::Runtime;
+
+impl Runtime {
+    pub fn kv_transactions_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.kv.active_transaction_count())
+            .unwrap_or_else(|| self.admin_read_model.kv_transactions(None).len())
+    }
+
+    pub fn kv_keys_total(&self) -> usize {
+        0
+    }
+
+    pub fn notice_subscriptions_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.notice.subscription_count())
+            .unwrap_or_else(|| self.admin_read_model.notice_subscriptions(None, None).len())
+    }
+
+    pub fn queue_messages_pending(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.pending_message_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .queues(None)
+                    .into_iter()
+                    .map(|queue| queue.messages_ready)
+                    .sum()
+            })
+    }
+
+    pub fn queue_leases_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.active_lease_count())
+            .unwrap_or_else(|| self.admin_read_model.queue_leases(None).len())
+    }
+
+    pub fn rpc_workers_registered(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.worker_count())
+            .unwrap_or_else(|| self.admin_read_model.rpc_workers(None).len())
+    }
+
+    pub fn rpc_requests_pending(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.pending_request_count())
+            .unwrap_or_else(|| self.admin_read_model.rpc_pending(None).len())
+    }
+
+    pub fn lease_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.lease.lease_count())
+            .unwrap_or_else(|| self.admin_read_model.leases(None).len())
+    }
+
+    pub fn stream_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.stream_count())
+            .unwrap_or_else(|| self.admin_read_model.streams(None).len())
+    }
+
+    pub fn kv_operations_per_second(&self) -> f64 {
+        0.0
+    }
+
+    pub fn stream_events_total(&self) -> usize {
+        self.admin_read_model
+            .streams(None)
+            .into_iter()
+            .map(|stream| stream.offset as usize)
+            .sum()
+    }
+
+    pub fn stream_operations_per_second(&self) -> f64 {
+        0.0
+    }
+
+    pub fn stream_subscriptions_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.subscription_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .streams(None)
+                    .into_iter()
+                    .map(|stream| stream.sessions_active)
+                    .sum()
+            })
+    }
+
+    pub fn notice_publishes_per_second(&self) -> f64 {
+        0.0
+    }
+
+    pub fn queue_operations_per_second(&self) -> f64 {
+        0.0
+    }
+
+    pub fn rpc_operations_per_second(&self) -> f64 {
+        0.0
+    }
+
+    pub fn lease_operations_per_second(&self) -> f64 {
+        0.0
+    }
+
+    pub fn schedule_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.schedule_count())
+            .unwrap_or_else(|| self.admin_read_model.schedules(None).len())
+    }
+
+    pub fn schedule_executions_per_minute(&self) -> f64 {
+        0.0
+    }
+
+    pub fn schedule_subscriptions_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.subscription_count())
+            .unwrap_or(0)
+    }
+}

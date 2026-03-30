@@ -30,7 +30,9 @@ fn bench_pipeline_decode_only(c: &mut Criterion) {
         group.bench_function(format!("decode_only_{}B", size), |b| {
             b.iter(|| {
                 refs.clear();
-                decoder.decode_refs_into(black_box(&data), &mut refs).unwrap();
+                decoder
+                    .decode_refs_into(black_box(&data), &mut refs)
+                    .unwrap();
                 black_box(&refs);
             })
         });
@@ -96,7 +98,9 @@ fn bench_pipeline_decode_then_mux_route_ref(c: &mut Criterion) {
         group.bench_function(format!("decode_then_mux_route_ref_{}B", size), |b| {
             b.iter(|| {
                 refs.clear();
-                decoder.decode_refs_into(black_box(&data), &mut refs).unwrap();
+                decoder
+                    .decode_refs_into(black_box(&data), &mut refs)
+                    .unwrap();
 
                 for tlv_ref in &refs {
                     let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();

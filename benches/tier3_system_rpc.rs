@@ -185,10 +185,7 @@ fn service_worker_for_route(
                             worker_session_id,
                             worker_source,
                             route,
-                            build_rpc_response_frame(
-                                request.correlation_id,
-                                request.body.as_ref(),
-                            ),
+                            build_rpc_response_frame(request.correlation_id, request.body.as_ref()),
                         );
                         responses += 1;
                     }
@@ -315,7 +312,8 @@ fn measure_full_roundtrip_scaling(
     let workers: Vec<WorkerHandle> = (0..worker_count)
         .map(|index| register_worker(&router, family, 1_000 + index as u64))
         .collect();
-    let mut request_ring = RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
     let iterations = ctx.measure_for(Duration::from_secs(5), || {
@@ -352,7 +350,8 @@ fn measure_dispatch_only_scaling(
     let workers: Vec<WorkerHandle> = (0..worker_count)
         .map(|index| register_worker(&router, family, 1_000 + index as u64))
         .collect();
-    let mut request_ring = RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
     let iterations = ctx.measure_for(Duration::from_secs(5), || {

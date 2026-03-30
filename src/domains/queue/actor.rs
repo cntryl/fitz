@@ -831,10 +831,10 @@ impl QueueActor {
             return self.persisted_next_delayed_visibility_ms;
         }
 
-        self.persisted_delayed.iter().filter_map(|(&id, &visible_at_ms)| {
-            (id != excluded).then_some(visible_at_ms)
-        })
-        .min()
+        self.persisted_delayed
+            .iter()
+            .filter_map(|(&id, &visible_at_ms)| (id != excluded).then_some(visible_at_ms))
+            .min()
     }
 
     fn recompute_persisted_delayed_visibility_ms(&mut self) {
@@ -872,9 +872,9 @@ impl QueueActor {
     ) -> cntryl_midge::MidgeResult<()> {
         match layout {
             StoredRecordLayout::EmbeddedHeader => txn.delete(header_key),
-            StoredRecordLayout::SplitHeaderBody => txn
-                .delete(header_key)
-                .and_then(|_| txn.delete(body_key)),
+            StoredRecordLayout::SplitHeaderBody => {
+                txn.delete(header_key).and_then(|_| txn.delete(body_key))
+            }
             StoredRecordLayout::LegacyKey => txn.delete(legacy_key),
         }
     }
@@ -1535,9 +1535,8 @@ impl QueueActor {
             }
             Err(e) => Err(format!("Failed to read message {}: {:?}", id, e)),
             Ok(None) => match txn.get(&legacy_key) {
-                Ok(Some(bytes)) => {
-                    Self::decode_legacy_record(bytes).map(|record| (record, StoredRecordLayout::LegacyKey))
-                }
+                Ok(Some(bytes)) => Self::decode_legacy_record(bytes)
+                    .map(|record| (record, StoredRecordLayout::LegacyKey)),
                 Ok(None) => Err(format!("Message {} disappeared from storage", id)),
                 Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
             },

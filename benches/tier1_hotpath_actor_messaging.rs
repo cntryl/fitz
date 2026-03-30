@@ -21,7 +21,9 @@ fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
 
-fn make_context_with_registered_routes(route_count: usize) -> (Context<BenchActor>, Vec<RouteAddress>) {
+fn make_context_with_registered_routes(
+    route_count: usize,
+) -> (Context<BenchActor>, Vec<RouteAddress>) {
     let router = Arc::new(Router::new());
     let addresses: Vec<_> = (0..route_count)
         .map(|i| test_address(1, &format!("/bench/resolve/{}", i)))

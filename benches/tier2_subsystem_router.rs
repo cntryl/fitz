@@ -90,17 +90,20 @@ fn bench_route_batch_exact_primary(c: &mut Criterion) {
         let (router, addresses) = make_exact_router(route_count, Arc::new(NoopSink));
         group.throughput(Throughput::Elements(route_count as u64));
 
-        group.bench_function(format!("route_batch_exact_{}_noop_primary", route_count), |b| {
-            let mut seq = 0_u64;
-            b.iter(|| {
-                for address in &addresses {
-                    router
-                        .route(Envelope::new(address.clone(), black_box(seq)))
-                        .expect("batched exact route should succeed");
-                    seq = seq.wrapping_add(1);
-                }
-            })
-        });
+        group.bench_function(
+            format!("route_batch_exact_{}_noop_primary", route_count),
+            |b| {
+                let mut seq = 0_u64;
+                b.iter(|| {
+                    for address in &addresses {
+                        router
+                            .route(Envelope::new(address.clone(), black_box(seq)))
+                            .expect("batched exact route should succeed");
+                        seq = seq.wrapping_add(1);
+                    }
+                })
+            },
+        );
     }
 
     group.finish();
@@ -148,7 +151,9 @@ fn bench_route_backpressure_primary(c: &mut Criterion) {
                     .expect("prefill should succeed");
                 (router, address)
             },
-            |(router, address)| match router.route(Envelope::new(black_box(address), black_box(1_u64))) {
+            |(router, address)| match router
+                .route(Envelope::new(black_box(address), black_box(1_u64)))
+            {
                 Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. })) => {
                     black_box(());
                 }

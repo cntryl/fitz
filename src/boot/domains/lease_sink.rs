@@ -431,7 +431,8 @@ impl MailboxSink for LeaseDomainSink {
                 fencing_token,
             } => match LeaseKey::from_route(family_id, &route) {
                 Some(key) => {
-                    let resp = self.handle_release(key.clone(), effective_owner(owner_id), fencing_token);
+                    let resp =
+                        self.handle_release(key.clone(), effective_owner(owner_id), fencing_token);
                     if let crate::domains::lease::protocol::LeaseResponse::Released = resp {
                         let route = key.to_route();
                         let event = crate::runtime::DomainPublishEvent::new(
@@ -445,10 +446,12 @@ impl MailboxSink for LeaseDomainSink {
                 }
                 None => LeaseResponse::NotFound,
             },
-            LeaseMessage::Query { family_id, route } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_query(key),
-                None => LeaseResponse::NotFound,
-            },
+            LeaseMessage::Query { family_id, route } => {
+                match LeaseKey::from_route(family_id, &route) {
+                    Some(key) => self.handle_query(key),
+                    None => LeaseResponse::NotFound,
+                }
+            }
             LeaseMessage::Tick => {
                 let now = std::time::Instant::now();
                 let mut leases = self.leases.lock();
