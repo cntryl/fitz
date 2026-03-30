@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Produce comprehensive CSV and Markdown summaries of Criterion benchmarks and stress tests.
+Produce comprehensive CSV, JSON, and Markdown summaries of Criterion benchmarks and stress tests.
 
 - Criterion: extracts mean, CI, std_dev, relative_stddev from target/criterion
 - Stress: extracts duration, throughput (elements/ns), scenario tags from target/stress
@@ -13,6 +13,7 @@ Then cntryl-stress writes results under target/stress/<bench_name>/ (e.g. latest
 This script expects target/stress/<suite_dir>/latest.json per suite.
 
 Flags high variance when relative_stddev > 0.10 (10%).
+Markdown output prefers raw result tables with lightweight diagnostics.
 Also writes human-friendly mean_us and mean_ms columns assuming nanoseconds.
 """
 from pathlib import Path
@@ -1466,6 +1467,24 @@ def fmt_ops_short(value):
     return f'{value:.0f}'
 
 
+def fmt_rel_stddev_pct(value):
+    if value is None:
+        return 'NA'
+    return f'{value * 100.0:.1f}%'
+
+
+def raw_benchmark_case_name(benchmark):
+    return benchmark.replace('\\', '/').split('/', 1)[-1]
+
+
+def raw_stress_case_name(name):
+    if not name:
+        return 'unknown'
+    if '::' in name:
+        return name.split('::')[-1]
+    return name
+
+
 def build_environment_block():
     physical_cores, logical_cores = detect_core_counts()
     ram_gb = detect_ram_gb()
@@ -1862,8 +1881,6 @@ def build_report():
     cliffs.sort(key=lambda item: item.get('delta_pct') or 0.0)
 
     noise_warnings = collect_noise_warnings(entries, stress_entries)
-    perf_targets = load_perf_targets()
-    optimization_targets = rank_optimization_targets(regressions, sweep_groups, noise_warnings, perf_targets)
 
     comparison_summary = {
         'performance_changes': len(comparison_records),
@@ -1904,91 +1921,145 @@ def build_report():
 
     OUT_MD.parent.mkdir(parents=True, exist_ok=True)
     with OUT_MD.open('w', encoding='utf-8') as f:
-        f.write('# Fitz Benchmark Optimization Diagnostics\n\n')
+        f.write(f'{fitz_report_title()}\n\n')
         f.write(f'- generated_at: {generated_at}\n')
         f.write(f'- commit: {commit_hash or "unknown"}\n')
         f.write(f'- baseline_available: {str(baseline_available).lower()}\n')
         f.write(f'- criterion_rows: {len(entries)}\n')
-        f.write(f'- stress_rows: {len(stress_entries)}\n\n')
+        f.write(f'- stress_rows: {len(stress_entries)}\n')
+        f.write(f'- criterion_csv: {OUT_CSV.relative_to(TARGET_ROOT.parent)}\n')
+        f.write(f'- stress_csv: {STRESS_CSV.relative_to(TARGET_ROOT.parent)}\n')
+        f.write(f'- manifest: {CURRENT_RESULTS_FILE.relative_to(TARGET_ROOT.parent)}\n\n')
 
-        write_section(f, 'Top Regressions', [])
-        if not baseline_available:
-            f.write('- No baseline available; regression ranking is unavailable.\n\n')
-        elif not regressions:
-            f.write('- No negative directional deltas detected.\n\n')
+        write_section(f, 'Current Criterion Results', [])
+        if not entries:
+            f.write('- No Criterion results found under target/criterion.\n\n')
         else:
-            write_table(
-                f,
-                ['target', 'delta', 'baseline', 'current', 'confidence', 'status'],
-                [
-                    [
-                        describe_record(record),
-                        comparison_display_delta(record),
-                        record_metric_text(record, 'baseline_value'),
-                        record_metric_text(record, 'current_value'),
-                        record_confidence(record)[0],
-                        record.get('risk_reason') or 'ok',
-                    ]
-                    for record in regressions[:15]
-                ],
-            )
-
-        write_section(f, 'Top Improvements', [])
-        if not baseline_available:
-            f.write('- No baseline available; improvement ranking is unavailable.\n\n')
-        elif not improvements:
-            f.write('- No positive directional deltas detected.\n\n')
-        else:
-            write_table(
-                f,
-                ['target', 'delta', 'baseline', 'current', 'confidence', 'status'],
-                [
-                    [
-                        describe_record(record),
-                        comparison_display_delta(record),
-                        record_metric_text(record, 'baseline_value'),
-                        record_metric_text(record, 'current_value'),
-                        record_confidence(record)[0],
-                        record.get('risk_reason') or 'ok',
-                    ]
-                    for record in improvements[:15]
-                ],
-            )
-
-        write_section(f, 'Suspected Cliffs', [])
-        if not cliffs:
-            f.write('- No sweep cliffs detected from current stress scenarios.\n\n')
-        else:
-            cliff_rows = []
-            for cliff in cliffs[:20]:
-                cliff_rows.append([
-                    f"{cliff['suite']} / {cliff['scenario']}",
-                    cliff['parameter'],
-                    f"{cliff['from_label']} -> {cliff['to_label']}",
-                    f"{cliff['delta_pct']:.1f}%",
-                    ','.join(cliff['reasons']),
-                ])
-            write_table(f, ['target', 'parameter', 'transition', 'delta', 'reasons'], cliff_rows)
-
-        write_section(f, 'Noise / Measurement Warnings', [])
-        for warning in noise_warnings:
-            f.write(f'- {warning}\n')
-        f.write('\n')
-
-        write_section(f, 'Next Optimization Targets', [])
-        if not optimization_targets:
-            f.write('- No ranked targets generated; missing regressions/cliffs/warnings.\n\n')
-        else:
-            for idx, target in enumerate(optimization_targets, start=1):
-                reason = (
-                    f"regressions={target['regressions']}, cliffs={target['cliffs']}, "
-                    f"warnings={target['warnings']}, confidence={target['confidence']:.2f}"
+            for suite_name in criterion_suite_order:
+                write_subheader(f, suite_name)
+                suite_rows = []
+                for entry in sorted(
+                    criterion_suites[suite_name],
+                    key=lambda item: (
+                        benchmark_latency_ns(item) is None,
+                        benchmark_latency_ns(item) or float('inf'),
+                        item['benchmark'],
+                    ),
+                ):
+                    suite_rows.append([
+                        raw_benchmark_case_name(entry['benchmark']),
+                        fmt_ns(entry.get('median_ns')),
+                        fmt_us(entry.get('median_ns')),
+                        fmt_ns(entry.get('mean')),
+                        fmt_rel_stddev_pct(entry.get('rel_stddev')),
+                        entry.get('stability') or 'NA',
+                        entry.get('status') or 'NA',
+                    ])
+                write_table(
+                    f,
+                    ['benchmark', 'median_ns', 'median_us', 'mean_ns', 'rsd', 'stability', 'status'],
+                    suite_rows,
                 )
-                f.write(f'{idx}. {target["label"]}\n')
-                f.write(f'   reason: {reason}\n')
-                f.write(f'   suggested investigation area: {target["investigation"]}\n\n')
 
-        write_section(f, 'Scaling Diagnostics', [])
+        write_section(f, 'Current Stress Results', [])
+        if not stress_entries:
+            f.write('- No stress results found under target/stress.\n\n')
+        else:
+            layer_order = {
+                'direct': 0,
+                'encoded': 1,
+                'tcp': 2,
+                'websocket': 3,
+                'ws': 3,
+                'multiclient': 4,
+            }
+            for suite_name in sorted(stress_suite_groups.keys(), key=suite_sort_key):
+                write_subheader(f, suite_name)
+                suite_rows = []
+                for entry in sorted(
+                    stress_suite_groups[suite_name],
+                    key=lambda item: (
+                        layer_order.get(item.get('layer') or '', 99),
+                        item.get('scenario') or '',
+                        item.get('name') or '',
+                    ),
+                ):
+                    suite_rows.append([
+                        raw_stress_case_name(entry.get('name')),
+                        entry.get('scenario') or 'NA',
+                        entry.get('layer') or 'NA',
+                        str(entry.get('num_runs') or 'NA'),
+                        str(entry.get('batch_size') or entry.get('elements') or 'NA'),
+                        f"{entry.get('median_duration_ms', 0.0):.2f}",
+                        f"{entry.get('per_op_us', 0.0):.3f}",
+                        fmt_ops_short(entry.get('median_throughput_ops_per_s')),
+                        fmt_rel_stddev_pct(entry.get('rel_stddev_runs')),
+                        entry.get('status') or 'NA',
+                    ])
+                write_table(
+                    f,
+                    ['case', 'scenario', 'layer', 'runs', 'batch_size', 'duration_ms', 'per_op_us', 'ops_per_s', 'rsd', 'status'],
+                    suite_rows,
+                )
+
+        write_section(f, 'Baseline Deltas', [])
+        if not baseline_available:
+            f.write('- No baseline available. Current raw results are still written above and in the CSV/JSON artifacts.\n\n')
+        else:
+            write_subheader(f, 'Criterion')
+            criterion_delta_rows = []
+            for suite_name in criterion_suite_order:
+                for entry in sorted(criterion_suites[suite_name], key=lambda item: item['benchmark']):
+                    comparison = criterion_comparison_map.get(entry['benchmark'])
+                    criterion_delta_rows.append([
+                        suite_name,
+                        raw_benchmark_case_name(entry['benchmark']),
+                        fmt_ns(comparison.get('baseline_value') if comparison else None),
+                        fmt_ns(entry.get('median_ns')),
+                        format_delta(comparison.get('delta_pct') if comparison else None),
+                        comparison.get('baseline_stability') if comparison else 'NA',
+                        entry.get('stability') or 'NA',
+                        comparison.get('baseline_status') if comparison else 'NA',
+                        entry.get('status') or 'NA',
+                    ])
+            write_table(
+                f,
+                ['suite', 'benchmark', 'baseline_median_ns', 'current_median_ns', 'delta_ns_pct', 'baseline_stability', 'current_stability', 'baseline_status', 'current_status'],
+                criterion_delta_rows,
+            )
+
+            write_subheader(f, 'Stress')
+            stress_delta_rows = []
+            for suite_name in sorted(stress_suite_groups.keys(), key=suite_sort_key):
+                for entry in sorted(
+                    stress_suite_groups[suite_name],
+                    key=lambda item: (
+                        layer_order.get(item.get('layer') or '', 99),
+                        item.get('scenario') or '',
+                        item.get('name') or '',
+                    ),
+                ):
+                    comparison = stress_comparison_map.get((entry['suite'], entry['name'], entry['scenario']))
+                    stress_delta_rows.append([
+                        suite_name,
+                        raw_stress_case_name(entry.get('name')),
+                        entry.get('scenario') or 'NA',
+                        entry.get('layer') or 'NA',
+                        fmt_ops_short(comparison.get('baseline_value') if comparison else None),
+                        fmt_ops_short(entry.get('median_throughput_ops_per_s')),
+                        format_delta(comparison.get('delta_pct') if comparison else None),
+                        comparison.get('baseline_stability') if comparison else 'NA',
+                        entry.get('stability') or 'NA',
+                        comparison.get('baseline_status') if comparison else 'NA',
+                        entry.get('status') or 'NA',
+                    ])
+            write_table(
+                f,
+                ['suite', 'case', 'scenario', 'layer', 'baseline_ops_s', 'current_ops_s', 'delta_ops_pct', 'baseline_stability', 'current_stability', 'baseline_status', 'current_status'],
+                stress_delta_rows,
+            )
+
+        write_section(f, 'Parameter Sweeps', [])
         if not sweep_groups:
             f.write('- No sweep-style parameter scenarios detected (concurrency/payload/depth/fanout/batch/subscribers).\n\n')
         else:
@@ -1996,16 +2067,21 @@ def build_report():
                 f.write(f"### {group['title']}\n\n")
                 rows = []
                 for point in group['points']:
-                    delta_text = 'NA' if point['delta_vs_previous_pct'] is None else f"{point['delta_vs_previous_pct']:+.1f}%"
+                    delta_text = format_delta(point['delta_vs_previous_pct'])
                     rows.append([
                         f"{point['parameter']}={point['parameter_label']}",
                         fmt_ops_short(point['throughput']),
                         delta_text,
-                        'yes' if point['cliff'] else 'no',
-                        variance_band(point.get('rel_stddev')),
+                        fmt_rel_stddev_pct(point.get('rel_stddev')),
                         str(point.get('runs') or 'NA'),
+                        point.get('status') or 'NA',
                     ])
-                write_table(f, ['parameter', 'throughput', 'delta vs previous', 'cliff flag', 'variance', 'run count'], rows)
+                write_table(f, ['parameter', 'ops_per_s', 'delta_vs_previous_pct', 'rsd', 'run_count', 'status'], rows)
+
+        write_section(f, 'Measurement Notes', [])
+        for warning in noise_warnings:
+            f.write(f'- {warning}\n')
+        f.write('\n')
 
     if CRITERION_ROOT.exists():
         print(f"Wrote {OUT_CSV} (criterion) with {len(entries)} entries.")
