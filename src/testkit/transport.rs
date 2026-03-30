@@ -41,11 +41,24 @@ pub struct TestServer {
 impl TestServer {
     /// Start a test server with auth disabled (backward compatible)
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_auth(false).await
+        Self::start_with_options(false, None).await
+    }
+
+    pub async fn start_with_rpc_timeout(
+        rpc_request_timeout: Duration,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(false, Some(rpc_request_timeout)).await
     }
 
     /// Start a test server with configurable auth mode
     pub async fn start_with_auth(auth_required: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(auth_required, None).await
+    }
+
+    async fn start_with_options(
+        auth_required: bool,
+        rpc_request_timeout: Option<Duration>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
             .acquire_owned()
@@ -112,6 +125,7 @@ impl TestServer {
             &store,
             &runtime.admin_read_model(),
             queue_write_options,
+            rpc_request_timeout,
         )?;
         runtime.attach_domains(Arc::new(domains));
 

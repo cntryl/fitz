@@ -4,18 +4,52 @@ use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
 use fxhash::FxBuildHasher;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::cmp::Ordering as HeapOrdering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 type RpcFastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
 const RPC_BACKPRESSURE_ERROR: &str = "RPC backpressure: too many pending requests";
 const RPC_NO_WORKERS_ERROR: &str = "No workers registered for route";
 const RPC_WORKER_NOT_FOUND_ERROR: &str = "Worker disconnected or unregistered";
+const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
 const RPC_MAX_PENDING_REQUESTS: usize = 4096;
 const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
+const RPC_DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const RPC_MIN_TIMEOUT_SWEEP_INTERVAL: Duration = Duration::from_millis(10);
+const RPC_MAX_TIMEOUT_SWEEP_INTERVAL: Duration = Duration::from_millis(250);
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ExpiringPendingRequest {
+    expires_at: Instant,
+    correlation_id: uuid::Uuid,
+}
+
+impl Ord for ExpiringPendingRequest {
+    fn cmp(&self, other: &Self) -> HeapOrdering {
+        other
+            .expires_at
+            .cmp(&self.expires_at)
+            .then_with(|| self.correlation_id.cmp(&other.correlation_id))
+    }
+}
+
+impl PartialOrd for ExpiringPendingRequest {
+    fn partial_cmp(&self, other: &Self) -> Option<HeapOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn rpc_timeout_sweep_interval(request_timeout: Duration) -> Duration {
+    request_timeout
+        .checked_div(4)
+        .unwrap_or(RPC_MIN_TIMEOUT_SWEEP_INTERVAL)
+        .max(RPC_MIN_TIMEOUT_SWEEP_INTERVAL)
+        .min(RPC_MAX_TIMEOUT_SWEEP_INTERVAL)
+}
 
 fn parse_route_quad(route: &str) -> Option<(String, String, String, String)> {
     let path = route.split("://").nth(1).unwrap_or(route);
@@ -44,9 +78,10 @@ struct RpcPendingRequest {
     caller_inbox_addr: Option<RouteAddress>,
     worker_addr: RouteAddress,
     worker_session_id: u64,
+    expires_at: Instant,
 }
 
-struct RpcPendingDisconnectDelivery {
+struct RpcPendingErrorDelivery {
     correlation_id: uuid::Uuid,
     caller_session_id: u64,
     caller_inbox_addr: RouteAddress,
@@ -56,7 +91,7 @@ struct RpcPendingCleanupResult {
     detached_callers: usize,
     removed_pending: usize,
     pending_len: usize,
-    disconnect_deliveries: Vec<RpcPendingDisconnectDelivery>,
+    disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 
 struct RpcSessionCleanupResult {
@@ -64,14 +99,20 @@ struct RpcSessionCleanupResult {
     detached_callers: usize,
     removed_pending: usize,
     pending_len: usize,
-    disconnect_deliveries: Vec<RpcPendingDisconnectDelivery>,
+    disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 
 struct RpcWorkerCleanupResult {
     removed_workers: usize,
     removed_pending: usize,
     pending_len: usize,
-    disconnect_deliveries: Vec<RpcPendingDisconnectDelivery>,
+    disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
+}
+
+struct RpcPendingTimeoutResult {
+    removed_pending: usize,
+    pending_len: usize,
+    timeout_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 
 struct RpcRouteState {
@@ -133,12 +174,14 @@ impl RpcRouteState {
 
 struct RpcPendingTable {
     pending: RpcFastMap<uuid::Uuid, RpcPendingRequest>,
+    expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
 impl RpcPendingTable {
     fn new() -> Self {
         Self {
             pending: HashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
+            expirations: BinaryHeap::with_capacity(256),
         }
     }
 
@@ -149,6 +192,7 @@ impl RpcPendingTable {
         caller_inbox_addr: RouteAddress,
         worker_addr: RouteAddress,
         worker_session_id: u64,
+        expires_at: Instant,
     ) -> usize {
         self.pending.insert(
             correlation_id,
@@ -157,8 +201,13 @@ impl RpcPendingTable {
                 caller_inbox_addr: Some(caller_inbox_addr),
                 worker_addr,
                 worker_session_id,
+                expires_at,
             },
         );
+        self.expirations.push(ExpiringPendingRequest {
+            expires_at,
+            correlation_id,
+        });
         self.pending.len()
     }
 
@@ -191,7 +240,7 @@ impl RpcPendingTable {
             if pending.worker_session_id == session_id {
                 if pending.caller_session_id != session_id {
                     if let Some(caller_inbox_addr) = pending.caller_inbox_addr.clone() {
-                        disconnect_deliveries.push(RpcPendingDisconnectDelivery {
+                        disconnect_deliveries.push(RpcPendingErrorDelivery {
                             correlation_id: correlation_id.to_owned(),
                             caller_session_id: pending.caller_session_id,
                             caller_inbox_addr,
@@ -231,7 +280,7 @@ impl RpcPendingTable {
             if pending.worker_session_id == worker_session_id && pending.worker_addr == *worker_addr
             {
                 if let Some(caller_inbox_addr) = pending.caller_inbox_addr.clone() {
-                    disconnect_deliveries.push(RpcPendingDisconnectDelivery {
+                    disconnect_deliveries.push(RpcPendingErrorDelivery {
                         correlation_id: correlation_id.to_owned(),
                         caller_session_id: pending.caller_session_id,
                         caller_inbox_addr,
@@ -249,6 +298,45 @@ impl RpcPendingTable {
             removed_pending: before.saturating_sub(self.pending.len()),
             pending_len: self.pending.len(),
             disconnect_deliveries,
+        }
+    }
+
+    fn expire_timed_out(&mut self, now: Instant) -> RpcPendingTimeoutResult {
+        let mut timeout_deliveries = Vec::new();
+        let before = self.pending.len();
+
+        while let Some(expiring) = self.expirations.peek() {
+            if expiring.expires_at > now {
+                break;
+            }
+
+            let expiring = self.expirations.pop().expect("pending expiration entry");
+            let Some(pending) = self.pending.get(&expiring.correlation_id).cloned() else {
+                continue;
+            };
+
+            if pending.expires_at != expiring.expires_at {
+                continue;
+            }
+
+            let pending = self
+                .pending
+                .remove(&expiring.correlation_id)
+                .expect("tracked pending request");
+
+            if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
+                timeout_deliveries.push(RpcPendingErrorDelivery {
+                    correlation_id: expiring.correlation_id,
+                    caller_session_id: pending.caller_session_id,
+                    caller_inbox_addr,
+                });
+            }
+        }
+
+        RpcPendingTimeoutResult {
+            removed_pending: before.saturating_sub(self.pending.len()),
+            pending_len: self.pending.len(),
+            timeout_deliveries,
         }
     }
 
@@ -354,6 +442,7 @@ pub struct RpcDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
+    request_timeout: Duration,
     snapshot_dirty: AtomicBool,
     snapshot_syncing: AtomicBool,
     last_snapshot_elapsed_us: AtomicU64,
@@ -371,12 +460,22 @@ impl RpcDomainSink {
             router,
             admin_read_model,
             active: AtomicBool::new(true),
+            request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
             snapshot_dirty: AtomicBool::new(false),
             snapshot_syncing: AtomicBool::new(false),
             last_snapshot_elapsed_us: AtomicU64::new(0),
             snapshot_epoch: Instant::now(),
             metrics: None,
         }
+    }
+
+    pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout = if request_timeout.is_zero() {
+            RPC_MIN_TIMEOUT_SWEEP_INTERVAL
+        } else {
+            request_timeout
+        };
+        self
     }
 
     pub fn with_metrics(
@@ -389,6 +488,36 @@ impl RpcDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    pub fn start_timeout_loop(self: &Arc<Self>) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
+            return;
+        };
+
+        let weak = Arc::downgrade(self);
+        handle.spawn(async move {
+            loop {
+                let Some(sink) = weak.upgrade() else {
+                    break;
+                };
+                if !sink.active.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                tokio::time::sleep(rpc_timeout_sweep_interval(sink.request_timeout)).await;
+
+                let Some(sink) = weak.upgrade() else {
+                    break;
+                };
+                if !sink.active.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                sink.expire_timed_out_requests();
+            }
+        });
     }
 
     fn counter_inc(&self, name: &str) {
@@ -411,6 +540,45 @@ impl RpcDomainSink {
 
     fn histogram_observe_elapsed_us(&self, name: &str, start: Instant) {
         self.histogram_observe_us(name, start.elapsed().as_micros() as u64);
+    }
+
+    fn expire_timed_out_requests(&self) {
+        self.expire_timed_out_requests_at(Instant::now());
+    }
+
+    fn expire_timed_out_requests_at(&self, now: Instant) {
+        let timeout_result = {
+            let mut state = self.state.lock();
+            state.pending.expire_timed_out(now)
+        };
+
+        if timeout_result.removed_pending == 0 {
+            return;
+        }
+
+        let timeout_delivery_count = timeout_result.timeout_deliveries.len();
+        self.gauge_set("rpc_pending_requests", timeout_result.pending_len as u64);
+        for _ in 0..timeout_result.removed_pending {
+            self.counter_inc("rpc_request_timeouts_total");
+        }
+        self.counter_inc("rpc_cleanup_pending_removed_total");
+        self.schedule_admin_snapshot(false);
+
+        tracing::debug!(
+            domain = "rpc",
+            removed_pending = timeout_result.removed_pending,
+            delivered_timeouts = timeout_delivery_count,
+            pending_len = timeout_result.pending_len,
+            "RPC request timeout sweep applied"
+        );
+
+        self.forward_pending_error_deliveries(
+            timeout_result.timeout_deliveries,
+            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            RPC_TIMEOUT_ERROR,
+            "rpc_timeout_errors_forwarded_total",
+            "rpc_timeout_errors_dropped_total",
+        );
     }
 
     fn remove_pending_request(&self, correlation_id: &uuid::Uuid) -> usize {
@@ -496,11 +664,15 @@ impl RpcDomainSink {
         cleanup_result
     }
 
-    fn forward_worker_disconnect_errors(
+    fn forward_pending_error_deliveries(
         &self,
-        disconnect_deliveries: Vec<RpcPendingDisconnectDelivery>,
+        error_deliveries: Vec<RpcPendingErrorDelivery>,
+        error_code: u16,
+        error_message: &'static str,
+        forwarded_counter: &str,
+        dropped_counter: &str,
     ) {
-        if disconnect_deliveries.is_empty() {
+        if error_deliveries.is_empty() {
             return;
         }
 
@@ -509,14 +681,14 @@ impl RpcDomainSink {
         let mut response_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(128);
 
-        for disconnect in disconnect_deliveries {
+        for delivery in error_deliveries {
             let error_body = crate::protocol::rpc_codec::encode_error_body_into(
-                crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
-                RPC_WORKER_NOT_FOUND_ERROR,
+                error_code,
+                error_message,
                 &mut error_body_encoder,
             );
             let error_response = crate::domains::rpc::protocol::RpcResponse::single(
-                disconnect.correlation_id,
+                delivery.correlation_id,
                 bytes::Bytes::from(error_body),
             );
             let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
@@ -524,26 +696,40 @@ impl RpcDomainSink {
                 &mut response_encoder,
             );
             let response_ctx = FrameContext::new(
-                disconnect.caller_session_id,
+                delivery.caller_session_id,
                 crate::protocol::frame::ChannelId::Rpc,
                 crate::protocol::tlv::MessageType::new(303),
                 bytes::Bytes::from(encoded_response),
-                *disconnect.caller_inbox_addr.family(),
+                *delivery.caller_inbox_addr.family(),
             );
-            let response_envelope = Envelope::new(disconnect.caller_inbox_addr, response_ctx);
+            let response_envelope = Envelope::new(delivery.caller_inbox_addr, response_ctx);
 
             if let Err(error) = self.router.route(response_envelope) {
-                self.counter_inc("rpc_worker_disconnect_errors_dropped_total");
+                self.counter_inc(dropped_counter);
                 tracing::warn!(
                     domain = "rpc",
-                    correlation_id = %disconnect.correlation_id,
+                    correlation_id = %delivery.correlation_id,
+                    error_code,
                     error = ?error,
-                    "Failed to forward worker disconnect error to requester"
+                    "Failed to forward RPC terminal error to requester"
                 );
             } else {
-                self.counter_inc("rpc_worker_disconnect_errors_forwarded_total");
+                self.counter_inc(forwarded_counter);
             }
         }
+    }
+
+    fn forward_worker_disconnect_errors(
+        &self,
+        disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
+    ) {
+        self.forward_pending_error_deliveries(
+            disconnect_deliveries,
+            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+            RPC_WORKER_NOT_FOUND_ERROR,
+            "rpc_worker_disconnect_errors_forwarded_total",
+            "rpc_worker_disconnect_errors_dropped_total",
+        );
     }
 
     fn sync_admin_snapshot(&self) {
@@ -741,6 +927,7 @@ impl MailboxSink for RpcDomainSink {
                 (Some(RpcResponseMsg::Ok { data: vec![] }), Some(true))
             }
             RpcMessage::Request(req) => {
+                self.expire_timed_out_requests();
                 self.counter_inc("rpc_requests_total");
                 let caller_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
                     session_inbox_address(frame_ctx.route_family, frame_ctx.session_id)
@@ -818,6 +1005,7 @@ impl MailboxSink for RpcDomainSink {
                             caller_inbox_addr,
                             worker.addr.clone(),
                             worker.session_id,
+                            Instant::now() + self.request_timeout,
                         ) as u64;
                         let pending_track_us = pending_track_start.elapsed().as_micros() as u64;
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -1257,6 +1445,147 @@ mod tests {
     }
 
     #[test]
+    fn should_forward_timeout_error_given_expired_pending_request() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(
+            RpcDomainSink::new(router.clone(), admin_read_model)
+                .with_request_timeout(Duration::from_millis(10)),
+        );
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/timeout");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let worker_source = session_inbox_address(family, 42);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let reply_sink = Arc::new(CaptureRpcFrameSink {
+            frames: reply_frames.clone(),
+        });
+        let worker_sink = Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        });
+        router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
+        router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker {
+                    addr: request_addr.clone(),
+                    inbox_addr: worker_source,
+                    session_id: 42,
+                });
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload,
+            family,
+        );
+
+        sink.deliver(Envelope::from_route(
+            request_source,
+            request_addr,
+            request_ctx,
+        ))
+        .expect("deliver request");
+
+        // Act
+        sink.expire_timed_out_requests_at(Instant::now() + Duration::from_millis(25));
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 0);
+        assert_eq!(worker_frames.lock().len(), 1);
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 2);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(reply_frames[0].payload[0], 0);
+        assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
+        let error_response = parse_forwarded_rpc_response(&reply_frames[1]);
+        assert!(error_response.stream_end);
+        assert_rpc_code_error(
+            error_response.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            RPC_TIMEOUT_ERROR,
+        );
+    }
+
+    #[test]
+    fn should_drop_timeout_error_given_requester_cleanup_before_expiration() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(
+            RpcDomainSink::new(router.clone(), admin_read_model)
+                .with_request_timeout(Duration::from_millis(10)),
+        );
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/timeout");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let worker_source = session_inbox_address(family, 42);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let reply_sink = Arc::new(CaptureRpcFrameSink {
+            frames: reply_frames.clone(),
+        });
+        let worker_sink = Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        });
+        router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
+        router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker {
+                    addr: request_addr.clone(),
+                    inbox_addr: worker_source,
+                    session_id: 42,
+                });
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload,
+            family,
+        );
+
+        sink.deliver(Envelope::from_route(
+            request_source.clone(),
+            request_addr,
+            request_ctx,
+        ))
+        .expect("deliver request");
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("rpc://cleanup")),
+            crate::runtime::SessionCleanup { session_id: 1 },
+        ))
+        .expect("cleanup requester session");
+
+        // Act
+        sink.expire_timed_out_requests_at(Instant::now() + Duration::from_millis(25));
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 0);
+        assert_eq!(worker_frames.lock().len(), 1);
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 1);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(reply_frames[0].payload[0], 0);
+    }
+
+    #[test]
     fn should_reject_rpc_request_when_pending_capacity_reached() {
         // Arrange
         let router = Arc::new(Router::new());
@@ -1292,6 +1621,7 @@ mod tests {
                     session_inbox_address(family, 7),
                     RouteAddress::new(family, request_route.clone()),
                     42,
+                    Instant::now() + Duration::from_secs(30),
                 );
             }
         }
@@ -1484,6 +1814,7 @@ mod tests {
             caller_inbox_addr.clone(),
             RouteAddress::new(family, route.clone()),
             42,
+            Instant::now() + Duration::from_secs(30),
         );
 
         // Act
@@ -1545,6 +1876,7 @@ mod tests {
             session_inbox_address(family, 99),
             RouteAddress::new(family, worker_route),
             42,
+            Instant::now() + Duration::from_secs(30),
         );
 
         // Act
@@ -1590,6 +1922,7 @@ mod tests {
             session_inbox_address(family, 99),
             removed_worker_addr.clone(),
             42,
+            Instant::now() + Duration::from_secs(30),
         );
         state.pending.track_pending(
             retained_correlation_id,
@@ -1597,6 +1930,7 @@ mod tests {
             session_inbox_address(family, 100),
             retained_worker_addr.clone(),
             42,
+            Instant::now() + Duration::from_secs(30),
         );
 
         // Act
@@ -1912,6 +2246,7 @@ mod tests {
             caller_inbox_addr.clone(),
             worker_addr.clone(),
             77,
+            Instant::now() + Duration::from_secs(30),
         );
 
         // Act
@@ -1945,6 +2280,7 @@ mod tests {
             caller_inbox_addr.clone(),
             worker_addr.clone(),
             99,
+            Instant::now() + Duration::from_secs(30),
         );
 
         // Act

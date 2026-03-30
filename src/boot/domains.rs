@@ -94,6 +94,7 @@ pub fn setup(
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::api::admin::read_model::AdminReadModel>,
     queue_write_options: cntryl_midge::WriteOptions,
+    rpc_request_timeout: Option<std::time::Duration>,
 ) -> BootResult<DomainHandles> {
     let kv_sink = Arc::new(KvDomainSink::new(
         store.clone(),
@@ -127,8 +128,13 @@ pub fn setup(
     router.register_domain_pattern("stream", stream_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
-    let rpc_sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
+    let rpc_sink = Arc::new(
+        RpcDomainSink::new(router.clone(), admin_read_model.clone()).with_request_timeout(
+            rpc_request_timeout.unwrap_or(std::time::Duration::from_secs(30)),
+        ),
+    );
     router.register_domain_pattern("rpc", rpc_sink.clone() as Arc<dyn MailboxSink>);
+    rpc_sink.start_timeout_loop();
     tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
     let lease_sink = Arc::new(LeaseDomainSink::new(
@@ -244,6 +250,7 @@ mod tests {
             &store,
             &admin_read_model,
             cntryl_midge::WriteOptions::best_effort(),
+            None,
         );
 
         // Assert

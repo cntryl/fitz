@@ -591,11 +591,11 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-RPC-003: RPC Timeout
 
 **MUST** timeout when no worker responds
-**Given:** No workers registered for `rpc://prod/users/check`  
+**Given:** A worker accepted `rpc://prod/users/check` and never replied  
 **When:** Client sends `Call(route, timeout=2s)` and waits  
 **Then:**
 
-- After 2 seconds, client receives error code `6004` (ERR_ROUTE_NOT_REGISTERED)
+- After 2 seconds, client receives error code `6001` (ERR_RPC_TIMEOUT)
 - Request is abandoned
 - Client can retry or handle error
 
@@ -914,7 +914,8 @@ Clients **MUST** interpret error codes using this mapping.
 **When:** Error code is:
 
 - `1001` (Transaction Not Found) → Fatal, do NOT retry
-- `6004` (ERR_ROUTE_NOT_REGISTERED; no workers for route or timeout before any reply) → Retryable with backoff
+- `6001` (ERR_RPC_TIMEOUT; worker accepted but did not reply before timeout) → Retryable with backoff
+- `6004` (ERR_ROUTE_NOT_REGISTERED; no workers registered for route) → Retryable with backoff
 - `1011` (KV Unauthorized) → Fatal, do NOT retry
 - `2009` (Stream Unauthorized) → Fatal, do NOT retry
 - `4009` (Queue Unauthorized) → Fatal, do NOT retry

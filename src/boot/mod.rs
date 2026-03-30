@@ -57,6 +57,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         &store,
         &runtime.admin_read_model(),
         queue_write_options,
+        None,
     )?;
     runtime.attach_domains(std::sync::Arc::new(domains));
     tracing::info!("Domain actors registered");
