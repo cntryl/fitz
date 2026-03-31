@@ -29,6 +29,7 @@ mod queue_sink;
 mod rpc_sink;
 mod schedule_sink;
 mod stream_sink;
+mod subscription_state;
 
 pub use kv_sink::KvDomainSink;
 pub use lease_sink::LeaseDomainSink;

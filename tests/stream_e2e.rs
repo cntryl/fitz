@@ -3,6 +3,7 @@
 
 mod fixtures;
 use fitz::testkit::TestServer;
+use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
 async fn commit_stream_record<C>(client: &mut C, route: &str, body: &[u8])
@@ -49,18 +50,6 @@ where
     assert_eq!(status, 0, "Expected success for stream append");
 }
 
-#[tokio::test]
-async fn should_append_data_to_stream_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_append_data_to_stream::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_append_data_to_stream_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_append_data_to_stream::<WsStreamConnector>(&server).await;
-}
-
 // Generic test helper for reading from stream
 async fn should_read_appended_data<C>(server: &TestServer)
 where
@@ -85,18 +74,6 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_stream_response(&response);
     assert_eq!(status, 0, "Expected success for stream read");
-}
-
-#[tokio::test]
-async fn should_read_appended_data_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_read_appended_data::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_read_appended_data_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_read_appended_data::<WsStreamConnector>(&server).await;
 }
 
 // Generic test helper for read ordering
@@ -130,18 +107,6 @@ where
     assert_eq!(status, 0, "Expected success for ordered read");
 }
 
-#[tokio::test]
-async fn should_preserve_append_order_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_preserve_append_order::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_preserve_append_order_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_preserve_append_order::<WsStreamConnector>(&server).await;
-}
-
 // Generic test helper for read past end
 async fn should_handle_read_past_end<C>(server: &TestServer)
 where
@@ -158,18 +123,6 @@ where
     let (_msg_type, _status, _data) = parse_stream_response(&response);
     // Status can be success (empty read) or not found - both acceptable
     // Any status is acceptable here - we're just validating the request completes
-}
-
-#[tokio::test]
-async fn should_handle_read_past_end_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_read_past_end::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_read_past_end_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_read_past_end::<WsStreamConnector>(&server).await;
 }
 
 // Generic test helper for FIFO ordering with multiple appends
@@ -196,18 +149,6 @@ where
     // Assert - Order should be preserved (can't directly verify without GET support for sequence, but test ensures no errors)
 }
 
-#[tokio::test]
-async fn should_maintain_fifo_order_with_multiple_appends_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_maintain_fifo_order_with_multiple_appends::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_maintain_fifo_order_with_multiple_appends_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_maintain_fifo_order_with_multiple_appends::<WsStreamConnector>(&server).await;
-}
-
 // Generic test helper for large stream payloads
 async fn should_handle_large_stream_payload<C>(server: &TestServer)
 where
@@ -224,18 +165,6 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_stream_response(&response);
     assert_eq!(status, 0, "Should handle large payload");
-}
-
-#[tokio::test]
-async fn should_handle_large_stream_payload_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_large_stream_payload::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_large_stream_payload_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_large_stream_payload::<WsStreamConnector>(&server).await;
 }
 
 // Generic test helper for concurrent appends from multiple clients
@@ -266,18 +195,6 @@ where
 
     assert_eq!(status1, 0, "Client 1 append should succeed");
     assert_eq!(status2, 0, "Client 2 append should succeed");
-}
-
-#[tokio::test]
-async fn should_handle_concurrent_appends_from_multiple_clients_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_concurrent_appends_from_multiple_clients::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_concurrent_appends_from_multiple_clients_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_concurrent_appends_from_multiple_clients::<WsStreamConnector>(&server).await;
 }
 
 // Generic test helper for multiple sequential read operations
@@ -325,18 +242,6 @@ where
     // Assert
     let (_msg_type, status3, _data) = parse_stream_response(&response3);
     assert_eq!(status3, 0, "Sequential reads should all succeed");
-}
-
-#[tokio::test]
-async fn should_handle_sequential_read_operations_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_sequential_read_operations::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_sequential_read_operations_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_sequential_read_operations::<WsStreamConnector>(&server).await;
 }
 
 // Generic test helper for stream isolation
@@ -426,26 +331,17 @@ where
     assert_eq!(retained_payload["batch_size"], 1);
 }
 
-#[tokio::test]
-async fn should_isolate_streams_by_route_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_isolate_streams_by_route::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_stream_subscription_after_unsubscribe_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_stream_subscription_after_unsubscribe::<TcpStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_isolate_streams_by_route_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_isolate_streams_by_route::<WsStreamConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_stream_subscription_after_unsubscribe_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_stream_subscription_after_unsubscribe::<WsStreamConnector>(&server).await;
-}
+define_transport_tests!(
+    TcpStreamConnector,
+    WsStreamConnector;
+    should_append_data_to_stream_tcp / should_append_data_to_stream_ws => should_append_data_to_stream,
+    should_read_appended_data_tcp / should_read_appended_data_ws => should_read_appended_data,
+    should_preserve_append_order_tcp / should_preserve_append_order_ws => should_preserve_append_order,
+    should_handle_read_past_end_tcp / should_handle_read_past_end_ws => should_handle_read_past_end,
+    should_maintain_fifo_order_with_multiple_appends_tcp / should_maintain_fifo_order_with_multiple_appends_ws => should_maintain_fifo_order_with_multiple_appends,
+    should_handle_large_stream_payload_tcp / should_handle_large_stream_payload_ws => should_handle_large_stream_payload,
+    should_handle_concurrent_appends_from_multiple_clients_tcp / should_handle_concurrent_appends_from_multiple_clients_ws => should_handle_concurrent_appends_from_multiple_clients,
+    should_handle_sequential_read_operations_tcp / should_handle_sequential_read_operations_ws => should_handle_sequential_read_operations,
+    should_isolate_streams_by_route_tcp / should_isolate_streams_by_route_ws => should_isolate_streams_by_route,
+    should_retain_other_stream_subscription_after_unsubscribe_tcp / should_retain_other_stream_subscription_after_unsubscribe_ws => should_retain_other_stream_subscription_after_unsubscribe,
+);

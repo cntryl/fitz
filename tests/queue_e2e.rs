@@ -3,6 +3,7 @@
 
 mod fixtures;
 use fitz::testkit::TestServer;
+use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
 // Generic test helper for enqueue
@@ -20,18 +21,6 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_queue_response(&response);
     assert_eq!(status, 0, "Expected success for enqueue");
-}
-
-#[tokio::test]
-async fn should_enqueue_message_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_enqueue_message::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_enqueue_message_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_enqueue_message::<WsQueueConnector>(&server).await;
 }
 
 // Generic test helper for dequeue
@@ -60,18 +49,6 @@ where
     assert_eq!(status, 0, "Expected success for dequeue");
 }
 
-#[tokio::test]
-async fn should_dequeue_message_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_dequeue_message::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_dequeue_message_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_dequeue_message::<WsQueueConnector>(&server).await;
-}
-
 // Generic test helper for dequeue on empty queue (returns success with 0 messages)
 async fn should_reject_dequeue_empty_queue<C>(server: &TestServer)
 where
@@ -89,18 +66,6 @@ where
     assert_eq!(status, 0, "Dequeue on empty queue returns success");
     let messages = fixtures::transport::extract_queue_messages(&data).expect("extract messages");
     assert!(messages.is_empty(), "Expected no messages from empty queue");
-}
-
-#[tokio::test]
-async fn should_reject_dequeue_empty_queue_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_reject_dequeue_empty_queue::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_reject_dequeue_empty_queue_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_reject_dequeue_empty_queue::<WsQueueConnector>(&server).await;
 }
 
 // Generic test helper for queue isolation by name
@@ -134,18 +99,6 @@ where
     );
 }
 
-#[tokio::test]
-async fn should_isolate_separate_queues_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_isolate_separate_queues::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_isolate_separate_queues_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_isolate_separate_queues::<WsQueueConnector>(&server).await;
-}
-
 // Generic test helper for message payload preservation
 async fn should_preserve_message_payload<C>(server: &TestServer)
 where
@@ -173,18 +126,6 @@ where
     let messages = fixtures::transport::extract_queue_messages(&data).expect("extract messages");
     assert_eq!(messages.len(), 1, "Should receive one message");
     assert_eq!(&messages[0], payload, "Payload should be preserved");
-}
-
-#[tokio::test]
-async fn should_preserve_message_payload_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_preserve_message_payload::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_preserve_message_payload_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_preserve_message_payload::<WsQueueConnector>(&server).await;
 }
 
 // Generic test helper for multiple enqueue operations
@@ -219,18 +160,6 @@ where
     assert_eq!(status, 0, "Should be able to dequeue after batch enqueue");
 }
 
-#[tokio::test]
-async fn should_handle_batch_enqueue_operations_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_batch_enqueue_operations::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_batch_enqueue_operations_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_batch_enqueue_operations::<WsQueueConnector>(&server).await;
-}
-
 // Generic test helper for concurrent enqueue from multiple clients
 async fn should_handle_concurrent_enqueue_from_multiple_clients<C>(server: &TestServer)
 where
@@ -258,18 +187,6 @@ where
     let (_msg_type, status2, _data) = parse_queue_response(&response2);
     assert_eq!(status1, 0, "Client 1 enqueue should succeed");
     assert_eq!(status2, 0, "Client 2 enqueue should succeed");
-}
-
-#[tokio::test]
-async fn should_handle_concurrent_enqueue_from_multiple_clients_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_concurrent_enqueue_from_multiple_clients::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_concurrent_enqueue_from_multiple_clients_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_concurrent_enqueue_from_multiple_clients::<WsQueueConnector>(&server).await;
 }
 
 // Generic test helper for enqueue-dequeue-enqueue sequence
@@ -369,26 +286,16 @@ where
     assert_eq!(retained_delivery.body.as_slice(), b"{}");
 }
 
-#[tokio::test]
-async fn should_handle_mixed_enqueue_dequeue_sequence_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_mixed_enqueue_dequeue_sequence::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_mixed_enqueue_dequeue_sequence_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_mixed_enqueue_dequeue_sequence::<WsQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_queue_subscription_after_unsubscribe_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_queue_subscription_after_unsubscribe::<TcpQueueConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_queue_subscription_after_unsubscribe_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_queue_subscription_after_unsubscribe::<WsQueueConnector>(&server).await;
-}
+define_transport_tests!(
+    TcpQueueConnector,
+    WsQueueConnector;
+    should_enqueue_message_tcp / should_enqueue_message_ws => should_enqueue_message,
+    should_dequeue_message_tcp / should_dequeue_message_ws => should_dequeue_message,
+    should_reject_dequeue_empty_queue_tcp / should_reject_dequeue_empty_queue_ws => should_reject_dequeue_empty_queue,
+    should_isolate_separate_queues_tcp / should_isolate_separate_queues_ws => should_isolate_separate_queues,
+    should_preserve_message_payload_tcp / should_preserve_message_payload_ws => should_preserve_message_payload,
+    should_handle_batch_enqueue_operations_tcp / should_handle_batch_enqueue_operations_ws => should_handle_batch_enqueue_operations,
+    should_handle_concurrent_enqueue_from_multiple_clients_tcp / should_handle_concurrent_enqueue_from_multiple_clients_ws => should_handle_concurrent_enqueue_from_multiple_clients,
+    should_handle_mixed_enqueue_dequeue_sequence_tcp / should_handle_mixed_enqueue_dequeue_sequence_ws => should_handle_mixed_enqueue_dequeue_sequence,
+    should_retain_other_queue_subscription_after_unsubscribe_tcp / should_retain_other_queue_subscription_after_unsubscribe_ws => should_retain_other_queue_subscription_after_unsubscribe,
+);

@@ -1,4 +1,5 @@
 use super::parse_route_triplet;
+use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -14,13 +15,22 @@ struct NoticeSubscription {
     subscriber: crate::runtime::routing::RouteAddress,
 }
 
-struct NoticeFamilyState {
-    subscriptions: HashMap<u64, NoticeSubscription>,
-    index: crate::runtime::SubscriptionIndex,
+impl RoutedSubscription for NoticeSubscription {
+    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
+        &self.pattern
+    }
+
+    fn session_id(&self) -> u64 {
+        self.session_id
+    }
+
+    fn subscription_id(&self) -> u64 {
+        self.subscription_id
+    }
 }
 
 pub struct NoticeDomainSink {
-    families: Mutex<HashMap<u64, NoticeFamilyState>>,
+    families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
     next_sub_id: AtomicU64,
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
@@ -50,7 +60,7 @@ impl NoticeDomainSink {
         let mut subscriptions = Vec::new();
         let mut routes: HashMap<String, usize> = HashMap::new();
         for state in families.values() {
-            for subscription in state.subscriptions.values() {
+            for subscription in state.values() {
                 let pattern = subscription.pattern.route().to_string();
                 if let Some((realm, _area, _resource)) = parse_route_triplet(&pattern) {
                     subscriptions.push(crate::api::admin::NoticeSubscription {
@@ -81,6 +91,41 @@ impl NoticeDomainSink {
         );
     }
 
+    fn fan_out_notice_event(
+        &self,
+        state: &RoutedSubscriptionSet<NoticeSubscription>,
+        event: &crate::runtime::DomainPublishEvent,
+        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+    ) {
+        state.for_each_matching(event, |subscription| {
+            self.route_notice_notify(subscription, &event.route, &event.payload, payload_encoder);
+        });
+    }
+
+    fn route_notice_notify(
+        &self,
+        subscription: &NoticeSubscription,
+        route: &crate::runtime::routing::Route,
+        payload: &[u8],
+        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+    ) {
+        let notify_payload = crate::protocol::notice_codec::encode_notify_into(
+            subscription.subscription_id,
+            route,
+            payload,
+            payload_encoder,
+        );
+        let notify_ctx = FrameContext::new(
+            subscription.session_id,
+            crate::protocol::frame::ChannelId::Sub,
+            crate::protocol::tlv::MessageType::new(504),
+            bytes::Bytes::from(notify_payload),
+            crate::runtime::routing::RouteFamily::from_u32(subscription.subscriber.family().id()),
+        );
+        let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
+        let _ = self.router.route(notify_envelope);
+    }
+
     fn handle_domain_publish(
         &self,
         event: &crate::runtime::DomainPublishEvent,
@@ -90,32 +135,7 @@ impl NoticeDomainSink {
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
-            let matches = state.index.match_all_with_capacity(
-                event.family_id,
-                &event.route,
-                state.subscriptions.len(),
-            );
-            for sub_id in matches {
-                if let Some(sub) = state.subscriptions.get(&sub_id.0) {
-                    let notify_payload = crate::protocol::notice_codec::encode_notify_into(
-                        sub.subscription_id,
-                        &event.route,
-                        &event.payload,
-                        &mut payload_encoder,
-                    );
-                    let notify_ctx = FrameContext::new(
-                        sub.session_id,
-                        crate::protocol::frame::ChannelId::Sub,
-                        crate::protocol::tlv::MessageType::new(504),
-                        bytes::Bytes::from(notify_payload),
-                        crate::runtime::routing::RouteFamily::from_u32(
-                            sub.subscriber.family().id(),
-                        ),
-                    );
-                    let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
-                    let _ = self.router.route(notify_envelope);
-                }
-            }
+            self.fan_out_notice_event(state, event, &mut payload_encoder);
         }
         Ok(())
     }
@@ -123,21 +143,10 @@ impl NoticeDomainSink {
     pub fn unsubscribe_all_for_session(&self, session_id: u64) {
         let mut families = self.families.lock();
         for (family_id, state) in families.iter_mut() {
-            let removed_ids: Vec<u64> = state
-                .subscriptions
-                .iter()
-                .filter_map(|(sub_id, sub)| (sub.session_id == session_id).then_some(*sub_id))
-                .collect();
-            for sub_id in removed_ids {
-                if let Some(sub) = state.subscriptions.remove(&sub_id) {
-                    let pattern = crate::runtime::routing::Route::new(sub.pattern.route());
-                    state.index.remove(
-                        crate::runtime::routing::RouteFamily::new(*family_id),
-                        &pattern,
-                        crate::runtime::SubscriptionId(sub_id),
-                    );
-                }
-            }
+            state.remove_session(
+                crate::runtime::routing::RouteFamily::new(*family_id),
+                session_id,
+            );
         }
         tracing::debug!(
             domain = "notice",
@@ -150,7 +159,7 @@ impl NoticeDomainSink {
         let families = self.families.lock();
         families
             .values()
-            .map(|state| state.subscriptions.len())
+            .map(|state| state.subscription_count())
             .sum()
     }
 }
@@ -227,33 +236,12 @@ impl MailboxSink for NoticeDomainSink {
                 let family_id = pub_msg.family_id.as_u64();
                 let families = self.families.lock();
                 if let Some(state) = families.get(&family_id) {
-                    let route = pub_msg.route.clone();
-                    let matches = state.index.match_all_with_capacity(
+                    let event = crate::runtime::DomainPublishEvent::new(
                         pub_msg.family_id,
-                        &route,
-                        state.subscriptions.len(),
+                        pub_msg.route.clone(),
+                        pub_msg.payload.clone(),
                     );
-                    for sub_id in matches {
-                        if let Some(sub) = state.subscriptions.get(&sub_id.0) {
-                            let notify_payload = crate::protocol::notice_codec::encode_notify_into(
-                                sub.subscription_id,
-                                &route,
-                                &pub_msg.payload,
-                                &mut payload_encoder,
-                            );
-                            let notify_ctx = FrameContext::new(
-                                sub.session_id,
-                                crate::protocol::frame::ChannelId::Sub,
-                                crate::protocol::tlv::MessageType::new(504),
-                                bytes::Bytes::from(notify_payload),
-                                crate::runtime::routing::RouteFamily::from_u32(
-                                    sub.subscriber.family().id(),
-                                ),
-                            );
-                            let notify_envelope = Envelope::new(sub.subscriber.clone(), notify_ctx);
-                            let _ = self.router.route(notify_envelope);
-                        }
-                    }
+                    self.fan_out_notice_event(state, &event, &mut payload_encoder);
                 }
                 (
                     Some(NoticeResponse::Ok {
@@ -268,19 +256,7 @@ impl MailboxSink for NoticeDomainSink {
                 let mut families = self.families.lock();
                 let state = families
                     .entry(family_id)
-                    .or_insert_with(|| NoticeFamilyState {
-                        subscriptions: HashMap::new(),
-                        index: crate::runtime::SubscriptionIndex::new(),
-                    });
-
-                let existing_sub_id = state
-                    .subscriptions
-                    .values()
-                    .find(|s| {
-                        s.session_id == sub_msg.session_id.0
-                            && s.pattern.route() == sub_msg.pattern.as_str()
-                    })
-                    .map(|s| s.subscription_id);
+                    .or_insert_with(RoutedSubscriptionSet::new);
 
                 if sub_msg.pattern.as_str().is_empty() {
                     tracing::warn!(
@@ -293,6 +269,8 @@ impl MailboxSink for NoticeDomainSink {
                         false,
                     )
                 } else {
+                    let existing_sub_id =
+                        state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
                     let sub_id = if let Some(id) = existing_sub_id {
                         tracing::debug!(
                             domain = "notice",
@@ -304,18 +282,12 @@ impl MailboxSink for NoticeDomainSink {
                         id
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        let pattern =
-                            crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str());
-
-                        state.index.insert(
+                        state.insert(
                             sub_msg.family_id,
-                            &sub_msg.pattern,
-                            crate::runtime::SubscriptionId(new_id),
-                        );
-                        state.subscriptions.insert(
-                            new_id,
                             NoticeSubscription {
-                                pattern,
+                                pattern: crate::runtime::matcher::Pattern::new(
+                                    sub_msg.pattern.as_str(),
+                                ),
                                 session_id: sub_msg.session_id.0,
                                 subscription_id: new_id,
                                 subscriber: sub_msg.subscriber.clone(),
@@ -344,24 +316,11 @@ impl MailboxSink for NoticeDomainSink {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
                 if let Some(state) = families.get_mut(&family_id) {
-                    let removed_ids: Vec<u64> = state
-                        .subscriptions
-                        .iter()
-                        .filter_map(|(sub_id, sub)| {
-                            (sub.session_id == unsub_msg.session_id.0
-                                && sub.pattern.route() == unsub_msg.pattern.as_str())
-                            .then_some(*sub_id)
-                        })
-                        .collect();
-                    for sub_id in removed_ids {
-                        if state.subscriptions.remove(&sub_id).is_some() {
-                            state.index.remove(
-                                unsub_msg.family_id,
-                                &unsub_msg.pattern,
-                                crate::runtime::SubscriptionId(sub_id),
-                            );
-                        }
-                    }
+                    state.remove_session_pattern(
+                        unsub_msg.family_id,
+                        unsub_msg.session_id.0,
+                        unsub_msg.pattern.as_str(),
+                    );
                 }
                 (
                     Some(NoticeResponse::Ok {

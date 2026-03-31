@@ -22,12 +22,77 @@ pub trait TestConnectorClient: Send {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), String>;
 }
 
+#[async_trait::async_trait]
+pub trait FrameReceivingConnector: TestConnectorClient {
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
+}
+
 // ============================================================================
 // TCP AND WEBSOCKET CONNECTOR WRAPPER STRUCTS
 // ============================================================================
 
 pub struct TcpClient(TestClient);
 pub struct WsClient(TestWebSocketClient);
+
+#[async_trait::async_trait]
+trait FixtureTransportClient: Send {
+    async fn fixture_request(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+    async fn fixture_send_frame(&mut self, frame: &[u8]) -> Result<(), String>;
+    async fn fixture_recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
+}
+
+trait HasFixtureClient {
+    type Client: FixtureTransportClient;
+
+    fn client_mut(&mut self) -> &mut Self::Client;
+}
+
+async fn connect_tcp_raw(server: &TestServer) -> Result<TestClient, String> {
+    TestClient::new(server.tcp_addr)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn connect_ws_raw(server: &TestServer) -> Result<TestWebSocketClient, String> {
+    let url = format!("ws://{}", server.ws_addr);
+    TestWebSocketClient::connect(&url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[async_trait::async_trait]
+impl FixtureTransportClient for TestClient {
+    async fn fixture_request(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn fixture_send_frame(&mut self, frame: &[u8]) -> Result<(), String> {
+        self.send_frame(frame).await.map_err(|e| e.to_string())
+    }
+
+    async fn fixture_recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.recv_frame(timeout_ms).await.map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl FixtureTransportClient for TestWebSocketClient {
+    async fn fixture_request(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn fixture_send_frame(&mut self, frame: &[u8]) -> Result<(), String> {
+        self.send_frame(frame).await.map_err(|e| e.to_string())
+    }
+
+    async fn fixture_recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.recv_frame(timeout_ms).await.map_err(|e| e.to_string())
+    }
+}
 
 #[async_trait::async_trait]
 impl TestConnectorClient for TcpClient {
@@ -40,6 +105,20 @@ impl TestConnectorClient for TcpClient {
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), String> {
         self.0.send_frame(frame).await.map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl<T> TestConnectorClient for T
+where
+    T: HasFixtureClient + Send,
+{
+    async fn request(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.client_mut().fixture_request(frame, timeout_ms).await
+    }
+
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), String> {
+        self.client_mut().fixture_send_frame(frame).await
     }
 }
 
@@ -57,6 +136,16 @@ impl TestConnectorClient for WsClient {
     }
 }
 
+#[async_trait::async_trait]
+impl<T> FrameReceivingConnector for T
+where
+    T: HasFixtureClient + Send,
+{
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.client_mut().fixture_recv_frame(timeout_ms).await
+    }
+}
+
 // ============================================================================
 // LEASE DOMAIN - CONNECTOR IMPLEMENTATIONS
 // ============================================================================
@@ -64,62 +153,42 @@ impl TestConnectorClient for WsClient {
 pub struct TcpLeaseConnector(TestClient);
 pub struct WsLeaseConnector(TestWebSocketClient);
 
-impl TcpLeaseConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+impl HasFixtureClient for TcpLeaseConnector {
+    type Client = TestClient;
+
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
-impl WsLeaseConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+impl HasFixtureClient for WsLeaseConnector {
+    type Client = TestWebSocketClient;
+
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
 #[async_trait::async_trait]
-pub trait LeaseConnector: Sized {
+pub trait LeaseConnector: TestConnectorClient + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
 impl LeaseConnector for TcpLeaseConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpLeaseConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpLeaseConnector)
     }
 }
 
 #[async_trait::async_trait]
 impl LeaseConnector for WsLeaseConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsLeaseConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsLeaseConnector)
     }
 }
 
@@ -234,91 +303,42 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
 pub struct TcpNoticeConnector(TestClient);
 pub struct WsNoticeConnector(TestWebSocketClient);
 
-impl TcpNoticeConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for TcpNoticeConnector {
+    type Client = TestClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
-impl WsNoticeConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for WsNoticeConnector {
+    type Client = TestWebSocketClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
 #[async_trait::async_trait]
-pub trait NoticeConnector: Sized {
+pub trait NoticeConnector: FrameReceivingConnector + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
+
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
 impl NoticeConnector for TcpNoticeConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpNoticeConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpNoticeConnector)
     }
 }
 
 #[async_trait::async_trait]
 impl NoticeConnector for WsNoticeConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsNoticeConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsNoticeConnector)
     }
 }
 
@@ -433,91 +453,42 @@ pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
 pub struct TcpQueueConnector(TestClient);
 pub struct WsQueueConnector(TestWebSocketClient);
 
-impl TcpQueueConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for TcpQueueConnector {
+    type Client = TestClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
-impl WsQueueConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for WsQueueConnector {
+    type Client = TestWebSocketClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
 #[async_trait::async_trait]
-pub trait QueueConnector: Sized {
+pub trait QueueConnector: FrameReceivingConnector + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
+
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
 impl QueueConnector for TcpQueueConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpQueueConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpQueueConnector)
     }
 }
 
 #[async_trait::async_trait]
 impl QueueConnector for WsQueueConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsQueueConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsQueueConnector)
     }
 }
 
@@ -684,62 +655,42 @@ pub fn extract_queue_messages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
 pub struct TcpRpcConnector(TestClient);
 pub struct WsRpcConnector(TestWebSocketClient);
 
-impl TcpRpcConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+impl HasFixtureClient for TcpRpcConnector {
+    type Client = TestClient;
+
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
-impl WsRpcConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+impl HasFixtureClient for WsRpcConnector {
+    type Client = TestWebSocketClient;
+
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
 #[async_trait::async_trait]
-pub trait RpcConnector: Sized {
+pub trait RpcConnector: TestConnectorClient + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
 impl RpcConnector for TcpRpcConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpRpcConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpRpcConnector)
     }
 }
 
 #[async_trait::async_trait]
 impl RpcConnector for WsRpcConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsRpcConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsRpcConnector)
     }
 }
 
@@ -934,91 +885,42 @@ pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, 
 pub struct TcpStreamConnector(TestClient);
 pub struct WsStreamConnector(TestWebSocketClient);
 
-impl TcpStreamConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for TcpStreamConnector {
+    type Client = TestClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
-impl WsStreamConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for WsStreamConnector {
+    type Client = TestWebSocketClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
 #[async_trait::async_trait]
-pub trait StreamConnector: Sized {
+pub trait StreamConnector: FrameReceivingConnector + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
+
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
 impl StreamConnector for TcpStreamConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpStreamConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpStreamConnector)
     }
 }
 
 #[async_trait::async_trait]
 impl StreamConnector for WsStreamConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsStreamConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsStreamConnector)
     }
 }
 
@@ -1223,91 +1125,42 @@ pub fn parse_stream_delivery(frame: &[u8]) -> Result<StreamDelivery, String> {
 pub struct TcpScheduleConnector(TestClient);
 pub struct WsScheduleConnector(TestWebSocketClient);
 
-impl TcpScheduleConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for TcpScheduleConnector {
+    type Client = TestClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
-impl WsScheduleConnector {
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
+impl HasFixtureClient for WsScheduleConnector {
+    type Client = TestWebSocketClient;
 
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+    fn client_mut(&mut self) -> &mut Self::Client {
+        &mut self.0
     }
 }
 
 #[async_trait::async_trait]
-pub trait ScheduleConnector: Sized {
+pub trait ScheduleConnector: FrameReceivingConnector + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
+
+    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.request(frame, timeout_ms).await
+    }
 }
 
 #[async_trait::async_trait]
 impl ScheduleConnector for TcpScheduleConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpScheduleConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpScheduleConnector)
     }
 }
 
 #[async_trait::async_trait]
 impl ScheduleConnector for WsScheduleConnector {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsScheduleConnector)
-            .map_err(|e| e.to_string())
-    }
-
-    async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .request(frame, timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
-        self.0
-            .recv_frame(timeout_ms)
-            .await
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsScheduleConnector)
     }
 }
 
@@ -1451,21 +1304,14 @@ pub trait KvConnector: TestConnectorClient + Sized {
 #[async_trait::async_trait]
 impl KvConnector for TcpClient {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        TestClient::new(server.tcp_addr)
-            .await
-            .map(TcpClient)
-            .map_err(|e| e.to_string())
+        connect_tcp_raw(server).await.map(TcpClient)
     }
 }
 
 #[async_trait::async_trait]
 impl KvConnector for WsClient {
     async fn connect(server: &TestServer) -> Result<Self, String> {
-        let url = format!("ws://{}", server.ws_addr);
-        TestWebSocketClient::connect(&url)
-            .await
-            .map(WsClient)
-            .map_err(|e| e.to_string())
+        connect_ws_raw(server).await.map(WsClient)
     }
 }
 

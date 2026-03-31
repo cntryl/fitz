@@ -4,6 +4,7 @@
 
 mod fixtures;
 use fitz::testkit::TestServer;
+use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
 // ===== GENERIC TEST IMPLEMENTATIONS =====
@@ -259,102 +260,15 @@ where
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
 }
 
-// ===== TCP TESTS =====
-
-#[tokio::test]
-async fn should_publish_to_subscribers_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_publish_to_subscribers::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_reject_invalid_pattern_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_reject_invalid_pattern::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_match_single_wildcard_pattern_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_match_single_wildcard_pattern::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_match_double_wildcard_pattern_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_match_double_wildcard_pattern::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_match_multiple_subscribers_on_overlapping_patterns_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_match_multiple_subscribers_on_overlapping_patterns::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_deliver_to_exact_match_before_wildcard_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_deliver_to_exact_match_before_wildcard::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_not_match_pattern_if_publish_beneath_scope_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_not_match_pattern_if_publish_beneath_scope::<TcpNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_notice_subscription_after_unsubscribe_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_notice_subscription_after_unsubscribe::<TcpNoticeConnector>(&server).await;
-}
-
-// ===== WEBSOCKET TESTS =====
-
-#[tokio::test]
-async fn should_publish_to_subscribers_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_publish_to_subscribers::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_reject_invalid_pattern_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_reject_invalid_pattern::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_match_single_wildcard_pattern_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_match_single_wildcard_pattern::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_match_double_wildcard_pattern_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_match_double_wildcard_pattern::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_match_multiple_subscribers_on_overlapping_patterns_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_match_multiple_subscribers_on_overlapping_patterns::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_deliver_to_exact_match_before_wildcard_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_deliver_to_exact_match_before_wildcard::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_not_match_pattern_if_publish_beneath_scope_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_not_match_pattern_if_publish_beneath_scope::<WsNoticeConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_notice_subscription_after_unsubscribe_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_notice_subscription_after_unsubscribe::<WsNoticeConnector>(&server).await;
-}
+define_transport_tests!(
+    TcpNoticeConnector,
+    WsNoticeConnector;
+    should_publish_to_subscribers_tcp / should_publish_to_subscribers_ws => should_publish_to_subscribers,
+    should_reject_invalid_pattern_tcp / should_reject_invalid_pattern_ws => should_reject_invalid_pattern,
+    should_match_single_wildcard_pattern_tcp / should_match_single_wildcard_pattern_ws => should_match_single_wildcard_pattern,
+    should_match_double_wildcard_pattern_tcp / should_match_double_wildcard_pattern_ws => should_match_double_wildcard_pattern,
+    should_match_multiple_subscribers_on_overlapping_patterns_tcp / should_match_multiple_subscribers_on_overlapping_patterns_ws => should_match_multiple_subscribers_on_overlapping_patterns,
+    should_deliver_to_exact_match_before_wildcard_tcp / should_deliver_to_exact_match_before_wildcard_ws => should_deliver_to_exact_match_before_wildcard,
+    should_not_match_pattern_if_publish_beneath_scope_tcp / should_not_match_pattern_if_publish_beneath_scope_ws => should_not_match_pattern_if_publish_beneath_scope,
+    should_retain_other_notice_subscription_after_unsubscribe_tcp / should_retain_other_notice_subscription_after_unsubscribe_ws => should_retain_other_notice_subscription_after_unsubscribe,
+);

@@ -3,6 +3,7 @@
 
 mod fixtures;
 use fitz::testkit::TestServer;
+use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
 // Generic test helper for creating schedule
@@ -20,18 +21,6 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_schedule_response(&response);
     assert_eq!(status, 0, "Expected success for create schedule");
-}
-
-#[tokio::test]
-async fn should_create_cron_schedule_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_create_cron_schedule::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_create_cron_schedule_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_create_cron_schedule::<WsScheduleConnector>(&server).await;
 }
 
 // Generic test helper for canceling schedule
@@ -60,18 +49,6 @@ where
     assert_eq!(status, 0, "Expected success for cancel schedule");
 }
 
-#[tokio::test]
-async fn should_cancel_schedule_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_cancel_schedule::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_cancel_schedule_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_cancel_schedule::<WsScheduleConnector>(&server).await;
-}
-
 // Generic test helper for invalid cron expression
 async fn should_reject_invalid_cron<C>(server: &TestServer)
 where
@@ -87,18 +64,6 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_schedule_response(&response);
     assert_ne!(status, 0, "Expected failure for invalid cron expression");
-}
-
-#[tokio::test]
-async fn should_reject_invalid_cron_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_reject_invalid_cron::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_reject_invalid_cron_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_reject_invalid_cron::<WsScheduleConnector>(&server).await;
 }
 
 // Generic test helper for cancel nonexistent schedule
@@ -121,18 +86,6 @@ where
     );
 }
 
-#[tokio::test]
-async fn should_reject_cancel_nonexistent_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_allow_cancel_nonexistent_idempotent::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_reject_cancel_nonexistent_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_allow_cancel_nonexistent_idempotent::<WsScheduleConnector>(&server).await;
-}
-
 // Generic test helper for schedule payload preservation
 async fn should_preserve_schedule_payload<C>(server: &TestServer)
 where
@@ -149,18 +102,6 @@ where
     // Assert
     let (_msg_type, status, _data) = parse_schedule_response(&response);
     assert_eq!(status, 0, "Should preserve schedule payload");
-}
-
-#[tokio::test]
-async fn should_preserve_schedule_payload_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_preserve_schedule_payload::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_preserve_schedule_payload_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_preserve_schedule_payload::<WsScheduleConnector>(&server).await;
 }
 
 // Generic test helper for multiple schedule creation
@@ -210,18 +151,6 @@ where
     assert_eq!(status3, 0, "Should handle multiple schedule creation");
 }
 
-#[tokio::test]
-async fn should_handle_multiple_schedule_creation_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_multiple_schedule_creation::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_handle_multiple_schedule_creation_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_multiple_schedule_creation::<WsScheduleConnector>(&server).await;
-}
-
 // Generic test helper for various cron expressions
 async fn should_support_various_cron_formats<C>(server: &TestServer)
 where
@@ -253,18 +182,6 @@ where
         let (_msg_type, status, _data) = parse_schedule_response(&response);
         assert_eq!(status, 0, "Should accept cron: {}", cron);
     }
-}
-
-#[tokio::test]
-async fn should_support_various_cron_formats_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_support_various_cron_formats::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_support_various_cron_formats_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_support_various_cron_formats::<WsScheduleConnector>(&server).await;
 }
 
 // Generic test helper for sequential create and cancel
@@ -392,28 +309,16 @@ where
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
 }
 
-#[tokio::test]
-async fn should_handle_sequential_create_and_cancel_operations_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_sequential_create_and_cancel_operations::<TcpScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_schedule_subscription_after_unsubscribe_tcp() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_schedule_subscription_after_unsubscribe::<TcpScheduleConnector>(&server)
-        .await;
-}
-
-#[tokio::test]
-async fn should_handle_sequential_create_and_cancel_operations_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_handle_sequential_create_and_cancel_operations::<WsScheduleConnector>(&server).await;
-}
-
-#[tokio::test]
-async fn should_retain_other_schedule_subscription_after_unsubscribe_ws() {
-    let server = TestServer::start().await.expect("start");
-    should_retain_other_schedule_subscription_after_unsubscribe::<WsScheduleConnector>(&server)
-        .await;
-}
+define_transport_tests!(
+    TcpScheduleConnector,
+    WsScheduleConnector;
+    should_create_cron_schedule_tcp / should_create_cron_schedule_ws => should_create_cron_schedule,
+    should_cancel_schedule_tcp / should_cancel_schedule_ws => should_cancel_schedule,
+    should_reject_invalid_cron_tcp / should_reject_invalid_cron_ws => should_reject_invalid_cron,
+    should_reject_cancel_nonexistent_tcp / should_reject_cancel_nonexistent_ws => should_allow_cancel_nonexistent_idempotent,
+    should_preserve_schedule_payload_tcp / should_preserve_schedule_payload_ws => should_preserve_schedule_payload,
+    should_handle_multiple_schedule_creation_tcp / should_handle_multiple_schedule_creation_ws => should_handle_multiple_schedule_creation,
+    should_support_various_cron_formats_tcp / should_support_various_cron_formats_ws => should_support_various_cron_formats,
+    should_handle_sequential_create_and_cancel_operations_tcp / should_handle_sequential_create_and_cancel_operations_ws => should_handle_sequential_create_and_cancel_operations,
+    should_retain_other_schedule_subscription_after_unsubscribe_tcp / should_retain_other_schedule_subscription_after_unsubscribe_ws => should_retain_other_schedule_subscription_after_unsubscribe,
+);
