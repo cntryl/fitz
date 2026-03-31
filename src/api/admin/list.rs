@@ -139,6 +139,147 @@ pub struct RpcOperationDetail {
     pub requests_pending: usize,
 }
 
+impl KvResourceDetail {
+    fn from_count(path: &ResourcePath<'_>, transactions_active: usize) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            transactions_active,
+        }
+    }
+}
+
+impl QueueResourceDetail {
+    fn from_queue(item: QueueInfo) -> Self {
+        Self {
+            realm: item.realm,
+            area: item.area,
+            resource: item.resource,
+            messages_ready: item.messages_ready,
+            messages_leased: item.messages_leased,
+            messages_total: item.messages_total,
+            oldest_message_age_seconds: item.oldest_message_age_seconds,
+        }
+    }
+
+    fn empty(path: &ResourcePath<'_>) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            messages_ready: 0,
+            messages_leased: 0,
+            messages_total: 0,
+            oldest_message_age_seconds: 0,
+        }
+    }
+}
+
+impl StreamResourceDetail {
+    fn from_stream(item: StreamInfo) -> Self {
+        Self {
+            realm: item.realm,
+            area: item.area,
+            resource: item.resource,
+            offset: item.offset,
+            watermark: item.watermark,
+            size_bytes: item.size_bytes,
+            sessions_active: item.sessions_active,
+        }
+    }
+
+    fn empty(path: &ResourcePath<'_>) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            offset: 0,
+            watermark: 0,
+            size_bytes: 0,
+            sessions_active: 0,
+        }
+    }
+}
+
+impl LeaseResourceDetail {
+    fn from_count(path: &ResourcePath<'_>, active_leases: usize) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            active_leases,
+        }
+    }
+}
+
+impl ScheduleResourceDetail {
+    fn empty(path: &ResourcePath<'_>) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            enabled: false,
+            cron: None,
+            next_run: None,
+            executions_total: 0,
+        }
+    }
+
+    fn from_schedule(item: ScheduleInfo) -> Self {
+        Self {
+            realm: item.realm,
+            area: item.area,
+            resource: item.resource,
+            enabled: item.enabled,
+            cron: Some(item.cron),
+            next_run: Some(item.next_run),
+            executions_total: item.executions_total,
+        }
+    }
+
+    fn aggregate(path: &ResourcePath<'_>, schedules: &[ScheduleInfo]) -> Self {
+        let next_run = schedules.iter().map(|item| item.next_run.as_str()).min();
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            enabled: schedules.iter().any(|item| item.enabled),
+            cron: None,
+            next_run: next_run.map(ToString::to_string),
+            executions_total: schedules.iter().map(|item| item.executions_total).sum(),
+        }
+    }
+}
+
+impl NoticeResourceDetail {
+    fn from_count(path: &ResourcePath<'_>, subscriptions_active: usize) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            subscriptions_active,
+        }
+    }
+}
+
+impl RpcOperationDetail {
+    fn from_counts(
+        path: &RpcOperationPath<'_>,
+        workers_registered: usize,
+        requests_pending: usize,
+    ) -> Self {
+        Self {
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            operation: path.operation.to_string(),
+            workers_registered,
+            requests_pending,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KvTransactionsList {
     pub transactions: Vec<KvTransaction>,
@@ -512,6 +653,37 @@ struct OwnedRpcOperation {
     operation: String,
 }
 
+impl ResourcePath<'_> {
+    fn matches(&self, realm: &str, area: &str, resource: &str) -> bool {
+        self.realm == realm && self.area == area && self.resource == resource
+    }
+}
+
+impl ResourceRef {
+    fn matches_path(&self, path: &ResourcePath<'_>) -> bool {
+        path.matches(&self.realm, &self.area, &self.resource)
+    }
+}
+
+impl RpcOperationPath<'_> {
+    fn matches(&self, realm: &str, area: &str, resource: &str, operation: &str) -> bool {
+        self.realm == realm
+            && self.area == area
+            && self.resource == resource
+            && self.operation == operation
+    }
+}
+
+impl OwnedRpcOperation {
+    fn matches_resource_path(&self, path: &ResourcePath<'_>) -> bool {
+        path.matches(&self.realm, &self.area, &self.resource)
+    }
+
+    fn matches_operation_path(&self, path: &RpcOperationPath<'_>) -> bool {
+        path.matches(&self.realm, &self.area, &self.resource, &self.operation)
+    }
+}
+
 pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
     let mut params = HashMap::new();
     if let Some(query) = uri.query() {
@@ -647,11 +819,7 @@ pub fn rpc_operations(runtime: &Runtime, path: &ResourcePath<'_>) -> OperationCo
         .rpc_list_workers(None)
         .into_iter()
         .filter_map(|worker| parse_rpc_operation(&worker.route))
-        .filter(|operation| {
-            operation.realm == path.realm
-                && operation.area == path.area
-                && operation.resource == path.resource
-        })
+        .filter(|operation| operation.matches_resource_path(path))
         .map(|operation| operation.operation)
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -681,7 +849,7 @@ pub async fn kv_transactions_for_resource(
     let transactions = runtime
         .kv_list_transactions(Some(path.realm))
         .into_iter()
-        .filter(|tx| tx.realm == path.realm && tx.area == path.area && tx.resource == path.resource)
+        .filter(|tx| path.matches(&tx.realm, &tx.area, &tx.resource))
         .collect();
     crate::api::admin::json_response(KvTransactionsList { transactions })
 }
@@ -693,9 +861,7 @@ pub async fn queue_leases_for_resource(
     let leases = runtime
         .queue_list_leases(Some(path.realm))
         .into_iter()
-        .filter(|lease| {
-            lease.realm == path.realm && lease.area == path.area && lease.resource == path.resource
-        })
+        .filter(|lease| path.matches(&lease.realm, &lease.area, &lease.resource))
         .collect();
     crate::api::admin::json_response(QueueLeasesList { leases })
 }
@@ -709,11 +875,7 @@ pub async fn notice_subscriptions_for_resource(
         .into_iter()
         .filter(|subscription| {
             parse_flexible_route(&subscription.pattern)
-                .map(|route| {
-                    route.realm == path.realm
-                        && route.area == path.area
-                        && route.resource == path.resource
-                })
+                .map(|route| route.matches_path(path))
                 .unwrap_or(false)
         })
         .collect();
@@ -729,12 +891,7 @@ pub async fn rpc_workers_for_operation(
         .into_iter()
         .filter(|worker| {
             parse_rpc_operation(&worker.route)
-                .map(|route| {
-                    route.realm == path.realm
-                        && route.area == path.area
-                        && route.resource == path.resource
-                        && route.operation == path.operation
-                })
+                .map(|route| route.matches_operation_path(path))
                 .unwrap_or(false)
         })
         .collect();
@@ -753,42 +910,19 @@ pub fn kv_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> KvResourceDetail
     let transactions = runtime
         .kv_list_transactions(Some(path.realm))
         .into_iter()
-        .filter(|tx| tx.realm == path.realm && tx.area == path.area && tx.resource == path.resource)
+        .filter(|tx| path.matches(&tx.realm, &tx.area, &tx.resource))
         .count();
-    KvResourceDetail {
-        realm: path.realm.to_string(),
-        area: path.area.to_string(),
-        resource: path.resource.to_string(),
-        transactions_active: transactions,
-    }
+    KvResourceDetail::from_count(path, transactions)
 }
 
 pub fn queue_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> QueueResourceDetail {
     let queue = runtime
         .queue_list_queues(Some(path.realm))
         .into_iter()
-        .find(|item| {
-            item.realm == path.realm && item.area == path.area && item.resource == path.resource
-        });
+        .find(|item| path.matches(&item.realm, &item.area, &item.resource));
     match queue {
-        Some(item) => QueueResourceDetail {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-            messages_ready: item.messages_ready,
-            messages_leased: item.messages_leased,
-            messages_total: item.messages_total,
-            oldest_message_age_seconds: item.oldest_message_age_seconds,
-        },
-        None => QueueResourceDetail {
-            realm: path.realm.to_string(),
-            area: path.area.to_string(),
-            resource: path.resource.to_string(),
-            messages_ready: 0,
-            messages_leased: 0,
-            messages_total: 0,
-            oldest_message_age_seconds: 0,
-        },
+        Some(item) => QueueResourceDetail::from_queue(item),
+        None => QueueResourceDetail::empty(path),
     }
 }
 
@@ -796,28 +930,10 @@ pub fn stream_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> StreamResour
     let stream = runtime
         .stream_list_streams(Some(path.realm))
         .into_iter()
-        .find(|item| {
-            item.realm == path.realm && item.area == path.area && item.resource == path.resource
-        });
+        .find(|item| path.matches(&item.realm, &item.area, &item.resource));
     match stream {
-        Some(item) => StreamResourceDetail {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-            offset: item.offset,
-            watermark: item.watermark,
-            size_bytes: item.size_bytes,
-            sessions_active: item.sessions_active,
-        },
-        None => StreamResourceDetail {
-            realm: path.realm.to_string(),
-            area: path.area.to_string(),
-            resource: path.resource.to_string(),
-            offset: 0,
-            watermark: 0,
-            size_bytes: 0,
-            sessions_active: 0,
-        },
+        Some(item) => StreamResourceDetail::from_stream(item),
+        None => StreamResourceDetail::empty(path),
     }
 }
 
@@ -825,61 +941,27 @@ pub fn lease_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> LeaseResource
     let active_leases = runtime
         .lease_list_leases(Some(path.realm))
         .into_iter()
-        .filter(|item| {
-            item.realm == path.realm && item.area == path.area && item.resource == path.resource
-        })
+        .filter(|item| path.matches(&item.realm, &item.area, &item.resource))
         .count();
-    LeaseResourceDetail {
-        realm: path.realm.to_string(),
-        area: path.area.to_string(),
-        resource: path.resource.to_string(),
-        active_leases,
-    }
+    LeaseResourceDetail::from_count(path, active_leases)
 }
 
 pub fn schedule_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> ScheduleResourceDetail {
     let schedules = runtime
         .schedule_list_schedules(Some(path.realm))
         .into_iter()
-        .filter(|item| {
-            item.realm == path.realm && item.area == path.area && item.resource == path.resource
-        })
+        .filter(|item| path.matches(&item.realm, &item.area, &item.resource))
         .collect::<Vec<_>>();
     if schedules.is_empty() {
-        return ScheduleResourceDetail {
-            realm: path.realm.to_string(),
-            area: path.area.to_string(),
-            resource: path.resource.to_string(),
-            enabled: false,
-            cron: None,
-            next_run: None,
-            executions_total: 0,
-        };
+        return ScheduleResourceDetail::empty(path);
     }
 
     if schedules.len() == 1 {
         let item = schedules.into_iter().next().expect("single schedule");
-        return ScheduleResourceDetail {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-            enabled: item.enabled,
-            cron: Some(item.cron),
-            next_run: Some(item.next_run),
-            executions_total: item.executions_total,
-        };
+        return ScheduleResourceDetail::from_schedule(item);
     }
 
-    let next_run = schedules.iter().map(|item| item.next_run.as_str()).min();
-    ScheduleResourceDetail {
-        realm: path.realm.to_string(),
-        area: path.area.to_string(),
-        resource: path.resource.to_string(),
-        enabled: schedules.iter().any(|item| item.enabled),
-        cron: None,
-        next_run: next_run.map(ToString::to_string),
-        executions_total: schedules.iter().map(|item| item.executions_total).sum(),
-    }
+    ScheduleResourceDetail::aggregate(path, &schedules)
 }
 
 pub fn notice_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> NoticeResourceDetail {
@@ -888,20 +970,11 @@ pub fn notice_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> NoticeResour
         .into_iter()
         .filter(|item| {
             parse_flexible_route(&item.pattern)
-                .map(|route| {
-                    route.realm == path.realm
-                        && route.area == path.area
-                        && route.resource == path.resource
-                })
+                .map(|route| route.matches_path(path))
                 .unwrap_or(false)
         })
         .count();
-    NoticeResourceDetail {
-        realm: path.realm.to_string(),
-        area: path.area.to_string(),
-        resource: path.resource.to_string(),
-        subscriptions_active,
-    }
+    NoticeResourceDetail::from_count(path, subscriptions_active)
 }
 
 pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> RpcOperationDetail {
@@ -910,12 +983,7 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
         .into_iter()
         .filter(|worker| {
             parse_rpc_operation(&worker.route)
-                .map(|route| {
-                    route.realm == path.realm
-                        && route.area == path.area
-                        && route.resource == path.resource
-                        && route.operation == path.operation
-                })
+                .map(|route| route.matches_operation_path(path))
                 .unwrap_or(false)
         })
         .count();
@@ -924,14 +992,7 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
         .into_iter()
         .filter(|request| request.route.contains(path.operation))
         .count();
-    RpcOperationDetail {
-        realm: path.realm.to_string(),
-        area: path.area.to_string(),
-        resource: path.resource.to_string(),
-        operation: path.operation.to_string(),
-        workers_registered,
-        requests_pending,
-    }
+    RpcOperationDetail::from_counts(path, workers_registered, requests_pending)
 }
 
 fn parse_flexible_route(route: &str) -> Option<ResourceRef> {
@@ -949,4 +1010,96 @@ fn parse_rpc_operation(route: &str) -> Option<OwnedRpcOperation> {
         resource: parts.resource.to_string(),
         operation: parts.operation.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_match_resource_ref_given_matching_resource_path() {
+        // Arrange
+        let path = ResourcePath {
+            realm: "acme",
+            area: "billing",
+            resource: "invoices",
+        };
+        let resource = ResourceRef {
+            realm: "acme".to_string(),
+            area: "billing".to_string(),
+            resource: "invoices".to_string(),
+        };
+
+        // Act
+        let result = resource.matches_path(&path);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn should_match_rpc_operation_given_matching_operation_path() {
+        // Arrange
+        let path = RpcOperationPath {
+            realm: "acme",
+            area: "billing",
+            resource: "invoices",
+            operation: "send",
+        };
+        let operation = OwnedRpcOperation {
+            realm: "acme".to_string(),
+            area: "billing".to_string(),
+            resource: "invoices".to_string(),
+            operation: "send".to_string(),
+        };
+
+        // Act
+        let result = operation.matches_operation_path(&path);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn should_aggregate_schedule_detail_given_multiple_schedules() {
+        // Arrange
+        let path = ResourcePath {
+            realm: "acme",
+            area: "billing",
+            resource: "invoices",
+        };
+        let schedules = vec![
+            ScheduleInfo {
+                realm: "acme".to_string(),
+                area: "billing".to_string(),
+                resource: "invoices".to_string(),
+                operation: "send".to_string(),
+                cron: "0 * * * *".to_string(),
+                next_run: "2026-03-31T02:00:00Z".to_string(),
+                last_run: None,
+                executions_total: 2,
+                enabled: false,
+            },
+            ScheduleInfo {
+                realm: "acme".to_string(),
+                area: "billing".to_string(),
+                resource: "invoices".to_string(),
+                operation: "retry".to_string(),
+                cron: "*/5 * * * *".to_string(),
+                next_run: "2026-03-31T01:00:00Z".to_string(),
+                last_run: None,
+                executions_total: 3,
+                enabled: true,
+            },
+        ];
+
+        // Act
+        let detail = ScheduleResourceDetail::aggregate(&path, &schedules);
+
+        // Assert
+        assert!(detail.enabled);
+        assert_eq!(detail.cron, None);
+        assert_eq!(detail.next_run.as_deref(), Some("2026-03-31T01:00:00Z"));
+        assert_eq!(detail.executions_total, 5);
+    }
 }
