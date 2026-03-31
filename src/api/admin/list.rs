@@ -453,6 +453,42 @@ impl LeaseInfo {
     }
 }
 
+impl ScheduleInfo {
+    pub(crate) fn enabled_snapshot(
+        realm: String,
+        area: String,
+        resource: String,
+        operation: String,
+        cron: String,
+        next_run: &str,
+    ) -> Self {
+        Self {
+            realm,
+            area,
+            resource,
+            operation,
+            cron,
+            next_run: next_run.to_string(),
+            last_run: None,
+            executions_total: 0,
+            enabled: true,
+        }
+    }
+
+    pub(crate) fn matches_identity(
+        &self,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        operation: &str,
+    ) -> bool {
+        self.realm == realm
+            && self.area == area
+            && self.resource == resource
+            && self.operation == operation
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResourcePath<'a> {
     pub realm: &'a str,
@@ -634,11 +670,7 @@ pub async fn list_sessions(
     runtime: Arc<Runtime>,
     realm: Option<&str>,
 ) -> Result<Response<Body>, Infallible> {
-    let sessions = runtime
-        .list_sessions(realm)
-        .into_iter()
-        .filter(|session| realm.map(|needle| session.realm == needle).unwrap_or(true))
-        .collect();
+    let sessions = runtime.list_sessions(realm);
     crate::api::admin::json_response(SessionsList { sessions })
 }
 
