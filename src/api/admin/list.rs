@@ -660,8 +660,50 @@ impl ResourcePath<'_> {
 }
 
 impl ResourceRef {
+    fn new(realm: String, area: String, resource: String) -> Self {
+        Self {
+            realm,
+            area,
+            resource,
+        }
+    }
+
     fn matches_path(&self, path: &ResourcePath<'_>) -> bool {
         path.matches(&self.realm, &self.area, &self.resource)
+    }
+}
+
+trait IntoResourceRef {
+    fn into_resource_ref(self) -> ResourceRef;
+}
+
+impl IntoResourceRef for KvTransaction {
+    fn into_resource_ref(self) -> ResourceRef {
+        ResourceRef::new(self.realm, self.area, self.resource)
+    }
+}
+
+impl IntoResourceRef for QueueInfo {
+    fn into_resource_ref(self) -> ResourceRef {
+        ResourceRef::new(self.realm, self.area, self.resource)
+    }
+}
+
+impl IntoResourceRef for StreamInfo {
+    fn into_resource_ref(self) -> ResourceRef {
+        ResourceRef::new(self.realm, self.area, self.resource)
+    }
+}
+
+impl IntoResourceRef for LeaseInfo {
+    fn into_resource_ref(self) -> ResourceRef {
+        ResourceRef::new(self.realm, self.area, self.resource)
+    }
+}
+
+impl IntoResourceRef for ScheduleInfo {
+    fn into_resource_ref(self) -> ResourceRef {
+        ResourceRef::new(self.realm, self.area, self.resource)
     }
 }
 
@@ -684,6 +726,27 @@ impl OwnedRpcOperation {
     }
 }
 
+fn collect_resource_refs<T: IntoResourceRef>(
+    items: impl IntoIterator<Item = T>,
+) -> Vec<ResourceRef> {
+    items
+        .into_iter()
+        .map(IntoResourceRef::into_resource_ref)
+        .collect()
+}
+
+fn collect_distinct_entries<T>(
+    values: impl IntoIterator<Item = String>,
+    entry: impl Fn(String) -> T,
+) -> Vec<T> {
+    values
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(entry)
+        .collect()
+}
+
 pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
     let mut params = HashMap::new();
     if let Some(query) = uri.query() {
@@ -697,105 +760,59 @@ pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
 }
 
 pub fn collect_realms(resources: &[ResourceRef]) -> RealmCollection {
-    let realms = resources
-        .iter()
-        .map(|item| item.realm.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|realm| RealmEntry { realm })
-        .collect();
-    RealmCollection { realms }
+    RealmCollection {
+        realms: collect_distinct_entries(
+            resources.iter().map(|item| item.realm.clone()),
+            |realm| RealmEntry { realm },
+        ),
+    }
 }
 
 pub fn collect_areas(resources: &[ResourceRef], realm: &str) -> AreaCollection {
-    let areas = resources
-        .iter()
-        .filter(|item| item.realm == realm)
-        .map(|item| item.area.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|area| AreaEntry { area })
-        .collect();
     AreaCollection {
         realm: realm.to_string(),
-        areas,
+        areas: collect_distinct_entries(
+            resources
+                .iter()
+                .filter(|item| item.realm == realm)
+                .map(|item| item.area.clone()),
+            |area| AreaEntry { area },
+        ),
     }
 }
 
 pub fn collect_resources(resources: &[ResourceRef], realm: &str, area: &str) -> ResourceCollection {
-    let resources = resources
-        .iter()
-        .filter(|item| item.realm == realm && item.area == area)
-        .map(|item| item.resource.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|resource| ResourceEntry { resource })
-        .collect();
     ResourceCollection {
         realm: realm.to_string(),
         area: area.to_string(),
-        resources,
+        resources: collect_distinct_entries(
+            resources
+                .iter()
+                .filter(|item| item.realm == realm && item.area == area)
+                .map(|item| item.resource.clone()),
+            |resource| ResourceEntry { resource },
+        ),
     }
 }
 
 pub fn kv_resources(runtime: &Runtime) -> Vec<ResourceRef> {
-    runtime
-        .kv_list_transactions(None)
-        .into_iter()
-        .map(|item| ResourceRef {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-        })
-        .collect()
+    collect_resource_refs(runtime.kv_list_transactions(None))
 }
 
 pub fn queue_resources(runtime: &Runtime) -> Vec<ResourceRef> {
-    runtime
-        .queue_list_queues(None)
-        .into_iter()
-        .map(|item| ResourceRef {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-        })
-        .collect()
+    collect_resource_refs(runtime.queue_list_queues(None))
 }
 
 pub fn stream_resources(runtime: &Runtime) -> Vec<ResourceRef> {
-    runtime
-        .stream_list_streams(None)
-        .into_iter()
-        .map(|item| ResourceRef {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-        })
-        .collect()
+    collect_resource_refs(runtime.stream_list_streams(None))
 }
 
 pub fn lease_resources(runtime: &Runtime) -> Vec<ResourceRef> {
-    runtime
-        .lease_list_leases(None)
-        .into_iter()
-        .map(|item| ResourceRef {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-        })
-        .collect()
+    collect_resource_refs(runtime.lease_list_leases(None))
 }
 
 pub fn schedule_resources(runtime: &Runtime) -> Vec<ResourceRef> {
-    runtime
-        .schedule_list_schedules(None)
-        .into_iter()
-        .map(|item| ResourceRef {
-            realm: item.realm,
-            area: item.area,
-            resource: item.resource,
-        })
-        .collect()
+    collect_resource_refs(runtime.schedule_list_schedules(None))
 }
 
 pub fn notice_resources(runtime: &Runtime) -> Vec<ResourceRef> {
@@ -815,16 +832,15 @@ pub fn rpc_resources(runtime: &Runtime) -> Vec<ResourceRef> {
 }
 
 pub fn rpc_operations(runtime: &Runtime, path: &ResourcePath<'_>) -> OperationCollection {
-    let operations = runtime
-        .rpc_list_workers(None)
-        .into_iter()
-        .filter_map(|worker| parse_rpc_operation(&worker.route))
-        .filter(|operation| operation.matches_resource_path(path))
-        .map(|operation| operation.operation)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|operation| OperationEntry { operation })
-        .collect();
+    let operations = collect_distinct_entries(
+        runtime
+            .rpc_list_workers(None)
+            .into_iter()
+            .filter_map(|worker| parse_rpc_operation(&worker.route))
+            .filter(|operation| operation.matches_resource_path(path))
+            .map(|operation| operation.operation),
+        |operation| OperationEntry { operation },
+    );
 
     OperationCollection {
         realm: path.realm.to_string(),
@@ -873,11 +889,7 @@ pub async fn notice_subscriptions_for_resource(
     let subscriptions = runtime
         .notice_list_subscriptions(Some(path.realm), None)
         .into_iter()
-        .filter(|subscription| {
-            parse_flexible_route(&subscription.pattern)
-                .map(|route| route.matches_path(path))
-                .unwrap_or(false)
-        })
+        .filter(|subscription| matches_resource_route(&subscription.pattern, path))
         .collect();
     crate::api::admin::json_response(NoticeSubscriptionsList { subscriptions })
 }
@@ -889,11 +901,7 @@ pub async fn rpc_workers_for_operation(
     let workers = runtime
         .rpc_list_workers(Some(path.realm))
         .into_iter()
-        .filter(|worker| {
-            parse_rpc_operation(&worker.route)
-                .map(|route| route.matches_operation_path(path))
-                .unwrap_or(false)
-        })
+        .filter(|worker| matches_operation_route(&worker.route, path))
         .collect();
     crate::api::admin::json_response(RpcWorkersList { workers })
 }
@@ -968,11 +976,7 @@ pub fn notice_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> NoticeResour
     let subscriptions_active = runtime
         .notice_list_subscriptions(Some(path.realm), None)
         .into_iter()
-        .filter(|item| {
-            parse_flexible_route(&item.pattern)
-                .map(|route| route.matches_path(path))
-                .unwrap_or(false)
-        })
+        .filter(|item| matches_resource_route(&item.pattern, path))
         .count();
     NoticeResourceDetail::from_count(path, subscriptions_active)
 }
@@ -981,11 +985,7 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
     let workers_registered = runtime
         .rpc_list_workers(Some(path.realm))
         .into_iter()
-        .filter(|worker| {
-            parse_rpc_operation(&worker.route)
-                .map(|route| route.matches_operation_path(path))
-                .unwrap_or(false)
-        })
+        .filter(|worker| matches_operation_route(&worker.route, path))
         .count();
     let requests_pending = runtime
         .rpc_list_pending(Some(path.realm))
@@ -996,10 +996,12 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
 }
 
 fn parse_flexible_route(route: &str) -> Option<ResourceRef> {
-    route_triplet(route).map(|parts| ResourceRef {
-        realm: parts.realm.to_string(),
-        area: parts.area.to_string(),
-        resource: parts.resource.to_string(),
+    route_triplet(route).map(|parts| {
+        ResourceRef::new(
+            parts.realm.to_string(),
+            parts.area.to_string(),
+            parts.resource.to_string(),
+        )
     })
 }
 
@@ -1010,6 +1012,14 @@ fn parse_rpc_operation(route: &str) -> Option<OwnedRpcOperation> {
         resource: parts.resource.to_string(),
         operation: parts.operation.to_string(),
     })
+}
+
+fn matches_resource_route(route: &str, path: &ResourcePath<'_>) -> bool {
+    parse_flexible_route(route).is_some_and(|parsed| parsed.matches_path(path))
+}
+
+fn matches_operation_route(route: &str, path: &RpcOperationPath<'_>) -> bool {
+    parse_rpc_operation(route).is_some_and(|parsed| parsed.matches_operation_path(path))
 }
 
 #[cfg(test)]
@@ -1038,6 +1048,22 @@ mod tests {
     }
 
     #[test]
+    fn should_match_resource_route_given_matching_path() {
+        // Arrange
+        let path = ResourcePath {
+            realm: "acme",
+            area: "billing",
+            resource: "invoices",
+        };
+
+        // Act
+        let result = matches_resource_route("notice://acme/billing/invoices", &path);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
     fn should_match_rpc_operation_given_matching_operation_path() {
         // Arrange
         let path = RpcOperationPath {
@@ -1058,6 +1084,127 @@ mod tests {
 
         // Assert
         assert!(result);
+    }
+
+    #[test]
+    fn should_match_operation_route_given_matching_path() {
+        // Arrange
+        let path = RpcOperationPath {
+            realm: "acme",
+            area: "billing",
+            resource: "invoices",
+            operation: "send",
+        };
+
+        // Act
+        let result = matches_operation_route("rpc://acme/billing/invoices/send", &path);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn should_collect_resource_refs_given_resource_items() {
+        // Arrange
+        let items = vec![QueueInfo::snapshot("acme", "billing", "invoices")];
+
+        // Act
+        let resources = collect_resource_refs(items);
+
+        // Assert
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].realm, "acme");
+        assert_eq!(resources[0].area, "billing");
+        assert_eq!(resources[0].resource, "invoices");
+    }
+
+    #[test]
+    fn should_collect_realms_given_duplicate_resources() {
+        // Arrange
+        let resources = vec![
+            ResourceRef::new(
+                "prod".to_string(),
+                "billing".to_string(),
+                "invoices".to_string(),
+            ),
+            ResourceRef::new(
+                "prod".to_string(),
+                "jobs".to_string(),
+                "pending".to_string(),
+            ),
+            ResourceRef::new(
+                "staging".to_string(),
+                "billing".to_string(),
+                "invoices".to_string(),
+            ),
+        ];
+
+        // Act
+        let collection = collect_realms(&resources);
+
+        // Assert
+        assert_eq!(collection.realms.len(), 2);
+        assert_eq!(collection.realms[0].realm, "prod");
+        assert_eq!(collection.realms[1].realm, "staging");
+    }
+
+    #[test]
+    fn should_collect_areas_given_realm_filter() {
+        // Arrange
+        let resources = vec![
+            ResourceRef::new(
+                "prod".to_string(),
+                "billing".to_string(),
+                "invoices".to_string(),
+            ),
+            ResourceRef::new(
+                "prod".to_string(),
+                "jobs".to_string(),
+                "pending".to_string(),
+            ),
+            ResourceRef::new(
+                "staging".to_string(),
+                "support".to_string(),
+                "tickets".to_string(),
+            ),
+        ];
+
+        // Act
+        let collection = collect_areas(&resources, "prod");
+
+        // Assert
+        assert_eq!(collection.realm, "prod");
+        assert_eq!(collection.areas.len(), 2);
+        assert_eq!(collection.areas[0].area, "billing");
+        assert_eq!(collection.areas[1].area, "jobs");
+    }
+
+    #[test]
+    fn should_collect_resources_given_area_filter() {
+        // Arrange
+        let resources = vec![
+            ResourceRef::new("prod".to_string(), "jobs".to_string(), "active".to_string()),
+            ResourceRef::new(
+                "prod".to_string(),
+                "jobs".to_string(),
+                "pending".to_string(),
+            ),
+            ResourceRef::new(
+                "prod".to_string(),
+                "billing".to_string(),
+                "invoices".to_string(),
+            ),
+        ];
+
+        // Act
+        let collection = collect_resources(&resources, "prod", "jobs");
+
+        // Assert
+        assert_eq!(collection.realm, "prod");
+        assert_eq!(collection.area, "jobs");
+        assert_eq!(collection.resources.len(), 2);
+        assert_eq!(collection.resources[0].resource, "active");
+        assert_eq!(collection.resources[1].resource, "pending");
     }
 
     #[test]
