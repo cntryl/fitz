@@ -58,24 +58,27 @@ impl LeaseDomainSink {
 
     fn sync_admin_snapshot(&self) {
         let now = std::time::Instant::now();
+        let acquired_at = Utc::now().to_rfc3339();
         let leases = self
             .leases
             .lock()
             .iter()
-            .map(|(key, state)| crate::api::admin::LeaseInfo {
-                realm: key.realm.clone(),
-                area: key.area.clone(),
-                resource: key.resource.clone(),
-                owner_session_id: state.owner_id.clone(),
-                acquired_at: Utc::now().to_rfc3339(),
-                expires_at: Utc::now()
+            .map(|(key, state)| {
+                let expires_at = Utc::now()
                     .checked_add_signed(chrono::TimeDelta::seconds(
                         state.expiry.saturating_duration_since(now).as_secs() as i64,
                     ))
                     .unwrap_or_else(Utc::now)
-                    .to_rfc3339(),
-                renewals: 0,
-                fencing_token: state.fencing_token,
+                    .to_rfc3339();
+                crate::api::admin::LeaseInfo::snapshot(
+                    &key.realm,
+                    &key.area,
+                    &key.resource,
+                    &state.owner_id,
+                    &acquired_at,
+                    expires_at,
+                    state.fencing_token,
+                )
             })
             .collect();
         self.admin_read_model.replace_leases(leases);

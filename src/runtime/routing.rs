@@ -167,6 +167,15 @@ pub(crate) fn route_triplet(route: &str) -> Option<RouteTriplet<'_>> {
     })
 }
 
+pub(crate) fn route_triplet_tail(route: &str) -> Option<RouteTriplet<'_>> {
+    let mut segments = route_path(route).trim_start_matches('/').splitn(3, '/');
+    Some(RouteTriplet {
+        realm: segments.next()?,
+        area: segments.next()?,
+        resource: segments.next()?,
+    })
+}
+
 pub(crate) fn route_quad(route: &str) -> Option<RouteQuad<'_>> {
     let mut segments = route_segments(route);
     Some(RouteQuad {
@@ -175,6 +184,24 @@ pub(crate) fn route_quad(route: &str) -> Option<RouteQuad<'_>> {
         resource: segments.next()?,
         operation: segments.next()?,
     })
+}
+
+pub(crate) fn route_exact_quad(route: &str) -> Option<RouteQuad<'_>> {
+    let mut segments = route_segments(route);
+    let quad = RouteQuad {
+        realm: segments.next()?,
+        area: segments.next()?,
+        resource: segments.next()?,
+        operation: segments.next()?,
+    };
+    if segments.next().is_some() {
+        return None;
+    }
+    Some(quad)
+}
+
+pub(crate) fn route_scheme(route: &str) -> Option<&str> {
+    route.split_once("://").map(|(scheme, _)| scheme)
 }
 
 fn route_path(route: &str) -> &str {
@@ -605,6 +632,25 @@ mod tests {
     }
 
     #[test]
+    fn should_parse_route_triplet_tail_given_nested_resource() {
+        // Arrange
+        let route = "kv://acme/app/orders/by/id";
+
+        // Act
+        let parsed = route_triplet_tail(route);
+
+        // Assert
+        assert_eq!(
+            parsed,
+            Some(RouteTriplet {
+                realm: "acme",
+                area: "app",
+                resource: "orders/by/id",
+            })
+        );
+    }
+
+    #[test]
     fn should_parse_route_quad_without_scheme() {
         // Arrange
         let route = "/acme/app/orders/create";
@@ -622,6 +668,30 @@ mod tests {
                 operation: "create",
             })
         );
+    }
+
+    #[test]
+    fn should_parse_route_scheme_given_scheme_prefix() {
+        // Arrange
+        let route = "schedule://acme/app/orders/run";
+
+        // Act
+        let scheme = route_scheme(route);
+
+        // Assert
+        assert_eq!(scheme, Some("schedule"));
+    }
+
+    #[test]
+    fn should_reject_exact_route_quad_given_extra_segment() {
+        // Arrange
+        let route = "stream://acme/app/orders/create/extra";
+
+        // Act
+        let parsed = route_exact_quad(route);
+
+        // Assert
+        assert!(parsed.is_none());
     }
 
     #[test]

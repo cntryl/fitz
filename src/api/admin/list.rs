@@ -314,6 +314,145 @@ pub struct SessionInfo {
     pub remote_addr: String,
 }
 
+impl KvTransaction {
+    pub(crate) fn snapshot(
+        tx_id: u64,
+        session_id: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        started_at: &str,
+    ) -> Self {
+        Self {
+            tx_id,
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+            mode: format!("session:{session_id}:readwrite"),
+            started_at: started_at.to_string(),
+            operations_count: 0,
+            idle_seconds: 0,
+        }
+    }
+}
+
+impl StreamInfo {
+    pub(crate) fn snapshot(
+        realm: &str,
+        area: &str,
+        resource: &str,
+        offset: u64,
+        watermark: u64,
+        sessions_active: usize,
+    ) -> Self {
+        Self {
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+            offset,
+            watermark,
+            size_bytes: 0,
+            sessions_active,
+        }
+    }
+}
+
+impl NoticeSubscription {
+    pub(crate) fn snapshot(
+        subscription_id: u64,
+        session_id: u64,
+        realm: &str,
+        pattern: String,
+        created_at: &str,
+    ) -> Self {
+        Self {
+            subscription_id,
+            session_id: session_id.to_string(),
+            realm: realm.to_string(),
+            pattern,
+            created_at: created_at.to_string(),
+            notifications_received: 0,
+        }
+    }
+}
+
+impl NoticeRouteInfo {
+    pub(crate) fn snapshot(route: String, subscribers: usize) -> Self {
+        Self {
+            route,
+            subscribers,
+            publishes_total: 0,
+            publishes_per_minute: 0.0,
+        }
+    }
+}
+
+impl QueueInfo {
+    pub(crate) fn snapshot(realm: &str, area: &str, resource: &str) -> Self {
+        Self {
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+            messages_ready: 0,
+            messages_leased: 0,
+            messages_total: 0,
+            oldest_message_age_seconds: 0,
+        }
+    }
+}
+
+impl RpcWorker {
+    pub(crate) fn snapshot(session_id: u64, realm: &str, route: &str, registered_at: &str) -> Self {
+        Self {
+            session_id: session_id.to_string(),
+            realm: realm.to_string(),
+            route: route.to_string(),
+            registered_at: registered_at.to_string(),
+            requests_handled: 0,
+            average_latency_ms: 0.0,
+        }
+    }
+}
+
+impl RpcPendingRequest {
+    pub(crate) fn snapshot(
+        correlation_id: String,
+        caller_session_id: u64,
+        submitted_at: &str,
+    ) -> Self {
+        Self {
+            correlation_id,
+            route: format!("rpc://pending/session/{caller_session_id}"),
+            submitted_at: submitted_at.to_string(),
+            age_seconds: 0,
+            worker_session_id: None,
+        }
+    }
+}
+
+impl LeaseInfo {
+    pub(crate) fn snapshot(
+        realm: &str,
+        area: &str,
+        resource: &str,
+        owner_session_id: &str,
+        acquired_at: &str,
+        expires_at: String,
+        fencing_token: u64,
+    ) -> Self {
+        Self {
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+            owner_session_id: owner_session_id.to_string(),
+            acquired_at: acquired_at.to_string(),
+            expires_at,
+            renewals: 0,
+            fencing_token,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResourcePath<'a> {
     pub realm: &'a str,

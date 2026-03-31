@@ -57,20 +57,20 @@ impl NoticeDomainSink {
 
     fn sync_admin_snapshot(&self) {
         let families = self.families.lock();
+        let created_at = Utc::now().to_rfc3339();
         let mut subscriptions = Vec::new();
         let mut routes: HashMap<String, usize> = HashMap::new();
         for state in families.values() {
             for subscription in state.values() {
                 let pattern = subscription.pattern.route().to_string();
                 if let Some(parts) = route_triplet(&pattern) {
-                    subscriptions.push(crate::api::admin::NoticeSubscription {
-                        subscription_id: subscription.subscription_id,
-                        session_id: subscription.session_id.to_string(),
-                        realm: parts.realm.to_string(),
-                        pattern: pattern.clone(),
-                        created_at: Utc::now().to_rfc3339(),
-                        notifications_received: 0,
-                    });
+                    subscriptions.push(crate::api::admin::NoticeSubscription::snapshot(
+                        subscription.subscription_id,
+                        subscription.session_id,
+                        parts.realm,
+                        pattern.clone(),
+                        &created_at,
+                    ));
                     *routes.entry(pattern).or_insert(0) += 1;
                 }
             }
@@ -81,11 +81,8 @@ impl NoticeDomainSink {
         self.admin_read_model.replace_notice_routes(
             routes
                 .into_iter()
-                .map(|(route, subscribers)| crate::api::admin::NoticeRouteInfo {
-                    route,
-                    subscribers,
-                    publishes_total: 0,
-                    publishes_per_minute: 0.0,
+                .map(|(route, subscribers)| {
+                    crate::api::admin::NoticeRouteInfo::snapshot(route, subscribers)
                 })
                 .collect(),
         );

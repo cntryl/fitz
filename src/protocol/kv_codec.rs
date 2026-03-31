@@ -1,7 +1,7 @@
 //! KV domain TLV message types and codec
 
 use crate::domains::kv::{KvMessage, KvResponse, ScanQuery, TxMode};
-use crate::runtime::routing::RouteFamily;
+use crate::runtime::routing::{route_triplet_tail, RouteFamily};
 use bytes::Bytes;
 
 /// KV domain message type IDs
@@ -109,22 +109,13 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 /// Parse route string into realm, area, resource components
 /// Expected format: "kv://realm/area/resource" or just "realm/area/resource"
 fn split_route(route_str: &str) -> Option<(&str, &str, &str)> {
-    let path = if let Some(pos) = route_str.find("://") {
-        &route_str[pos + 3..]
-    } else {
-        route_str
-    };
+    let parts = route_triplet_tail(route_str)?;
 
-    let mut parts = path.splitn(3, '/');
-    let realm = parts.next()?;
-    let area = parts.next()?;
-    let resource = parts.next()?;
-
-    if realm.is_empty() || area.is_empty() || resource.is_empty() {
+    if parts.realm.is_empty() || parts.area.is_empty() || parts.resource.is_empty() {
         return None;
     }
 
-    Some((realm, area, resource))
+    Some((parts.realm, parts.area, parts.resource))
 }
 
 fn decode_route_str<'a>(route_bytes: &'a [u8], op_name: &str) -> Result<&'a str, String> {
@@ -1064,5 +1055,25 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_parse_begin_given_nested_resource_path() {
+        // Arrange
+        let route = "kv://acme/kv/users/by/id";
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u8(1);
+        payload.put_u8(0);
+
+        // Act
+        let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
+
+        // Assert
+        match result {
+            Ok(KvMessage::Begin { resource, .. }) => assert_eq!(resource, "users/by/id"),
+            _ => panic!("Expected KvMessage::Begin with nested resource path"),
+        }
     }
 }

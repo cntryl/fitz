@@ -118,14 +118,15 @@ impl StreamDomainSink {
             .routes
             .iter()
             .filter_map(|(route, route_state)| {
-                route_triplet(route).map(|parts| crate::api::admin::StreamInfo {
-                    realm: parts.realm.to_string(),
-                    area: parts.area.to_string(),
-                    resource: parts.resource.to_string(),
-                    offset: route_state.next_offset.saturating_sub(1),
-                    watermark: route_state.next_offset,
-                    size_bytes: 0,
-                    sessions_active: sessions_by_route.get(route).copied().unwrap_or(0),
+                route_triplet(route).map(|parts| {
+                    crate::api::admin::StreamInfo::snapshot(
+                        parts.realm,
+                        parts.area,
+                        parts.resource,
+                        route_state.next_offset.saturating_sub(1),
+                        route_state.next_offset,
+                        sessions_by_route.get(route).copied().unwrap_or(0),
+                    )
                 })
             })
             .collect();

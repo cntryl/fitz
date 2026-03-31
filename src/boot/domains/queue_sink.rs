@@ -132,15 +132,7 @@ impl QueueDomainSink {
             .actors
             .lock()
             .keys()
-            .map(|key| crate::api::admin::QueueInfo {
-                realm: key.realm.clone(),
-                area: key.area.clone(),
-                resource: key.resource.clone(),
-                messages_ready: 0,
-                messages_leased: 0,
-                messages_total: 0,
-                oldest_message_age_seconds: 0,
-            })
+            .map(|key| crate::api::admin::QueueInfo::snapshot(&key.realm, &key.area, &key.resource))
             .collect();
         self.admin_read_model.replace_queues(queues);
     }

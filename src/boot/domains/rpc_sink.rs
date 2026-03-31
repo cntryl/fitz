@@ -748,6 +748,7 @@ impl RpcDomainSink {
 
     fn sync_admin_snapshot(&self) {
         let state = self.state.lock();
+        let captured_at = Utc::now().to_rfc3339();
         let workers = state
             .routes
             .iter()
@@ -756,13 +757,13 @@ impl RpcDomainSink {
                     .workers
                     .iter()
                     .filter_map(|worker| {
-                        route_quad(route.as_str()).map(|parts| crate::api::admin::RpcWorker {
-                            session_id: worker.session_id.to_string(),
-                            realm: parts.realm.to_string(),
-                            route: route.as_str().to_string(),
-                            registered_at: Utc::now().to_rfc3339(),
-                            requests_handled: 0,
-                            average_latency_ms: 0.0,
+                        route_quad(route.as_str()).map(|parts| {
+                            crate::api::admin::RpcWorker::snapshot(
+                                worker.session_id,
+                                parts.realm,
+                                route.as_str(),
+                                &captured_at,
+                            )
                         })
                     })
                     .collect::<Vec<_>>()
@@ -772,15 +773,13 @@ impl RpcDomainSink {
             .pending
             .pending
             .iter()
-            .map(
-                |(correlation_id, pending)| crate::api::admin::RpcPendingRequest {
-                    correlation_id: correlation_id.to_string(),
-                    route: format!("rpc://pending/session/{}", pending.caller_session_id),
-                    submitted_at: Utc::now().to_rfc3339(),
-                    age_seconds: 0,
-                    worker_session_id: None,
-                },
-            )
+            .map(|(correlation_id, pending)| {
+                crate::api::admin::RpcPendingRequest::snapshot(
+                    correlation_id.to_string(),
+                    pending.caller_session_id,
+                    &captured_at,
+                )
+            })
             .collect();
         self.admin_read_model.replace_rpc_workers(workers);
         self.admin_read_model.replace_rpc_pending(pending);

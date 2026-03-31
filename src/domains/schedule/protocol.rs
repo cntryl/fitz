@@ -1,4 +1,4 @@
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{route_exact_quad, route_scheme, Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,7 +12,7 @@ pub struct ConcreteScheduleRoute {
 }
 
 pub fn parse_concrete_schedule_route(route: &str) -> Result<ConcreteScheduleRoute, String> {
-    let Some((scheme, path)) = route.split_once("://") else {
+    let Some(scheme) = route_scheme(route) else {
         return Err(
             "schedule route must be schedule://{realm}/{area}/{resource}/{operation}".to_string(),
         );
@@ -21,21 +21,31 @@ pub fn parse_concrete_schedule_route(route: &str) -> Result<ConcreteScheduleRout
         return Err("schedule route scheme must be schedule".to_string());
     }
 
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() != 4 || parts.iter().any(|part| part.is_empty()) {
+    let Some(parts) = route_exact_quad(route) else {
+        return Err(
+            "schedule route must be schedule://{realm}/{area}/{resource}/{operation}".to_string(),
+        );
+    };
+    if [parts.realm, parts.area, parts.resource, parts.operation]
+        .iter()
+        .any(|part| part.is_empty())
+    {
         return Err(
             "schedule route must be schedule://{realm}/{area}/{resource}/{operation}".to_string(),
         );
     }
-    if parts.iter().any(|part| *part == "*" || *part == "**") {
+    if [parts.realm, parts.area, parts.resource, parts.operation]
+        .iter()
+        .any(|part| *part == "*" || *part == "**")
+    {
         return Err("schedule route must not contain wildcards".to_string());
     }
 
     Ok(ConcreteScheduleRoute {
-        realm: parts[0].to_string(),
-        area: parts[1].to_string(),
-        resource: parts[2].to_string(),
-        operation: parts[3].to_string(),
+        realm: parts.realm.to_string(),
+        area: parts.area.to_string(),
+        resource: parts.resource.to_string(),
+        operation: parts.operation.to_string(),
     })
 }
 

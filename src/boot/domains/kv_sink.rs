@@ -57,22 +57,21 @@ impl KvDomainSink {
     }
 
     fn sync_admin_snapshot(&self) {
+        let started_at = Utc::now().to_rfc3339();
         let transactions = self
             .tx_to_resource
             .lock()
             .iter()
-            .map(
-                |((session_id, tx_id), resource_key)| crate::api::admin::KvTransaction {
-                    tx_id: *tx_id,
-                    realm: resource_key.realm.clone(),
-                    area: resource_key.area.clone(),
-                    resource: resource_key.resource.clone(),
-                    mode: format!("session:{session_id}:readwrite"),
-                    started_at: Utc::now().to_rfc3339(),
-                    operations_count: 0,
-                    idle_seconds: 0,
-                },
-            )
+            .map(|((session_id, tx_id), resource_key)| {
+                crate::api::admin::KvTransaction::snapshot(
+                    *tx_id,
+                    *session_id,
+                    &resource_key.realm,
+                    &resource_key.area,
+                    &resource_key.resource,
+                    &started_at,
+                )
+            })
             .collect();
         self.admin_read_model.replace_kv_transactions(transactions);
     }

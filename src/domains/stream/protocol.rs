@@ -3,36 +3,23 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::routing::{Route, RouteFamily};
+use crate::runtime::routing::{route_exact_quad, Route, RouteFamily};
 
 /// Parse a stream route into (realm, area, resource, operation).
 ///
 /// Expected format: `{scheme}://{realm}/{area}/{resource}/{operation}`
 /// or `/{realm}/{area}/{resource}/{operation}`
 pub fn parse_stream_route(route: &Route) -> Result<(String, String, String, String), String> {
-    let path = route.as_str();
-
-    let path_without_scheme = if let Some(pos) = path.find("://") {
-        &path[pos + 3..]
-    } else {
-        path
-    };
-
-    let parts: Vec<&str> = path_without_scheme
-        .trim_start_matches('/')
-        .split('/')
-        .collect();
-
-    if parts.len() != 4 {
-        return Err("Stream routes require exactly 4 segments".to_string());
-    }
-
-    Ok((
-        parts[0].to_string(),
-        parts[1].to_string(),
-        parts[2].to_string(),
-        parts[3].to_string(),
-    ))
+    route_exact_quad(route.as_str())
+        .map(|parts| {
+            (
+                parts.realm.to_string(),
+                parts.area.to_string(),
+                parts.resource.to_string(),
+                parts.operation.to_string(),
+            )
+        })
+        .ok_or_else(|| "Stream routes require exactly 4 segments".to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -471,6 +458,18 @@ mod tests {
     fn should_reject_stream_route_missing_operation() {
         // Arrange
         let route = Route::new("stream://acme/orders/checkout");
+
+        // Act
+        let result = parse_stream_route(&route);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_stream_route_given_extra_segment() {
+        // Arrange
+        let route = Route::new("stream://acme/orders/checkout/append/extra");
 
         // Act
         let result = parse_stream_route(&route);
