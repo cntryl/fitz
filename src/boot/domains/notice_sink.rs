@@ -1,6 +1,6 @@
-use super::parse_route_triplet;
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::route_triplet;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
@@ -62,11 +62,11 @@ impl NoticeDomainSink {
         for state in families.values() {
             for subscription in state.values() {
                 let pattern = subscription.pattern.route().to_string();
-                if let Some((realm, _area, _resource)) = parse_route_triplet(&pattern) {
+                if let Some(parts) = route_triplet(&pattern) {
                     subscriptions.push(crate::api::admin::NoticeSubscription {
                         subscription_id: subscription.subscription_id,
                         session_id: subscription.session_id.to_string(),
-                        realm,
+                        realm: parts.realm.to_string(),
                         pattern: pattern.clone(),
                         created_at: Utc::now().to_rfc3339(),
                         notifications_received: 0,

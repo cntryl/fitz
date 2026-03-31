@@ -1,6 +1,6 @@
-use super::parse_route_triplet;
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::route_triplet;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -118,16 +118,14 @@ impl StreamDomainSink {
             .routes
             .iter()
             .filter_map(|(route, route_state)| {
-                parse_route_triplet(route).map(|(realm, area, resource)| {
-                    crate::api::admin::StreamInfo {
-                        realm,
-                        area,
-                        resource,
-                        offset: route_state.next_offset.saturating_sub(1),
-                        watermark: route_state.next_offset,
-                        size_bytes: 0,
-                        sessions_active: sessions_by_route.get(route).copied().unwrap_or(0),
-                    }
+                route_triplet(route).map(|parts| crate::api::admin::StreamInfo {
+                    realm: parts.realm.to_string(),
+                    area: parts.area.to_string(),
+                    resource: parts.resource.to_string(),
+                    offset: route_state.next_offset.saturating_sub(1),
+                    watermark: route_state.next_offset,
+                    size_bytes: 0,
+                    sessions_active: sessions_by_route.get(route).copied().unwrap_or(0),
                 })
             })
             .collect();
@@ -184,8 +182,9 @@ impl StreamDomainSink {
     ) -> (u64, u64, u64, u64) {
         let batch_size = batch_size as u64;
 
-        if let Some((realm, area, _resource)) = parse_route_triplet(route) {
-            let area_key = (realm.clone(), area);
+        if let Some(parts) = route_triplet(route) {
+            let realm = parts.realm.to_string();
+            let area_key = (realm.clone(), parts.area.to_string());
             let first_area_offset = *state.next_area_offsets.entry(area_key.clone()).or_insert(0);
             let first_realm_offset = *state.next_realm_offsets.entry(realm.clone()).or_insert(0);
 

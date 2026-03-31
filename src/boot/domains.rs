@@ -9,19 +9,6 @@ use std::sync::Arc as StdArc;
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
-fn parse_route_triplet(route: &str) -> Option<(String, String, String)> {
-    let path = route.split("://").nth(1).unwrap_or(route);
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    Some((
-        parts[0].to_string(),
-        parts[1].to_string(),
-        parts[2].to_string(),
-    ))
-}
-
 mod kv_sink;
 mod lease_sink;
 mod notice_sink;

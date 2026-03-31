@@ -37,7 +37,7 @@
 //! - Notices are hints (at-most-once), not guarantees
 //! - QueueActor never stores waiters or blocking state
 
-use crate::runtime::routing::{Route, RouteFamily};
+use crate::runtime::routing::{route_triplet, Route, RouteFamily};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -62,27 +62,15 @@ impl QueueKey {
     ///
     /// Returns None if the route doesn't match the expected format.
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
-        let path = route.as_str();
-
-        // Strip scheme if present (e.g., "queue://..." → "...")
-        let path_without_scheme = if let Some(pos) = path.find("://") {
-            &path[pos + 3..]
-        } else {
-            path
-        };
-
-        let mut parts = path_without_scheme.trim_start_matches('/').split('/');
-        let realm = parts.next()?;
-        let area = parts.next()?;
-        let resource = parts.next()?;
+        let parts = route_triplet(route.as_str())?;
 
         // Accept both 3-segment (realm/area/resource) and 4+ segment (realm/area/resource/...) for queue identity
-        if !realm.is_empty() && !area.is_empty() && !resource.is_empty() {
+        if !parts.realm.is_empty() && !parts.area.is_empty() && !parts.resource.is_empty() {
             Some(QueueKey {
                 family,
-                realm: realm.to_string(),
-                area: area.to_string(),
-                resource: resource.to_string(),
+                realm: parts.realm.to_string(),
+                area: parts.area.to_string(),
+                resource: parts.resource.to_string(),
             })
         } else {
             None

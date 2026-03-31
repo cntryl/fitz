@@ -143,6 +143,48 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RouteTriplet<'a> {
+    pub realm: &'a str,
+    pub area: &'a str,
+    pub resource: &'a str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RouteQuad<'a> {
+    pub realm: &'a str,
+    pub area: &'a str,
+    pub resource: &'a str,
+    pub operation: &'a str,
+}
+
+pub(crate) fn route_triplet(route: &str) -> Option<RouteTriplet<'_>> {
+    let mut segments = route_segments(route);
+    Some(RouteTriplet {
+        realm: segments.next()?,
+        area: segments.next()?,
+        resource: segments.next()?,
+    })
+}
+
+pub(crate) fn route_quad(route: &str) -> Option<RouteQuad<'_>> {
+    let mut segments = route_segments(route);
+    Some(RouteQuad {
+        realm: segments.next()?,
+        area: segments.next()?,
+        resource: segments.next()?,
+        operation: segments.next()?,
+    })
+}
+
+fn route_path(route: &str) -> &str {
+    route.split_once("://").map_or(route, |(_, path)| path)
+}
+
+fn route_segments(route: &str) -> std::str::Split<'_, char> {
+    route_path(route).trim_start_matches('/').split('/')
+}
+
 /// An opaque route family identifier
 ///
 /// Route families create hard isolation boundaries in Fitz.
@@ -541,5 +583,58 @@ mod tests {
         );
         assert_eq!(map.get(&addr1), Some(&"value-a"));
         assert_eq!(map.get(&addr2), Some(&"value-b"));
+    }
+
+    #[test]
+    fn should_parse_route_triplet_given_route_prefix() {
+        // Arrange
+        let route = "notice://acme/app/orders/created";
+
+        // Act
+        let parsed = route_triplet(route);
+
+        // Assert
+        assert_eq!(
+            parsed,
+            Some(RouteTriplet {
+                realm: "acme",
+                area: "app",
+                resource: "orders",
+            })
+        );
+    }
+
+    #[test]
+    fn should_parse_route_quad_without_scheme() {
+        // Arrange
+        let route = "/acme/app/orders/create";
+
+        // Act
+        let parsed = route_quad(route);
+
+        // Assert
+        assert_eq!(
+            parsed,
+            Some(RouteQuad {
+                realm: "acme",
+                area: "app",
+                resource: "orders",
+                operation: "create",
+            })
+        );
+    }
+
+    #[test]
+    fn should_reject_route_prefix_given_missing_segments() {
+        // Arrange
+        let route = "queue://acme/app";
+
+        // Act
+        let triplet = route_triplet(route);
+        let quad = route_quad(route);
+
+        // Assert
+        assert!(triplet.is_none());
+        assert!(quad.is_none());
     }
 }

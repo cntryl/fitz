@@ -1,5 +1,7 @@
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{
+    route_quad, session_inbox_address, Route, RouteAddress, RouteFamily,
+};
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
 use fxhash::FxBuildHasher;
@@ -50,20 +52,6 @@ fn rpc_timeout_sweep_interval(request_timeout: Duration) -> Duration {
         .unwrap_or(RPC_MIN_TIMEOUT_SWEEP_INTERVAL)
         .max(RPC_MIN_TIMEOUT_SWEEP_INTERVAL)
         .min(RPC_MAX_TIMEOUT_SWEEP_INTERVAL)
-}
-
-fn parse_route_quad(route: &str) -> Option<(String, String, String, String)> {
-    let path = route.split("://").nth(1).unwrap_or(route);
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-    Some((
-        parts[0].to_string(),
-        parts[1].to_string(),
-        parts[2].to_string(),
-        parts[3].to_string(),
-    ))
 }
 
 #[derive(Clone)]
@@ -768,16 +756,14 @@ impl RpcDomainSink {
                     .workers
                     .iter()
                     .filter_map(|worker| {
-                        parse_route_quad(route.as_str()).map(
-                            |(realm, _area, _resource, _operation)| crate::api::admin::RpcWorker {
-                                session_id: worker.session_id.to_string(),
-                                realm,
-                                route: route.as_str().to_string(),
-                                registered_at: Utc::now().to_rfc3339(),
-                                requests_handled: 0,
-                                average_latency_ms: 0.0,
-                            },
-                        )
+                        route_quad(route.as_str()).map(|parts| crate::api::admin::RpcWorker {
+                            session_id: worker.session_id.to_string(),
+                            realm: parts.realm.to_string(),
+                            route: route.as_str().to_string(),
+                            registered_at: Utc::now().to_rfc3339(),
+                            requests_handled: 0,
+                            average_latency_ms: 0.0,
+                        })
                     })
                     .collect::<Vec<_>>()
             })

@@ -1,6 +1,7 @@
 //! Hierarchical list endpoints for admin API
 
 use crate::boot::Runtime;
+use crate::runtime::routing::{route_quad, route_triplet};
 use hyper::{Body, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -763,28 +764,18 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
 }
 
 fn parse_flexible_route(route: &str) -> Option<ResourceRef> {
-    let route = route.split("://").nth(1).unwrap_or(route);
-    let parts: Vec<&str> = route.split('/').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    Some(ResourceRef {
-        realm: parts[0].to_string(),
-        area: parts[1].to_string(),
-        resource: parts[2].to_string(),
+    route_triplet(route).map(|parts| ResourceRef {
+        realm: parts.realm.to_string(),
+        area: parts.area.to_string(),
+        resource: parts.resource.to_string(),
     })
 }
 
 fn parse_rpc_operation(route: &str) -> Option<OwnedRpcOperation> {
-    let route = route.split("://").nth(1).unwrap_or(route);
-    let parts: Vec<&str> = route.split('/').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-    Some(OwnedRpcOperation {
-        realm: parts[0].to_string(),
-        area: parts[1].to_string(),
-        resource: parts[2].to_string(),
-        operation: parts[3].to_string(),
+    route_quad(route).map(|parts| OwnedRpcOperation {
+        realm: parts.realm.to_string(),
+        area: parts.area.to_string(),
+        resource: parts.resource.to_string(),
+        operation: parts.operation.to_string(),
     })
 }
