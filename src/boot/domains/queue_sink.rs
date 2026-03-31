@@ -797,10 +797,32 @@ impl MailboxSink for QueueDomainSink {
 mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
+    use crate::protocol::payload_codec::PayloadDecoder;
     use crate::protocol::tlv::MessageType;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
-    use bytes::Bytes;
+    use crate::runtime::Mailbox;
+    use bytes::{BufMut, Bytes};
     use std::sync::Mutex as StdMutex;
+
+    fn encode_queue_subscribe(pattern: &str) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(pattern.len() as u32);
+        payload.put_slice(pattern.as_bytes());
+        Bytes::from(payload)
+    }
+
+    fn encode_queue_send(route: &str, body: &[u8]) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u32(body.len() as u32);
+        payload.put_slice(body);
+        Bytes::from(payload)
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
 
     struct CaptureFrameContextSink {
         msg_types: Arc<StdMutex<Vec<u16>>>,
@@ -898,5 +920,226 @@ mod tests {
             "expected inbox to receive msg_type 209 (QUEUE_NOTIFY), got {:?}",
             *msg_types
         );
+    }
+
+    #[test]
+    fn should_remove_queue_subscriptions_given_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let subscriber_session_id = 7;
+        let sender_session_id = 8;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+        );
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address,
+            queue_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Pub,
+                MessageType::new(207),
+                encode_queue_subscribe(queue_route),
+                family,
+            ),
+        ))
+        .expect("subscribe queue route");
+        let subscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("queue subscribe ack envelope");
+        let subscribe_frame = subscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("queue subscribe ack frame");
+        assert_eq!(subscribe_frame.payload[0], 0);
+        assert_eq!(sink.subscription_count(), 1);
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("queue://cleanup")),
+            crate::runtime::SessionCleanup {
+                session_id: subscriber_session_id,
+            },
+        ))
+        .expect("cleanup queue subscriptions");
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address,
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(queue_route, b"email"),
+                family,
+            ),
+        ))
+        .expect("enqueue queue message");
+
+        // Assert
+        assert_eq!(sink.subscription_count(), 0);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+        let send_ack_envelope = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("queue send ack envelope");
+        let send_ack_frame = send_ack_envelope
+            .into_payload::<FrameContext>()
+            .expect("queue send ack frame");
+        assert_eq!(send_ack_frame.msg_type.as_u16(), 200);
+        assert_eq!(send_ack_frame.payload[0], 0);
+    }
+
+    #[test]
+    fn should_retain_other_queue_subscription_given_unsubscribe_on_same_session() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let subscriber_session_id = 7;
+        let sender_session_id = 8;
+        let removed_route = "queue://acme/jobs/emails";
+        let retained_route = "queue://acme/jobs/reports";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let subscriber_mailbox = Arc::new(Mailbox::new(16));
+        let sender_mailbox = Arc::new(Mailbox::new(16));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+        );
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            queue_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Pub,
+                MessageType::new(207),
+                encode_queue_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("subscribe removed queue route");
+        let _removed_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("removed subscribe ack envelope");
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            queue_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Pub,
+                MessageType::new(207),
+                encode_queue_subscribe(retained_route),
+                family,
+            ),
+        ))
+        .expect("subscribe retained queue route");
+        let _retained_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained subscribe ack envelope");
+        assert_eq!(sink.subscription_count(), 2);
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            subscriber_address,
+            queue_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Pub,
+                MessageType::new(208),
+                encode_queue_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("unsubscribe removed queue route");
+        let unsubscribe_ack_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("unsubscribe ack envelope");
+        let unsubscribe_ack_frame = unsubscribe_ack_envelope
+            .into_payload::<FrameContext>()
+            .expect("unsubscribe ack frame");
+        assert_eq!(unsubscribe_ack_frame.payload[0], 0);
+        assert_eq!(sink.subscription_count(), 1);
+        drain_mailbox(&subscriber_mailbox);
+
+        sink.deliver(Envelope::from_route(
+            sender_address.clone(),
+            queue_address.clone(),
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(removed_route, b"removed"),
+                family,
+            ),
+        ))
+        .expect("enqueue removed queue message");
+        let _removed_send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("removed send ack envelope");
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address,
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(retained_route, b"retained"),
+                family,
+            ),
+        ))
+        .expect("enqueue retained queue message");
+        let _retained_send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained send ack envelope");
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained queue notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("retained queue notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 209);
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_route = notify_decoder.get_string().expect("notify route");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+        assert_eq!(notified_route, retained_route);
+        assert_eq!(notified_payload.as_ref(), b"{}");
+        assert!(notify_decoder.is_complete());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 }

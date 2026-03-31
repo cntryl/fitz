@@ -18,6 +18,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Queue-style sink that keeps delivered frame contexts until explicitly drained.
 #[derive(Default)]
@@ -174,6 +175,16 @@ pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<RpcDomainSink> {
         router,
         crate::api::admin::read_model::AdminReadModel::new(),
     ))
+}
+
+pub fn create_bench_rpc_sink_with_timeout(
+    router: Arc<Router>,
+    request_timeout: Duration,
+) -> Arc<RpcDomainSink> {
+    Arc::new(
+        RpcDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new())
+            .with_request_timeout(request_timeout),
+    )
 }
 
 pub fn create_bench_rpc_sink_with_metrics(

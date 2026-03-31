@@ -152,6 +152,16 @@ name = "tier2_subsystem_schedule_scan"
 harness = false
 path = "benches/tier2_subsystem_schedule_scan.rs"
 
+[[bench]]
+name = "tier2_subsystem_queue"
+harness = false
+path = "benches/tier2_subsystem_queue.rs"
+
+[[bench]]
+name = "tier2_subsystem_rpc"
+harness = false
+path = "benches/tier2_subsystem_rpc.rs"
+
 # Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
 [[bench]]
 name = "tier3_system_kv"

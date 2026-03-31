@@ -424,7 +424,31 @@ impl MailboxSink for NoticeDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::frame_context::FrameContext;
+    use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+    use crate::protocol::tlv::MessageType;
+    use crate::runtime::mailbox::Mailbox;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use bytes::Bytes;
     use std::sync::Arc;
+
+    fn encode_notice_subscribe(pattern: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(pattern);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_notice_publish(route: &str, payload: &[u8]) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_bytes(payload);
+        Bytes::from(encoder.finish())
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
 
     #[test]
     fn should_create_notice_domain_sink() {
@@ -437,5 +461,262 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_remove_notice_subscriptions_given_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let subscriber_session_id = 7;
+        let publisher_session_id = 11;
+        let notice_route = "notice://acme/app/events";
+        let notice_address = RouteAddress::new(family, Route::new(notice_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        let publisher_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register(publisher_address.clone(), publisher_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            notice_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(501),
+                encode_notice_subscribe(notice_route),
+                family,
+            ),
+        ))
+        .expect("subscribe notice route");
+        let subscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("subscribe ack envelope");
+        let subscribe_frame = subscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("subscribe ack frame");
+        let mut subscribe_decoder = PayloadDecoder::new(&subscribe_frame.payload);
+        let subscribe_status = subscribe_decoder.get_u8().expect("subscribe status");
+        assert_eq!(subscribe_status, 0);
+        let _subscription_id = subscribe_decoder
+            .get_optional_u64()
+            .expect("subscription id");
+        assert!(subscribe_decoder.is_complete());
+
+        // Act
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("notice://cleanup")),
+            crate::runtime::SessionCleanup {
+                session_id: subscriber_session_id,
+            },
+        ))
+        .expect("cleanup notice subscriber");
+        sink.deliver(Envelope::from_route(
+            publisher_address,
+            notice_address,
+            FrameContext::new(
+                publisher_session_id,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(notice_route, b"hello"),
+                family,
+            ),
+        ))
+        .expect("publish notice event");
+
+        // Assert
+        assert_eq!(sink.subscription_count(), 0);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+
+        let publish_envelope = publisher_mailbox
+            .receiver()
+            .try_recv()
+            .expect("publish ack envelope");
+        let publish_frame = publish_envelope
+            .into_payload::<FrameContext>()
+            .expect("publish ack frame");
+        let mut publish_decoder = PayloadDecoder::new(&publish_frame.payload);
+        let publish_status = publish_decoder.get_u8().expect("publish status");
+        assert_eq!(publish_status, 0);
+        let publish_subscription_id = publish_decoder
+            .get_optional_u64()
+            .expect("publish subscription id");
+        assert!(publish_subscription_id.is_none());
+        assert!(publish_decoder.is_complete());
+    }
+
+    #[test]
+    fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let subscriber_session_id = 7;
+        let publisher_session_id = 11;
+        let removed_route = "notice://acme/app/events";
+        let retained_route = "notice://acme/app/audits";
+        let notice_address = RouteAddress::new(family, Route::new(removed_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(16));
+        let publisher_mailbox = Arc::new(Mailbox::new(16));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register(publisher_address.clone(), publisher_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            notice_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(501),
+                encode_notice_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("subscribe removed notice route");
+        let _removed_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("removed subscribe ack envelope");
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            notice_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(501),
+                encode_notice_subscribe(retained_route),
+                family,
+            ),
+        ))
+        .expect("subscribe retained notice route");
+        let _retained_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained subscribe ack envelope");
+        assert_eq!(sink.subscription_count(), 2);
+        drain_mailbox(&subscriber_mailbox);
+        drain_mailbox(&publisher_mailbox);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            subscriber_address,
+            notice_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(502),
+                encode_notice_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("unsubscribe removed notice route");
+        let unsubscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("unsubscribe ack envelope");
+        let unsubscribe_frame = unsubscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("unsubscribe ack frame");
+        let mut unsubscribe_decoder = PayloadDecoder::new(&unsubscribe_frame.payload);
+        assert_eq!(unsubscribe_decoder.get_u8().expect("unsubscribe status"), 0);
+        let unsubscribe_subscription_id = unsubscribe_decoder
+            .get_optional_u64()
+            .expect("unsubscribe subscription id");
+        assert!(unsubscribe_subscription_id.is_none());
+        assert!(unsubscribe_decoder.is_complete());
+        assert_eq!(sink.subscription_count(), 1);
+
+        sink.deliver(Envelope::from_route(
+            publisher_address.clone(),
+            notice_address.clone(),
+            FrameContext::new(
+                publisher_session_id,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(removed_route, b"removed"),
+                family,
+            ),
+        ))
+        .expect("publish removed notice event");
+        let removed_publish_envelope = publisher_mailbox
+            .receiver()
+            .try_recv()
+            .expect("removed publish ack envelope");
+        let removed_publish_frame = removed_publish_envelope
+            .into_payload::<FrameContext>()
+            .expect("removed publish ack frame");
+        let mut removed_publish_decoder = PayloadDecoder::new(&removed_publish_frame.payload);
+        assert_eq!(
+            removed_publish_decoder
+                .get_u8()
+                .expect("removed publish status"),
+            0
+        );
+        let removed_publish_subscription_id = removed_publish_decoder
+            .get_optional_u64()
+            .expect("removed publish subscription id");
+        assert!(removed_publish_subscription_id.is_none());
+        assert!(removed_publish_decoder.is_complete());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+
+        sink.deliver(Envelope::from_route(
+            publisher_address,
+            notice_address,
+            FrameContext::new(
+                publisher_session_id,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(retained_route, b"retained"),
+                family,
+            ),
+        ))
+        .expect("publish retained notice event");
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained notice notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("retained notice notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 504);
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_route = notify_decoder.get_string().expect("notify route");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+        assert_eq!(notified_route, retained_route);
+        assert_eq!(notified_payload.as_ref(), b"retained");
+        assert!(notify_decoder.is_complete());
+
+        let retained_publish_envelope = publisher_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained publish ack envelope");
+        let retained_publish_frame = retained_publish_envelope
+            .into_payload::<FrameContext>()
+            .expect("retained publish ack frame");
+        let mut retained_publish_decoder = PayloadDecoder::new(&retained_publish_frame.payload);
+        assert_eq!(
+            retained_publish_decoder
+                .get_u8()
+                .expect("retained publish status"),
+            0
+        );
+        let retained_publish_subscription_id = retained_publish_decoder
+            .get_optional_u64()
+            .expect("retained publish subscription id");
+        assert!(retained_publish_subscription_id.is_none());
+        assert!(retained_publish_decoder.is_complete());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 }

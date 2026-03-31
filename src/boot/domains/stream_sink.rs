@@ -927,6 +927,59 @@ impl MailboxSink for StreamDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::frame_context::FrameContext;
+    use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+    use crate::protocol::tlv::MessageType;
+    use crate::runtime::mailbox::Mailbox;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use bytes::Bytes;
+    use std::sync::Arc;
+
+    fn encode_stream_begin(route: &str, expected_offset: u64) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_u64(expected_offset);
+        encoder.put_u8(0);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_stream_append(session_id: u64, body: &[u8]) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_u64(session_id);
+        encoder.put_bytes(body);
+        encoder.put_u8(0);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_stream_commit(session_id: u64) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_u64(session_id);
+        encoder.put_u8(0);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_stream_subscribe(pattern: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(pattern);
+        Bytes::from(encoder.finish())
+    }
+
+    fn decode_stream_ok_response(payload: &[u8]) -> (Option<u64>, Bytes) {
+        let mut decoder = PayloadDecoder::new(payload);
+        let status = decoder.get_u8().expect("stream response status");
+        let maybe_id = decoder.get_optional_u64().expect("stream response id");
+        let data = decoder.get_bytes().expect("stream response data");
+
+        assert_eq!(status, 0);
+        assert!(decoder.is_complete());
+
+        (maybe_id, Bytes::copy_from_slice(data.as_ref()))
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
 
     #[test]
     fn should_create_stream_domain_sink() {
@@ -940,6 +993,373 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_publish_stream_notify_to_subscribers_when_commit_succeeds() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let requester_session_id = 7;
+        let subscriber_session_id = 9;
+        let stream_route = "stream://acme/app/events";
+        let stream_address = RouteAddress::new(family, Route::new(stream_route));
+        let requester_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let requester_mailbox = Arc::new(Mailbox::new(8));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(requester_address.clone(), requester_mailbox.clone());
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = StreamDomainSink::new(store, router, admin_read_model);
+
+        let subscribe_ctx = FrameContext::new(
+            subscriber_session_id,
+            ChannelId::Sub,
+            MessageType::new(607),
+            encode_stream_subscribe(stream_route),
+            family,
+        );
+        let begin_ctx = FrameContext::new(
+            requester_session_id,
+            ChannelId::Sub,
+            MessageType::new(600),
+            encode_stream_begin(stream_route, 0),
+            family,
+        );
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            stream_address.clone(),
+            subscribe_ctx,
+        ))
+        .expect("subscribe stream");
+        let subscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("subscribe ack envelope");
+        let subscribe_frame = subscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("subscribe ack frame");
+        let (subscription_id, subscribe_data) = decode_stream_ok_response(&subscribe_frame.payload);
+        let subscription_id = subscription_id.expect("subscription id present");
+        assert!(subscribe_data.is_empty());
+
+        sink.deliver(Envelope::from_route(
+            requester_address.clone(),
+            stream_address.clone(),
+            begin_ctx,
+        ))
+        .expect("begin stream session");
+        let begin_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("begin ack envelope");
+        let begin_frame = begin_envelope
+            .into_payload::<FrameContext>()
+            .expect("begin ack frame");
+        let (stream_session_id, begin_data) = decode_stream_ok_response(&begin_frame.payload);
+        let stream_session_id = stream_session_id.expect("stream session id present");
+        assert!(begin_data.is_empty());
+
+        let append_ctx = FrameContext::new(
+            requester_session_id,
+            ChannelId::Sub,
+            MessageType::new(601),
+            encode_stream_append(stream_session_id, b"alpha"),
+            family,
+        );
+        let commit_ctx = FrameContext::new(
+            requester_session_id,
+            ChannelId::Sub,
+            MessageType::new(602),
+            encode_stream_commit(stream_session_id),
+            family,
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            requester_address.clone(),
+            stream_address.clone(),
+            append_ctx,
+        ))
+        .expect("append stream record");
+        let append_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("append ack envelope");
+        let append_frame = append_envelope
+            .into_payload::<FrameContext>()
+            .expect("append ack frame");
+        let (append_session_id, append_data) = decode_stream_ok_response(&append_frame.payload);
+        assert!(append_session_id.is_none());
+        assert_eq!(append_data.len(), 8);
+
+        drain_mailbox(&subscriber_mailbox);
+        sink.deliver(Envelope::from_route(
+            requester_address,
+            stream_address,
+            commit_ctx,
+        ))
+        .expect("commit stream session");
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("stream notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("stream notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 609);
+
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let notified_subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_route = notify_decoder.get_string().expect("notify route");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+        assert_eq!(notified_subscription_id, subscription_id);
+        assert_eq!(notified_route, stream_route);
+
+        let decoded: serde_json::Value =
+            serde_json::from_slice(notified_payload.as_ref()).expect("notify payload JSON");
+        assert_eq!(decoded["event"], "committed");
+        assert_eq!(decoded["first_resource_offset"], 0);
+        assert_eq!(decoded["last_resource_offset"], 0);
+        assert_eq!(decoded["first_area_offset"], 0);
+        assert_eq!(decoded["last_area_offset"], 0);
+        assert_eq!(decoded["first_realm_offset"], 0);
+        assert_eq!(decoded["last_realm_offset"], 0);
+        assert_eq!(decoded["batch_size"], 1);
+        assert!(notify_decoder.is_complete());
+
+        let commit_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("commit ack envelope");
+        let commit_frame = commit_envelope
+            .into_payload::<FrameContext>()
+            .expect("commit ack frame");
+        let (commit_session_id, commit_data) = decode_stream_ok_response(&commit_frame.payload);
+        assert!(commit_session_id.is_none());
+        assert!(commit_data.is_empty());
+    }
+
+    #[test]
+    fn should_remove_stream_subscriptions_given_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let requester_session_id = 7;
+        let subscriber_session_id = 9;
+        let stream_route = "stream://acme/app/events";
+        let stream_address = RouteAddress::new(family, Route::new(stream_route));
+        let requester_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let requester_mailbox = Arc::new(Mailbox::new(8));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(requester_address.clone(), requester_mailbox.clone());
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = StreamDomainSink::new(store, router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            stream_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(607),
+                encode_stream_subscribe(stream_route),
+                family,
+            ),
+        ))
+        .expect("subscribe stream");
+        drain_mailbox(&subscriber_mailbox);
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("stream://cleanup")),
+            crate::runtime::SessionCleanup {
+                session_id: subscriber_session_id,
+            },
+        ))
+        .expect("cleanup session");
+        sink.deliver(Envelope::from_route(
+            requester_address.clone(),
+            stream_address.clone(),
+            FrameContext::new(
+                requester_session_id,
+                ChannelId::Sub,
+                MessageType::new(600),
+                encode_stream_begin(stream_route, 0),
+                family,
+            ),
+        ))
+        .expect("begin stream session");
+        let begin_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("begin ack envelope");
+        let begin_frame = begin_envelope
+            .into_payload::<FrameContext>()
+            .expect("begin ack frame");
+        let (stream_session_id, begin_data) = decode_stream_ok_response(&begin_frame.payload);
+        let stream_session_id = stream_session_id.expect("stream session id present");
+        assert!(begin_data.is_empty());
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            requester_address.clone(),
+            stream_address.clone(),
+            FrameContext::new(
+                requester_session_id,
+                ChannelId::Sub,
+                MessageType::new(601),
+                encode_stream_append(stream_session_id, b"alpha"),
+                family,
+            ),
+        ))
+        .expect("append stream record");
+        let _append_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("append ack envelope");
+        sink.deliver(Envelope::from_route(
+            requester_address,
+            stream_address,
+            FrameContext::new(
+                requester_session_id,
+                ChannelId::Sub,
+                MessageType::new(602),
+                encode_stream_commit(stream_session_id),
+                family,
+            ),
+        ))
+        .expect("commit stream session");
+
+        // Assert
+        assert_eq!(sink.subscription_count(), 0);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn should_retain_other_stream_subscription_given_unsubscribe_on_same_session() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let subscriber_session_id = 9;
+        let removed_route = "stream://acme/app/events";
+        let retained_route = "stream://acme/app/audits";
+        let removed_address = RouteAddress::new(family, Route::new(removed_route));
+        let retained_address = RouteAddress::new(family, Route::new(retained_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(16));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = StreamDomainSink::new(store, router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            removed_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(607),
+                encode_stream_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("subscribe removed stream route");
+        let _removed_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("removed subscribe ack envelope");
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            retained_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(607),
+                encode_stream_subscribe(retained_route),
+                family,
+            ),
+        ))
+        .expect("subscribe retained stream route");
+        let _retained_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained subscribe ack envelope");
+        assert_eq!(sink.subscription_count(), 2);
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            subscriber_address,
+            removed_address,
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Sub,
+                MessageType::new(608),
+                encode_stream_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("unsubscribe removed stream route");
+        let unsubscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("unsubscribe ack envelope");
+        let unsubscribe_frame = unsubscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("unsubscribe ack frame");
+        let (unsubscribe_session_id, unsubscribe_data) =
+            decode_stream_ok_response(&unsubscribe_frame.payload);
+        assert!(unsubscribe_session_id.is_none());
+        assert!(unsubscribe_data.is_empty());
+        assert_eq!(sink.subscription_count(), 1);
+
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("stream://events/removed")),
+            crate::runtime::DomainPublishEvent::new(
+                family,
+                Route::new(removed_route),
+                Bytes::from_static(b"removed"),
+            ),
+        ))
+        .expect("deliver removed stream event");
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("stream://events/retained")),
+            crate::runtime::DomainPublishEvent::new(
+                family,
+                Route::new(retained_route),
+                Bytes::from_static(b"retained"),
+            ),
+        ))
+        .expect("deliver retained stream event");
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained stream notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("retained stream notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 609);
+
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_route = notify_decoder.get_string().expect("notify route");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+        assert_eq!(notified_route, retained_route);
+        assert_eq!(notified_payload.as_ref(), b"retained");
+        assert!(notify_decoder.is_complete());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 
     #[test]

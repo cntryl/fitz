@@ -195,6 +195,70 @@ where
     // Any status is acceptable here - we're just validating the request completes
 }
 
+async fn should_retain_other_notice_subscription_after_unsubscribe<C>(server: &TestServer)
+where
+    C: NoticeConnector,
+{
+    let removed_route = "notice://test/app/events";
+    let retained_route = "notice://test/app/audits";
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+    let mut publisher = C::connect(server).await.expect("connect publisher");
+
+    let removed_subscribe_response = subscriber
+        .send_and_receive(&build_notice_subscribe(removed_route), 2000)
+        .await
+        .expect("subscribe removed route");
+    let (_msg_type, status, _data) = parse_notice_response(&removed_subscribe_response);
+    assert_eq!(status, 0, "Expected success for removed route subscribe");
+
+    let retained_subscribe_response = subscriber
+        .send_and_receive(&build_notice_subscribe(retained_route), 2000)
+        .await
+        .expect("subscribe retained route");
+    let (_msg_type, status, _data) = parse_notice_response(&retained_subscribe_response);
+    assert_eq!(status, 0, "Expected success for retained route subscribe");
+
+    let unsubscribe_response = subscriber
+        .send_and_receive(&build_notice_unsubscribe(removed_route), 2000)
+        .await
+        .expect("unsubscribe removed route");
+    let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
+    assert_eq!(status, 0, "Expected success for removed route unsubscribe");
+
+    let removed_publish_response = publisher
+        .send_and_receive(
+            &build_notice_publish(removed_route, "test-realm", b"removed"),
+            2000,
+        )
+        .await
+        .expect("publish removed route");
+    let (_msg_type, status, _data) = parse_notice_response(&removed_publish_response);
+    assert_eq!(status, 0, "Expected success for removed route publish");
+    assert!(
+        subscriber.recv_frame(200).await.is_err(),
+        "Removed route publish should not deliver after unsubscribe"
+    );
+
+    let retained_publish_response = publisher
+        .send_and_receive(
+            &build_notice_publish(retained_route, "test-realm", b"retained"),
+            2000,
+        )
+        .await
+        .expect("publish retained route");
+    let (_msg_type, status, _data) = parse_notice_response(&retained_publish_response);
+    assert_eq!(status, 0, "Expected success for retained route publish");
+
+    let retained_delivery = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("retained route delivery");
+    let retained_delivery = parse_notice_delivery(&retained_delivery).expect("parse delivery");
+    assert_eq!(retained_delivery.msg_type, 504);
+    assert_eq!(retained_delivery.route, retained_route);
+    assert_eq!(retained_delivery.body.as_slice(), b"retained");
+}
+
 // ===== TCP TESTS =====
 
 #[tokio::test]
@@ -239,6 +303,12 @@ async fn should_not_match_pattern_if_publish_beneath_scope_tcp() {
     should_not_match_pattern_if_publish_beneath_scope::<TcpNoticeConnector>(&server).await;
 }
 
+#[tokio::test]
+async fn should_retain_other_notice_subscription_after_unsubscribe_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_retain_other_notice_subscription_after_unsubscribe::<TcpNoticeConnector>(&server).await;
+}
+
 // ===== WEBSOCKET TESTS =====
 
 #[tokio::test]
@@ -281,4 +351,10 @@ async fn should_deliver_to_exact_match_before_wildcard_ws() {
 async fn should_not_match_pattern_if_publish_beneath_scope_ws() {
     let server = TestServer::start().await.expect("start");
     should_not_match_pattern_if_publish_beneath_scope::<WsNoticeConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_retain_other_notice_subscription_after_unsubscribe_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_retain_other_notice_subscription_after_unsubscribe::<WsNoticeConnector>(&server).await;
 }

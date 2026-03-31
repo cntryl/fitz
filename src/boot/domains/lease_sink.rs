@@ -640,7 +640,32 @@ impl MailboxSink for LeaseDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::frame_context::FrameContext;
+    use crate::protocol::payload_codec::PayloadEncoder;
+    use crate::protocol::tlv::MessageType;
+    use crate::runtime::mailbox::Mailbox;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use bytes::Bytes;
     use std::sync::Arc;
+
+    fn encode_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(owner_id);
+        encoder.put_u64(ttl_secs);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_lease_subscribe(pattern: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(pattern);
+        Bytes::from(encoder.finish())
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
 
     #[test]
     fn should_create_lease_domain_sink() {
@@ -653,5 +678,77 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_clear_session_state_given_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let lease_route = "lease://acme/locks/resource";
+        let lease_address = RouteAddress::new(family, Route::new(lease_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = LeaseDomainSink::new(router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            lease_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(400),
+                encode_lease_acquire(lease_route, "session:7", 30),
+                family,
+            ),
+        ))
+        .expect("acquire lease");
+        let _acquire_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("acquire ack envelope");
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            lease_address,
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(407),
+                encode_lease_subscribe(lease_route),
+                family,
+            ),
+        ))
+        .expect("subscribe lease route");
+        let _subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("subscribe ack envelope");
+        assert_eq!(sink.lease_count(), 1);
+        assert_eq!(sink.subscription_count(), 1);
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("lease://cleanup")),
+            crate::runtime::SessionCleanup { session_id },
+        ))
+        .expect("cleanup lease session");
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("lease://events")),
+            crate::runtime::DomainPublishEvent::new(
+                family,
+                Route::new(lease_route),
+                Bytes::from_static(b"expired"),
+            ),
+        ))
+        .expect("deliver lease publish event");
+
+        // Assert
+        assert_eq!(sink.lease_count(), 0);
+        assert_eq!(sink.subscription_count(), 0);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 }

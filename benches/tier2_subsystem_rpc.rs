@@ -1,0 +1,568 @@
+use bytes::Bytes;
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+};
+use fitz::benchkit::{
+    build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
+    create_bench_rpc_sink, create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
+    register_session_queue_sink, FrameQueueSink,
+};
+use fitz::domains::rpc::protocol::RpcMessage;
+use fitz::protocol::frame::ChannelId;
+use fitz::protocol::frame_context::FrameContext;
+use fitz::protocol::rpc_codec::parse_request;
+use fitz::protocol::tlv::MessageType;
+use fitz::runtime::envelope::Envelope;
+use fitz::runtime::router::{MailboxSink, Router};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+#[path = "criterion_config.rs"]
+mod criterion_config;
+
+const ROUTE_STR: &str = "rpc://bench/subsystem/route";
+const REQUESTER_SESSION_ID: u64 = 1;
+const REQUEST_FRAME_RING_SIZE: usize = 1024;
+const DISPATCH_BATCH_SIZE: usize = 256;
+const MULTI_ROUTE_COUNT: usize = 64;
+const RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(10);
+const RPC_TIMEOUT_SWEEP_WAIT: Duration = Duration::from_millis(25);
+
+type WorkerHandle = (u64, RouteAddress, Arc<FrameQueueSink>);
+
+struct RequestFrameRing {
+    frames: Vec<(u16, Bytes)>,
+    next: usize,
+}
+
+impl RequestFrameRing {
+    fn new(route: &str, payload: &[u8], count: usize) -> Self {
+        let frames = (0..count)
+            .map(|_| {
+                let frame = build_rpc_request(route, payload);
+                extract_single_tlv_field(&frame)
+            })
+            .collect();
+
+        Self { frames, next: 0 }
+    }
+
+    fn next_frame(&mut self) -> (u16, Bytes) {
+        let (msg_type, payload) = &self.frames[self.next];
+        self.next = (self.next + 1) % self.frames.len();
+        (*msg_type, payload.clone())
+    }
+}
+
+struct PreparedResponseCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    destination: RouteAddress,
+    worker_session_id: u64,
+    worker_source: RouteAddress,
+    requester_inbox: Arc<FrameQueueSink>,
+    response_msg_type: u16,
+    response_payload: Bytes,
+}
+
+struct PreparedTimeoutSweepCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    requester_source: RouteAddress,
+    destination: RouteAddress,
+    requester_inbox: Arc<FrameQueueSink>,
+    worker_inbox: Arc<FrameQueueSink>,
+    request_msg_type: u16,
+    request_payload: Bytes,
+}
+
+fn route_address(family: RouteFamily, route: &str) -> RouteAddress {
+    RouteAddress::new(family, Route::new(route))
+}
+
+fn build_route_set(family: RouteFamily, route_count: usize) -> Vec<RouteAddress> {
+    (0..route_count)
+        .map(|index| route_address(family, &format!("rpc://bench/subsystem/route/{index}")))
+        .collect()
+}
+
+fn assert_requester_received_worker_responses(
+    frames: Vec<fitz::protocol::frame_context::FrameContext>,
+    expected_count: usize,
+) {
+    let response_count = frames
+        .into_iter()
+        .filter(|frame| frame.msg_type.as_u16() == 303)
+        .count();
+
+    assert_eq!(
+        response_count, expected_count,
+        "expected requester inbox to contain {expected_count} worker responses"
+    );
+}
+
+fn route_frame_to_address(
+    router: &Router,
+    source: &RouteAddress,
+    destination: &RouteAddress,
+    session_id: u64,
+    msg_type: u16,
+    payload: Bytes,
+    family: RouteFamily,
+) {
+    let frame = FrameContext::new(
+        session_id,
+        ChannelId::Rpc,
+        MessageType::new(msg_type),
+        payload,
+        family,
+    );
+
+    router
+        .route(Envelope::from_route(
+            source.clone(),
+            destination.clone(),
+            frame,
+        ))
+        .expect("rpc route should succeed");
+}
+
+fn setup_rpc_sink(
+    request_timeout: Option<Duration>,
+) -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink: Arc<dyn MailboxSink> = match request_timeout {
+        Some(timeout) => create_bench_rpc_sink_with_timeout(router.clone(), timeout),
+        None => create_bench_rpc_sink(router.clone()),
+    };
+    router.register_domain_pattern("rpc", sink);
+    let (requester_source, requester_inbox) =
+        register_session_queue_sink(&router, family, REQUESTER_SESSION_ID);
+    (router, family, requester_source, requester_inbox)
+}
+
+fn register_worker_for_destination(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    session_id: u64,
+    destination: &RouteAddress,
+) -> WorkerHandle {
+    let (worker_source, worker_inbox) = register_session_queue_sink(router, family, session_id);
+    let subscribe_frame = build_rpc_subscribe(destination.route().as_str());
+    let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
+    route_frame_to_address(
+        router.as_ref(),
+        &worker_source,
+        destination,
+        session_id,
+        msg_type,
+        payload,
+        family,
+    );
+    worker_inbox.clear();
+    (session_id, worker_source, worker_inbox)
+}
+
+fn dispatch_request_to_destination(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    requester_source: &RouteAddress,
+    destination: &RouteAddress,
+    request_msg_type: u16,
+    request_payload: Bytes,
+) {
+    route_frame_to_address(
+        router.as_ref(),
+        requester_source,
+        destination,
+        REQUESTER_SESSION_ID,
+        request_msg_type,
+        request_payload,
+        family,
+    );
+}
+
+fn route_worker_frame_to_destination(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    worker_session_id: u64,
+    worker_source: &RouteAddress,
+    destination: &RouteAddress,
+    msg_type: u16,
+    payload: Bytes,
+) {
+    route_frame_to_address(
+        router.as_ref(),
+        worker_source,
+        destination,
+        worker_session_id,
+        msg_type,
+        payload,
+        family,
+    );
+}
+
+fn drain_request_correlation(
+    worker_inbox: &Arc<FrameQueueSink>,
+    family: RouteFamily,
+) -> uuid::Uuid {
+    worker_inbox
+        .drain()
+        .into_iter()
+        .find_map(|frame| match frame.msg_type.as_u16() {
+            302 => match parse_request(&frame, &frame.payload, family) {
+                Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
+                _ => None,
+            },
+            304 => None,
+            _ => None,
+        })
+        .expect("rpc dispatched request")
+}
+
+fn cleanup_worker_request_on_destination(
+    router: &Arc<Router>,
+    family: RouteFamily,
+    destination: &RouteAddress,
+    worker: &WorkerHandle,
+) {
+    let (worker_session_id, worker_source, worker_inbox) = worker;
+    let correlation_id = drain_request_correlation(worker_inbox, family);
+    let (ack_msg_type, ack_payload) =
+        extract_single_tlv_field(&build_rpc_ack_frame(correlation_id));
+    route_worker_frame_to_destination(
+        router,
+        family,
+        *worker_session_id,
+        worker_source,
+        destination,
+        ack_msg_type,
+        ack_payload,
+    );
+}
+
+fn find_dispatched_request(
+    workers: &[WorkerHandle],
+    family: RouteFamily,
+) -> (u64, RouteAddress, uuid::Uuid) {
+    workers
+        .iter()
+        .find_map(|(session_id, worker_source, worker_inbox)| {
+            let correlation_id =
+                worker_inbox
+                    .drain()
+                    .into_iter()
+                    .find_map(|frame| match frame.msg_type.as_u16() {
+                        302 => match parse_request(&frame, &frame.payload, family) {
+                            Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
+                            _ => None,
+                        },
+                        304 => None,
+                        _ => None,
+                    });
+
+            correlation_id.map(|value| (*session_id, worker_source.clone(), value))
+        })
+        .expect("one worker should receive the pending request")
+}
+
+fn prepare_response_case() -> PreparedResponseCase {
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
+    let destination = route_address(family, ROUTE_STR);
+    let workers = vec![register_worker_for_destination(
+        &router,
+        family,
+        10_000,
+        &destination,
+    )];
+    let mut request_ring = RequestFrameRing::new(ROUTE_STR, b"response payload", 1);
+    let (request_msg_type, request_payload) = request_ring.next_frame();
+
+    dispatch_request_to_destination(
+        &router,
+        family,
+        &requester_source,
+        &destination,
+        request_msg_type,
+        request_payload,
+    );
+
+    let (worker_session_id, worker_source, correlation_id) =
+        find_dispatched_request(&workers, family);
+    let response_frame = build_rpc_response_frame(correlation_id, b"response payload");
+    let (response_msg_type, response_payload) = extract_single_tlv_field(&response_frame);
+
+    PreparedResponseCase {
+        router,
+        family,
+        destination,
+        worker_session_id,
+        worker_source,
+        requester_inbox,
+        response_msg_type,
+        response_payload,
+    }
+}
+
+fn prepare_timeout_sweep_case(expired_pending: usize) -> PreparedTimeoutSweepCase {
+    let (router, family, requester_source, requester_inbox) =
+        setup_rpc_sink(Some(RPC_REQUEST_TIMEOUT));
+    let destination = route_address(family, ROUTE_STR);
+    let (_, _, worker_inbox) =
+        register_worker_for_destination(&router, family, 20_000, &destination);
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"timeout sweep payload", expired_pending + 1);
+
+    for _ in 0..expired_pending {
+        let (request_msg_type, request_payload) = request_ring.next_frame();
+        dispatch_request_to_destination(
+            &router,
+            family,
+            &requester_source,
+            &destination,
+            request_msg_type,
+            request_payload,
+        );
+    }
+
+    worker_inbox.clear();
+    requester_inbox.clear();
+    std::thread::sleep(RPC_TIMEOUT_SWEEP_WAIT);
+
+    let (request_msg_type, request_payload) = request_ring.next_frame();
+    PreparedTimeoutSweepCase {
+        router,
+        family,
+        requester_source,
+        destination,
+        requester_inbox,
+        worker_inbox,
+        request_msg_type,
+        request_payload,
+    }
+}
+
+fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_rpc");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("worker_subscribe_primary", |b| {
+        b.iter_batched(
+            || {
+                let (router, family, _, _) = setup_rpc_sink(None);
+                let destination = route_address(family, ROUTE_STR);
+                let (worker_source, worker_inbox) =
+                    register_session_queue_sink(&router, family, 30_000);
+                let subscribe_frame = build_rpc_subscribe(ROUTE_STR);
+                let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
+
+                (
+                    router,
+                    family,
+                    destination,
+                    worker_source,
+                    worker_inbox,
+                    msg_type,
+                    payload,
+                )
+            },
+            |(router, family, destination, worker_source, worker_inbox, msg_type, payload)| {
+                route_frame_to_address(
+                    router.as_ref(),
+                    &worker_source,
+                    &destination,
+                    30_000,
+                    msg_type,
+                    black_box(payload),
+                    family,
+                );
+                black_box(worker_inbox.count());
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    group.finish();
+}
+
+fn bench_rpc_dispatch_primary(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_rpc");
+    group.sampling_mode(SamplingMode::Flat);
+
+    for worker_count in [1usize, 64usize, 256usize] {
+        let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
+        let destination = route_address(family, ROUTE_STR);
+        let workers: Vec<WorkerHandle> = (0..worker_count)
+            .map(|index| {
+                register_worker_for_destination(
+                    &router,
+                    family,
+                    40_000 + index as u64,
+                    &destination,
+                )
+            })
+            .collect();
+        let mut request_ring =
+            RequestFrameRing::new(ROUTE_STR, b"dispatch payload", REQUEST_FRAME_RING_SIZE);
+        let mut next_worker_index = 0usize;
+
+        group.throughput(Throughput::Elements(DISPATCH_BATCH_SIZE as u64));
+        group.bench_function(
+            format!("dispatch_ack_cleanup_{}_workers_primary", worker_count),
+            |b| {
+                b.iter(|| {
+                    for _ in 0..DISPATCH_BATCH_SIZE {
+                        let (request_msg_type, request_payload) = request_ring.next_frame();
+                        dispatch_request_to_destination(
+                            &router,
+                            family,
+                            &requester_source,
+                            &destination,
+                            request_msg_type,
+                            black_box(request_payload),
+                        );
+                        cleanup_worker_request_on_destination(
+                            &router,
+                            family,
+                            &destination,
+                            &workers[next_worker_index],
+                        );
+                        next_worker_index = (next_worker_index + 1) % workers.len();
+                        requester_inbox.clear();
+                    }
+                })
+            },
+        );
+    }
+
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
+    let destinations = build_route_set(family, MULTI_ROUTE_COUNT);
+    let workers: Vec<WorkerHandle> = destinations
+        .iter()
+        .enumerate()
+        .map(|(index, destination)| {
+            register_worker_for_destination(&router, family, 50_000 + index as u64, destination)
+        })
+        .collect();
+    let mut request_rings: Vec<RequestFrameRing> = destinations
+        .iter()
+        .map(|destination| {
+            RequestFrameRing::new(
+                destination.route().as_str(),
+                b"multi route dispatch payload",
+                64,
+            )
+        })
+        .collect();
+    let mut next_route_index = 0usize;
+
+    group.throughput(Throughput::Elements(DISPATCH_BATCH_SIZE as u64));
+    group.bench_function("dispatch_ack_cleanup_64_routes_primary", |b| {
+        b.iter(|| {
+            for _ in 0..DISPATCH_BATCH_SIZE {
+                let route_index = next_route_index;
+                next_route_index = (next_route_index + 1) % destinations.len();
+
+                let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+                dispatch_request_to_destination(
+                    &router,
+                    family,
+                    &requester_source,
+                    &destinations[route_index],
+                    request_msg_type,
+                    black_box(request_payload),
+                );
+                cleanup_worker_request_on_destination(
+                    &router,
+                    family,
+                    &destinations[route_index],
+                    &workers[route_index],
+                );
+                requester_inbox.clear();
+            }
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_rpc_response_primary(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_rpc");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("response_forward_pending_primary", |b| {
+        b.iter_batched(
+            prepare_response_case,
+            |case| {
+                route_worker_frame_to_destination(
+                    &case.router,
+                    case.family,
+                    case.worker_session_id,
+                    &case.worker_source,
+                    &case.destination,
+                    case.response_msg_type,
+                    black_box(case.response_payload),
+                );
+                assert_requester_received_worker_responses(case.requester_inbox.drain(), 1);
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    group.finish();
+}
+
+fn bench_rpc_timeout_sweep_primary(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_rpc");
+    group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_millis(300));
+
+    for expired_pending in [1usize, 64usize, 256usize] {
+        group.throughput(Throughput::Elements(expired_pending as u64));
+        group.bench_function(
+            format!(
+                "dispatch_trigger_timeout_sweep_{}_pending_primary",
+                expired_pending
+            ),
+            |b| {
+                b.iter_custom(|iters| {
+                    let mut elapsed = Duration::ZERO;
+
+                    for _ in 0..iters {
+                        let case = prepare_timeout_sweep_case(expired_pending);
+                        let start = Instant::now();
+                        dispatch_request_to_destination(
+                            &case.router,
+                            case.family,
+                            &case.requester_source,
+                            &case.destination,
+                            case.request_msg_type,
+                            black_box(case.request_payload),
+                        );
+                        elapsed += start.elapsed();
+                        black_box((case.requester_inbox.count(), case.worker_inbox.count()));
+                    }
+
+                    elapsed
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+criterion_group! {
+    name = benches;
+    config = criterion_config::criterion_config_for_tier2();
+    targets =
+        bench_rpc_worker_subscribe_primary,
+        bench_rpc_dispatch_primary,
+        bench_rpc_response_primary,
+        bench_rpc_timeout_sweep_primary
+}
+criterion_main!(benches);

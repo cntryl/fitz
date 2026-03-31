@@ -43,6 +43,7 @@ pub struct EnvelopeMetadata {
     pub destination: RouteAddress,
     pub causation: Option<MessageId>,
     pub deadline: Option<Instant>,
+    pub queued_at: Option<Instant>,
 }
 
 /// Unique message identifier for tracing and correlation
@@ -111,6 +112,9 @@ pub struct Envelope {
     /// Optional deadline for time-bounded processing
     deadline: Option<Instant>,
 
+    /// Mailbox enqueue time, set when the envelope is accepted by a mailbox.
+    queued_at: Option<Instant>,
+
     /// Type-erased message payload (must be Send + Sync)
     payload: Box<dyn Any + Send + Sync>,
 }
@@ -124,6 +128,7 @@ impl Envelope {
             destination,
             causation: None,
             deadline: None,
+            queued_at: None,
             payload: Box::new(payload),
         }
     }
@@ -140,6 +145,7 @@ impl Envelope {
             destination,
             causation: None,
             deadline: None,
+            queued_at: None,
             payload: Box::new(payload),
         }
     }
@@ -182,6 +188,7 @@ impl Envelope {
             destination: source.clone(),
             causation: Some(self.id),
             deadline: self.deadline,
+            queued_at: None,
             payload: Box::new(payload),
         }
     }
@@ -199,6 +206,7 @@ impl Envelope {
             destination: source.clone(),
             causation: Some(self.id),
             deadline: self.deadline,
+            queued_at: None,
             payload: Box::new(payload),
         })
     }
@@ -233,6 +241,18 @@ impl Envelope {
         self.deadline
     }
 
+    /// Get the mailbox enqueue time, if this envelope has entered a mailbox.
+    #[inline]
+    pub fn queued_at(&self) -> Option<Instant> {
+        self.queued_at
+    }
+
+    /// Stamp the envelope with the instant it entered a mailbox.
+    #[inline]
+    pub(crate) fn mark_queued(&mut self, queued_at: Instant) {
+        self.queued_at = Some(queued_at);
+    }
+
     /// Check if this message has expired past its deadline
     ///
     /// Hot path: no deadline (None) returns false without calling `Instant::now()`.
@@ -253,6 +273,7 @@ impl Envelope {
             destination: self.destination.clone(),
             causation: self.causation,
             deadline: self.deadline,
+            queued_at: self.queued_at,
         }
     }
 
@@ -264,6 +285,7 @@ impl Envelope {
             destination: self.destination,
             causation: self.causation,
             deadline: self.deadline,
+            queued_at: self.queued_at,
         };
         let payload = self.payload.downcast::<M>().ok().map(|b| *b);
         (metadata, payload)
@@ -292,6 +314,7 @@ impl fmt::Debug for Envelope {
             .field("destination", &self.destination)
             .field("causation", &self.causation)
             .field("deadline", &self.deadline)
+            .field("queued_at", &self.queued_at)
             .field("payload", &"<type-erased>")
             .finish()
     }
@@ -406,6 +429,19 @@ mod tests {
 
         // Assert
         assert_eq!(payload, Some(42));
+    }
+
+    #[test]
+    fn should_mark_envelope_as_queued() {
+        // Arrange
+        let mut envelope = Envelope::new(test_address(1, "/test/actor"), 42_i32);
+        let queued_at = Instant::now();
+
+        // Act
+        envelope.mark_queued(queued_at);
+
+        // Assert
+        assert_eq!(envelope.queued_at(), Some(queued_at));
     }
 
     #[test]

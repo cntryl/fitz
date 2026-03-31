@@ -3,11 +3,37 @@
 
 use crate::runtime::context::TimerManager;
 use crate::runtime::envelope::Envelope;
-use crate::runtime::router::{RouteError, Router};
+use crate::runtime::router::{DeliveryError, RouteError, Router};
 use crate::runtime::routing::RouteAddress;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+#[inline]
+fn delivery_error_to_send_error(target: RouteAddress, error: DeliveryError) -> SendError {
+    match error {
+        DeliveryError::MailboxFull {
+            capacity,
+            current_len,
+        }
+        | DeliveryError::HighLaneFull {
+            capacity,
+            current_len,
+        } => SendError::MailboxFull {
+            target,
+            occupancy: current_len as f64 / capacity as f64,
+        },
+        DeliveryError::ActorStopped => SendError::ActorStopped { target },
+    }
+}
+
+#[inline]
+fn route_error_to_send_error(error: RouteError) -> SendError {
+    match error {
+        RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
+        RouteError::DeliveryFailed(target, error) => delivery_error_to_send_error(target, error),
+    }
+}
 
 /// Metrics for actor message processing
 #[derive(Debug, Default)]
@@ -219,32 +245,7 @@ impl<A: Actor + ?Sized> Context<A> {
             return self
                 .router
                 .route(Envelope::from_route(self.address.clone(), dest, msg))
-                .map_err(|e| match e {
-                    RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
-                    RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                        crate::runtime::router::DeliveryError::MailboxFull {
-                            capacity,
-                            current_len,
-                        } => SendError::MailboxFull {
-                            target,
-                            occupancy: current_len as f64 / capacity as f64,
-                        },
-                        crate::runtime::router::DeliveryError::HighLaneFull {
-                            capacity,
-                            current_len,
-                        } => {
-                            // High-priority lane should never be used by user code
-                            // Treat as normal mailbox full for error reporting
-                            SendError::MailboxFull {
-                                target,
-                                occupancy: current_len as f64 / capacity as f64,
-                            }
-                        }
-                        crate::runtime::router::DeliveryError::ActorStopped => {
-                            SendError::ActorStopped { target }
-                        }
-                    },
-                });
+                .map_err(route_error_to_send_error);
         }
 
         let mut envelope = Envelope::from_route(self.address.clone(), dest, msg);
@@ -259,32 +260,9 @@ impl<A: Actor + ?Sized> Context<A> {
             }
         }
 
-        self.router.route(envelope).map_err(|e| match e {
-            RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
-            RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                crate::runtime::router::DeliveryError::MailboxFull {
-                    capacity,
-                    current_len,
-                } => SendError::MailboxFull {
-                    target,
-                    occupancy: current_len as f64 / capacity as f64,
-                },
-                crate::runtime::router::DeliveryError::HighLaneFull {
-                    capacity,
-                    current_len,
-                } => {
-                    // High-priority lane should never be used by user code
-                    // Treat as normal mailbox full for error reporting
-                    SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    }
-                }
-                crate::runtime::router::DeliveryError::ActorStopped => {
-                    SendError::ActorStopped { target }
-                }
-            },
-        })
+        self.router
+            .route(envelope)
+            .map_err(route_error_to_send_error)
     }
 
     /// Send a message without attaching source, causation, or deadline metadata.
@@ -297,28 +275,7 @@ impl<A: Actor + ?Sized> Context<A> {
     {
         self.router
             .route(Envelope::new(dest, msg))
-            .map_err(|e| match e {
-                RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
-                RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                    crate::runtime::router::DeliveryError::MailboxFull {
-                        capacity,
-                        current_len,
-                    } => SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    },
-                    crate::runtime::router::DeliveryError::HighLaneFull {
-                        capacity,
-                        current_len,
-                    } => SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    },
-                    crate::runtime::router::DeliveryError::ActorStopped => {
-                        SendError::ActorStopped { target }
-                    }
-                },
-            })
+            .map_err(route_error_to_send_error)
     }
 
     /// Publish a domain event to the router.
@@ -373,32 +330,9 @@ impl<A: Actor + ?Sized> Context<A> {
             reply_envelope = reply_envelope.with_deadline(deadline);
         }
 
-        self.router.route(reply_envelope).map_err(|e| match e {
-            RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
-            RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                crate::runtime::router::DeliveryError::MailboxFull {
-                    capacity,
-                    current_len,
-                } => SendError::MailboxFull {
-                    target,
-                    occupancy: current_len as f64 / capacity as f64,
-                },
-                crate::runtime::router::DeliveryError::HighLaneFull {
-                    capacity,
-                    current_len,
-                } => {
-                    // High-priority lane should never be used by user code
-                    // Treat as normal mailbox full for error reporting
-                    SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    }
-                }
-                crate::runtime::router::DeliveryError::ActorStopped => {
-                    SendError::ActorStopped { target }
-                }
-            },
-        })
+        self.router
+            .route(reply_envelope)
+            .map_err(route_error_to_send_error)
     }
 
     /// Stop this actor
@@ -480,32 +414,9 @@ impl<M: Send + 'static> ActorRef<M> {
         M: Send + Sync + 'static,
     {
         let envelope = Envelope::new(self.address.clone(), msg);
-        self.router.route(envelope).map_err(|e| match e {
-            RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
-            RouteError::DeliveryFailed(target, delivery_err) => match delivery_err {
-                crate::runtime::router::DeliveryError::MailboxFull {
-                    capacity,
-                    current_len,
-                } => SendError::MailboxFull {
-                    target,
-                    occupancy: current_len as f64 / capacity as f64,
-                },
-                crate::runtime::router::DeliveryError::HighLaneFull {
-                    capacity,
-                    current_len,
-                } => {
-                    // High-priority lane should never be used by user code
-                    // Treat as normal mailbox full for error reporting
-                    SendError::MailboxFull {
-                        target,
-                        occupancy: current_len as f64 / capacity as f64,
-                    }
-                }
-                crate::runtime::router::DeliveryError::ActorStopped => {
-                    SendError::ActorStopped { target }
-                }
-            },
-        })
+        self.router
+            .route(envelope)
+            .map_err(route_error_to_send_error)
     }
 
     /// Get the actor's route address

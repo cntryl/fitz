@@ -1,9 +1,11 @@
 // LAYER: RUNTIME
 //! Actor mailbox implementation and message queuing
 
+use crate::observability as obs;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{DeliveryError, MailboxSink};
 use crossbeam_channel::{bounded, Receiver, Sender};
+use std::time::Instant;
 
 /// Mailbox for actor message queuing with bounded capacity
 ///
@@ -108,25 +110,41 @@ impl Clone for Mailbox {
 /// (in runtime) without creating a circular dependency.
 impl MailboxSink for Mailbox {
     #[inline]
-    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+    fn deliver(&self, mut envelope: Envelope) -> Result<(), DeliveryError> {
+        envelope.mark_queued(Instant::now());
         self.sender.try_send(envelope).map_err(|e| match e {
             crossbeam_channel::TrySendError::Full(_) => DeliveryError::MailboxFull {
                 capacity: self.capacity,
                 current_len: self.len(),
             },
             crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
-        })
+        })?;
+
+        crate::boot::observability::gauge_set(
+            obs::METRIC_MAILBOX_DEPTH,
+            self.len().saturating_add(self.high_priority_len()) as u64,
+        );
+
+        Ok(())
     }
 
     #[inline]
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+    fn deliver_high_priority(&self, mut envelope: Envelope) -> Result<(), DeliveryError> {
+        envelope.mark_queued(Instant::now());
         self.high_priority.try_send(envelope).map_err(|e| match e {
             crossbeam_channel::TrySendError::Full(_) => DeliveryError::HighLaneFull {
                 capacity: self.capacity,
                 current_len: self.high_priority_len(),
             },
             crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
-        })
+        })?;
+
+        crate::boot::observability::gauge_set(
+            obs::METRIC_MAILBOX_DEPTH,
+            self.len().saturating_add(self.high_priority_len()) as u64,
+        );
+
+        Ok(())
     }
 }
 
@@ -216,6 +234,21 @@ mod tests {
         // Assert
         assert_eq!(cloned.capacity(), mailbox.capacity());
         assert_eq!(cloned.len(), mailbox.len());
+    }
+
+    #[test]
+    fn should_stamp_envelope_when_delivered() {
+        // Arrange
+        let mailbox = Mailbox::new(10);
+
+        // Act
+        mailbox
+            .deliver(Envelope::new(test_address(1, "/test/actor"), 42_u64))
+            .unwrap();
+        let received = mailbox.receiver().try_recv().unwrap();
+
+        // Assert
+        assert!(received.queued_at().is_some());
     }
 
     #[test]

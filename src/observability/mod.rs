@@ -79,6 +79,8 @@ pub const METRIC_DELIVERY_FAILURES: &str = "fitz_delivery_failures_total";
 
 pub const METRIC_AUTH_FAILURES: &str = "fitz_auth_failures_total";
 pub const METRIC_PERMISSION_DENIALS: &str = "fitz_permission_denials_total";
+pub const METRIC_WORKER_BUSY_TIME: &str = "fitz_worker_busy_us_total";
+pub const METRIC_WORKER_IDLE_TIME: &str = "fitz_worker_idle_us_total";
 
 // Domain-specific counters (per domain)
 pub const METRIC_DOMAIN_OPERATIONS: &str = "fitz_domain_operations_total";
@@ -96,6 +98,7 @@ pub const METRIC_MESSAGES_PENDING: &str = "fitz_messages_pending";
 
 // Histograms (latency in milliseconds)
 pub const METRIC_MESSAGE_LATENCY: &str = "fitz_message_latency_ms";
+pub const METRIC_QUEUE_WAIT_LATENCY: &str = "fitz_queue_wait_us";
 pub const METRIC_TLV_CODEC_LATENCY: &str = "fitz_tlv_codec_latency_us";
 pub const METRIC_ROUTE_MATCH_LATENCY: &str = "fitz_route_match_latency_us";
 pub const METRIC_DOMAIN_OPERATION_LATENCY: &str = "fitz_domain_operation_latency_ms";

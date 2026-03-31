@@ -5,6 +5,33 @@ mod fixtures;
 use fitz::testkit::TestServer;
 use fixtures::transport::*;
 
+async fn commit_stream_record<C>(client: &mut C, route: &str, body: &[u8])
+where
+    C: StreamConnector,
+{
+    let begin_response = client
+        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .await
+        .expect("begin stream");
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "Expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    let append_response = client
+        .send_and_receive(&build_stream_append(session_id, body), 2000)
+        .await
+        .expect("append stream");
+    let (_msg_type, status, _data) = parse_stream_response(&append_response);
+    assert_eq!(status, 0, "Expected success for stream append");
+
+    let commit_response = client
+        .send_and_receive(&build_stream_commit(session_id), 2000)
+        .await
+        .expect("commit stream");
+    let (_msg_type, status, _data) = parse_stream_response(&commit_response);
+    assert_eq!(status, 0, "Expected success for stream commit");
+}
+
 // Generic test helper for appending to stream
 async fn should_append_data_to_stream<C>(server: &TestServer)
 where
@@ -346,6 +373,59 @@ where
     assert_eq!(status, 0, "Should isolate streams by route");
 }
 
+async fn should_retain_other_stream_subscription_after_unsubscribe<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    let removed_route = "stream://test/app/events";
+    let retained_route = "stream://test/app/audits";
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+    let mut writer = C::connect(server).await.expect("connect writer");
+
+    let removed_subscribe_response = subscriber
+        .send_and_receive(&build_stream_subscribe(removed_route), 2000)
+        .await
+        .expect("subscribe removed route");
+    let (_msg_type, status, _data) = parse_stream_response(&removed_subscribe_response);
+    assert_eq!(status, 0, "Expected success for removed route subscribe");
+
+    let retained_subscribe_response = subscriber
+        .send_and_receive(&build_stream_subscribe(retained_route), 2000)
+        .await
+        .expect("subscribe retained route");
+    let (_msg_type, status, _data) = parse_stream_response(&retained_subscribe_response);
+    assert_eq!(status, 0, "Expected success for retained route subscribe");
+
+    let unsubscribe_response = subscriber
+        .send_and_receive(&build_stream_unsubscribe(removed_route), 2000)
+        .await
+        .expect("unsubscribe removed route");
+    let (_msg_type, status, _data) = parse_stream_response(&unsubscribe_response);
+    assert_eq!(status, 0, "Expected success for removed route unsubscribe");
+
+    commit_stream_record(&mut writer, removed_route, b"removed").await;
+    assert!(
+        subscriber.recv_frame(200).await.is_err(),
+        "Removed route commit should not deliver after unsubscribe"
+    );
+
+    commit_stream_record(&mut writer, retained_route, b"retained").await;
+
+    let retained_delivery = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("retained route delivery");
+    let retained_delivery = parse_stream_delivery(&retained_delivery).expect("parse delivery");
+    assert_eq!(retained_delivery.msg_type, 609);
+    assert!(retained_delivery.subscription_id > 0);
+    assert_eq!(retained_delivery.route, retained_route);
+
+    let retained_payload: serde_json::Value =
+        serde_json::from_slice(&retained_delivery.body).expect("notify payload JSON");
+    assert_eq!(retained_payload["event"], "committed");
+    assert_eq!(retained_payload["batch_size"], 1);
+}
+
 #[tokio::test]
 async fn should_isolate_streams_by_route_tcp() {
     let server = TestServer::start().await.expect("start");
@@ -353,7 +433,19 @@ async fn should_isolate_streams_by_route_tcp() {
 }
 
 #[tokio::test]
+async fn should_retain_other_stream_subscription_after_unsubscribe_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_retain_other_stream_subscription_after_unsubscribe::<TcpStreamConnector>(&server).await;
+}
+
+#[tokio::test]
 async fn should_isolate_streams_by_route_ws() {
     let server = TestServer::start().await.expect("start");
     should_isolate_streams_by_route::<WsStreamConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_retain_other_stream_subscription_after_unsubscribe_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_retain_other_stream_subscription_after_unsubscribe::<WsStreamConnector>(&server).await;
 }

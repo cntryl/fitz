@@ -37,6 +37,16 @@ pub fn counter_inc(name: &str) {
     metrics_ref().counter_inc(name);
 }
 
+/// Add to a counter using the cached global collector.
+pub fn counter_add(name: &str, amount: u64) {
+    metrics_ref().counter_add(name, amount);
+}
+
+/// Set a gauge using the cached global collector.
+pub fn gauge_set(name: &str, value: u64) {
+    metrics_ref().gauge_set(name, value);
+}
+
 /// Try to initialize observability, returning existing collector if already initialized.
 ///
 /// This is safe to call multiple times (useful for tests).

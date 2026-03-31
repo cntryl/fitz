@@ -241,6 +241,13 @@ impl TcpNoticeConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl WsNoticeConnector {
@@ -250,12 +257,20 @@ impl WsNoticeConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]
 pub trait NoticeConnector: Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
 }
 
 #[async_trait::async_trait]
@@ -270,6 +285,13 @@ impl NoticeConnector for TcpNoticeConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -288,6 +310,13 @@ impl NoticeConnector for WsNoticeConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -329,6 +358,19 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build NOTICE UNSUBSCRIBE frame (msg_type 502)
+pub fn build_notice_unsubscribe(route_pattern: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(502, &buf);
+    builder.build()
+}
+
 /// Parse NOTICE response
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
@@ -350,6 +392,40 @@ pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     (0, 1, Vec::new())
 }
 
+pub struct NoticeDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub body: Vec<u8>,
+}
+
+pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing notice delivery frame".to_string())?;
+    if msg_type != 504 {
+        return Err(format!("Unexpected notice delivery msg_type: {}", msg_type));
+    }
+
+    let mut dec = PayloadDecoder::new(&payload);
+    let subscription_id = dec.get_u64()?;
+    let route = dec.get_string()?;
+    let body = dec.get_bytes()?.to_vec();
+    if !dec.is_complete() {
+        return Err("Trailing data in notice delivery".to_string());
+    }
+
+    Ok(NoticeDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        body,
+    })
+}
+
 // ============================================================================
 // QUEUE DOMAIN - CONNECTOR TRAIT
 // ============================================================================
@@ -364,6 +440,13 @@ impl TcpQueueConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl WsQueueConnector {
@@ -373,12 +456,20 @@ impl WsQueueConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]
 pub trait QueueConnector: Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
 }
 
 #[async_trait::async_trait]
@@ -393,6 +484,13 @@ impl QueueConnector for TcpQueueConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -414,6 +512,35 @@ impl QueueConnector for WsQueueConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Build QUEUE SUBSCRIBE frame (msg_type 207)
+pub fn build_queue_subscribe(route_pattern: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(207, &payload);
+    builder.build()
+}
+
+/// Build QUEUE UNSUBSCRIBE frame (msg_type 208)
+pub fn build_queue_unsubscribe(route_pattern: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(208, &payload);
+    builder.build()
 }
 
 /// Build QUEUE ENQUEUE frame (msg_type 200)
@@ -460,6 +587,40 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     // Fallback if no data
     (0, 1, Vec::new())
+}
+
+pub struct QueueDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub body: Vec<u8>,
+}
+
+pub fn parse_queue_delivery(frame: &[u8]) -> Result<QueueDelivery, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing queue delivery frame".to_string())?;
+    if msg_type != 209 {
+        return Err(format!("Unexpected queue delivery msg_type: {}", msg_type));
+    }
+
+    let mut dec = PayloadDecoder::new(&payload);
+    let subscription_id = dec.get_u64()?;
+    let route = dec.get_string()?;
+    let body = dec.get_bytes()?.to_vec();
+    if !dec.is_complete() {
+        return Err("Trailing data in queue delivery".to_string());
+    }
+
+    Ok(QueueDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        body,
+    })
 }
 
 /// Extract message bodies from Queue Reserve response
@@ -780,6 +941,13 @@ impl TcpStreamConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl WsStreamConnector {
@@ -789,12 +957,20 @@ impl WsStreamConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]
 pub trait StreamConnector: Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
 }
 
 #[async_trait::async_trait]
@@ -809,6 +985,13 @@ impl StreamConnector for TcpStreamConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -827,6 +1010,13 @@ impl StreamConnector for WsStreamConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -873,6 +1063,45 @@ pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(601, &buf);
+    builder.build()
+}
+
+/// Build STREAM COMMIT frame (msg_type 602)
+pub fn build_stream_commit(session_id: u64) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u64(session_id);
+    buf.put_u8(0);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(602, &buf);
+    builder.build()
+}
+
+/// Build STREAM SUBSCRIBE frame (msg_type 607)
+pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(607, &buf);
+    builder.build()
+}
+
+/// Build STREAM UNSUBSCRIBE frame (msg_type 608)
+pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(608, &buf);
     builder.build()
 }
 
@@ -953,6 +1182,40 @@ pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
     Ok(u64::from_be_bytes(bytes))
 }
 
+pub struct StreamDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub body: Vec<u8>,
+}
+
+pub fn parse_stream_delivery(frame: &[u8]) -> Result<StreamDelivery, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing stream delivery frame".to_string())?;
+    if msg_type != 609 {
+        return Err(format!("Unexpected stream delivery msg_type: {}", msg_type));
+    }
+
+    let mut dec = PayloadDecoder::new(&payload);
+    let subscription_id = dec.get_u64()?;
+    let route = dec.get_string()?;
+    let body = dec.get_bytes()?.to_vec();
+    if !dec.is_complete() {
+        return Err("Trailing data in stream delivery".to_string());
+    }
+
+    Ok(StreamDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        body,
+    })
+}
+
 // ============================================================================
 // SCHEDULE DOMAIN - CONNECTOR TRAIT
 // ============================================================================
@@ -967,6 +1230,13 @@ impl TcpScheduleConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl WsScheduleConnector {
@@ -976,12 +1246,20 @@ impl WsScheduleConnector {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]
 pub trait ScheduleConnector: Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String>;
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String>;
 }
 
 #[async_trait::async_trait]
@@ -996,6 +1274,13 @@ impl ScheduleConnector for TcpScheduleConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -1014,6 +1299,13 @@ impl ScheduleConnector for WsScheduleConnector {
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.0
             .request(frame, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
             .await
             .map_err(|e| e.to_string())
     }
@@ -1068,6 +1360,32 @@ pub fn build_schedule_list() -> Vec<u8> {
     frame_builder.build()
 }
 
+/// Build SCHEDULE SUBSCRIBE frame (msg_type 703)
+pub fn build_schedule_subscribe(route_pattern: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(703, &buf);
+    builder.build()
+}
+
+/// Build SCHEDULE UNSUBSCRIBE frame (msg_type 704)
+pub fn build_schedule_unsubscribe(route_pattern: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route_pattern.len() as u32);
+    buf.put_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(704, &buf);
+    builder.build()
+}
+
 /// Parse SCHEDULE response
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
@@ -1082,6 +1400,40 @@ pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     // Fallback if no data
     (0, 1, Vec::new())
+}
+
+pub struct ScheduleDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub body: Vec<u8>,
+}
+
+pub fn parse_schedule_delivery(frame: &[u8]) -> Result<ScheduleDelivery, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing schedule delivery frame".to_string())?;
+    if msg_type != 705 {
+        return Err(format!(
+            "Unexpected schedule delivery msg_type: {}",
+            msg_type
+        ));
+    }
+
+    let mut dec = PayloadDecoder::new(&payload);
+    let subscription_id = dec.get_u64()?;
+    let body = dec.get_bytes()?.to_vec();
+    if !dec.is_complete() {
+        return Err("Trailing data in schedule delivery".to_string());
+    }
+
+    Ok(ScheduleDelivery {
+        msg_type,
+        subscription_id,
+        body,
+    })
 }
 
 // ============================================================================

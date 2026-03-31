@@ -310,6 +310,65 @@ where
     assert_eq!(status, 0, "Should allow enqueue after dequeue");
 }
 
+async fn should_retain_other_queue_subscription_after_unsubscribe<C>(server: &TestServer)
+where
+    C: QueueConnector,
+{
+    let removed_route = "queue://test/app/jobs";
+    let retained_route = "queue://test/app/audits";
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+    let mut sender = C::connect(server).await.expect("connect sender");
+
+    let removed_subscribe_response = subscriber
+        .send_and_receive(&build_queue_subscribe(removed_route), 2000)
+        .await
+        .expect("subscribe removed route");
+    let (_msg_type, status, _data) = parse_queue_response(&removed_subscribe_response);
+    assert_eq!(status, 0, "Expected success for removed route subscribe");
+
+    let retained_subscribe_response = subscriber
+        .send_and_receive(&build_queue_subscribe(retained_route), 2000)
+        .await
+        .expect("subscribe retained route");
+    let (_msg_type, status, _data) = parse_queue_response(&retained_subscribe_response);
+    assert_eq!(status, 0, "Expected success for retained route subscribe");
+
+    let unsubscribe_response = subscriber
+        .send_and_receive(&build_queue_unsubscribe(removed_route), 2000)
+        .await
+        .expect("unsubscribe removed route");
+    let (_msg_type, status, _data) = parse_queue_response(&unsubscribe_response);
+    assert_eq!(status, 0, "Expected success for removed route unsubscribe");
+
+    let removed_enqueue_response = sender
+        .send_and_receive(&build_queue_enqueue(removed_route, b"removed"), 2000)
+        .await
+        .expect("enqueue removed route");
+    let (_msg_type, status, _data) = parse_queue_response(&removed_enqueue_response);
+    assert_eq!(status, 0, "Expected success for removed route enqueue");
+    assert!(
+        subscriber.recv_frame(200).await.is_err(),
+        "Removed route enqueue should not deliver after unsubscribe"
+    );
+
+    let retained_enqueue_response = sender
+        .send_and_receive(&build_queue_enqueue(retained_route, b"retained"), 2000)
+        .await
+        .expect("enqueue retained route");
+    let (_msg_type, status, _data) = parse_queue_response(&retained_enqueue_response);
+    assert_eq!(status, 0, "Expected success for retained route enqueue");
+
+    let retained_delivery = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("retained route delivery");
+    let retained_delivery = parse_queue_delivery(&retained_delivery).expect("parse delivery");
+    assert_eq!(retained_delivery.msg_type, 209);
+    assert!(retained_delivery.subscription_id > 0);
+    assert_eq!(retained_delivery.route, retained_route);
+    assert_eq!(retained_delivery.body.as_slice(), b"{}");
+}
+
 #[tokio::test]
 async fn should_handle_mixed_enqueue_dequeue_sequence_tcp() {
     let server = TestServer::start().await.expect("start");
@@ -320,4 +379,16 @@ async fn should_handle_mixed_enqueue_dequeue_sequence_tcp() {
 async fn should_handle_mixed_enqueue_dequeue_sequence_ws() {
     let server = TestServer::start().await.expect("start");
     should_handle_mixed_enqueue_dequeue_sequence::<WsQueueConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_retain_other_queue_subscription_after_unsubscribe_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_retain_other_queue_subscription_after_unsubscribe::<TcpQueueConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_retain_other_queue_subscription_after_unsubscribe_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_retain_other_queue_subscription_after_unsubscribe::<WsQueueConnector>(&server).await;
 }

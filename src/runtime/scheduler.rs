@@ -3,6 +3,7 @@
 
 use super::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
 use super::mailbox::Mailbox;
+use crate::observability as obs;
 use crate::runtime::router::Router;
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
@@ -26,6 +27,39 @@ const MIN_POLL_TIMEOUT_MS: u64 = 1;
 
 /// Maximum timeout for mailbox polling (when mailbox is empty)
 const MAX_POLL_TIMEOUT_MS: u64 = 1;
+
+fn record_duration_counter(name: &str, duration: Duration) {
+    let duration_us = duration.as_micros().min(u64::MAX as u128) as u64;
+    if duration_us == 0 {
+        return;
+    }
+
+    crate::boot::observability::counter_add(name, duration_us);
+}
+
+fn record_worker_busy_time(duration: Duration) {
+    record_duration_counter(obs::METRIC_WORKER_BUSY_TIME, duration);
+}
+
+fn record_worker_idle_time(duration: Duration) {
+    record_duration_counter(obs::METRIC_WORKER_IDLE_TIME, duration);
+}
+
+fn record_mailbox_observability(mailbox: &Mailbox, envelope: &crate::runtime::envelope::Envelope) {
+    if let Some(queued_at) = envelope.queued_at() {
+        crate::boot::observability::histogram_observe_us(
+            obs::METRIC_QUEUE_WAIT_LATENCY,
+            Instant::now()
+                .saturating_duration_since(queued_at)
+                .as_micros() as u64,
+        );
+    }
+
+    crate::boot::observability::gauge_set(
+        obs::METRIC_MAILBOX_DEPTH,
+        mailbox.len().saturating_add(mailbox.high_priority_len()) as u64,
+    );
+}
 
 /// Actor system scheduler that manages actor lifecycles and message processing
 pub struct Scheduler {
@@ -138,7 +172,9 @@ impl Scheduler {
                         }
                     };
 
-                    let start = Instant::now();
+                    record_mailbox_observability(&mailbox, &envelope);
+
+                    let busy_start = Instant::now();
 
                     // Check deadline before processing
                     if envelope.is_expired() {
@@ -148,12 +184,14 @@ impl Scheduler {
                             envelope.id(),
                             address
                         );
+                        record_worker_busy_time(busy_start.elapsed());
                         processed_high += 1;
                         continue;
                     }
 
                     // Process high-priority message
-                    process_envelope(envelope, &mut actor, &mut ctx, &address, start);
+                    process_envelope(envelope, &mut actor, &mut ctx, &address, busy_start);
+                    record_worker_busy_time(busy_start.elapsed());
                     processed_high += 1;
                 }
 
@@ -173,7 +211,11 @@ impl Scheduler {
 
                     let envelope = if processed_high == 0 && processed_normal == 0 {
                         // First message overall: use blocking receive with timeout
-                        match receiver.recv_timeout(Duration::from_millis(timeout_ms)) {
+                        let idle_start = Instant::now();
+                        let received = receiver.recv_timeout(Duration::from_millis(timeout_ms));
+                        record_worker_idle_time(idle_start.elapsed());
+
+                        match received {
                             Ok(env) => env,
                             Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
                             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -189,7 +231,9 @@ impl Scheduler {
                         }
                     };
 
-                    let start = Instant::now();
+                    record_mailbox_observability(&mailbox, &envelope);
+
+                    let busy_start = Instant::now();
 
                     // Check deadline before processing
                     if envelope.is_expired() {
@@ -199,23 +243,26 @@ impl Scheduler {
                             envelope.id(),
                             address
                         );
+                        record_worker_busy_time(busy_start.elapsed());
                         processed_normal += 1;
                         continue;
                     }
 
                     // Process normal-priority message
-                    process_envelope(envelope, &mut actor, &mut ctx, &address, start);
+                    process_envelope(envelope, &mut actor, &mut ctx, &address, busy_start);
+                    record_worker_busy_time(busy_start.elapsed());
                     processed_normal += 1;
                 }
 
                 // After processing messages, handle any fired timers for this actor
                 let fired_timers = ctx.timer_manager().fired_timers();
                 for timer_id in fired_timers {
-                    let start = Instant::now();
+                    let timer_start = Instant::now();
                     // Invoke on_timer with panic safety similar to message processing
                     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         actor.on_timer(timer_id, &mut ctx);
                     })) {
+                        record_worker_busy_time(timer_start.elapsed());
                         eprintln!(
                             "Actor {:?} panicked during timer handling: {:?}\nStopping actor. Supervisor will handle restart.",
                             address, e
@@ -227,8 +274,9 @@ impl Scheduler {
                         ctx.stop();
                         break;
                     } else {
-                        let elapsed = start.elapsed().as_micros() as u64;
-                        ctx.metrics().record_processed(elapsed);
+                        let elapsed = timer_start.elapsed();
+                        record_worker_busy_time(elapsed);
+                        ctx.metrics().record_processed(elapsed.as_micros() as u64);
                     }
                 }
             }
@@ -330,6 +378,7 @@ fn process_envelope<A: Actor>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observability as obs;
     use crate::runtime::envelope::Envelope;
     use crate::runtime::routing::{Route, RouteFamily};
 
@@ -574,5 +623,70 @@ mod tests {
         // Assert
         let response = response_received.lock().clone();
         assert_eq!(response, Some("world".to_string()));
+    }
+
+    #[test]
+    fn should_accumulate_duration_counter_in_microseconds() {
+        // Arrange
+        let metric_name = "test_scheduler_duration_counter_us_total";
+        let metrics = crate::boot::observability::metrics();
+        let before = metrics.counter_get(metric_name);
+
+        // Act
+        record_duration_counter(metric_name, Duration::from_micros(250));
+
+        // Assert
+        assert_eq!(metrics.counter_get(metric_name), before + 250);
+    }
+
+    #[test]
+    fn should_record_worker_busy_time_when_processing_messages() {
+        // Arrange
+        let metrics = crate::boot::observability::metrics();
+        let before = metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME);
+        let scheduler = Scheduler::new(1);
+        scheduler.start();
+        let actor = CounterActor { count: 0 };
+        let actor_ref = scheduler.spawn(actor, test_address(1, "/test/busy-counter"), 10);
+
+        // Act
+        actor_ref.send(TestMsg::Increment).unwrap();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        actor_ref.send(TestMsg::GetCount(tx)).unwrap();
+        let count = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut after = before;
+        while after == before && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+            after = metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME);
+        }
+        actor_ref.send(TestMsg::Stop).unwrap();
+
+        // Assert
+        assert_eq!(count, 1);
+        assert!(after > before);
+    }
+
+    #[test]
+    fn should_record_worker_idle_time_while_waiting_for_messages() {
+        // Arrange
+        let metrics = crate::boot::observability::metrics();
+        let before = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
+        let scheduler = Scheduler::new(1);
+        scheduler.start();
+        let actor = CounterActor { count: 0 };
+        let actor_ref = scheduler.spawn(actor, test_address(1, "/test/idle-counter"), 10);
+
+        // Act
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut after = before;
+        while after == before && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+            after = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
+        }
+        actor_ref.send(TestMsg::Stop).unwrap();
+
+        // Assert
+        assert!(after > before);
     }
 }

@@ -527,6 +527,12 @@ impl RpcDomainSink {
         }
     }
 
+    fn counter_add(&self, name: &str, amount: u64) {
+        if let Some(ref metrics) = self.metrics {
+            metrics.counter_add(name, amount);
+        }
+    }
+
     fn gauge_set(&self, name: &str, value: u64) {
         if let Some(ref metrics) = self.metrics {
             metrics.gauge_set(name, value);
@@ -559,10 +565,14 @@ impl RpcDomainSink {
 
         let timeout_delivery_count = timeout_result.timeout_deliveries.len();
         self.gauge_set("rpc_pending_requests", timeout_result.pending_len as u64);
-        for _ in 0..timeout_result.removed_pending {
-            self.counter_inc("rpc_request_timeouts_total");
-        }
-        self.counter_inc("rpc_cleanup_pending_removed_total");
+        self.counter_add(
+            "rpc_request_timeouts_total",
+            timeout_result.removed_pending as u64,
+        );
+        self.counter_add(
+            "rpc_cleanup_pending_removed_total",
+            timeout_result.removed_pending as u64,
+        );
         self.schedule_admin_snapshot(false);
 
         tracing::debug!(
@@ -603,13 +613,22 @@ impl RpcDomainSink {
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
         if cleanup_result.removed_workers > 0 {
-            self.counter_inc("rpc_cleanup_workers_removed_total");
+            self.counter_add(
+                "rpc_cleanup_workers_removed_total",
+                cleanup_result.removed_workers as u64,
+            );
         }
         if cleanup_result.detached_callers > 0 {
-            self.counter_inc("rpc_cleanup_callers_detached_total");
+            self.counter_add(
+                "rpc_cleanup_callers_detached_total",
+                cleanup_result.detached_callers as u64,
+            );
         }
         if cleanup_result.removed_pending > 0 {
-            self.counter_inc("rpc_cleanup_pending_removed_total");
+            self.counter_add(
+                "rpc_cleanup_pending_removed_total",
+                cleanup_result.removed_pending as u64,
+            );
         }
         if cleanup_result.removed_workers > 0
             || cleanup_result.detached_callers > 0
@@ -643,10 +662,16 @@ impl RpcDomainSink {
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
         if cleanup_result.removed_workers > 0 {
-            self.counter_inc("rpc_cleanup_workers_removed_total");
+            self.counter_add(
+                "rpc_cleanup_workers_removed_total",
+                cleanup_result.removed_workers as u64,
+            );
         }
         if cleanup_result.removed_pending > 0 {
-            self.counter_inc("rpc_cleanup_pending_removed_total");
+            self.counter_add(
+                "rpc_cleanup_pending_removed_total",
+                cleanup_result.removed_pending as u64,
+            );
         }
         if cleanup_result.removed_workers > 0 || cleanup_result.removed_pending > 0 {
             self.schedule_admin_snapshot(false);
@@ -1463,6 +1488,199 @@ mod tests {
     }
 
     #[test]
+    fn should_accumulate_cleanup_counters_given_rpc_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let metrics = crate::observability::metrics::MetricsCollector::new();
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+        let worker_route_a = Route::new("rpc://bench/system/resource/operation-a");
+        let worker_route_b = Route::new("rpc://bench/system/resource/operation-b");
+        let external_route_a = Route::new("rpc://bench/external/resource/operation-a");
+        let external_route_b = Route::new("rpc://bench/external/resource/operation-b");
+
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&worker_route_a)
+                .register_worker(RpcWorker {
+                    addr: RouteAddress::new(family, worker_route_a.clone()),
+                    inbox_addr: session_inbox_address(family, 42),
+                    session_id: 42,
+                });
+            state
+                .ensure_route_state(&worker_route_b)
+                .register_worker(RpcWorker {
+                    addr: RouteAddress::new(family, worker_route_b.clone()),
+                    inbox_addr: session_inbox_address(family, 42),
+                    session_id: 42,
+                });
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                90,
+                session_inbox_address(family, 90),
+                RouteAddress::new(family, worker_route_a),
+                42,
+                Instant::now() + Duration::from_secs(30),
+            );
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                91,
+                session_inbox_address(family, 91),
+                RouteAddress::new(family, worker_route_b),
+                42,
+                Instant::now() + Duration::from_secs(30),
+            );
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                42,
+                session_inbox_address(family, 42),
+                RouteAddress::new(family, external_route_a),
+                7,
+                Instant::now() + Duration::from_secs(30),
+            );
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                42,
+                session_inbox_address(family, 42),
+                RouteAddress::new(family, external_route_b),
+                8,
+                Instant::now() + Duration::from_secs(30),
+            );
+        }
+
+        // Act
+        let cleanup = sink.apply_session_cleanup(42);
+
+        // Assert
+        assert_eq!(cleanup.removed_workers, 2);
+        assert_eq!(cleanup.detached_callers, 2);
+        assert_eq!(cleanup.removed_pending, 2);
+        assert_eq!(cleanup.pending_len, 2);
+        assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 2);
+        assert_eq!(metrics.counter_get("rpc_cleanup_callers_detached_total"), 2);
+        assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 2);
+        assert_eq!(metrics.gauge_get("rpc_pending_requests"), 2);
+    }
+
+    #[test]
+    fn should_accumulate_pending_removed_counter_given_rpc_worker_unsubscribe() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let metrics = crate::observability::metrics::MetricsCollector::new();
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+        let removed_route = Route::new("rpc://bench/system/resource/operation");
+        let retained_route = Route::new("rpc://bench/system/resource/other");
+        let removed_addr = RouteAddress::new(family, removed_route.clone());
+
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&removed_route)
+                .register_worker(RpcWorker {
+                    addr: removed_addr.clone(),
+                    inbox_addr: session_inbox_address(family, 42),
+                    session_id: 42,
+                });
+            state
+                .ensure_route_state(&retained_route)
+                .register_worker(RpcWorker {
+                    addr: RouteAddress::new(family, retained_route.clone()),
+                    inbox_addr: session_inbox_address(family, 42),
+                    session_id: 42,
+                });
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                90,
+                session_inbox_address(family, 90),
+                removed_addr.clone(),
+                42,
+                Instant::now() + Duration::from_secs(30),
+            );
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                91,
+                session_inbox_address(family, 91),
+                removed_addr.clone(),
+                42,
+                Instant::now() + Duration::from_secs(30),
+            );
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                92,
+                session_inbox_address(family, 92),
+                RouteAddress::new(family, retained_route),
+                42,
+                Instant::now() + Duration::from_secs(30),
+            );
+        }
+
+        // Act
+        let cleanup = sink.apply_worker_unsubscribe(&removed_addr, 42);
+
+        // Assert
+        assert_eq!(cleanup.removed_workers, 1);
+        assert_eq!(cleanup.removed_pending, 2);
+        assert_eq!(cleanup.pending_len, 1);
+        assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 1);
+        assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 2);
+        assert_eq!(metrics.gauge_get("rpc_pending_requests"), 1);
+    }
+
+    #[test]
+    fn should_accumulate_timeout_counters_given_rpc_timeout_sweep() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let metrics = crate::observability::metrics::MetricsCollector::new();
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = RpcDomainSink::new(router.clone(), admin_read_model)
+            .with_metrics(metrics.clone())
+            .with_request_timeout(Duration::from_millis(10));
+        let caller_one = session_inbox_address(family, 1);
+        let caller_two = session_inbox_address(family, 2);
+        let caller_sink = Arc::new(CaptureRpcFrameSink {
+            frames: Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new())),
+        });
+        router.register(
+            caller_one.clone(),
+            caller_sink.clone() as Arc<dyn MailboxSink>,
+        );
+        router.register(caller_two.clone(), caller_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                1,
+                caller_one,
+                RouteAddress::new(family, Route::new("rpc://bench/system/resource/a")),
+                42,
+                Instant::now() + Duration::from_millis(5),
+            );
+            state.pending.track_pending(
+                uuid::Uuid::new_v4(),
+                2,
+                caller_two,
+                RouteAddress::new(family, Route::new("rpc://bench/system/resource/b")),
+                43,
+                Instant::now() + Duration::from_millis(5),
+            );
+        }
+
+        // Act
+        sink.expire_timed_out_requests_at(Instant::now() + Duration::from_millis(25));
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 0);
+        assert_eq!(metrics.counter_get("rpc_request_timeouts_total"), 2);
+        assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 2);
+        assert_eq!(metrics.gauge_get("rpc_pending_requests"), 0);
+    }
+
+    #[test]
     fn should_forward_timeout_error_given_expired_pending_request() {
         // Arrange
         let router = Arc::new(Router::new());
@@ -2071,6 +2289,130 @@ mod tests {
             crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
             RPC_WORKER_NOT_FOUND_ERROR,
         );
+    }
+
+    #[test]
+    fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+        let family = RouteFamily::new(1);
+        let removed_route = Route::new("rpc://bench/system/resource/operation");
+        let retained_route = Route::new("rpc://bench/system/resource/other");
+        let removed_addr = RouteAddress::new(family, removed_route.clone());
+        let retained_addr = RouteAddress::new(family, retained_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let worker_source = session_inbox_address(family, 42);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let reply_sink = Arc::new(CaptureRpcFrameSink {
+            frames: reply_frames.clone(),
+        });
+        let worker_sink = Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        });
+        router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
+        router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&removed_route)
+                .register_worker(RpcWorker {
+                    addr: removed_addr.clone(),
+                    inbox_addr: worker_source.clone(),
+                    session_id: 42,
+                });
+            state
+                .ensure_route_state(&retained_route)
+                .register_worker(RpcWorker {
+                    addr: retained_addr.clone(),
+                    inbox_addr: worker_source.clone(),
+                    session_id: 42,
+                });
+        }
+        let unsubscribe_payload = {
+            let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+            encoder.put_string(removed_route.as_str());
+            encoder.finish()
+        };
+        let request_frame = crate::benchkit::build_rpc_request(retained_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload.clone(),
+            family,
+        );
+        let request =
+            match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
+                .expect("parse rpc request")
+            {
+                crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+                other => panic!("expected rpc request, found {other:?}"),
+            };
+        let response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::single(
+                request.correlation_id,
+                bytes::Bytes::from_static(b"ok"),
+            ),
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            worker_source.clone(),
+            removed_addr,
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(301),
+                bytes::Bytes::from(unsubscribe_payload),
+                family,
+            ),
+        ))
+        .expect("unsubscribe removed worker route");
+        sink.deliver(Envelope::from_route(
+            request_source,
+            retained_addr.clone(),
+            request_ctx,
+        ))
+        .expect("dispatch request to retained route");
+        sink.deliver(Envelope::from_route(
+            worker_source,
+            retained_addr,
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver retained worker response");
+
+        // Assert
+        assert_eq!(sink.worker_count(), 1);
+        assert_eq!(sink.pending_request_count(), 0);
+
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 2);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(reply_frames[0].payload[0], 0);
+        assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
+        let forwarded_response = parse_forwarded_rpc_response(&reply_frames[1]);
+        assert_eq!(forwarded_response.correlation_id, request.correlation_id);
+        assert_eq!(forwarded_response.seq, 0);
+        assert!(forwarded_response.stream_end);
+        assert_eq!(forwarded_response.body.as_ref(), b"ok");
+
+        let worker_frames = worker_frames.lock();
+        assert_eq!(worker_frames.len(), 3);
+        assert_eq!(worker_frames[0].msg_type.as_u16(), 301);
+        assert_eq!(worker_frames[0].payload[0], 0);
+        assert_eq!(worker_frames[1].msg_type.as_u16(), 302);
+        assert_eq!(worker_frames[2].msg_type.as_u16(), 304);
     }
 
     #[test]

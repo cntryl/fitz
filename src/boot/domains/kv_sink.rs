@@ -414,7 +414,32 @@ impl MailboxSink for KvDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::tlv::MessageType;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::Mailbox;
+    use bytes::{BufMut, Bytes};
     use std::sync::Arc;
+
+    fn encode_kv_begin(route: &str, mode: u8, durability: u8) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u8(mode);
+        payload.put_u8(durability);
+        Bytes::from(payload)
+    }
+
+    fn decode_kv_begin_tx_id(payload: &[u8]) -> u64 {
+        let tx_id_bytes: [u8; 8] = payload[1..9]
+            .try_into()
+            .expect("begin response tx_id bytes");
+        u64::from_be_bytes(tx_id_bytes)
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
 
     #[test]
     fn should_create_kv_domain_sink() {
@@ -428,5 +453,90 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_release_resource_lock_given_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let first_session_id = 7;
+        let second_session_id = 8;
+        let kv_route = "kv://acme/app/users";
+        let kv_address = RouteAddress::new(family, Route::new(kv_route));
+        let first_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let second_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let first_mailbox = Arc::new(Mailbox::new(8));
+        let second_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(first_address.clone(), first_mailbox.clone());
+        router.register(second_address.clone(), second_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = KvDomainSink::new(store, router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            first_address,
+            kv_address.clone(),
+            FrameContext::new(
+                first_session_id,
+                ChannelId::Sub,
+                MessageType::new(100),
+                encode_kv_begin(kv_route, 1, 0),
+                family,
+            ),
+        ))
+        .expect("begin first KV transaction");
+        let first_begin_envelope = first_mailbox
+            .receiver()
+            .try_recv()
+            .expect("first begin ack envelope");
+        let first_begin_frame = first_begin_envelope
+            .into_payload::<FrameContext>()
+            .expect("first begin ack frame");
+        let first_tx_id = decode_kv_begin_tx_id(&first_begin_frame.payload);
+        assert_eq!(first_begin_frame.payload[0], 0);
+        assert!(first_tx_id > 0);
+        assert_eq!(sink.active_transaction_count(), 1);
+        assert_eq!(sink.resource_locks.lock().len(), 1);
+        drain_mailbox(&first_mailbox);
+
+        // Act
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("kv://cleanup")),
+            crate::runtime::SessionCleanup {
+                session_id: first_session_id,
+            },
+        ))
+        .expect("cleanup first KV session");
+        assert_eq!(sink.active_transaction_count(), 0);
+        assert!(sink.resource_locks.lock().is_empty());
+
+        sink.deliver(Envelope::from_route(
+            second_address,
+            kv_address,
+            FrameContext::new(
+                second_session_id,
+                ChannelId::Sub,
+                MessageType::new(100),
+                encode_kv_begin(kv_route, 1, 0),
+                family,
+            ),
+        ))
+        .expect("begin second KV transaction");
+
+        // Assert
+        let second_begin_envelope = second_mailbox
+            .receiver()
+            .try_recv()
+            .expect("second begin ack envelope");
+        let second_begin_frame = second_begin_envelope
+            .into_payload::<FrameContext>()
+            .expect("second begin ack frame");
+        let second_tx_id = decode_kv_begin_tx_id(&second_begin_frame.payload);
+        assert_eq!(second_begin_frame.payload[0], 0);
+        assert!(second_tx_id > 0);
+        assert_eq!(sink.active_transaction_count(), 1);
+        assert_eq!(sink.resource_locks.lock().len(), 1);
+        assert!(first_mailbox.receiver().try_recv().is_err());
     }
 }

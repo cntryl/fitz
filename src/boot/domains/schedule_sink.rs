@@ -97,6 +97,17 @@ impl ScheduleDomainSink {
         }
     }
 
+    pub(crate) fn force_due_scan_for_tests(&self, ready_count: usize) {
+        {
+            let mut actors = self.actors.lock();
+            for actor in actors.values_mut() {
+                actor.bench_prepare_scan(ready_count);
+            }
+        }
+
+        self.scan_due_schedules();
+    }
+
     fn handle_domain_publish(
         &self,
         event: &crate::runtime::DomainPublishEvent,
@@ -451,7 +462,32 @@ impl MailboxSink for ScheduleDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::frame_context::FrameContext;
+    use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+    use crate::protocol::tlv::MessageType;
+    use crate::runtime::mailbox::Mailbox;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use bytes::Bytes;
     use std::sync::Arc;
+
+    fn encode_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(cron);
+        encoder.put_bytes(payload);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_schedule_subscribe(pattern: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(pattern);
+        Bytes::from(encoder.finish())
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
 
     #[test]
     fn should_create_schedule_domain_sink() {
@@ -465,5 +501,278 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_publish_schedule_notify_to_subscribers_when_due() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let schedule_route = "schedule://acme/jobs/nightly/run";
+        let schedule_address = RouteAddress::new(family, Route::new(schedule_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(ScheduleDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model,
+        ));
+        router.register_domain_pattern("schedule", sink.clone());
+
+        let create_ctx = FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(700),
+            encode_schedule_create(schedule_route, "* * * * *", b"nightly"),
+            family,
+        );
+        let subscribe_ctx = FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(703),
+            encode_schedule_subscribe(schedule_route),
+            family,
+        );
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            schedule_address.clone(),
+            create_ctx,
+        ))
+        .expect("create schedule");
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            schedule_address,
+            subscribe_ctx,
+        ))
+        .expect("subscribe schedule");
+        let subscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("subscribe ack envelope");
+        let subscribe_frame = subscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("subscribe ack frame");
+        let mut subscribe_decoder = PayloadDecoder::new(&subscribe_frame.payload);
+        let _subscribe_status = subscribe_decoder.get_u8().expect("subscribe status");
+        let subscription_id = subscribe_decoder
+            .get_optional_u64()
+            .expect("subscription id")
+            .expect("subscription id present");
+
+        {
+            let mut actors = sink.actors.lock();
+            let actor = actors.get_mut(&family).expect("schedule actor");
+            actor.bench_prepare_scan(1);
+        }
+
+        sink.scan_due_schedules();
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("schedule notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("schedule notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 705);
+
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let notified_subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+
+        assert_eq!(notified_subscription_id, subscription_id);
+        assert_eq!(notified_payload.as_ref(), b"nightly");
+        assert!(notify_decoder.is_complete());
+    }
+
+    #[test]
+    fn should_remove_schedule_subscriptions_given_session_cleanup() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let schedule_route = "schedule://acme/jobs/nightly/run";
+        let schedule_address = RouteAddress::new(family, Route::new(schedule_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(ScheduleDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model,
+        ));
+        router.register_domain_pattern("schedule", sink.clone());
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            schedule_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(700),
+                encode_schedule_create(schedule_route, "* * * * *", b"nightly"),
+                family,
+            ),
+        ))
+        .expect("create schedule");
+        drain_mailbox(&subscriber_mailbox);
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            schedule_address,
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(703),
+                encode_schedule_subscribe(schedule_route),
+                family,
+            ),
+        ))
+        .expect("subscribe schedule");
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("schedule://cleanup")),
+            crate::runtime::SessionCleanup { session_id },
+        ))
+        .expect("cleanup session");
+        {
+            let mut actors = sink.actors.lock();
+            let actor = actors.get_mut(&family).expect("schedule actor");
+            actor.bench_prepare_scan(1);
+        }
+        sink.scan_due_schedules();
+
+        // Assert
+        assert_eq!(sink.subscription_count(), 0);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let removed_route = "schedule://acme/jobs/nightly/run";
+        let retained_route = "schedule://acme/jobs/weekly/report";
+        let removed_address = RouteAddress::new(family, Route::new(removed_route));
+        let retained_address = RouteAddress::new(family, Route::new(retained_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(16));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            removed_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(703),
+                encode_schedule_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("subscribe removed schedule route");
+        let _removed_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("removed subscribe ack envelope");
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            retained_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(703),
+                encode_schedule_subscribe(retained_route),
+                family,
+            ),
+        ))
+        .expect("subscribe retained schedule route");
+        let _retained_subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained subscribe ack envelope");
+        assert_eq!(sink.subscription_count(), 2);
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            subscriber_address,
+            removed_address,
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(704),
+                encode_schedule_subscribe(removed_route),
+                family,
+            ),
+        ))
+        .expect("unsubscribe removed schedule route");
+        let unsubscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("unsubscribe ack envelope");
+        let unsubscribe_frame = unsubscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("unsubscribe ack frame");
+        let mut unsubscribe_decoder = PayloadDecoder::new(&unsubscribe_frame.payload);
+        let unsubscribe_status = unsubscribe_decoder.get_u8().expect("unsubscribe status");
+        assert_eq!(unsubscribe_status, 0);
+        assert!(unsubscribe_decoder.is_complete());
+        assert_eq!(sink.subscription_count(), 1);
+
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("schedule://events/removed")),
+            crate::runtime::DomainPublishEvent::new(
+                family,
+                Route::new(removed_route),
+                Bytes::from_static(b"nightly"),
+            ),
+        ))
+        .expect("deliver removed schedule event");
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("schedule://events/retained")),
+            crate::runtime::DomainPublishEvent::new(
+                family,
+                Route::new(retained_route),
+                Bytes::from_static(b"weekly"),
+            ),
+        ))
+        .expect("deliver retained schedule event");
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("retained schedule notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("retained schedule notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 705);
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+        assert_eq!(notified_payload.as_ref(), b"weekly");
+        assert!(notify_decoder.is_complete());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 }

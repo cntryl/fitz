@@ -255,6 +255,20 @@ impl TestServer {
         })
         .await
     }
+
+    pub fn force_schedule_scan_for_tests(
+        &self,
+        ready_count: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let domains_guard = self.runtime.domains.read();
+        let domains = domains_guard.as_ref().ok_or_else(|| {
+            Box::new(std::io::Error::other("domain handles unavailable"))
+                as Box<dyn std::error::Error>
+        })?;
+
+        domains.schedule.force_due_scan_for_tests(ready_count);
+        Ok(())
+    }
 }
 
 /// Test client for sending raw protocol frames
