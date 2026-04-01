@@ -242,6 +242,8 @@ Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: ru
 
 Numerical, testable performance targets are defined in **[Performance targets](bench-targets.md)** and mirrored in [`config/perf_targets.json`](../../config/perf_targets.json). The doc is the human-facing matrix; the JSON file is the machine-readable source used by the perf loop. Fitz currently gates on `mean_us`, with derived ops/sec shown only as a convenience. Latency percentiles remain out of scope until explicit percentile scenarios exist.
 
+For a domain-by-domain production validation checklist that turns the current benchmark inventory into concrete benchmark and failure-mode questions, see **[Production credibility checklist](production-credibility-checklist.md)**.
+
 The benchmark summary script validates the collected Criterion and stress outputs before generating the report. Invalid or implausible measurements are excluded from the main tables and listed separately so they do not turn into presentation-safe numbers like `0.000 us` or absurd ops/sec.
 
 ## Best Practices
