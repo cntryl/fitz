@@ -3,7 +3,7 @@
 //! Encodes/decodes TLV messages for the schedule domain.
 //! Supports Create, Cancel, List operations with route-based identity.
 
-use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
+use crate::domains::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -28,6 +28,7 @@ pub fn parse_request(
         702 => parse_list(&mut dec),
         703 => parse_subscribe(&mut dec, route_family, session_id, subscriber),
         704 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber),
+        706 => parse_create_batch(&mut dec),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -53,7 +54,12 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
+        706 => Err("schedule batch create requires multi-route authorization".to_string()),
         702 => {
+            if dec.remaining() == 0 {
+                return Ok(None);
+            }
+
             dec.get_optional_u64()?;
             dec.get_optional_u64()?;
             if !dec.is_complete() {
@@ -63,6 +69,25 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         }
         _ => Err(format!("Unknown operation: {}", msg_type)),
     }
+}
+
+pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
+    let mut dec = PayloadDecoder::new(payload);
+    let entry_count = dec.get_u32()? as usize;
+    let mut routes = Vec::with_capacity(entry_count.min(256));
+
+    for _ in 0..entry_count {
+        let route = dec.get_string_ref()?;
+        dec.get_string_ref()?;
+        dec.skip_bytes()?;
+        routes.push(route);
+    }
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(routes)
 }
 
 /// Encode domain response to TLV-encoded bytes
@@ -125,6 +150,25 @@ fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     })
 }
 
+fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+    let entry_count = dec.get_u32()? as usize;
+    let mut entries = Vec::with_capacity(entry_count.min(256));
+
+    for _ in 0..entry_count {
+        entries.push(ScheduleCreateEntry {
+            route: dec.get_string()?,
+            cron: dec.get_string()?,
+            payload: dec.get_bytes()?,
+        });
+    }
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(ScheduleMessage::CreateBatch { entries })
+}
+
 /// Parse CANCEL message
 /// Wire format: [string route]
 fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
@@ -141,6 +185,13 @@ fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
 /// Wire format (optional): [u64 offset][u64 limit]
 /// If no parameters provided, defaults to offset=0, limit=100
 fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+    if dec.remaining() == 0 {
+        return Ok(ScheduleMessage::List {
+            offset: 0,
+            limit: 100,
+        });
+    }
+
     let offset = dec.get_optional_u64()?.unwrap_or(0);
     let limit = dec.get_optional_u64()?.unwrap_or(100);
 
@@ -219,7 +270,8 @@ pub fn encode_notify_into(
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_notify, encode_response};
+    use super::{encode_notify, encode_response, extract_batch_auth_routes};
+    use crate::protocol::payload_codec::PayloadEncoder;
     use crate::domains::schedule::ScheduleResponse;
 
     #[test]
@@ -248,5 +300,27 @@ mod tests {
         assert_eq!(&payload[0..8], &7u64.to_be_bytes());
         assert_eq!(&payload[8..12], &(4u32).to_be_bytes());
         assert_eq!(&payload[12..], b"fire");
+    }
+
+    #[test]
+    fn should_extract_schedule_batch_auth_routes() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_u32(2);
+        enc.put_string("schedule://acme/jobs/backup/run");
+        enc.put_string("0 2 * * *");
+        enc.put_bytes(b"backup");
+        enc.put_string("schedule://acme/jobs/report/run");
+        enc.put_string("15 6 * * *");
+        enc.put_bytes(b"report");
+        let payload = enc.finish();
+
+        // Act
+        let routes = extract_batch_auth_routes(&payload).expect("batch auth routes");
+
+        // Assert
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0], "schedule://acme/jobs/backup/run");
+        assert_eq!(routes[1], "schedule://acme/jobs/report/run");
     }
 }

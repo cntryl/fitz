@@ -8,7 +8,9 @@
 
 use bytes::Bytes;
 use fitz::domains::schedule::protocol::CronSchedule;
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
+use fitz::domains::schedule::{
+    ScheduleActor, ScheduleCreateEntry, ScheduleMessage, ScheduleResponse,
+};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::testkit::create_test_engine_with_cfs;
 
@@ -339,6 +341,84 @@ fn should_keep_single_schedule_given_identical_create_upsert() {
             assert_eq!(entries[0].route, route);
             assert_eq!(entries[0].cron, "0 2 * * *");
             assert_eq!(entries[0].payload, payload);
+        }
+        _ => panic!("Expected ListDefs response"),
+    }
+}
+
+#[test]
+fn should_create_multiple_schedules_in_single_batch() {
+    // Arrange
+    let mut actor = make_schedule_actor();
+    let entries = vec![
+        ScheduleCreateEntry {
+            route: "schedule://acme/jobs/batch-1/run".to_string(),
+            cron: "0 2 * * *".to_string(),
+            payload: Bytes::from("backup"),
+        },
+        ScheduleCreateEntry {
+            route: "schedule://acme/jobs/batch-2/run".to_string(),
+            cron: "15 6 * * *".to_string(),
+            payload: Bytes::from("report"),
+        },
+        ScheduleCreateEntry {
+            route: "schedule://acme/jobs/batch-3/run".to_string(),
+            cron: "0 * * * *".to_string(),
+            payload: Bytes::from("sync"),
+        },
+    ];
+
+    // Act
+    let response = actor.handle(ScheduleMessage::CreateBatch { entries });
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
+
+    // Assert
+    assert!(matches!(response, ScheduleResponse::Ok));
+    match list_response {
+        ScheduleResponse::ListDefs { entries, .. } => {
+            assert_eq!(entries.len(), 3);
+        }
+        _ => panic!("Expected ListDefs response"),
+    }
+}
+
+#[test]
+fn should_reject_schedule_batch_given_duplicate_routes() {
+    // Arrange
+    let mut actor = make_schedule_actor();
+    let entries = vec![
+        ScheduleCreateEntry {
+            route: "schedule://acme/jobs/backup/run".to_string(),
+            cron: "0 2 * * *".to_string(),
+            payload: Bytes::from("backup"),
+        },
+        ScheduleCreateEntry {
+            route: "schedule://acme/jobs/backup/run".to_string(),
+            cron: "15 6 * * *".to_string(),
+            payload: Bytes::from("report"),
+        },
+    ];
+
+    // Act
+    let response = actor.handle(ScheduleMessage::CreateBatch { entries });
+    let list_response = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
+
+    // Assert
+    match response {
+        ScheduleResponse::Error(error) => {
+            assert!(error.contains("duplicate schedule route in batch"));
+        }
+        _ => panic!("Expected Error response for duplicate routes"),
+    }
+    match list_response {
+        ScheduleResponse::ListDefs { entries, .. } => {
+            assert_eq!(entries.len(), 0);
         }
         _ => panic!("Expected ListDefs response"),
     }

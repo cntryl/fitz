@@ -540,6 +540,27 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
     builder.build()
 }
 
+/// Build SCHEDULE CREATE BATCH frame (msg_type 706).
+pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(entries.len() as u32);
+
+    for (route, cron, payload) in entries {
+        buf.put_u32(route.len() as u32);
+        buf.put_slice(route.as_bytes());
+
+        buf.put_u32(cron.len() as u32);
+        buf.put_slice(cron.as_bytes());
+
+        buf.put_u32(payload.len() as u32);
+        buf.put_slice(payload);
+    }
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(706, &buf);
+    builder.build()
+}
+
 /// Parse SCHEDULE response
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);

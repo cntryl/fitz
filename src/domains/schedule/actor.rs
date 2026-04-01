@@ -1,6 +1,6 @@
 use crate::domains::schedule::protocol::{
     parse_concrete_schedule_route, validate_concrete_schedule_route, CronSchedule, ScheduleDef,
-    ScheduleListEntry,
+    ScheduleCreateEntry, ScheduleListEntry,
     ScheduleMessage, ScheduleResponse,
 };
 use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
@@ -10,12 +10,24 @@ use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use fxhash::FxBuildHasher;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
+type FastSet<K> = HashSet<K, FxBuildHasher>;
+
+struct PendingScheduleCreate {
+    route: String,
+    cron: String,
+    parsed_cron: CronSchedule,
+    payload: Bytes,
+    next_fire_time: Instant,
+    next_fire_ms: u64,
+    previous_fire_ms: Option<u64>,
+    previous_list_index: Option<usize>,
+}
 
 /// Schedule actor: manages time-based triggers with route-based identity
 ///
@@ -226,6 +238,117 @@ impl ScheduleActor {
         Ok(true)
     }
 
+    /// Create or update multiple schedules in one persisted batch.
+    ///
+    /// Returns the number of schedules that changed in storage and memory.
+    pub fn create_schedules(
+        &mut self,
+        entries: Vec<ScheduleCreateEntry>,
+    ) -> Result<usize, String> {
+        if entries.is_empty() {
+            return Err("schedule batch must not be empty".to_string());
+        }
+
+        let now = Instant::now();
+        let mut seen_routes =
+            FastSet::with_capacity_and_hasher(entries.len(), FxBuildHasher::default());
+        let mut pending = Vec::with_capacity(entries.len());
+
+        for entry in entries {
+            if !seen_routes.insert(entry.route.clone()) {
+                return Err(format!(
+                    "duplicate schedule route in batch: {}",
+                    entry.route
+                ));
+            }
+
+            validate_concrete_schedule_route(&entry.route)?;
+
+            let (previous_fire_ms, previous_list_index, should_skip) = match self
+                .schedules
+                .get(&entry.route)
+            {
+                Some(existing)
+                    if existing.cron == entry.cron
+                        && existing.payload == entry.payload
+                        && existing.next_fire_time > now =>
+                {
+                    (Some(existing.next_fire_ms), Some(existing.list_index), true)
+                }
+                Some(existing) => (Some(existing.next_fire_ms), Some(existing.list_index), false),
+                None => (None, None, false),
+            };
+
+            if should_skip {
+                continue;
+            }
+
+            let parsed_cron = self.parsed_cron_for(&entry.cron)?;
+            let next_fire_time = parsed_cron.next_fire_time(now);
+            let next_fire_ms = Self::instant_to_ms(next_fire_time);
+
+            pending.push(PendingScheduleCreate {
+                route: entry.route,
+                cron: entry.cron,
+                parsed_cron,
+                payload: entry.payload,
+                next_fire_time,
+                next_fire_ms,
+                previous_fire_ms,
+                previous_list_index,
+            });
+        }
+
+        if pending.is_empty() {
+            return Ok(0);
+        }
+
+        let store_items: Vec<_> = pending
+            .iter()
+            .map(|entry| {
+                (
+                    entry.route.clone(),
+                    entry.cron.clone(),
+                    entry.payload.clone(),
+                    entry.next_fire_time,
+                    entry.next_fire_ms,
+                    entry.previous_fire_ms,
+                )
+            })
+            .collect();
+
+        self.store
+            .insert_batch(self.family.as_u64(), &store_items, self.write_options)?;
+
+        let changed = pending.len();
+        for entry in pending {
+            let list_index = self.upsert_list_entry(
+                entry.previous_list_index,
+                &entry.route,
+                &entry.cron,
+                &entry.payload,
+            );
+
+            let def = ScheduleDef {
+                route: entry.route.clone(),
+                cron: entry.cron,
+                parsed_cron: entry.parsed_cron,
+                payload: entry.payload,
+                next_fire_time: entry.next_fire_time,
+                next_fire_ms: entry.next_fire_ms,
+                storage_key: ScheduleStore::encode_key(entry.next_fire_ms, &entry.route),
+                index_key: Vec::new(),
+                list_index,
+            };
+
+            self.ready_heap
+                .push((Reverse(entry.next_fire_ms), entry.route.clone()));
+            self.schedules.insert(entry.route, def);
+        }
+
+        Ok(changed)
+    }
+
     /// Delete a schedule by route
     pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
         validate_concrete_schedule_route(&route)?;
@@ -404,7 +527,8 @@ impl ScheduleActor {
         let now_ms = Self::instant_to_ms(now);
         let mut fired = Vec::new();
         // Reuse single vec for persistence: (route, cron, payload, next_fire, next_fire_ms, previous_fire_ms)
-        let mut to_reschedule: Vec<(String, String, Bytes, Instant, u64, u64)> = Vec::new();
+        let mut to_reschedule: Vec<(String, String, Bytes, Instant, u64, Option<u64>)> =
+            Vec::new();
         let mut heap_popped = Vec::new();
 
         // Peek the heap for schedules ready to fire (fire_ms <= now_ms)
@@ -436,7 +560,7 @@ impl ScheduleActor {
                     def.payload.clone(),
                     next_fire,
                     next_fire_ms,
-                    fire_ms,
+                    Some(fire_ms),
                 ));
                 fired.push((route.clone(), def.payload.clone()));
                 info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
@@ -571,6 +695,10 @@ impl ScheduleActor {
                 cron,
                 payload,
             } => match self.create_schedule(route, cron, payload) {
+                Ok(_) => ScheduleResponse::Ok,
+                Err(e) => ScheduleResponse::Error(e),
+            },
+            ScheduleMessage::CreateBatch { entries } => match self.create_schedules(entries) {
                 Ok(_) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },

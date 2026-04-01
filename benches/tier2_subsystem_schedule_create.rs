@@ -4,7 +4,9 @@ use criterion::{
 };
 use fitz::benchkit::create_bench_store;
 use fitz::domains::schedule::actor::ScheduleActor;
-use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, CronSchedule};
+use fitz::domains::schedule::protocol::{
+    validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry,
+};
 use fitz::domains::schedule::store::{ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -172,6 +174,31 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
         )
     });
 
+    group.bench_function("store_insert_batch_unique_inmemory_32", |b| {
+        b.iter_batched(
+            || create_store_insert_case(&fixtures),
+            |case| {
+                let items: Vec<_> = (0..CREATE_BATCH_SIZE)
+                    .map(|index| {
+                        (
+                            case.routes[index].clone(),
+                            case.cron.clone(),
+                            case.payloads[index].clone(),
+                            case.next_fire_time,
+                            case.next_fire_ms,
+                            None,
+                        )
+                    })
+                    .collect();
+                case.store
+                    .insert_batch(1, &items, cntryl_midge::WriteOptions::buffered())
+                    .expect("schedule insert batch");
+                black_box(());
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
     group.bench_function("actor_create_unique_inmemory_32", |b| {
         b.iter_batched(
             || create_actor_case(&fixtures),
@@ -187,6 +214,27 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                             .expect("actor create schedule"),
                     );
                 }
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    group.bench_function("actor_create_batch_unique_inmemory_32", |b| {
+        b.iter_batched(
+            || create_actor_case(&fixtures),
+            |mut case| {
+                let entries: Vec<_> = (0..CREATE_BATCH_SIZE)
+                    .map(|index| ScheduleCreateEntry {
+                        route: case.routes[index].clone(),
+                        cron: case.cron.clone(),
+                        payload: case.payloads[index].clone(),
+                    })
+                    .collect();
+                black_box(
+                    case.actor
+                        .create_schedules(entries)
+                        .expect("actor create schedule batch"),
+                );
             },
             BatchSize::SmallInput,
         )

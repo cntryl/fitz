@@ -373,6 +373,17 @@ impl MailboxSink for ScheduleDomainSink {
                         Err(e) => ScheduleResponse::Error(e),
                     }
                 }
+                ScheduleMessage::CreateBatch { entries } => {
+                    match actor.create_schedules(entries) {
+                        Ok(changed) => {
+                            if changed > 0 {
+                                schedule_snapshot_dirty = true;
+                            }
+                            ScheduleResponse::Ok
+                        }
+                        Err(e) => ScheduleResponse::Error(e),
+                    }
+                }
                 ScheduleMessage::Cancel { route } => {
                     match actor.delete_schedule(route) {
                         Ok(removed) => {

@@ -11,7 +11,8 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_schedule_create, create_local_bench_store, ensure_schedule_ok, shared_bench_runtime,
+    build_schedule_create, build_schedule_create_batch, create_local_bench_store,
+    ensure_schedule_ok, shared_bench_runtime,
 };
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::ScheduleMessage;
@@ -25,6 +26,7 @@ use tokio::sync::Mutex;
 
 const DIRECT_ROUTE_RING_SIZE: usize = 65_536;
 const TRANSPORT_FRAME_RING_SIZE: usize = 8_192;
+const CREATE_BATCH_WIDTH: usize = 32;
 
 fn valid_schedule_route(prefix: &str, index: usize) -> String {
     format!("schedule://tier4/{prefix}/resource-{index}/run")
@@ -154,6 +156,61 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
         ensure_schedule_ok(&response).expect("create should succeed");
     });
     ctx.set_elements(iterations as u64);
+
+    runtime
+        .block_on(client.close())
+        .expect("close ws client gracefully");
+}
+
+#[stress_test]
+fn should_complete_ws_batch_create(ctx: &mut StressContext) {
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "batch_create");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "32_creates_per_request");
+
+    let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
+        .map(|batch_index| {
+            let routes: Vec<String> = (0..CREATE_BATCH_WIDTH)
+                .map(|entry_index| {
+                    valid_schedule_route(
+                        "ws-batch",
+                        (batch_index * CREATE_BATCH_WIDTH) + entry_index,
+                    )
+                })
+                .collect();
+            let entries: Vec<_> = routes
+                .iter()
+                .map(|route| (route.as_str(), "0 * * * *", b"payload".as_slice()))
+                .collect();
+            build_schedule_create_batch(&entries)
+        })
+        .collect();
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws");
+
+    let warmup = runtime
+        .block_on(client.request(&frame_ring[0], 2000))
+        .expect("warmup batch create response");
+    ensure_schedule_ok(&warmup).expect("warmup batch create should succeed");
+
+    let mut next_index = 1usize;
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let frame = &frame_ring[next_index % frame_ring.len()];
+        next_index += 1;
+        let response = runtime
+            .block_on(client.request(frame, 2000))
+            .expect("batch create response");
+        ensure_schedule_ok(&response).expect("batch create should succeed");
+    });
+    ctx.set_elements((CREATE_BATCH_WIDTH as u64) * iterations as u64);
 
     runtime
         .block_on(client.close())

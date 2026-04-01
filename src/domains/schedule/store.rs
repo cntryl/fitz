@@ -8,6 +8,8 @@ use cntryl_midge::WriteOptions;
 /// This gives the schedule time to be processed and fanned out before cleanup
 const GRACE_PERIOD_SECS: u64 = 3600; // 1 hour
 
+pub type ScheduleBatchInsertItem = (String, String, Bytes, Instant, u64, Option<u64>);
+
 pub struct ScheduleInsert<'a> {
     pub route: &'a str,
     pub cron: &'a str,
@@ -186,7 +188,7 @@ impl ScheduleStore {
     pub fn insert_batch(
         &self,
         cf_id: u64,
-        items: &[(String, String, Bytes, Instant, u64, u64)],
+        items: &[ScheduleBatchInsertItem],
         write_options: WriteOptions,
     ) -> Result<(), String> {
         if items.is_empty() {
@@ -210,10 +212,12 @@ impl ScheduleStore {
             };
             let ttl = time_until_fire + Duration::from_secs(GRACE_PERIOD_SECS);
 
-            if previous_fire_ms != next_fire_ms {
-                let old_key = Self::encode_key(*previous_fire_ms, route);
-                txn.delete(old_key)
-                    .map_err(|e| format!("delete previous key failed: {:?}", e))?;
+            if let Some(previous_fire_ms) = previous_fire_ms {
+                if previous_fire_ms != next_fire_ms {
+                    let old_key = Self::encode_key(*previous_fire_ms, route);
+                    txn.delete(old_key)
+                        .map_err(|e| format!("delete previous key failed: {:?}", e))?;
+                }
             }
 
             txn.put(key.clone(), value, Some(ttl.as_millis() as u64))

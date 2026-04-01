@@ -4,9 +4,11 @@ mod characterization_support;
 use characterization_support::{
     compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
     parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint,
+    DomainReport, ProductionReport, ScalingPoint, ScenarioReport,
 };
-use fitz::benchkit::{build_schedule_create, ensure_schedule_ok, shared_bench_runtime};
+use fitz::benchkit::{
+    build_schedule_create, build_schedule_create_batch, ensure_schedule_ok, shared_bench_runtime,
+};
 use fitz::testkit::{TestServer, TestWebSocketClient};
 use futures::future::join_all;
 use std::thread;
@@ -14,23 +16,22 @@ use std::time::{Duration, Instant};
 
 const RESPONSE_TIMEOUT_MS: u64 = 2_000;
 const UNIQUE_FRAME_RING: usize = 512;
+const CREATE_BATCH_WIDTH: usize = 32;
 
-fn measure_schedule(
+fn measure_ws_scenario<F>(
+    unit: &str,
+    meaningful_ops_per_sample: u64,
     single_duration: Duration,
     scaling_duration: Duration,
     client_counts: &[usize],
-    resource_samples: usize,
-    idle_connection_cost: i64,
-) -> Result<DomainReport, String> {
+    build_frame: F,
+) -> Result<(characterization_support::LatencyStats, Vec<ScalingPoint>), String>
+where
+    F: Fn(usize, usize) -> Vec<u8>,
+{
     let runtime = shared_bench_runtime();
     let frame_ring: Vec<Vec<u8>> = (0..UNIQUE_FRAME_RING)
-        .map(|index| {
-            build_schedule_create(
-                &format!("schedule://characterization/jobs/single-{index}/run"),
-                "0 * * * *",
-                b"payload",
-            )
-        })
+        .map(|index| build_frame(0, index))
         .collect();
 
     let server = runtime
@@ -59,7 +60,13 @@ fn measure_schedule(
             Err(_) => single_errors += 1,
         }
     }
-    let single_client_ws = compute_stats("create", started.elapsed(), single_latencies, 1, single_errors);
+    let single_client_ws = compute_stats(
+        unit,
+        started.elapsed(),
+        single_latencies,
+        meaningful_ops_per_sample,
+        single_errors,
+    );
     let _ = runtime.block_on(client.close());
     drop(server);
 
@@ -78,15 +85,7 @@ fn measure_schedule(
             );
             rings.push(
                 (0..UNIQUE_FRAME_RING)
-                    .map(|frame_index| {
-                        build_schedule_create(
-                            &format!(
-                                "schedule://characterization/jobs/client-{client_index}/run-{frame_index}"
-                            ),
-                            "0 * * * *",
-                            b"payload",
-                        )
-                    })
+                    .map(|frame_index| build_frame(client_index, frame_index))
                     .collect::<Vec<_>>(),
             );
         }
@@ -134,10 +133,68 @@ fn measure_schedule(
         scaling_curve_ws.push(ScalingPoint {
             dimension: "clients".to_string(),
             count,
-            stats: compute_stats("create", started.elapsed(), latencies, 1, errors),
+            stats: compute_stats(
+                unit,
+                started.elapsed(),
+                latencies,
+                meaningful_ops_per_sample,
+                errors,
+            ),
         });
     }
 
+    Ok((single_client_ws, scaling_curve_ws))
+}
+
+fn measure_schedule(
+    single_duration: Duration,
+    scaling_duration: Duration,
+    client_counts: &[usize],
+    resource_samples: usize,
+    idle_connection_cost: i64,
+) -> Result<DomainReport, String> {
+    let (single_client_ws, scaling_curve_ws) = measure_ws_scenario(
+        "create",
+        1,
+        single_duration,
+        scaling_duration,
+        client_counts,
+        |client_index, frame_index| {
+            build_schedule_create(
+                &format!(
+                    "schedule://characterization/jobs/client-{client_index}/run-{frame_index}"
+                ),
+                "0 * * * *",
+                b"payload",
+            )
+        },
+    )?;
+
+    let (batch_single_client_ws, batch_scaling_curve_ws) = measure_ws_scenario(
+        "batch_create_32",
+        CREATE_BATCH_WIDTH as u64,
+        single_duration,
+        scaling_duration,
+        client_counts,
+        |client_index, frame_index| {
+            let base_index = frame_index * CREATE_BATCH_WIDTH;
+            let routes: Vec<String> = (0..CREATE_BATCH_WIDTH)
+                .map(|entry_index| {
+                    format!(
+                        "schedule://characterization/batch/client-{client_index}/resource-{}/run",
+                        base_index + entry_index
+                    )
+                })
+                .collect();
+            let entries: Vec<_> = routes
+                .iter()
+                .map(|route| (route.as_str(), "0 * * * *", b"payload".as_slice()))
+                .collect();
+            build_schedule_create_batch(&entries)
+        },
+    )?;
+
+    let runtime = shared_bench_runtime();
     let server = runtime
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
@@ -173,9 +230,22 @@ fn measure_schedule(
         single_client_ws,
         suspected_cliff_at: detect_cliff(&scaling_curve_ws),
         scaling_curve_ws,
+        additional_scenarios: vec![ScenarioReport {
+            name: "Batch Create (32 schedules/request)".to_string(),
+            single_client_ws: batch_single_client_ws,
+            suspected_cliff_at: detect_cliff(&batch_scaling_curve_ws),
+            scaling_curve_ws: batch_scaling_curve_ws,
+            notes: vec![
+                "ops_per_s counts schedules created, while latency values are for each batch request".to_string(),
+                "batch create runs use 32 unique concrete schedule routes per request".to_string(),
+            ],
+        }],
         resource_memory,
         idle_connection_bytes_per_client: idle_connection_cost,
-        notes: vec!["schedule create runs use unique routes so the active schedule set grows during measurement".to_string()],
+        notes: vec![
+            "schedule create runs use unique routes so the active schedule set grows during measurement".to_string(),
+            "resource-memory sampling still measures per-schedule state; batching only changes admission shape".to_string(),
+        ],
     })
 }
 

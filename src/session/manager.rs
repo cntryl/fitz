@@ -397,7 +397,7 @@ impl RuntimeIngress {
             600..=603 => Ok(Some(("stream", crate::auth::Access::Write))),
             604..=608 => Ok(Some(("stream", crate::auth::Access::Read))),
             609 => Err("invalid message type: 609 is server-to-client only"),
-            700 | 701 => Ok(Some(("schedule", crate::auth::Access::Write))),
+            700 | 701 | 706 => Ok(Some(("schedule", crate::auth::Access::Write))),
             702..=704 => Ok(Some(("schedule", crate::auth::Access::Read))),
             705 => Err("invalid message type: 705 is server-to-client only"),
             _ => Ok(None),
@@ -655,20 +655,45 @@ impl Ingress for RuntimeIngress {
                     domain = domain,
                     "Ingress: resolved domain for msg_type"
                 );
+                    let payload_ref = message_payload.as_ref().unwrap();
                     // Attempt to derive a fine-grained route from the payload for better authorization.
                     let auth_route_start = Instant::now();
-                    let auth_route = match self
-                        .derive_auth_route_for_frame(msg_type, message_payload.as_ref().unwrap())
-                    {
-                        Ok(Some(r)) => r,
-                        Ok(None) => Cow::Borrowed(Self::wildcard_route_for_domain(domain)),
-                        Err(e) => {
-                            warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive route for authorization");
-                            return IngressDecision::Close(format!(
-                                "authorization parse failed: {}",
-                                e
-                            ));
+                    let auth_routes = if domain == "schedule" && msg_type.as_u16() == 706 {
+                        match crate::protocol::schedule_codec::extract_batch_auth_routes(payload_ref)
+                        {
+                            Ok(routes) => Some(
+                                routes
+                                    .into_iter()
+                                    .map(|route| {
+                                        Self::canonicalize_domain_route_str("schedule", route)
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                            Err(e) => {
+                                warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive routes for authorization");
+                                return IngressDecision::Close(format!(
+                                    "authorization parse failed: {}",
+                                    e
+                                ));
+                            }
                         }
+                    } else {
+                        None
+                    };
+                    let auth_route = if auth_routes.is_none() {
+                        match self.derive_auth_route_for_frame(msg_type, payload_ref) {
+                            Ok(Some(r)) => Some(r),
+                            Ok(None) => Some(Cow::Borrowed(Self::wildcard_route_for_domain(domain))),
+                            Err(e) => {
+                                warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive route for authorization");
+                                return IngressDecision::Close(format!(
+                                    "authorization parse failed: {}",
+                                    e
+                                ));
+                            }
+                        }
+                    } else {
+                        None
                     };
 
                     if let Ok(collector) =
@@ -682,17 +707,48 @@ impl Ingress for RuntimeIngress {
 
                     // Check session actor's authorization
                     if let Some(actor_ref) = self.get_session_actor(session_id) {
+                        let auth_target = auth_routes
+                            .as_ref()
+                            .and_then(|routes| routes.first().map(|route| route.as_ref()))
+                            .or_else(|| auth_route.as_ref().map(|route| route.as_ref()))
+                            .unwrap_or(Self::wildcard_route_for_domain(domain));
+                        let auth_target_count =
+                            auth_routes.as_ref().map(|routes| routes.len()).unwrap_or(1);
+
                         // 100% sample: authorization is critical path
                         let _span = tracing::debug_span!(
                             obs::SPAN_PERMISSION_CHECK,
                             session_id = session_id,
-                            route = %auth_route.as_ref(),
+                            route = auth_target,
+                            route_count = auth_target_count,
                             access = ?access,
                         );
                         let _guard = _span.enter();
                         let start = Instant::now();
 
-                        let authorized = actor_ref.authorize_route(auth_route.as_ref(), access);
+                        let (authorized, denied_route, denied_route_count) =
+                            if let Some(auth_routes) = auth_routes.as_ref() {
+                                let authorized = auth_routes
+                                    .iter()
+                                    .all(|route| actor_ref.authorize_route(route.as_ref(), access));
+                                (
+                                    authorized,
+                                    auth_routes
+                                        .first()
+                                        .map(|route| route.as_ref())
+                                        .unwrap_or(Self::wildcard_route_for_domain(domain)),
+                                    auth_routes.len(),
+                                )
+                            } else {
+                                let auth_route = auth_route
+                                    .as_ref()
+                                    .expect("single-route auth target must exist");
+                                (
+                                    actor_ref.authorize_route(auth_route.as_ref(), access),
+                                    auth_route.as_ref(),
+                                    1,
+                                )
+                            };
 
                         // Record latency
                         if let Ok(collector) =
@@ -709,7 +765,8 @@ impl Ingress for RuntimeIngress {
                             warn!(
                                 session_id = session_id,
                                 msg_type = msg_type.as_u16(),
-                                route = auth_route.as_ref(),
+                                route = denied_route,
+                                route_count = denied_route_count,
                                 access = ?access,
                                 "Ingress: authorization DENIED"
                             );

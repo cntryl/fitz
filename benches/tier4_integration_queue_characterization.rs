@@ -129,6 +129,7 @@ fn measure_queue(
         single_client_ws,
         suspected_cliff_at: detect_cliff(&scaling_curve_ws),
         scaling_curve_ws,
+        additional_scenarios: Vec::new(),
         resource_memory,
         idle_connection_bytes_per_client: idle_connection_cost,
         notes: vec!["queue scaling curve uses many producers against one queue route".to_string()],

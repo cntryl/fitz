@@ -61,11 +61,21 @@ pub struct MemoryCost {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ScenarioReport {
+    pub name: String,
+    pub single_client_ws: LatencyStats,
+    pub scaling_curve_ws: Vec<ScalingPoint>,
+    pub suspected_cliff_at: Option<usize>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DomainReport {
     pub domain: String,
     pub single_client_ws: LatencyStats,
     pub scaling_curve_ws: Vec<ScalingPoint>,
     pub suspected_cliff_at: Option<usize>,
+    pub additional_scenarios: Vec<ScenarioReport>,
     pub resource_memory: MemoryCost,
     pub idle_connection_bytes_per_client: i64,
     pub notes: Vec<String>,
@@ -344,46 +354,24 @@ fn render_markdown(report: &ProductionReport) -> String {
 
     for domain in &report.domains {
         output.push_str(&format!("## {}\n\n", domain.domain.to_uppercase()));
-        output.push_str("### Single Client\n\n");
-        output.push_str(
-            "| unit | ops_per_s | p50_us | p95_us | p99_us | mean_us | max_us | errors |\n",
+        render_scenario_markdown(
+            &mut output,
+            None,
+            &domain.single_client_ws,
+            &domain.scaling_curve_ws,
+            domain.suspected_cliff_at,
+            &[],
         );
-        output.push_str("|---|---:|---:|---:|---:|---:|---:|---:|\n");
-        output.push_str(&format!(
-            "| {} | {:.0} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {} |\n\n",
-            domain.single_client_ws.unit,
-            domain.single_client_ws.ops_per_s,
-            domain.single_client_ws.p50_us,
-            domain.single_client_ws.p95_us,
-            domain.single_client_ws.p99_us,
-            domain.single_client_ws.mean_us,
-            domain.single_client_ws.max_us,
-            domain.single_client_ws.errors,
-        ));
-
-        output.push_str("### Scaling\n\n");
-        output.push_str("| dimension | count | ops_per_s | p50_us | p95_us | p99_us | errors |\n");
-        output.push_str("|---|---:|---:|---:|---:|---:|---:|\n");
-        for point in &domain.scaling_curve_ws {
-            output.push_str(&format!(
-                "| {} | {} | {:.0} | {:.1} | {:.1} | {:.1} | {} |\n",
-                point.dimension,
-                point.count,
-                point.stats.ops_per_s,
-                point.stats.p50_us,
-                point.stats.p95_us,
-                point.stats.p99_us,
-                point.stats.errors,
-            ));
+        for scenario in &domain.additional_scenarios {
+            render_scenario_markdown(
+                &mut output,
+                Some(&scenario.name),
+                &scenario.single_client_ws,
+                &scenario.scaling_curve_ws,
+                scenario.suspected_cliff_at,
+                &scenario.notes,
+            );
         }
-        output.push('\n');
-        output.push_str(&format!(
-            "- suspected_cliff_at: {}\n",
-            domain
-                .suspected_cliff_at
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "none observed".to_string())
-        ));
         output.push_str(&format!(
             "- {} bytes_per_resource: {} (delta: {})\n",
             domain.resource_memory.resource,
@@ -404,4 +392,70 @@ fn render_markdown(report: &ProductionReport) -> String {
     }
 
     output
+}
+
+fn render_scenario_markdown(
+    output: &mut String,
+    title: Option<&str>,
+    single_client_ws: &LatencyStats,
+    scaling_curve_ws: &[ScalingPoint],
+    suspected_cliff_at: Option<usize>,
+    notes: &[String],
+) {
+    if let Some(title) = title {
+        output.push_str(&format!("### {}\n\n", title));
+        output.push_str("#### Single Client\n\n");
+    } else {
+        output.push_str("### Single Client\n\n");
+    }
+
+    output.push_str(
+        "| unit | ops_per_s | p50_us | p95_us | p99_us | mean_us | max_us | errors |\n",
+    );
+    output.push_str("|---|---:|---:|---:|---:|---:|---:|---:|\n");
+    output.push_str(&format!(
+        "| {} | {:.0} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {} |\n\n",
+        single_client_ws.unit,
+        single_client_ws.ops_per_s,
+        single_client_ws.p50_us,
+        single_client_ws.p95_us,
+        single_client_ws.p99_us,
+        single_client_ws.mean_us,
+        single_client_ws.max_us,
+        single_client_ws.errors,
+    ));
+
+    if title.is_some() {
+        output.push_str("#### Scaling\n\n");
+    } else {
+        output.push_str("### Scaling\n\n");
+    }
+    output.push_str("| dimension | count | ops_per_s | p50_us | p95_us | p99_us | errors |\n");
+    output.push_str("|---|---:|---:|---:|---:|---:|---:|\n");
+    for point in scaling_curve_ws {
+        output.push_str(&format!(
+            "| {} | {} | {:.0} | {:.1} | {:.1} | {:.1} | {} |\n",
+            point.dimension,
+            point.count,
+            point.stats.ops_per_s,
+            point.stats.p50_us,
+            point.stats.p95_us,
+            point.stats.p99_us,
+            point.stats.errors,
+        ));
+    }
+    output.push('\n');
+    output.push_str(&format!(
+        "- suspected_cliff_at: {}\n",
+        suspected_cliff_at
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none observed".to_string())
+    ));
+    if !notes.is_empty() {
+        output.push_str("- scenario_notes:\n");
+        for note in notes {
+            output.push_str(&format!("  - {}\n", note));
+        }
+    }
+    output.push('\n');
 }

@@ -62,6 +62,10 @@ pub enum ScheduleMessage {
         cron: String,
         payload: Bytes,
     },
+    /// Create or update multiple schedules atomically.
+    CreateBatch {
+        entries: Vec<ScheduleCreateEntry>,
+    },
     /// Cancel an existing schedule by route
     Cancel { route: String },
     /// List all schedules (supports pagination)
@@ -90,6 +94,13 @@ pub enum ScheduleMessage {
         session_id: u64,
         subscriber: RouteAddress,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleCreateEntry {
+    pub route: String,
+    pub cron: String,
+    pub payload: Bytes,
 }
 
 /// Response from schedule operations

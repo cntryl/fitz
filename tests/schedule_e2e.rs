@@ -3,6 +3,7 @@
 
 mod fixtures;
 use fitz::testkit::TestServer;
+use fitz::protocol::payload_codec::PayloadDecoder;
 use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
@@ -149,6 +150,41 @@ where
     // Assert
     let (_msg_type, status3, _data) = parse_schedule_response(&response3);
     assert_eq!(status3, 0, "Should handle multiple schedule creation");
+}
+
+async fn should_create_schedule_batch<C>(server: &TestServer)
+where
+    C: ScheduleConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let entries = [
+        ("schedule://test/jobs/batch-1/run", "0 0 * * *", &b"backup"[..]),
+        ("schedule://test/jobs/batch-2/run", "15 6 * * *", &b"report"[..]),
+        ("schedule://test/jobs/batch-3/run", "0 * * * *", &b"sync"[..]),
+    ];
+    let create_frame = build_schedule_create_batch(&entries);
+
+    // Act
+    let create_response = client
+        .send_and_receive(&create_frame, 2000)
+        .await
+        .expect("batch create");
+    let list_response = client
+        .send_and_receive(&build_schedule_list(), 2000)
+        .await
+        .expect("list schedules");
+
+    // Assert
+    let (_msg_type, create_status, _data) = parse_schedule_response(&create_response);
+    assert_eq!(create_status, 0, "Expected success for schedule batch create");
+
+    let (_msg_type, list_status, list_payload) = parse_schedule_response(&list_response);
+    assert_eq!(list_status, 0, "Expected success for schedule list");
+
+    let mut dec = PayloadDecoder::new(&list_payload[1..]);
+    let total_count = dec.get_u64().expect("total count");
+    assert_eq!(total_count, entries.len() as u64);
 }
 
 // Generic test helper for various cron expressions
@@ -313,6 +349,7 @@ define_transport_tests!(
     TcpScheduleConnector,
     WsScheduleConnector;
     should_create_cron_schedule_tcp / should_create_cron_schedule_ws => should_create_cron_schedule,
+    should_create_schedule_batch_tcp / should_create_schedule_batch_ws => should_create_schedule_batch,
     should_cancel_schedule_tcp / should_cancel_schedule_ws => should_cancel_schedule,
     should_reject_invalid_cron_tcp / should_reject_invalid_cron_ws => should_reject_invalid_cron,
     should_reject_cancel_nonexistent_tcp / should_reject_cancel_nonexistent_ws => should_allow_cancel_nonexistent_idempotent,

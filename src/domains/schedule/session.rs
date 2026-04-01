@@ -31,7 +31,9 @@ impl SessionActor {
     /// Validate authorization for a schedule operation
     pub fn authorize(&self, route: &Route, msg: &ScheduleMessage) -> Result<(), String> {
         match msg {
-            ScheduleMessage::Create { .. } | ScheduleMessage::Cancel { .. } => {
+            ScheduleMessage::Create { .. }
+            | ScheduleMessage::CreateBatch { .. }
+            | ScheduleMessage::Cancel { .. } => {
                 // Create/Cancel requires write access
                 if !self.permissions.allows(route, Access::Write) {
                     return Err("unauthorized: write access required".to_string());
