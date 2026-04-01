@@ -5,7 +5,21 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
+
+fn schedule_admin_snapshot_due(
+    snapshot_dirty: bool,
+    force: bool,
+    now_elapsed_us: u64,
+    last_snapshot_elapsed_us: u64,
+) -> bool {
+    snapshot_dirty
+        && (force
+            || now_elapsed_us.saturating_sub(last_snapshot_elapsed_us)
+                >= SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US)
+}
 
 struct ScheduleSubscription {
     pattern: crate::runtime::matcher::Pattern,
@@ -38,6 +52,10 @@ pub struct ScheduleDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
+    snapshot_dirty: AtomicBool,
+    snapshot_syncing: AtomicBool,
+    last_snapshot_elapsed_us: AtomicU64,
+    snapshot_epoch: Instant,
 }
 
 impl ScheduleDomainSink {
@@ -54,6 +72,10 @@ impl ScheduleDomainSink {
             router,
             admin_read_model,
             active: AtomicBool::new(true),
+            snapshot_dirty: AtomicBool::new(false),
+            snapshot_syncing: AtomicBool::new(false),
+            last_snapshot_elapsed_us: AtomicU64::new(0),
+            snapshot_epoch: Instant::now(),
         }
     }
 
@@ -89,16 +111,25 @@ impl ScheduleDomainSink {
 
     fn scan_due_schedules(&self) {
         let mut publishes = Vec::new();
+        let mut snapshot_dirty = false;
         {
             let mut actors = self.actors.lock();
             for (family, actor) in actors.iter_mut() {
-                for (route, payload) in actor.scan_and_fire() {
+                let fired = actor.scan_and_fire();
+                if !fired.is_empty() {
+                    snapshot_dirty = true;
+                }
+                for (route, payload) in fired {
                     let route = crate::runtime::routing::Route::new(route);
                     publishes.push(crate::runtime::DomainPublishEvent::new(
                         *family, route, payload,
                     ));
                 }
             }
+        }
+
+        if snapshot_dirty {
+            self.schedule_admin_snapshot(false);
         }
 
         for event in publishes {
@@ -117,6 +148,7 @@ impl ScheduleDomainSink {
         }
 
         self.scan_due_schedules();
+        self.schedule_admin_snapshot(true);
     }
 
     fn route_schedule_notify(
@@ -184,6 +216,68 @@ impl ScheduleDomainSink {
         let actors = self.actors.lock();
         actors.values().map(|actor| actor.schedule_count()).sum()
     }
+
+    fn sync_admin_snapshot(&self) {
+        let snapshot = {
+            let actors = self.actors.lock();
+            let mut schedules = Vec::new();
+            for actor in actors.values() {
+                schedules.extend(actor.admin_snapshot());
+            }
+            schedules
+        };
+
+        self.admin_read_model.replace_schedules(snapshot);
+    }
+
+    fn schedule_admin_snapshot(&self, force: bool) {
+        self.snapshot_dirty.store(true, Ordering::Relaxed);
+        self.maybe_sync_admin_snapshot(force);
+    }
+
+    fn maybe_sync_admin_snapshot(&self, force: bool) {
+        #[cfg(feature = "bench-no-snapshot")]
+        {
+            let _ = force;
+            return;
+        }
+
+        #[cfg(not(feature = "bench-no-snapshot"))]
+        {
+            let now_elapsed_us = self.snapshot_epoch.elapsed().as_micros() as u64;
+            let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
+            let snapshot_dirty = self.snapshot_dirty.load(Ordering::Relaxed);
+
+            if !schedule_admin_snapshot_due(
+                snapshot_dirty,
+                force,
+                now_elapsed_us,
+                last_snapshot_elapsed_us,
+            ) {
+                return;
+            }
+
+            if self
+                .snapshot_syncing
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+
+            if !self.snapshot_dirty.swap(false, Ordering::AcqRel) {
+                self.snapshot_syncing.store(false, Ordering::Release);
+                return;
+            }
+
+            self.sync_admin_snapshot();
+            self.last_snapshot_elapsed_us.store(
+                self.snapshot_epoch.elapsed().as_micros() as u64,
+                Ordering::Relaxed,
+            );
+            self.snapshot_syncing.store(false, Ordering::Release);
+        }
+    }
 }
 
 impl MailboxSink for ScheduleDomainSink {
@@ -250,23 +344,7 @@ impl MailboxSink for ScheduleDomainSink {
         let route_family = *route_addr.family();
 
         use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
-        enum ScheduleAdminUpdate {
-            Upsert {
-                realm: String,
-                area: String,
-                resource: String,
-                operation: String,
-                cron: String,
-            },
-            Remove {
-                realm: String,
-                area: String,
-                resource: String,
-                operation: String,
-            },
-        }
-
-        let mut admin_update: Option<ScheduleAdminUpdate> = None;
+        let mut schedule_snapshot_dirty = false;
 
         let response = {
             let store = self.store.clone();
@@ -285,24 +363,10 @@ impl MailboxSink for ScheduleDomainSink {
                     cron,
                     payload,
                 } => {
-                    let route_for_admin = route.clone();
-                    let cron_for_admin = cron.clone();
                     match actor.create_schedule(route, cron, payload) {
                         Ok(changed) => {
                             if changed {
-                                if let Ok(route_parts) =
-                                    crate::domains::schedule::protocol::parse_concrete_schedule_route(
-                                        &route_for_admin,
-                                    )
-                                {
-                                    admin_update = Some(ScheduleAdminUpdate::Upsert {
-                                        realm: route_parts.realm,
-                                        area: route_parts.area,
-                                        resource: route_parts.resource,
-                                        operation: route_parts.operation,
-                                        cron: cron_for_admin,
-                                    });
-                                }
+                                schedule_snapshot_dirty = true;
                             }
                             ScheduleResponse::Ok
                         }
@@ -310,22 +374,10 @@ impl MailboxSink for ScheduleDomainSink {
                     }
                 }
                 ScheduleMessage::Cancel { route } => {
-                    let route_for_admin = route.clone();
                     match actor.delete_schedule(route) {
                         Ok(removed) => {
                             if removed {
-                                if let Ok(route_parts) =
-                                    crate::domains::schedule::protocol::parse_concrete_schedule_route(
-                                        &route_for_admin,
-                                    )
-                                {
-                                    admin_update = Some(ScheduleAdminUpdate::Remove {
-                                        realm: route_parts.realm,
-                                        area: route_parts.area,
-                                        resource: route_parts.resource,
-                                        operation: route_parts.operation,
-                                    });
-                                }
+                                schedule_snapshot_dirty = true;
                             }
                             ScheduleResponse::Ok
                         }
@@ -428,28 +480,8 @@ impl MailboxSink for ScheduleDomainSink {
             }
         };
 
-        if let Some(update) = admin_update {
-            match update {
-                ScheduleAdminUpdate::Upsert {
-                    realm,
-                    area,
-                    resource,
-                    operation,
-                    cron,
-                } => {
-                    self.admin_read_model
-                        .upsert_schedule_fields(realm, area, resource, operation, cron);
-                }
-                ScheduleAdminUpdate::Remove {
-                    realm,
-                    area,
-                    resource,
-                    operation,
-                } => {
-                    self.admin_read_model
-                        .remove_schedule(&realm, &area, &resource, &operation);
-                }
-            }
+        if schedule_snapshot_dirty {
+            self.schedule_admin_snapshot(false);
         }
 
         let response_bytes =

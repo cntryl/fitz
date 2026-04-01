@@ -241,6 +241,40 @@ pub struct Router {
 }
 
 impl Router {
+    fn deliver_with_sink(
+        &self,
+        dest: RouteAddress,
+        sink: Arc<dyn MailboxSink>,
+        envelope: Envelope,
+        start: Instant,
+    ) -> Result<(), RouteError> {
+        match sink.deliver(envelope) {
+            Ok(()) => {
+                debug!(destination = %dest, "Router: envelope delivered successfully");
+
+                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics)
+                {
+                    metrics.histogram_observe_us(
+                        obs::METRIC_ROUTE_MATCH_LATENCY,
+                        start.elapsed().as_micros() as u64,
+                    );
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                warn!(destination = %dest, error = %e, "Router: delivery failed");
+
+                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics)
+                {
+                    metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
+                }
+
+                Err(RouteError::DeliveryFailed(dest, e))
+            }
+        }
+    }
+
     /// Create a new router with an empty registry
     pub fn new() -> Self {
         Self {
@@ -272,6 +306,15 @@ impl Router {
     /// an extra registry lookup in `route()` while preserving delivery behavior.
     pub fn resolve_sink(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
         self.registry.get(address)
+    }
+
+    /// Resolve a sink for a registered domain pattern.
+    ///
+    /// This is intended for hot paths that already know the destination domain
+    /// and want to avoid an exact-route miss before falling back to domain
+    /// pattern matching.
+    pub fn resolve_domain_sink(&self, domain: &str) -> Option<Arc<dyn MailboxSink>> {
+        self.registry.get_by_domain(domain)
     }
 
     /// Register a domain pattern (e.g., "kv", "queue", "notice")
@@ -370,31 +413,38 @@ impl Router {
                 })?
         };
 
-        match sink.deliver(envelope) {
-            Ok(()) => {
-                debug!(destination = %dest, "Router: envelope delivered successfully");
+        self.deliver_with_sink(dest, sink, envelope, start)
+    }
 
-                // Record success metrics
-                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
-                    metrics.histogram_observe_us(
-                        obs::METRIC_ROUTE_MATCH_LATENCY,
-                        start.elapsed().as_micros() as u64,
-                    );
-                }
+    /// Route an envelope directly via a known domain pattern.
+    ///
+    /// This avoids an exact-route lookup miss when the caller already resolved
+    /// the domain from another signal such as message type.
+    pub fn route_to_domain(&self, domain: &str, envelope: Envelope) -> Result<(), RouteError> {
+        let dest = envelope.destination().clone();
+        let start = Instant::now();
 
-                Ok(())
-            }
-            Err(e) => {
-                warn!(destination = %dest, error = %e, "Router: delivery failed");
+        trace!(destination = %dest, domain = domain, "Router: routing envelope directly to known domain");
 
-                // Record failure metrics
-                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
-                    metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
-                }
-
-                Err(RouteError::DeliveryFailed(dest, e))
-            }
+        if should_sample_hot_path() {
+            let _span = tracing::debug_span!(
+                obs::SPAN_ROUTE_MATCH,
+                route = %dest,
+                domain = domain
+            );
         }
+
+        let sink = self.registry.get_by_domain(domain).ok_or_else(|| {
+            warn!(destination = %dest, domain = domain, "Router: no domain sink found");
+
+            if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+                metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
+            }
+
+            RouteError::RouteNotFound(dest.clone())
+        })?;
+
+        self.deliver_with_sink(dest, sink, envelope, start)
     }
 
     /// Route an envelope to the high-priority lane (runtime-internal use only)
@@ -553,6 +603,23 @@ mod tests {
         // Assert - Exact match wins
         assert_eq!(exact_sink.delivered.lock().len(), 1);
         assert_eq!(pattern_sink.delivered.lock().len(), 0);
+    }
+
+    #[test]
+    fn should_route_directly_to_known_domain_pattern() {
+        // Arrange
+        let router = Router::new();
+        let sink = Arc::new(MockSink::new());
+        let address = test_address(7, "queue://inbound");
+
+        router.register_domain_pattern("queue", sink.clone());
+
+        // Act
+        let result = router.route_to_domain("queue", Envelope::new(address, "msg"));
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(sink.count(), 1);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use characterization_support::{
     parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
     DomainReport, ProductionReport, ScalingPoint,
 };
-use fitz::benchkit::{build_schedule_create, parse_schedule_response, shared_bench_runtime};
+use fitz::benchkit::{build_schedule_create, ensure_schedule_ok, shared_bench_runtime};
 use fitz::testkit::{TestServer, TestWebSocketClient};
 use futures::future::join_all;
 use std::thread;
@@ -26,7 +26,7 @@ fn measure_schedule(
     let frame_ring: Vec<Vec<u8>> = (0..UNIQUE_FRAME_RING)
         .map(|index| {
             build_schedule_create(
-                &format!("schedule://characterization/job/{index}"),
+                &format!("schedule://characterization/jobs/single-{index}/run"),
                 "0 * * * *",
                 b"payload",
             )
@@ -50,8 +50,11 @@ fn measure_schedule(
         let op_start = Instant::now();
         match runtime.block_on(client.request(frame, RESPONSE_TIMEOUT_MS)) {
             Ok(response) => {
-                let _ = parse_schedule_response(&response);
-                single_latencies.push(op_start.elapsed().as_micros() as u64);
+                if ensure_schedule_ok(&response).is_ok() {
+                    single_latencies.push(op_start.elapsed().as_micros() as u64);
+                } else {
+                    single_errors += 1;
+                }
             }
             Err(_) => single_errors += 1,
         }
@@ -78,7 +81,7 @@ fn measure_schedule(
                     .map(|frame_index| {
                         build_schedule_create(
                             &format!(
-                                "schedule://characterization/job/{client_index}/{frame_index}"
+                                "schedule://characterization/jobs/client-{client_index}/run-{frame_index}"
                             ),
                             "0 * * * *",
                             b"payload",
@@ -104,8 +107,11 @@ fn measure_schedule(
                         let op_start = Instant::now();
                         match client.request(frame, RESPONSE_TIMEOUT_MS).await {
                             Ok(response) => {
-                                let _ = parse_schedule_response(&response);
-                                latencies.push(op_start.elapsed().as_micros() as u64);
+                                if ensure_schedule_ok(&response).is_ok() {
+                                    latencies.push(op_start.elapsed().as_micros() as u64);
+                                } else {
+                                    errors += 1;
+                                }
                             }
                             Err(_) => errors += 1,
                         }
@@ -141,7 +147,7 @@ fn measure_schedule(
     let resource_ring: Vec<Vec<u8>> = (0..resource_samples)
         .map(|index| {
             build_schedule_create(
-                &format!("schedule://characterization/memory/{index}"),
+                &format!("schedule://characterization/memory/resource-{index}/run"),
                 "0 * * * *",
                 b"payload",
             )
@@ -150,9 +156,10 @@ fn measure_schedule(
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;
     for frame in &resource_ring {
-        runtime
+        let response = runtime
             .block_on(client.request(frame, RESPONSE_TIMEOUT_MS))
             .map_err(|error| error.to_string())?;
+        ensure_schedule_ok(&response)?;
     }
     thread::sleep(Duration::from_millis(150));
     let after = stable_working_set_bytes()?;

@@ -103,6 +103,9 @@ pub const METRIC_TLV_CODEC_LATENCY: &str = "fitz_tlv_codec_latency_us";
 pub const METRIC_ROUTE_MATCH_LATENCY: &str = "fitz_route_match_latency_us";
 pub const METRIC_DOMAIN_OPERATION_LATENCY: &str = "fitz_domain_operation_latency_ms";
 pub const METRIC_PERMISSION_CHECK_LATENCY: &str = "fitz_permission_check_latency_us";
+pub const METRIC_INGRESS_AUTH_ROUTE_LATENCY: &str = "fitz_ingress_auth_route_latency_us";
+pub const METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY: &str =
+    "fitz_ingress_domain_dispatch_latency_us";
 pub const METRIC_QUEUE_RECOVERY_INDEX_LOAD_LATENCY: &str =
     "fitz_queue_recovery_index_load_latency_us";
 pub const METRIC_QUEUE_RECOVERY_FALLBACK_SCAN_LATENCY: &str =

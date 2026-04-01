@@ -164,6 +164,19 @@ pub enum CronField {
     Step(Box<CronField>, u32),
 }
 
+impl CronField {
+    fn is_any(&self) -> bool {
+        matches!(self, CronField::Any)
+    }
+
+    fn as_single(&self) -> Option<u32> {
+        match self {
+            CronField::Single(value) => Some(*value),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FieldMatcher {
     values: Vec<u32>,
@@ -250,6 +263,10 @@ impl CronSchedule {
             .unwrap_or_default()
             .as_secs();
 
+        if let Some(candidate_secs) = self.simple_candidate_seconds(seconds) {
+            return instant_from_epoch_seconds(candidate_secs, now_sys, now_instant);
+        }
+
         // Start from next minute (round up). We then jump between matching
         // month/day/hour/minute candidates instead of scanning minute-by-minute.
         let mut candidate_secs = ((seconds / 60) + 1) * 60;
@@ -309,16 +326,40 @@ impl CronSchedule {
                 continue;
             }
 
-            let candidate_sys = UNIX_EPOCH + std::time::Duration::from_secs(candidate_secs);
-            let duration_from_now_sys = candidate_sys
-                .duration_since(now_sys)
-                .unwrap_or_else(|_| std::time::Duration::from_secs(0));
-            return now_instant + duration_from_now_sys;
+            return instant_from_epoch_seconds(candidate_secs, now_sys, now_instant);
         }
 
         // Fallback: if no match found in 4 years, return 1 hour from now
         // This should never happen with valid cron expressions
         from + std::time::Duration::from_secs(3600)
+    }
+
+    fn simple_candidate_seconds(&self, current_secs: u64) -> Option<u64> {
+        if !self.day_of_month.is_any() || !self.month.is_any() || !self.day_of_week.is_any() {
+            return None;
+        }
+
+        if self.hour.is_any() {
+            let target_minute = self.minute.as_single()? as u64;
+            let hour_start = current_secs - (current_secs % 3_600);
+            let target = hour_start + (target_minute * 60);
+            return Some(if target > current_secs {
+                target
+            } else {
+                target + 3_600
+            });
+        }
+
+        let target_hour = self.hour.as_single()? as u64;
+        let target_minute = self.minute.as_single()? as u64;
+        let day_start = current_secs - (current_secs % 86_400);
+        let target = day_start + (target_hour * 3_600) + (target_minute * 60);
+
+        Some(if target > current_secs {
+            target
+        } else {
+            target + 86_400
+        })
     }
 
     fn matches_day_of_month(&self, day: u32) -> bool {
@@ -339,6 +380,14 @@ impl CronSchedule {
         }
         None
     }
+}
+
+fn instant_from_epoch_seconds(candidate_secs: u64, now_sys: std::time::SystemTime, now_instant: Instant) -> Instant {
+    let candidate_sys = std::time::UNIX_EPOCH + std::time::Duration::from_secs(candidate_secs);
+    let duration_from_now_sys = candidate_sys
+        .duration_since(now_sys)
+        .unwrap_or_else(|_| std::time::Duration::from_secs(0));
+    now_instant + duration_from_now_sys
 }
 
 /// Check if a value matches a cron field
@@ -619,6 +668,30 @@ mod tests {
         let err = parse_concrete_schedule_route("schedule://acme/billing/*/send").unwrap_err();
 
         assert_eq!(err, "schedule route must not contain wildcards");
+    }
+
+    #[test]
+    fn should_fast_path_hourly_schedule_given_single_minute() {
+        // Arrange
+        let cron = CronSchedule::parse("0 * * * *").unwrap();
+
+        // Act
+        let candidate = cron.simple_candidate_seconds((10 * 3_600) + (14 * 60) + 30);
+
+        // Assert
+        assert_eq!(candidate, Some(11 * 3_600));
+    }
+
+    #[test]
+    fn should_fast_path_daily_schedule_given_single_hour_and_minute() {
+        // Arrange
+        let cron = CronSchedule::parse("15 6 * * *").unwrap();
+
+        // Act
+        let candidate = cron.simple_candidate_seconds((6 * 3_600) + (20 * 60));
+
+        // Assert
+        assert_eq!(candidate, Some(86_400 + (6 * 3_600) + (15 * 60)));
     }
 }
 

@@ -153,6 +153,11 @@ harness = false
 path = "benches/tier2_subsystem_schedule_scan.rs"
 
 [[bench]]
+name = "tier2_subsystem_schedule_create"
+harness = false
+path = "benches/tier2_subsystem_schedule_create.rs"
+
+[[bench]]
 name = "tier2_subsystem_queue"
 harness = false
 path = "benches/tier2_subsystem_queue.rs"

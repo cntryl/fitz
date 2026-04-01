@@ -19,6 +19,7 @@ use crate::protocol::frame::ChannelId;
 use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
@@ -144,6 +145,8 @@ pub struct RuntimeIngress {
     sessions: Arc<DashMap<u64, SessionInfo>>,
     /// Per-session SessionActor instances for authorization checks
     session_actors: Arc<DashMap<u64, crate::session::actor::SessionActor>>,
+    /// Cached per-session inbox routes used as the source address for domain dispatch.
+    session_inbox_routes: Arc<DashMap<u64, crate::runtime::routing::Route>>,
     /// Optional router for dispatching frames to domain sinks
     router: Option<Arc<crate::runtime::Router>>,
     /// Optional callback for session events (for routing to handlers)
@@ -167,6 +170,7 @@ impl RuntimeIngress {
         Self {
             sessions: Arc::new(DashMap::new()),
             session_actors: Arc::new(DashMap::new()),
+            session_inbox_routes: Arc::new(DashMap::new()),
             router: None,
             event_handler: None,
             control_plane: Arc::new(crate::session::tenant::ControlPlaneStub::new()),
@@ -334,16 +338,69 @@ impl RuntimeIngress {
         }
     }
 
-    fn inbound_route_for_domain(domain: &str) -> &'static str {
+    fn inbound_route_for_domain_cached(domain: &str) -> &'static crate::runtime::routing::Route {
+        static KV: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("kv://inbound"));
+        static QUEUE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("queue://inbound"));
+        static RPC: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("rpc://inbound"));
+        static LEASE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("lease://inbound"));
+        static NOTICE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("notice://inbound"));
+        static STREAM: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("stream://inbound"));
+        static SCHEDULE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("schedule://inbound"));
+        static DEFAULT: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("inbox://inbound"));
+
         match domain {
-            "kv" => "kv://inbound",
-            "queue" => "queue://inbound",
-            "rpc" => "rpc://inbound",
-            "lease" => "lease://inbound",
-            "notice" => "notice://inbound",
-            "stream" => "stream://inbound",
-            "schedule" => "schedule://inbound",
-            _ => "inbox://inbound",
+            "kv" => &KV,
+            "queue" => &QUEUE,
+            "rpc" => &RPC,
+            "lease" => &LEASE,
+            "notice" => &NOTICE,
+            "stream" => &STREAM,
+            "schedule" => &SCHEDULE,
+            _ => &DEFAULT,
+        }
+    }
+
+    fn cached_session_inbox_route(&self, session_id: u64) -> crate::runtime::routing::Route {
+        self.session_inbox_routes
+            .get(&session_id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_else(|| crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")))
+    }
+
+    fn domain_dispatch_for_msg_type(
+        msg_type: crate::protocol::tlv::MessageType,
+    ) -> Result<Option<(&'static str, crate::auth::Access)>, &'static str> {
+        let mt = msg_type.as_u16();
+
+        match mt {
+            100 | 101 | 102 | 104 | 105 | 106 | 107 => {
+                Ok(Some(("kv", crate::auth::Access::Write)))
+            }
+            103 | 108 => Ok(Some(("kv", crate::auth::Access::Read))),
+            200..=204 => Ok(Some(("queue", crate::auth::Access::Write))),
+            205..=299 => Ok(Some(("queue", crate::auth::Access::Read))),
+            300..=304 => Ok(Some(("rpc", crate::auth::Access::Write))),
+            305..=399 => Ok(Some(("rpc", crate::auth::Access::Read))),
+            400..=402 => Ok(Some(("lease", crate::auth::Access::Write))),
+            403 => Ok(Some(("lease", crate::auth::Access::Read))),
+            404..=499 => Ok(Some(("lease", crate::auth::Access::Write))),
+            500..=504 => Ok(Some(("notice", crate::auth::Access::Write))),
+            505..=599 => Ok(Some(("notice", crate::auth::Access::Read))),
+            600..=603 => Ok(Some(("stream", crate::auth::Access::Write))),
+            604..=608 => Ok(Some(("stream", crate::auth::Access::Read))),
+            609 => Err("invalid message type: 609 is server-to-client only"),
+            700 | 701 => Ok(Some(("schedule", crate::auth::Access::Write))),
+            702..=704 => Ok(Some(("schedule", crate::auth::Access::Read))),
+            705 => Err("invalid message type: 705 is server-to-client only"),
+            _ => Ok(None),
         }
     }
 
@@ -414,6 +471,10 @@ impl Ingress for RuntimeIngress {
         );
 
         self.sessions.insert(session_id, session.clone());
+        self.session_inbox_routes.insert(
+            session_id,
+            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        );
         if let Some(admin_read_model) = &self.admin_read_model {
             admin_read_model.record_session_open(&session);
         }
@@ -460,26 +521,21 @@ impl Ingress for RuntimeIngress {
             payload_len = message_payload.len(),
             "Ingress on_frame: enter"
         );
-        // Verify session exists
-        if !self.sessions.contains_key(&session_id) {
-            warn!(
-                session_id = session_id,
-                "Ingress: frame for unknown session"
-            );
-            return IngressDecision::Close(format!("unknown session: {}", session_id));
-        }
+
+        let should_notify_handler = self.event_handler.is_some();
+        let mut message_payload = Some(message_payload);
 
         // Auth gating: if session is not authenticated, only allow CONNECT control messages
         // We'll set authenticated=true while holding the map write guard, but
         // perform handler notification after dropping the guard to avoid lock reentrancy.
         let mut notify_frame: Option<SessionFrame> = None;
-        {
+        let route_family = {
             let Some(mut entry) = self.sessions.get_mut(&session_id) else {
                 warn!(
                     session_id = session_id,
-                    "Ingress: session vanished during frame processing"
+                    "Ingress: frame for unknown session"
                 );
-                return IngressDecision::Close(format!("session vanished: {}", session_id));
+                return IngressDecision::Close(format!("unknown session: {}", session_id));
             };
             if !entry.authenticated {
                 if self.auth_required {
@@ -492,7 +548,8 @@ impl Ingress for RuntimeIngress {
                         );
                     }
 
-                    let compact = std::str::from_utf8(&message_payload).unwrap_or("");
+                    let compact =
+                        std::str::from_utf8(message_payload.as_ref().unwrap()).unwrap_or("");
                     debug!(
                         session_id = session_id,
                         jwt_len = compact.len(),
@@ -529,11 +586,13 @@ impl Ingress for RuntimeIngress {
                                 snapshot,
                                 route_family,
                             );
-                            notify_frame = Some(SessionFrame {
-                                session_id,
-                                channel_id,
-                                payload: message_payload.clone(),
-                            });
+                            if should_notify_handler {
+                                notify_frame = Some(SessionFrame {
+                                    session_id,
+                                    channel_id,
+                                    payload: message_payload.as_ref().unwrap().clone(),
+                                });
+                            }
                         }
                         Err(e) => {
                             error!(
@@ -558,14 +617,17 @@ impl Ingress for RuntimeIngress {
                         ),
                     );
 
-                    notify_frame = Some(SessionFrame {
-                        session_id,
-                        channel_id,
-                        payload: message_payload.clone(),
-                    });
+                    if should_notify_handler {
+                        notify_frame = Some(SessionFrame {
+                            session_id,
+                            channel_id,
+                            payload: message_payload.as_ref().unwrap().clone(),
+                        });
+                    }
                 } // Close else block for auth_required check
             }
-        }
+            entry.route_family
+        };
 
         if let Some(frame) = &notify_frame {
             debug!(
@@ -581,73 +643,22 @@ impl Ingress for RuntimeIngress {
 
         // Dispatch to router if configured (domain dispatch)
         if let Some(router) = &self.router {
-            // Map msg_type ranges to domain scheme
-            let domain = match msg_type.as_u16() {
-                100..=199 => "kv",
-                200..=299 => "queue",
-                300..=399 => "rpc",
-                400..=499 => "lease",
-                500..=599 => "notice",
-                600..=699 => "stream",
-                700..=799 => "schedule",
-                _ => "",
-            };
-
-            if !domain.is_empty() {
+            match Self::domain_dispatch_for_msg_type(msg_type) {
+                Err(reason) => {
+                    warn!(session_id = session_id, msg_type = msg_type.as_u16(), reason = reason, "Ingress: client sent server-to-client-only message type");
+                    return IngressDecision::Close(reason.to_string());
+                }
+                Ok(Some((domain, access))) => {
                 debug!(
                     session_id = session_id,
                     msg_type = msg_type.as_u16(),
                     domain = domain,
                     "Ingress: resolved domain for msg_type"
                 );
-                if let Some(session_info) = self.sessions.get(&session_id) {
-                    let route_family = session_info.route_family;
-                    // Authorization: determine required access for this msg type
-                    let access = match msg_type.as_u16() {
-                        // KV
-                        100 | 101 | 102 | 104 | 105 | 106 | 107 => crate::auth::Access::Write,
-                        103 | 108 => crate::auth::Access::Read,
-                        // Queue (200s) - write operations
-                        200..=204 => crate::auth::Access::Write,
-                        // RPC (300s) - writes (request/register)
-                        300..=304 => crate::auth::Access::Write,
-                        // Lease (400s)
-                        400..=402 => crate::auth::Access::Write,
-                        403 => crate::auth::Access::Read,
-                        // Notice (500s)
-                        500..=504 => crate::auth::Access::Write,
-                        // Stream (600s)
-                        600..=603 => crate::auth::Access::Write,
-                        604..=608 => crate::auth::Access::Read, // READ/LAST/GET_METADATA/SUBSCRIBE/UNSUBSCRIBE
-                        609 => {
-                            // STREAM_NOTIFY is Server->Client only, reject inbound
-                            warn!(
-                                session_id = session_id,
-                                "Ingress: client sent Server->Client-only STREAM_NOTIFY (609)"
-                            );
-                            return IngressDecision::Close(
-                                "invalid message type: 609 is server-to-client only".to_string(),
-                            );
-                        }
-                        // Schedule (700s)
-                        700 | 701 => crate::auth::Access::Write,
-                        702..=704 => crate::auth::Access::Read, // LIST/SUBSCRIBE/UNSUBSCRIBE
-                        705 => {
-                            // SCHEDULE_NOTIFY is Server->Client only, reject inbound
-                            warn!(
-                                session_id = session_id,
-                                "Ingress: client sent Server->Client-only SCHEDULE_NOTIFY (705)"
-                            );
-                            return IngressDecision::Close(
-                                "invalid message type: 705 is server-to-client only".to_string(),
-                            );
-                        }
-                        _ => crate::auth::Access::Write,
-                    };
-
                     // Attempt to derive a fine-grained route from the payload for better authorization.
+                    let auth_route_start = Instant::now();
                     let auth_route = match self
-                        .derive_auth_route_for_frame(msg_type, &message_payload)
+                        .derive_auth_route_for_frame(msg_type, message_payload.as_ref().unwrap())
                     {
                         Ok(Some(r)) => r,
                         Ok(None) => Cow::Borrowed(Self::wildcard_route_for_domain(domain)),
@@ -660,8 +671,17 @@ impl Ingress for RuntimeIngress {
                         }
                     };
 
+                    if let Ok(collector) =
+                        std::panic::catch_unwind(crate::boot::observability::metrics)
+                    {
+                        collector.histogram_observe_us(
+                            obs::METRIC_INGRESS_AUTH_ROUTE_LATENCY,
+                            auth_route_start.elapsed().as_micros() as u64,
+                        );
+                    }
+
                     // Check session actor's authorization
-                    if let Some(actor_ref) = self.session_actors.get(&session_id) {
+                    if let Some(actor_ref) = self.get_session_actor(session_id) {
                         // 100% sample: authorization is critical path
                         let _span = tracing::debug_span!(
                             obs::SPAN_PERMISSION_CHECK,
@@ -672,9 +692,7 @@ impl Ingress for RuntimeIngress {
                         let _guard = _span.enter();
                         let start = Instant::now();
 
-                        let authorized = actor_ref
-                            .value()
-                            .authorize_route(auth_route.as_ref(), access);
+                        let authorized = actor_ref.authorize_route(auth_route.as_ref(), access);
 
                         // Record latency
                         if let Ok(collector) =
@@ -717,23 +735,24 @@ impl Ingress for RuntimeIngress {
                         );
                     }
 
-                    let route =
-                        crate::runtime::routing::Route::new(Self::inbound_route_for_domain(domain));
+                    let route = Self::inbound_route_for_domain_cached(domain).clone();
                     let addr = crate::runtime::routing::RouteAddress::new(route_family, route);
+                    let dispatch_payload = if should_notify_handler && notify_frame.is_none() {
+                        message_payload.as_ref().unwrap().clone()
+                    } else {
+                        message_payload.take().unwrap()
+                    };
                     let ctx = crate::protocol::frame_context::FrameContext::new(
                         session_id,
                         crate::protocol::frame::ChannelId::Pub,
                         msg_type,
-                        message_payload.clone(),
+                        dispatch_payload,
                         route_family,
                     );
                     // Set source to the session's inbox so domain sinks can route responses back
                     let source = crate::runtime::routing::RouteAddress::new(
                         route_family,
-                        crate::runtime::routing::Route::new(format!(
-                            "inbox://session/{}",
-                            session_id
-                        )),
+                        self.cached_session_inbox_route(session_id),
                     );
                     let envelope =
                         crate::runtime::envelope::Envelope::from_route(source, addr, ctx);
@@ -745,7 +764,18 @@ impl Ingress for RuntimeIngress {
                         source = ?envelope.source(),
                         "Ingress: routing envelope to domain"
                     );
-                    match router.route(envelope) {
+                    let dispatch_start = Instant::now();
+                    let dispatch_result = router.route_to_domain(domain, envelope);
+                    if let Ok(collector) =
+                        std::panic::catch_unwind(crate::boot::observability::metrics)
+                    {
+                        collector.histogram_observe_us(
+                            obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
+                            dispatch_start.elapsed().as_micros() as u64,
+                        );
+                    }
+
+                    match dispatch_result {
                         Ok(()) => {}
                         Err(crate::runtime::router::RouteError::DeliveryFailed(
                             _,
@@ -770,16 +800,17 @@ impl Ingress for RuntimeIngress {
                         }
                     }
                 }
+                Ok(None) => {}
             }
         }
 
         // Notify handler if present (if we haven't already notified via `notify_frame`)
-        if notify_frame.is_none() {
+        if should_notify_handler && notify_frame.is_none() {
             if let Some(handler) = &self.event_handler {
                 handler(SessionEvent::Frame(SessionFrame {
                     session_id,
                     channel_id,
-                    payload: message_payload.clone(),
+                    payload: message_payload.take().unwrap(),
                 }));
             }
         }
@@ -842,6 +873,7 @@ impl Ingress for RuntimeIngress {
         // Remove session state after domain cleanup completes.
         self.sessions.remove(&session_id);
         self.session_actors.remove(&session_id);
+        self.session_inbox_routes.remove(&session_id);
         if let Some(admin_read_model) = &self.admin_read_model {
             admin_read_model.record_session_close(session_id);
         }

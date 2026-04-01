@@ -11,7 +11,7 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_schedule_create, create_local_bench_store, parse_schedule_response, shared_bench_runtime,
+    build_schedule_create, create_local_bench_store, ensure_schedule_ok, shared_bench_runtime,
 };
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::ScheduleMessage;
@@ -23,9 +23,19 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+const DIRECT_ROUTE_RING_SIZE: usize = 65_536;
+const TRANSPORT_FRAME_RING_SIZE: usize = 8_192;
+
+fn valid_schedule_route(prefix: &str, index: usize) -> String {
+    format!("schedule://tier4/{prefix}/resource-{index}/run")
+}
+
 fn make_schedule_ctx() -> Context<ScheduleActor> {
     let router = Router::new();
-    let addr = RouteAddress::new(RouteFamily::new(1), Route::new("schedule://tier4/job1"));
+    let addr = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new(valid_schedule_route("direct", 0)),
+    );
     Context::new(addr, Arc::new(router))
 }
 
@@ -43,21 +53,27 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
         cntryl_midge::WriteOptions::buffered(),
     );
     let mut actor_ctx = make_schedule_ctx();
+    let route_ring: Vec<String> = (0..DIRECT_ROUTE_RING_SIZE)
+        .map(|index| valid_schedule_route("direct", index))
+        .collect();
 
     // Warmup direct actor path outside measurement.
     actor.receive(
         ScheduleMessage::Create {
-            route: "schedule://tier4/job1".to_string(),
+            route: route_ring[0].clone(),
             cron: "0 * * * *".to_string(),
             payload: Bytes::from_static(b"payload"),
         },
         &mut actor_ctx,
     );
 
+    let mut next_index = 1usize;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let route = &route_ring[next_index % route_ring.len()];
+        next_index += 1;
         actor.receive(
             ScheduleMessage::Create {
-                route: "schedule://tier4/job1".to_string(),
+                route: route.clone(),
                 cron: "0 * * * *".to_string(),
                 payload: Bytes::from_static(b"payload"),
             },
@@ -74,7 +90,9 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     ctx.tag("measurement_scope", "tcp_e2e");
     ctx.tag("batch_size", "single_create");
 
-    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
+    let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
+        .map(|index| build_schedule_create(&valid_schedule_route("tcp", index), "0 * * * *", b"payload"))
+        .collect();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -84,15 +102,18 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
 
     // Warmup one request to reduce transport/session cold-start variance.
     let warmup = runtime
-        .block_on(client.request(&create_frame, 2000))
+        .block_on(client.request(&frame_ring[0], 2000))
         .expect("warmup create response");
-    let _ = parse_schedule_response(&warmup);
+    ensure_schedule_ok(&warmup).expect("warmup create should succeed");
 
+    let mut next_index = 1usize;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let frame = &frame_ring[next_index % frame_ring.len()];
+        next_index += 1;
         let response = runtime
-            .block_on(client.request(&create_frame, 2000))
+            .block_on(client.request(frame, 2000))
             .expect("create response");
-        let (_msg_type, _status, _data) = parse_schedule_response(&response);
+        ensure_schedule_ok(&response).expect("create should succeed");
     });
     ctx.set_elements(iterations as u64);
 }
@@ -104,7 +125,9 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     ctx.tag("measurement_scope", "ws_e2e");
     ctx.tag("batch_size", "single_create");
 
-    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
+    let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
+        .map(|index| build_schedule_create(&valid_schedule_route("ws", index), "0 * * * *", b"payload"))
+        .collect();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -117,15 +140,18 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
 
     // Warmup one request to reduce transport/session cold-start variance.
     let warmup = runtime
-        .block_on(client.request(&create_frame, 2000))
+        .block_on(client.request(&frame_ring[0], 2000))
         .expect("warmup create response");
-    let _ = parse_schedule_response(&warmup);
+    ensure_schedule_ok(&warmup).expect("warmup create should succeed");
 
+    let mut next_index = 1usize;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let frame = &frame_ring[next_index % frame_ring.len()];
+        next_index += 1;
         let response = runtime
-            .block_on(client.request(&create_frame, 2000))
+            .block_on(client.request(frame, 2000))
             .expect("create response");
-        let (_msg_type, _status, _data) = parse_schedule_response(&response);
+        ensure_schedule_ok(&response).expect("create should succeed");
     });
     ctx.set_elements(iterations as u64);
 
@@ -141,8 +167,19 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ctx.tag("measurement_scope", "ws_multiclient_e2e");
     ctx.tag("batch_size", "10_clients_1_create_each");
     ctx.tag("client_count", "10");
-
-    let create_frame = build_schedule_create("schedule://tier4/job1", "0 * * * *", b"payload");
+    let frame_rings: Vec<Vec<Vec<u8>>> = (0..10)
+        .map(|client_index| {
+            (0..TRANSPORT_FRAME_RING_SIZE)
+                .map(|frame_index| {
+                    build_schedule_create(
+                        &valid_schedule_route(&format!("multi-{client_index}"), frame_index),
+                        "0 * * * *",
+                        b"payload",
+                    )
+                })
+                .collect()
+        })
+        .collect();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -159,27 +196,40 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
         .collect();
 
     // Warmup each client once outside measurement to reduce connection/setup skew.
-    let _warmup: Vec<_> = runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
-        let arc = arc.clone();
-        let frame = create_frame.clone();
-        async move {
-            let mut c = arc.lock().await;
-            let response = c.request(&frame, 2000).await.expect("warmup create");
-            let _ = parse_schedule_response(&response);
-        }
-    })));
-
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+    let _warmup: Vec<_> = runtime.block_on(futures::future::join_all(
+        clients
+            .iter()
+            .enumerate()
+            .map(|(client_index, arc)| {
                 let arc = arc.clone();
-                let frame = create_frame.clone();
+                let frame = frame_rings[client_index][0].clone();
+                async move {
+                    let mut c = arc.lock().await;
+                    let response = c.request(&frame, 2000).await.expect("warmup create");
+                    ensure_schedule_ok(&response).expect("warmup create should succeed");
+                }
+            }),
+    ));
+
+    let next_indices = Arc::new(std::sync::Mutex::new(vec![1usize; clients.len()]));
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let next_indices = next_indices.clone();
+        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+            clients.iter().enumerate().map(|(client_index, arc)| {
+                let arc = arc.clone();
+                let frame = {
+                    let mut indices = next_indices.lock().unwrap();
+                    let index = indices[client_index] % frame_rings[client_index].len();
+                    indices[client_index] += 1;
+                    frame_rings[client_index][index].clone()
+                };
                 async move {
                     let mut c = arc.lock().await;
                     let response = c.request(&frame, 2000).await.expect("create");
-                    let _ = parse_schedule_response(&response);
+                    ensure_schedule_ok(&response).expect("create should succeed");
                 }
-            })));
+            }),
+        ));
     });
     ctx.set_elements(10 * iterations as u64);
 

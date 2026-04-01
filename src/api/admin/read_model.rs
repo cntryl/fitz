@@ -5,8 +5,28 @@ use crate::api::admin::{
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::Utc;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+
+type ScheduleIdentity = (String, String, String, String);
+
+fn schedule_identity_key(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    operation: &str,
+) -> ScheduleIdentity {
+    (
+        realm.to_string(),
+        area.to_string(),
+        resource.to_string(),
+        operation.to_string(),
+    )
+}
+
+fn schedule_identity_for(info: &ScheduleInfo) -> ScheduleIdentity {
+    schedule_identity_key(&info.realm, &info.area, &info.resource, &info.operation)
+}
 
 fn matches_realm(realm: Option<&str>, value: &str) -> bool {
     realm.map(|needle| value == needle).unwrap_or(true)
@@ -48,7 +68,7 @@ pub struct AdminReadModel {
     rpc_workers: RwLock<Vec<RpcWorker>>,
     rpc_pending: RwLock<Vec<RpcPendingRequest>>,
     leases: RwLock<Vec<LeaseInfo>>,
-    schedules: RwLock<Vec<ScheduleInfo>>,
+    schedules: RwLock<BTreeMap<ScheduleIdentity, ScheduleInfo>>,
     sessions: RwLock<HashMap<u64, SessionInfo>>,
 }
 
@@ -145,19 +165,16 @@ impl AdminReadModel {
     }
 
     pub fn replace_schedules(&self, schedules: Vec<ScheduleInfo>) {
-        *self.schedules.write() = schedules;
+        *self.schedules.write() = schedules
+            .into_iter()
+            .map(|schedule| (schedule_identity_for(&schedule), schedule))
+            .collect();
     }
 
     pub fn upsert_schedule(&self, schedule: ScheduleInfo) {
         let mut schedules = self.schedules.write();
-        if let Some(existing) = schedules.iter_mut().find(|item| {
-            item.matches_identity(
-                &schedule.realm,
-                &schedule.area,
-                &schedule.resource,
-                &schedule.operation,
-            )
-        }) {
+        let identity = schedule_identity_for(&schedule);
+        if let Some(existing) = schedules.get_mut(&identity) {
             // Fast path for idempotent create/upsert calls: avoid rewriting
             // the admin model when durable schedule identity is unchanged.
             if existing.cron == schedule.cron && existing.enabled == schedule.enabled {
@@ -165,7 +182,7 @@ impl AdminReadModel {
             }
             *existing = schedule;
         } else {
-            schedules.push(schedule);
+            schedules.insert(identity, schedule);
         }
     }
 
@@ -184,13 +201,18 @@ impl AdminReadModel {
     }
 
     pub fn remove_schedule(&self, realm: &str, area: &str, resource: &str, operation: &str) {
-        let mut schedules = self.schedules.write();
-        schedules.retain(|item| !item.matches_identity(realm, area, resource, operation));
+        self.schedules
+            .write()
+            .remove(&schedule_identity_key(realm, area, resource, operation));
     }
 
     pub fn schedules(&self, realm: Option<&str>) -> Vec<ScheduleInfo> {
         let schedules = self.schedules.read();
-        collect_slice_matches(&schedules, |item| matches_realm(realm, &item.realm))
+        schedules
+            .values()
+            .filter(|item| matches_realm(realm, &item.realm))
+            .cloned()
+            .collect()
     }
 
     pub fn record_session_open(&self, session: &RuntimeSessionInfo) {

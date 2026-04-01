@@ -551,3 +551,21 @@ pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     (0, 1, Vec::new())
 }
+
+/// Ensure a SCHEDULE response reported success.
+pub fn ensure_schedule_ok(response: &[u8]) -> Result<(), String> {
+    let (msg_type, status, _data) = parse_schedule_response(response);
+
+    if msg_type == 0 {
+        return Err("Empty SCHEDULE response".to_string());
+    }
+
+    if status != 0 {
+        return Err(format!(
+            "SCHEDULE operation failed (msg_type={}, status={})",
+            msg_type, status
+        ));
+    }
+
+    Ok(())
+}

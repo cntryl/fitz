@@ -1,5 +1,6 @@
 use crate::domains::schedule::protocol::{
-    validate_concrete_schedule_route, CronSchedule, ScheduleDef, ScheduleListEntry,
+    parse_concrete_schedule_route, validate_concrete_schedule_route, CronSchedule, ScheduleDef,
+    ScheduleListEntry,
     ScheduleMessage, ScheduleResponse,
 };
 use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
@@ -83,7 +84,7 @@ impl ScheduleActor {
                             next_fire_time: next_fire,
                             next_fire_ms,
                             storage_key: ScheduleStore::encode_key(next_fire_ms, &route),
-                            index_key: ScheduleStore::encode_index_key(&route),
+                            index_key: Vec::new(),
                             list_index,
                         };
                         actor.schedules.insert(route.clone(), def);
@@ -101,6 +102,43 @@ impl ScheduleActor {
         }
 
         actor
+    }
+
+    pub fn admin_snapshot(&self) -> Vec<crate::api::admin::ScheduleInfo> {
+        let mut snapshot: Vec<_> = self
+            .schedules
+            .values()
+            .filter_map(|schedule| {
+                parse_concrete_schedule_route(&schedule.route)
+                    .ok()
+                    .map(|route| crate::api::admin::ScheduleInfo {
+                        realm: route.realm,
+                        area: route.area,
+                        resource: route.resource,
+                        operation: route.operation,
+                        cron: schedule.cron.clone(),
+                        next_run: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                            schedule.next_fire_ms as i64,
+                        )
+                        .map(|timestamp| timestamp.to_rfc3339())
+                        .unwrap_or_default(),
+                        last_run: None,
+                        executions_total: 0,
+                        enabled: true,
+                    })
+            })
+            .collect();
+
+        snapshot.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource, &left.operation).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+                &right.operation,
+            ))
+        });
+
+        snapshot
     }
 
     fn parsed_cron_for(&mut self, cron: &str) -> Result<CronSchedule, String> {
@@ -160,11 +198,7 @@ impl ScheduleActor {
                     .schedules
                     .get(&route)
                     .map(|existing| existing.storage_key.clone()),
-                index_key: self
-                    .schedules
-                    .get(&route)
-                    .map(|existing| existing.index_key.clone())
-                    .or_else(|| Some(ScheduleStore::encode_index_key(&route))),
+                index_key: self.schedules.get(&route).map(|existing| existing.index_key.clone()),
             },
             self.write_options,
         )?;
@@ -180,7 +214,7 @@ impl ScheduleActor {
             next_fire_time: next_fire,
             next_fire_ms,
             storage_key,
-            index_key: ScheduleStore::encode_index_key(&route),
+            index_key: Vec::new(),
             list_index,
         };
 

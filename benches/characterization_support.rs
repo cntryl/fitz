@@ -83,6 +83,7 @@ pub struct ProductionReport {
     pub domains: Vec<DomainReport>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ClientRun {
     pub latencies_us: Vec<u64>,

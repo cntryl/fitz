@@ -159,7 +159,7 @@ fn measure_lease(
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;
     for index in 0..resource_samples {
-        let route = format!("lease://characterization/lease/memory/{index}");
+        let route = format!("lease://characterization/lease/memory-{index}");
         let owner = format!("owner-memory-{index}");
         let response = runtime
             .block_on(client.request(&build_lease_acquire_immediate(&route, &owner, 30), RESPONSE_TIMEOUT_MS))

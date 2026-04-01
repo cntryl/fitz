@@ -615,19 +615,6 @@ impl ScheduleInfo {
             enabled: true,
         }
     }
-
-    pub(crate) fn matches_identity(
-        &self,
-        realm: &str,
-        area: &str,
-        resource: &str,
-        operation: &str,
-    ) -> bool {
-        self.realm == realm
-            && self.area == area
-            && self.resource == resource
-            && self.operation == operation
-    }
 }
 
 #[derive(Debug, Clone)]

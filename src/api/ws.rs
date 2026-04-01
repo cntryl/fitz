@@ -95,20 +95,68 @@ impl WebSocketHandler {
                 }
 
                 // Forward frame to session for processing, handling backpressure
-                // via the session API
-                // For now simply send through tx channel as a placeholder
-                if let Err(e) = self.tx.send((self.session_id, frame)).await {
-                    let reason = format!("failed to send frame: {}", e);
-                    error!(session_id = self.session_id, error = %e, "WS failed to send frame to channel");
-                    self.ingress
-                        .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                        .await;
-                    return Err(reason);
+                // via the bounded transport channel. Mirror TCP behavior: retry once
+                // after a short pause, then close the session if pressure persists.
+                match self.tx.try_send((self.session_id, frame.clone())) {
+                    Ok(()) => {
+                        trace!(
+                            session_id = self.session_id,
+                            "WS frame forwarded to channel"
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        warn!(
+                            session_id = self.session_id,
+                            "WS channel full, backpressure - retrying after timeout"
+                        );
+                        tokio::time::sleep(self.config.backpressure_timeout).await;
+
+                        match self.tx.try_send((self.session_id, frame)) {
+                            Ok(()) => {
+                                trace!(
+                                    session_id = self.session_id,
+                                    "WS frame forwarded after backpressure retry"
+                                );
+                            }
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                let reason = "channel full: backpressure exceeded".to_string();
+                                warn!(
+                                    session_id = self.session_id,
+                                    "WS backpressure exceeded, closing session"
+                                );
+                                self.ingress
+                                    .on_close(
+                                        self.session_id,
+                                        CloseReason::Error(reason.clone()),
+                                    )
+                                    .await;
+                                return Err(reason);
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                let reason = "failed to send frame: channel closed".to_string();
+                                error!(
+                                    session_id = self.session_id,
+                                    "WS channel closed during backpressure retry"
+                                );
+                                self.ingress
+                                    .on_close(
+                                        self.session_id,
+                                        CloseReason::Error(reason.clone()),
+                                    )
+                                    .await;
+                                return Err(reason);
+                            }
+                        }
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        let reason = "failed to send frame: channel closed".to_string();
+                        error!(session_id = self.session_id, "WS failed to send frame to channel");
+                        self.ingress
+                            .on_close(self.session_id, CloseReason::Error(reason.clone()))
+                            .await;
+                        return Err(reason);
+                    }
                 }
-                trace!(
-                    session_id = self.session_id,
-                    "WS frame forwarded to channel"
-                );
 
                 Ok(true)
             }
@@ -159,6 +207,7 @@ mod tests {
     use crate::session::{
         IngressDecision, SessionInfo, SessionMetadata, SessionPermissions, TransportKind,
     };
+    use std::sync::Mutex;
 
     // Mock ingress for testing
     struct MockIngress;
@@ -180,6 +229,31 @@ mod tests {
         }
 
         async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
+    }
+
+    struct RecordingIngress {
+        closes: Arc<Mutex<Vec<CloseReason>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Ingress for RecordingIngress {
+        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
+            Ok(1)
+        }
+
+        async fn on_frame(
+            &self,
+            _session_id: u64,
+            _channel_id: ChannelId,
+            _msg_type: crate::protocol::tlv::MessageType,
+            _message_payload: Bytes,
+        ) -> IngressDecision {
+            IngressDecision::Accept
+        }
+
+        async fn on_close(&self, _session_id: u64, reason: CloseReason) {
+            self.closes.lock().unwrap().push(reason);
+        }
     }
 
     #[test]
@@ -217,5 +291,26 @@ mod tests {
         // Assert
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn should_close_websocket_session_when_runtime_channel_stays_full() {
+        // Arrange
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let ingress = Arc::new(RecordingIngress {
+            closes: closes.clone(),
+        });
+        let config = IngressConfig::default().with_backpressure_timeout(std::time::Duration::ZERO);
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send((7, Bytes::from_static(b"occupied"))).unwrap();
+        let handler = WebSocketHandler::new(ingress, config, tx, 7);
+
+        // Act
+        let result = handler.handle_message(Message::Binary(vec![1, 2, 3])).await;
+
+        // Assert
+        assert_eq!(rx.try_recv().unwrap(), (7, Bytes::from_static(b"occupied")));
+        assert_eq!(result.unwrap_err(), "channel full: backpressure exceeded");
+        assert_eq!(closes.lock().unwrap().len(), 1);
     }
 }

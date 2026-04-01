@@ -115,14 +115,6 @@ impl ScheduleStore {
         Ok((timestamp_ms, route))
     }
 
-    fn decode_index_route(index_key: &[u8]) -> Result<String, String> {
-        let route_bytes = index_key
-            .strip_prefix(b"sched:idx:")
-            .ok_or_else(|| "Invalid schedule index key".to_string())?;
-        String::from_utf8(route_bytes.to_vec())
-            .map_err(|e| format!("Invalid schedule index route encoding: {}", e))
-    }
-
     /// Encode value: `{cron_expr}|{payload_bytes}`
     fn encode_value(cron: &str, payload: &Bytes) -> Vec<u8> {
         let mut val = Vec::with_capacity(cron.len() + 1 + payload.len());
@@ -154,9 +146,6 @@ impl ScheduleStore {
         write_options: WriteOptions,
     ) -> Result<Vec<u8>, String> {
         let key = Self::encode_key(schedule.next_fire_ms, schedule.route);
-        let index_key = schedule
-            .index_key
-            .unwrap_or_else(|| Self::encode_index_key(schedule.route));
         let value = Self::encode_value(schedule.cron, schedule.payload);
 
         // TTL = time until next fire + grace period
@@ -185,8 +174,6 @@ impl ScheduleStore {
 
         txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
             .map_err(|e| format!("put failed: {:?}", e))?;
-        txn.put(index_key, key.clone(), None)
-            .map_err(|e| format!("put index failed: {:?}", e))?;
 
         txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
@@ -231,8 +218,6 @@ impl ScheduleStore {
 
             txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
                 .map_err(|e| format!("put failed: {:?}", e))?;
-            txn.put(Self::encode_index_key(route), key, None)
-                .map_err(|e| format!("put index failed: {:?}", e))?;
         }
 
         txn.commit(write_options)
@@ -258,9 +243,11 @@ impl ScheduleStore {
             .get(&index_key)
             .map_err(|e| format!("get index failed: {:?}", e))?;
 
-        if main_key_opt.is_some() {
+        if let Some(main_key) = main_key_opt {
             txn.delete(index_key)
                 .map_err(|e| format!("delete index failed: {:?}", e))?;
+            txn.delete(main_key.to_vec())
+                .map_err(|e| format!("delete failed: {:?}", e))?;
         } else {
             // Legacy: no index (e.g. pre-index DB); fallback to one-time scan
             let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:m"));
@@ -323,18 +310,18 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        let has_index = txn
-            .get(&index_key)
-            .map_err(|e| format!("get index failed: {:?}", e))?
-            .is_some();
-
-        if has_index {
+        if !index_key.is_empty()
+            && txn
+                .get(&index_key)
+                .map_err(|e| format!("get index failed: {:?}", e))?
+                .is_some()
+        {
             txn.delete(index_key)
                 .map_err(|e| format!("delete index failed: {:?}", e))?;
-        } else {
-            txn.delete(main_key)
-                .map_err(|e| format!("delete failed: {:?}", e))?;
         }
+
+        txn.delete(main_key)
+            .map_err(|e| format!("delete failed: {:?}", e))?;
 
         txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
@@ -358,44 +345,6 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let mut ready = Vec::new();
-        let index_query = cntryl_midge::Query::new().prefix(Bytes::from("sched:idx:"));
-        let mut index_iter = txn
-            .scan(&index_query)
-            .map_err(|e| format!("scan index failed: {:?}", e))?;
-        let index_results = index_iter.collect_all();
-
-        if !index_results.is_empty() {
-            for (index_key, main_key) in index_results {
-                let route = match Self::decode_index_route(&index_key) {
-                    Ok(route) => route,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode schedule index key: {}", e);
-                        continue;
-                    }
-                };
-                let timestamp_ms = match Self::decode_key(&main_key) {
-                    Ok((timestamp_ms, _)) => timestamp_ms,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode indexed schedule key: {}", e);
-                        continue;
-                    }
-                };
-                if timestamp_ms > now_ms {
-                    continue;
-                }
-
-                match txn.get(&main_key) {
-                    Ok(Some(value)) => match Self::decode_value(&value) {
-                        Ok((cron, payload)) => ready.push((route, cron, payload)),
-                        Err(e) => tracing::warn!("Failed to decode schedule value: {}", e),
-                    },
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!("Failed to read indexed schedule value: {:?}", e),
-                }
-            }
-            return Ok(ready);
-        }
-
         let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:m"));
         let mut iter = txn
             .scan(&query)
@@ -424,41 +373,6 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let mut all = Vec::new();
-        let index_query = cntryl_midge::Query::new().prefix(Bytes::from("sched:idx:"));
-        let mut index_iter = txn
-            .scan(&index_query)
-            .map_err(|e| format!("scan index failed: {:?}", e))?;
-        let index_results = index_iter.collect_all();
-
-        if !index_results.is_empty() {
-            for (index_key, main_key) in index_results {
-                let route = match Self::decode_index_route(&index_key) {
-                    Ok(route) => route,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode schedule index key: {}", e);
-                        continue;
-                    }
-                };
-                let timestamp_ms = match Self::decode_key(&main_key) {
-                    Ok((timestamp_ms, _)) => timestamp_ms,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode indexed schedule key: {}", e);
-                        continue;
-                    }
-                };
-
-                match txn.get(&main_key) {
-                    Ok(Some(value)) => match Self::decode_value(&value) {
-                        Ok((cron, payload)) => all.push((route, cron, payload, timestamp_ms)),
-                        Err(e) => tracing::warn!("Failed to decode schedule value: {}", e),
-                    },
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!("Failed to read indexed schedule value: {:?}", e),
-                }
-            }
-            return Ok(all);
-        }
-
         let query = cntryl_midge::Query::new().prefix(Bytes::from("sched:m"));
         let mut iter = txn
             .scan(&query)
