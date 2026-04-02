@@ -41,7 +41,7 @@ pub fn parse_request(
     let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        500 => parse_publish(&mut dec, route_family).map(NotificationMessage::Publish),
+        500 => parse_publish(ctx, &mut dec, route_family).map(NotificationMessage::Publish),
         501 => parse_subscribe(&mut dec, route_family, session_id, subscriber)
             .map(NotificationMessage::Subscribe),
         502 => parse_unsubscribe(&mut dec, route_family, session_id)
@@ -130,12 +130,12 @@ pub fn encode_response_into(response: &NoticeResponse, enc: &mut PayloadEncoder)
 
 /// Wire format: `[string route][bytes payload]`
 fn parse_publish(
+    ctx: &FrameContext,
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<PublishMessage, String> {
-    let route_str = dec.get_string()?;
-    let route = Route::new(route_str);
-    let payload = dec.get_bytes()?;
+    let route = Route::from_ref(dec.get_string_ref()?);
+    let payload = ctx.payload.slice(dec.get_bytes_range()?);
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -155,8 +155,7 @@ fn parse_subscribe(
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<SubscribeMessage, String> {
-    let pattern_str = dec.get_string()?;
-    let pattern = Route::new(pattern_str);
+    let pattern = Route::from_ref(dec.get_string_ref()?);
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());

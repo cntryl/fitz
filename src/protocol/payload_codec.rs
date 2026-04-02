@@ -6,6 +6,7 @@
 //! the body of messages. For the wire-level frame format (real TLV), see [`crate::protocol::tlv`].
 
 use bytes::BufMut;
+use std::ops::Range;
 
 /// Encoder for sequential typed fields in message payloads.
 pub struct PayloadEncoder {
@@ -203,6 +204,20 @@ impl<'a> PayloadDecoder<'a> {
         Ok(data)
     }
 
+    /// Decode a byte range with length prefix without allocating.
+    ///
+    /// Returns the range within the original payload slice that contains the bytes.
+    pub fn get_bytes_range(&mut self) -> Result<Range<usize>, String> {
+        let len = self.get_u32()? as usize;
+        if self.offset + len > self.payload.len() {
+            return Err("Incomplete bytes data".to_string());
+        }
+
+        let start = self.offset;
+        self.offset += len;
+        Ok(start..self.offset)
+    }
+
     /// Skip bytes with length prefix without allocating.
     pub fn skip_bytes(&mut self) -> Result<(), String> {
         let len = self.get_u32()? as usize;
@@ -314,6 +329,22 @@ mod tests {
 
         // Assert
         assert_eq!(dec.get_bytes().unwrap(), Bytes::from("test data"));
+        assert!(dec.is_complete());
+    }
+
+    #[test]
+    fn should_return_byte_range_without_allocating() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_bytes(b"test data");
+
+        // Act
+        let buf = enc.finish();
+        let mut dec = PayloadDecoder::new(&buf);
+        let range = dec.get_bytes_range().unwrap();
+
+        // Assert
+        assert_eq!(&buf[range], b"test data");
         assert!(dec.is_complete());
     }
 

@@ -4,11 +4,13 @@ use crate::runtime::routing::route_triplet;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
+type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
 
 #[derive(Clone)]
 struct NoticeDeliveryTarget {
@@ -121,7 +123,7 @@ impl NoticeDomainSink {
 
     fn fan_out_notice_event(
         &self,
-        targets: &[NoticeDeliveryTarget],
+        targets: &NoticeDeliveryTargets,
         event: &crate::runtime::DomainPublishEvent,
         payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
     ) {
@@ -157,13 +159,13 @@ impl NoticeDomainSink {
     fn collect_matching_targets(
         &self,
         event: &crate::runtime::DomainPublishEvent,
-    ) -> Vec<NoticeDeliveryTarget> {
+    ) -> NoticeDeliveryTargets {
         let families = self.families.lock();
         let Some(state) = families.get(&event.family_id.as_u64()) else {
-            return Vec::new();
+            return NoticeDeliveryTargets::new();
         };
 
-        let mut targets = Vec::new();
+        let mut targets = NoticeDeliveryTargets::new();
         state.for_each_matching(event, |subscription| {
             targets.push(NoticeDeliveryTarget::from(subscription));
         });
