@@ -1,7 +1,8 @@
-//! RpcRouteActor: manages worker pool and request queue for a single RPC route
+//! RpcRouteActor: manages the worker pool and request queue for one exact RPC
+//! route inside the current broker process.
 //!
-//! Each RPC route (e.g., `rpc://acme/auth/user/create`) has a dedicated actor
-//! that queues inbound requests, assigns them to registered workers using
+//! Each route key (for example, `rpc://acme/auth/user/create`) has a dedicated
+//! actor that queues inbound requests, assigns them to registered workers using
 //! round-robin distribution, and forwards responses back to clients.
 //!
 //! # State Model
@@ -12,12 +13,11 @@
 //!                      [Client Inbox] ← [Response Forwarding] ←
 //! ```
 //!
-//! # Lease Mechanism
+//! # Failure Model
 //!
-//! Each request assigned to a worker gets a lease with expiration time.
-//! If the worker doesn't respond before expiration, the route actor can only
-//! release the lease and surface timeout semantics inside the current process.
-//! There is no durable retry or restart recovery in this actor.
+//! Worker registrations, queued requests, and active leases exist only inside
+//! the running broker process. This actor does not provide durable retry,
+//! restart recovery, or wildcard worker registration semantics.
 //!
 //! # Invariants
 //!
@@ -26,6 +26,8 @@
 //! 3. **Bounded queue**: Backpressure when queue is full
 //! 4. **No durability**: Worker registrations, queue state, and leases are ephemeral
 //! 5. **Lease enforcement**: Workers must respond before lease expiry
+//! Correlation IDs are used only to match live in-flight responses in this
+//! process; they are not durable deduplication or replay tokens.
 //! 6. **Correlation tracking**: Maps correlation_id → worker for proper cleanup
 
 use super::errors::RpcError;

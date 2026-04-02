@@ -228,8 +228,8 @@ await Promise.all([msg1, msg2]);
 // Cross-domain parallelism (different channels: Notice + RPC)
 const notice_sub = client.noticeSubscribe("notice://prod/app/*");
 const rpc_call = client.rpcRequest(
-  "rpc://prod/app/worker",
-  "rpc://prod/app/caller",
+  "rpc://prod/app/worker/run",
+  "inbox://session/replies",
   correlation_id_uuid,
   Buffer.from("payload")
 );
@@ -264,7 +264,7 @@ Different domains run on independent logical channels. A single client connectio
 const kv_tx = client.kvBegin("kv://prod/app/data", TxMode.ReadWrite, Durability.Sync);
 const queue_msg = client.queueEnqueue("queue://prod/app/tasks", payload);
 const notice_sub = client.noticeSubscribe("notice://prod/app/*");
-const rpc_call = client.rpcRequest("rpc://prod/app/svc", reply_route, correlation_id, payload);
+const rpc_call = client.rpcRequest("rpc://prod/app/config/get", reply_route, correlation_id, payload);
 
 // All complete independently and concurrently
 await Promise.all([kv_tx.commit(), queue_msg, notice_sub, rpc_call]);
@@ -386,8 +386,8 @@ RPC is also explicitly ephemeral. Worker registrations and pending requests are 
 
 ```javascript
 // Multiple RPC calls in flight, responses matched by correlation_id
-const rpc1 = client.rpcRequest("rpc://prod/app/svc", reply_route, uuid1, payload1);
-const rpc2 = client.rpcRequest("rpc://prod/app/svc", reply_route, uuid2, payload2);
+const rpc1 = client.rpcRequest("rpc://prod/app/config/get", reply_route, uuid1, payload1);
+const rpc2 = client.rpcRequest("rpc://prod/app/config/get", reply_route, uuid2, payload2);
 
 // Responses arrive in any order and are matched by correlation_id
 const [resp1, resp2] = await Promise.all([rpc1, rpc2]);
@@ -1194,13 +1194,13 @@ A request is valid **only if**:
 
 **Domains supporting wildcards (`*` and `**` patterns):**
 - **Notice:** Full wildcard support in SUBSCRIBE patterns (`notice://realm/area/*`, `notice://realm/**`)
-- **RPC:** Wildcards in SUBSCRIBE_WORKER patterns (`rpc://realm/area/*`)
 - **Stream:** Wildcards in READ patterns (check Stream domain spec for details)
 - **Queue:** Wildcards in RESERVE patterns (check Queue domain spec for details)
 
 **Domains requiring concrete routes only (no wildcards):**
 - **KV:** All operations use concrete routes only (`kv://realm/area/resource`)
 - **Lease:** All operations use concrete routes only (`lease://realm/area/resource`)
+- **RPC:** Worker registrations and requests use exact routes only. The common operation-style form is `rpc://realm/area/resource/operation`
 - **Schedule:** `CREATE`, `CANCEL`, `SUBSCRIBE`, and `UNSUBSCRIBE` use concrete routes only (`schedule://realm/area/resource/operation`)
 
 **Pattern matching semantics:**
@@ -1328,15 +1328,16 @@ A request is valid **only if**:
 
 ### RPC Domain
 
-**Valid Route Shapes:**
+**Route Shape Guidance:**
 
-- `rpc://{realm}/{area}/{resource}`
-- `rpc://{realm}/{area}/*`
+- Worker registrations and request routes use exact route strings only.
+- Wildcard worker registration is not part of the contract.
+- The common operation-style form is `rpc://{realm}/{area}/{resource}/{operation}`.
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
   | ------------- | ----------------------------------------------- |
-  | `CALL` | `{realm}/{area}/{resource}` |
-  | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
+  | `CALL` | exact route (commonly `{realm}/{area}/{resource}/{operation}`) |
+  | `SUBSCRIBE` | exact route only |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
 ## Lock-In Rule
@@ -1538,11 +1539,11 @@ This section documents the **canonical operations** for each of the seven Fitz d
 | `Deliver` | (via 303) | S→C | Server→Worker delivery |
 
 **Constraints:**
-- Each request uses 16-byte UUID `correlation_id` for matching
+- Each request uses 16-byte UUID `correlation_id` for matching the live in-flight response
 - Multiple RPC requests MAY be in flight simultaneously (true multiplexing via correlation_id)
-- Workers register on listening route and receive DELIVER (async push)
-- Callers specify reply inbox route for responses
-- Worker registrations and pending requests are process-local and are not recovered after broker restart
+- Workers register exact listening routes and receive DELIVER (async push)
+- Callers include reply inbox routing metadata with each request
+- Worker registrations and pending requests are process-local and are not recovered or replayed after broker restart
 - A worker reconnecting after disconnect or restart MUST send `Subscribe` again before it can receive new requests
 
 ---
@@ -1946,7 +1947,7 @@ When a single operation generates multiple responses:
 - **Idempotent operations** (GET, SCAN, READ): SAFE to retry
 - **Non-idempotent operations** (PUT, ENQUEUE, PUBLISH): DO NOT retry
   - Retrying may cause duplicate execution
-  - Use application-level idempotency tokens if needed (e.g., RPC correlation_id)
+- Use application-level idempotency tokens if needed; do not rely on RPC `correlation_id` alone for durable deduplication
 
 **Transaction-Specific Behavior:**
 - If disconnect during KV transaction: server ROLLS BACK automatically
@@ -2009,8 +2010,8 @@ Clients MUST NOT automatically retry operations unless:
   **Context-Dependent (Safe to Retry WITH Deduplication):**
   Operations that are safe to retry only if client tracks correlation ID:
 - Queue: `COMPLETE` (safe to retry if message_id+token already deleted)
-- RPC: `REQUEST` (safe to retry if broker caches correlation_id)
-  Retry behavior: Clients MUST maintain deduplication state (correlation ID → result cache) to safely retry.
+- RPC: `REQUEST` (safe to retry only if the application owns idempotency; broker correlation matching does not cache, replay, or deduplicate requests)
+  Retry behavior: Clients MUST maintain application-level deduplication state if they want to retry safely; broker `correlation_id` tracking is only for live in-flight response matching.
 
 ### Recommended Retry Strategy
 
@@ -2366,7 +2367,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use RPC or Queue for guaranteed delivery or acknowledgement-based workflows.**
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for durable delivery. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
 
 ##### Pattern Matching & Precedence
 
@@ -3083,7 +3084,7 @@ When the broker selects a worker for an incoming REQUEST, it delivers the same R
 [bytes]    body
 ```
 
-The worker MUST use `correlation_id` when sending RESPONSE frames back. The broker routes RESPONSE frames to the caller by matching `reply_route`.
+The worker MUST use `correlation_id` when sending RESPONSE frames back. The broker forwards RESPONSE frames to the caller currently associated with that in-memory pending request.
 
 #### RESPONSE (From worker to caller via broker)
 
@@ -3125,7 +3126,7 @@ client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
 
 # SUBSCRIBE_WORKER returns a WorkerSubscription object
 worker = client.rpc_subscribe_worker(
-    worker_route="rpc://prod/app/compute"
+    worker_route="rpc://prod/app/compute/run"
 )
 
 # Worker: Handle incoming requests through subscription
@@ -3144,8 +3145,8 @@ worker.unsubscribe()
 # Caller: Send request and wait for response (stateless)
 correlation_id = generate_uuid()
 responses = client.rpc_request(
-    route="rpc://prod/app/compute",
-    reply_route="rpc://prod/app/caller",
+    route="rpc://prod/app/compute/run",
+    reply_route="inbox://session/replies",
     correlation_id=correlation_id,
     body=b"request_payload"
 )
@@ -3203,11 +3204,11 @@ Every operation includes full context:
 #### Semantics
 
 - **Self-Contained Operations**: Every SUBSCRIBE/REQUEST includes full route information
-- **Correlation**: UUID links request to responses (client-generated)
+- **Correlation**: UUID links a live in-flight request to its responses (client-generated)
 - **Streaming**: Multi-frame responses have incrementing `sequence` and `stream_end` flag
 - **Backpressure**: ERR_RPC_BACKPRESSURE if outbound queue full
 - **Ordering**: Responses delivered in sequence order
-- **Exactly-Once**: Each request reaches worker once
+- **Single-Worker Assignment**: Each accepted request is assigned to at most one live worker while tracked in memory
 
 ##### Worker Selection & Load Balancing
 
@@ -3227,6 +3228,7 @@ Every operation includes full context:
 
 - If worker disconnects during request: ERR_WORKER_NOT_FOUND
 - Caller receives timeout after configured interval (default 30s)
+- Broker restart or reconnect does not recover worker registrations or replay pending requests
 
 #### Error Codes (6xxx range)
 

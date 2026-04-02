@@ -16,23 +16,31 @@
 //!
 //! # Semantics
 //!
-//! - **Exactly-once dispatch**: Each request is assigned to exactly one worker
+//! - **Single-worker dispatch**: Each accepted request is assigned to one live
+//!   worker inside the current broker process
 //! - **Strict correlation**: Responses must include the original correlation ID
+//!   to match the live in-flight request
 //! - **FIFO ordering**: Requests dispatched in arrival order per route
 //! - **Bounded queue**: Backpressure when queue reaches capacity (default: 1000)
 //! - **Streaming support**: Workers can send multi-chunk responses with sequence numbers
 //! - **Explicitly ephemeral**: Worker registrations and pending requests live only in memory
 //! - **Restart loss**: Broker restart drops workers, pending requests, and reply routing state
-//! - **Reconnect contract**: Workers must re-register and callers must retry lost work at the application layer
+//! - **No durable dedup**: Correlation IDs are matching keys, not broker-side
+//!   replay or idempotency tokens
+//! - **Reconnect contract**: Workers must re-register and callers must retry lost
+//!   work at the application layer
 //!
 //! # Worker Model
 //!
-//! Workers register with specific routes (no wildcards). Each worker can handle
-//! `max_concurrent` requests (default: 1). The actor maintains in-flight tracking
-//! and assigns new requests only to available workers. Disconnect or broker
-//! restart clears the worker pool; there is no durable worker recovery.
+//! Workers register with exact route strings (no wildcards). Each worker can
+//! handle `max_concurrent` requests (default: 1). The actor maintains in-flight
+//! tracking and assigns new requests only to available workers. Disconnect or
+//! broker restart clears the worker pool; there is no durable worker recovery.
 //!
 //! # Route Format
+//!
+//! RPC request and worker routes are exact route strings. Operation-style routes
+//! commonly use:
 //!
 //! ```text
 //! rpc://{realm}/{area}/{resource}/{operation}

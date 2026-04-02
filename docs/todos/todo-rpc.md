@@ -31,11 +31,11 @@
 
 ## Concrete Tasks
 
-- [ ] Audit docs and comments for any durability or replay implications and remove them.
-- [ ] Add tests proving workers must re-register after restart.
-- [ ] Add tests proving pending requests are lost on restart and handled as expected.
-- [ ] Review backpressure and queue-full behavior so failures are explicit and observable.
-- [ ] Ensure admin surfaces report live in-memory state only.
+- [x] Audit docs and comments for any durability or replay implications and remove them.
+- [x] Add tests proving workers must re-register after restart.
+- [x] Add tests proving pending requests are lost on restart and handled as expected.
+- [x] Review backpressure and queue-full behavior so failures are explicit and observable.
+- [x] Ensure admin surfaces report live in-memory state only.
 
 ## Non-Goals
 
@@ -45,9 +45,9 @@
 
 ## Verification
 
-- [ ] Restart tests prove worker registrations are lost.
-- [ ] Restart tests prove pending requests are not durably recovered.
-- [ ] Queue-full and timeout behavior are covered by tests or explicit docs.
+- [x] Restart tests prove worker registrations are lost.
+- [x] Restart tests prove pending requests are not durably recovered.
+- [x] Queue-full and timeout behavior are covered by tests or explicit docs.
 
 ## Files To Touch First
 

@@ -817,8 +817,8 @@ Response (error):
 - **Non-idempotent ops** (PUT, PUBLISH, APPEND): clients must not retry (or must deduplicate)
 Some operations use **correlation IDs** (RPC):
 - Client-generated UUID (16 bytes)
-- Broker tracks to prevent duplicates
-- Allows safe replay
+- Broker uses them to match live in-flight requests to responses
+- They do not create a durable replay, recovery, or broker-side deduplication log
 ## References
 - Protocol specification: [client-spec.md](../clients/client-spec.md)
 - Transport implementation: `src/api/`

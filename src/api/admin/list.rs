@@ -144,6 +144,8 @@ pub struct OperationEntry {
     pub operation: String,
 }
 
+/// Point-in-time live in-memory RPC state for a single operation on the
+/// current broker process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcOperationDetail {
     pub realm: String,
@@ -407,11 +409,15 @@ pub struct QueueLease {
     pub attempts: usize,
 }
 
+/// Collection of live in-memory RPC worker snapshots for the current broker
+/// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcWorkersList {
     pub workers: Vec<RpcWorker>,
 }
 
+/// Live in-memory RPC worker registration for the current broker process.
+/// Registrations disappear on disconnect or broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcWorker {
     pub session_id: String,
@@ -422,11 +428,15 @@ pub struct RpcWorker {
     pub average_latency_ms: f64,
 }
 
+/// Collection of live in-memory pending RPC request snapshots for the current
+/// broker process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcPendingList {
     pub requests: Vec<RpcPendingRequest>,
 }
 
+/// Live in-memory pending RPC request tracked by the current broker process.
+/// Pending requests disappear on timeout, cleanup, or broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcPendingRequest {
     pub correlation_id: String,

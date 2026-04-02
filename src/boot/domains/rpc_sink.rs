@@ -19,9 +19,12 @@ const RPC_NO_WORKERS_ERROR: &str = "No workers registered for route";
 const RPC_WORKER_NOT_FOUND_ERROR: &str = "Worker disconnected or unregistered";
 const RPC_CORRELATION_NOT_FOUND_ERROR: &str = "Correlation ID not found (orphaned response)";
 const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
+// RPC remains broker-local and in-memory. Worker registrations and pending
+// requests disappear on disconnect cleanup or broker restart; this bound keeps
+// that live coordination state from growing without limit in one process.
 const RPC_MAX_PENDING_REQUESTS: usize = 4096;
 // Admin endpoints read from a coalesced in-memory snapshot so hot-path request
-// dispatch does not rewrite the read model on every mutation.
+// dispatch does not rewrite the current-process read model on every mutation.
 const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 const RPC_DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RPC_MIN_TIMEOUT_SWEEP_INTERVAL: Duration = Duration::from_millis(10);
@@ -596,7 +599,9 @@ impl RpcDomainSink {
     ///
     /// Expired requests are removed from the current process, timeout counters are
     /// updated, and terminal errors are forwarded only if the caller inbox is still
-    /// registered. There is no replay or restart recovery path behind this loop.
+    /// registered. Correlation IDs here only match live in-flight work; there is
+    /// no replay, broker-side deduplication, or restart recovery path behind this
+    /// loop.
     pub fn start_timeout_loop(self: &Arc<Self>) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
@@ -864,10 +869,12 @@ impl RpcDomainSink {
         );
     }
 
-    /// Copy a point-in-time view of live in-memory RPC state into the admin read model.
+    /// Copy a point-in-time view of live in-memory RPC state into the admin read
+    /// model for the current broker process only.
     ///
     /// This snapshot is intentionally coalesced and may lag very recent subscribe,
-    /// unsubscribe, timeout, or cleanup mutations by up to the current sync interval.
+    /// unsubscribe, timeout, or cleanup mutations by up to the current sync
+    /// interval. It is an operational view, not a durable recovery log.
     fn sync_admin_snapshot(&self) {
         let state = self.state.lock();
         let snapshot_now = Instant::now();

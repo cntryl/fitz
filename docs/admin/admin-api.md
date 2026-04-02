@@ -432,7 +432,7 @@ GET /admin/rpc/workers?realm={realm}
     {
       "session_id": "sess_abc123",
       "realm": "prod",
-      "route": "rpc://prod/compute/heavy-task",
+      "route": "rpc://prod/compute/tasks/heavy-task",
       "registered_at": "2026-01-31T10:00:00Z",
       "requests_handled": 1847,
       "average_latency_ms": 145
@@ -452,7 +452,7 @@ Pending requests shown here are only those still tracked in memory by the runnin
   "requests": [
     {
       "correlation_id": "0123456789abcdef",
-      "route": "rpc://prod/compute/heavy-task",
+      "route": "rpc://prod/compute/tasks/heavy-task",
       "submitted_at": "2026-01-31T10:34:50Z",
       "age_seconds": 10,
       "worker_session_id": "sess_abc123"
