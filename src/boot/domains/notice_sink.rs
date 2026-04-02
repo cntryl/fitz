@@ -124,74 +124,98 @@ impl NoticeDomainSink {
     fn fan_out_notice_event(
         &self,
         targets: &NoticeDeliveryTargets,
-        event: &crate::runtime::DomainPublishEvent,
-        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+        shared_suffix: &bytes::Bytes,
     ) {
         for target in targets {
-            self.route_notice_notify(target, &event.route, &event.payload, payload_encoder);
+            self.route_notice_notify(target, shared_suffix);
         }
     }
 
     fn route_notice_notify(
         &self,
         target: &NoticeDeliveryTarget,
-        route: &crate::runtime::routing::Route,
-        payload: &[u8],
-        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+        shared_suffix: &bytes::Bytes,
     ) {
-        let notify_payload = crate::protocol::notice_codec::encode_notify_into(
+        let notify_payload = crate::protocol::notice_codec::encode_notify_with_shared_suffix(
             target.subscription_id,
-            route,
-            payload,
-            payload_encoder,
+            shared_suffix,
         );
         let notify_ctx = FrameContext::new(
             target.session_id,
             crate::protocol::frame::ChannelId::Sub,
             crate::protocol::tlv::MessageType::new(504),
-            bytes::Bytes::from(notify_payload),
-            crate::runtime::routing::RouteFamily::from_u32(target.subscriber.family().id()),
+            notify_payload,
+            *target.subscriber.family(),
         );
         let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx);
         let _ = self.router.route(notify_envelope);
     }
 
-    fn collect_matching_targets(
+    fn collect_matching_targets_for_route(
         &self,
-        event: &crate::runtime::DomainPublishEvent,
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &str,
     ) -> NoticeDeliveryTargets {
         let families = self.families.lock();
-        let Some(state) = families.get(&event.family_id.as_u64()) else {
+        let Some(state) = families.get(&family_id.as_u64()) else {
             return NoticeDeliveryTargets::new();
         };
 
-        let mut targets = NoticeDeliveryTargets::new();
-        state.for_each_matching(event, |subscription| {
+        let mut targets = NoticeDeliveryTargets::with_capacity(state.matching_capacity_hint(route));
+        state.for_each_matching_route(family_id, route, |subscription| {
             targets.push(NoticeDeliveryTarget::from(subscription));
         });
         targets
     }
 
-    fn publish_event(
+    fn publish_route_payload(
         &self,
-        event: &crate::runtime::DomainPublishEvent,
-        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &str,
+        payload: &[u8],
     ) {
-        let targets = self.collect_matching_targets(event);
+        let targets = self.collect_matching_targets_for_route(family_id, route);
         if targets.is_empty() {
             return;
         }
 
-        self.fan_out_notice_event(&targets, event, payload_encoder);
+        let shared_suffix = crate::protocol::notice_codec::encode_notify_shared_suffix(route, payload);
+        self.fan_out_notice_event(&targets, &shared_suffix);
+    }
+
+    fn publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
+        self.publish_route_payload(event.family_id, event.route.as_str(), event.payload.as_ref());
+    }
+
+    fn handle_frame_publish(
+        &self,
+        frame_ctx: &FrameContext,
+        route_family: crate::runtime::routing::RouteFamily,
+    ) -> Result<(), DeliveryError> {
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&frame_ctx.payload);
+        let route = decoder.get_string_ref().map_err(|error| {
+            tracing::warn!(domain = "notice", error = %error, "Failed to parse notice publish route");
+            DeliveryError::ActorStopped
+        })?;
+        let payload_range = decoder.get_bytes_range().map_err(|error| {
+            tracing::warn!(domain = "notice", error = %error, "Failed to parse notice publish payload");
+            DeliveryError::ActorStopped
+        })?;
+        if !decoder.is_complete() {
+            tracing::warn!(domain = "notice", "Trailing data in notice publish message");
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        let payload = frame_ctx.payload.slice(payload_range);
+        self.publish_route_payload(route_family, route, payload.as_ref());
+        Ok(())
     }
 
     fn handle_domain_publish(
         &self,
         event: &crate::runtime::DomainPublishEvent,
     ) -> Result<(), DeliveryError> {
-        let mut payload_encoder =
-            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-        self.publish_event(event, &mut payload_encoder);
+        self.publish_event(event);
         Ok(())
     }
 
@@ -274,6 +298,10 @@ impl MailboxSink for NoticeDomainSink {
             "Notice: parsing request"
         );
 
+        if frame_ctx.msg_type.as_u16() == 500 {
+            return self.handle_frame_publish(&frame_ctx, *envelope.destination().family());
+        }
+
         let notice_msg = match crate::protocol::notice_codec::parse_request(
             &frame_ctx,
             &frame_ctx.payload,
@@ -310,7 +338,7 @@ impl MailboxSink for NoticeDomainSink {
                     pub_msg.route.clone(),
                     pub_msg.payload.clone(),
                 );
-                self.publish_event(&event, &mut payload_encoder);
+                self.publish_event(&event);
                 (None, false)
             }
             NotificationMessage::Subscribe(sub_msg) => {

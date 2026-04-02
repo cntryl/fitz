@@ -1,8 +1,12 @@
-# TODO - Schedule
+# Schedule
+
+- Requires real storage changes.
+- TTL-backed primary rows are the wrong foundation for durable recurring schedules.
+- Boot behavior and reschedule failure handling both need structural correction.
 
 Define a TDD-driven implementation plan for the following server correction work.
 
-Important context:
+### Important context:
 
 - Do not repeat or reinvent domain-level requirement lists unless absolutely necessary.
 - Your job is to turn the existing concerns and checklists into an implementation strategy and test strategy.

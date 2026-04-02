@@ -47,6 +47,10 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         self.subscriptions.values()
     }
 
+    pub(crate) fn matching_capacity_hint(&self, route: &str) -> usize {
+        self.exact_routes.get(route).map_or(0, Vec::len) + self.wildcard_subscription_count
+    }
+
     pub(crate) fn find_existing_id(&self, session_id: u64, pattern: &str) -> Option<u64> {
         self.session_patterns
             .get(&session_id)
@@ -135,11 +139,20 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
     pub(crate) fn for_each_matching(
         &self,
         event: &DomainPublishEvent,
+        visit: impl FnMut(&T),
+    ) -> usize {
+        self.for_each_matching_route(event.family_id, event.route.as_str(), visit)
+    }
+
+    pub(crate) fn for_each_matching_route(
+        &self,
+        family_id: RouteFamily,
+        route: &str,
         mut visit: impl FnMut(&T),
     ) -> usize {
         let mut matched = 0;
 
-        if let Some(exact_ids) = self.exact_routes.get(event.route.as_str()) {
+        if let Some(exact_ids) = self.exact_routes.get(route) {
             for subscription_id in exact_ids {
                 if let Some(subscription) = self.subscriptions.get(subscription_id) {
                     matched += 1;
@@ -149,9 +162,9 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         }
 
         if self.wildcard_subscription_count > 0 {
-            let wildcard_matches = self.index.match_all_with_capacity(
-                event.family_id,
-                &event.route,
+            let wildcard_matches = self.index.match_all_route_str_with_capacity(
+                family_id,
+                route,
                 self.wildcard_subscription_count,
             );
             for subscription_id in wildcard_matches {

@@ -1,8 +1,12 @@
-# TODO - Stream
+# Stream
+
+- Hardest domain.
+- There is still split authority between live sink behavior and the intended actor or store model.
+- Restart-safe sequencing across resource, area, and realm is an architectural problem, not a small fix.
 
 Define a TDD-driven implementation plan for the following server correction work.
 
-Important context:
+## Important context:
 
 - Do not repeat or reinvent domain-level requirement lists unless absolutely necessary.
 - Your job is to turn the existing concerns and checklists into an implementation strategy and test strategy.

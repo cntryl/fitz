@@ -15,6 +15,7 @@ use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
+use bytes::{BufMut, Bytes, BytesMut};
 
 /// Response from notice operations
 #[derive(Debug, Clone)]
@@ -212,7 +213,7 @@ fn parse_unsubscribe_all(
 /// The route and payload carry the actual delivery content.
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
-    encode_notify_into(subscription_id, route, payload, &mut enc)
+    encode_notify_route_into(subscription_id, route.as_str(), payload, &mut enc)
 }
 
 /// Encode NOTICE DELIVER payload using a reusable payload encoder.
@@ -222,11 +223,43 @@ pub fn encode_notify_into(
     payload: &[u8],
     enc: &mut PayloadEncoder,
 ) -> Vec<u8> {
+    encode_notify_route_into(subscription_id, route.as_str(), payload, enc)
+}
+
+/// Encode NOTICE DELIVER payload from a raw route string using a reusable payload encoder.
+pub fn encode_notify_route_into(
+    subscription_id: u64,
+    route: &str,
+    payload: &[u8],
+    enc: &mut PayloadEncoder,
+) -> Vec<u8> {
     enc.clear();
     enc.put_u64(subscription_id);
-    enc.put_string(route.as_str());
+    enc.put_string(route);
     enc.put_bytes(payload);
     enc.finish()
+}
+
+/// Encode the route/payload suffix shared by all NOTIFY deliveries for one publish.
+///
+/// Wire format: `[string route][bytes payload]`
+pub fn encode_notify_shared_suffix(route: &str, payload: &[u8]) -> Bytes {
+    let mut suffix = BytesMut::with_capacity(4 + route.len() + 4 + payload.len());
+    suffix.put_u32(route.len() as u32);
+    suffix.extend_from_slice(route.as_bytes());
+    suffix.put_u32(payload.len() as u32);
+    suffix.extend_from_slice(payload);
+    suffix.freeze()
+}
+
+/// Encode a NOTICE DELIVER payload from a pre-encoded shared route/payload suffix.
+///
+/// Wire format: `[u64 subscription_id][string route][bytes payload]`
+pub fn encode_notify_with_shared_suffix(subscription_id: u64, suffix: &Bytes) -> Bytes {
+    let mut payload = BytesMut::with_capacity(8 + suffix.len());
+    payload.put_u64(subscription_id);
+    payload.extend_from_slice(suffix.as_ref());
+    payload.freeze()
 }
 
 fn parse_deliver(dec: &mut PayloadDecoder) -> Result<DeliverMessage, String> {

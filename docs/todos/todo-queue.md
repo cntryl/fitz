@@ -1,8 +1,12 @@
-# TODO - Queue
+# Queue
+
+- Classification: Durable committed messages and indexes, ephemeral inflight coordination.
+- Goal: tighten the failure model and stop memory growth from cold actor retention.
+- Primary outcome: durable queue semantics that are explicit about what is and is not restart-safe.
 
 Define a TDD-driven implementation plan for the following server correction work.
 
-Important context:
+### Important context:
 
 - Do not repeat or reinvent domain-level requirement lists unless absolutely necessary.
 - Your job is to turn the existing concerns and checklists into an implementation strategy and test strategy.

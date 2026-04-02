@@ -299,7 +299,17 @@ impl SubscriptionIndex {
     /// trie layout and removal order.
     #[inline]
     pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> SubscriptionMatches {
-        self.match_all_with_capacity(family_id, route, 8)
+        self.match_all_route_str_with_capacity(family_id, route.as_str(), 8)
+    }
+
+    /// Find all subscriptions matching a raw route string.
+    #[inline]
+    pub fn match_all_route_str(
+        &self,
+        family_id: RouteFamily,
+        route: &str,
+    ) -> SubscriptionMatches {
+        self.match_all_route_str_with_capacity(family_id, route, 8)
     }
 
     /// Find all subscriptions matching a route with pre-allocated capacity
@@ -311,7 +321,17 @@ impl SubscriptionIndex {
         route: &Route,
         capacity: usize,
     ) -> SubscriptionMatches {
-        let route_segments = extract_route_segments_borrowed(route.as_str());
+        self.match_all_route_str_with_capacity(family_id, route.as_str(), capacity)
+    }
+
+    /// Find all subscriptions matching a raw route string with pre-allocated capacity.
+    pub fn match_all_route_str_with_capacity(
+        &self,
+        family_id: RouteFamily,
+        route: &str,
+        capacity: usize,
+    ) -> SubscriptionMatches {
+        let route_segments = extract_route_segments_borrowed(route);
         let compiled_route_segments = self.compile_route_segments_lookup(&route_segments);
         let Some(&root) = self.family_roots.get(&family_id) else {
             return SubscriptionMatches::new();
