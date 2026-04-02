@@ -20,6 +20,8 @@ const RPC_WORKER_NOT_FOUND_ERROR: &str = "Worker disconnected or unregistered";
 const RPC_CORRELATION_NOT_FOUND_ERROR: &str = "Correlation ID not found (orphaned response)";
 const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
 const RPC_MAX_PENDING_REQUESTS: usize = 4096;
+// Admin endpoints read from a coalesced in-memory snapshot so hot-path request
+// dispatch does not rewrite the read model on every mutation.
 const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 const RPC_DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RPC_MIN_TIMEOUT_SWEEP_INTERVAL: Duration = Duration::from_millis(10);
@@ -479,6 +481,11 @@ impl RpcDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    /// Start the best-effort timeout sweep for in-memory pending RPC requests.
+    ///
+    /// Expired requests are removed from the current process, timeout counters are
+    /// updated, and terminal errors are forwarded only if the caller inbox is still
+    /// registered. There is no replay or restart recovery path behind this loop.
     pub fn start_timeout_loop(self: &Arc<Self>) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
@@ -746,6 +753,10 @@ impl RpcDomainSink {
         );
     }
 
+    /// Copy a point-in-time view of live in-memory RPC state into the admin read model.
+    ///
+    /// This snapshot is intentionally coalesced and may lag very recent subscribe,
+    /// unsubscribe, timeout, or cleanup mutations by up to the current sync interval.
     fn sync_admin_snapshot(&self) {
         let state = self.state.lock();
         let captured_at = Utc::now().to_rfc3339();
@@ -798,11 +809,16 @@ impl RpcDomainSink {
         self.state.lock().pending.len()
     }
 
+    /// Mark the admin snapshot dirty and opportunistically refresh the coalesced view.
     fn schedule_admin_snapshot(&self, force: bool) {
         self.snapshot_dirty.store(true, Ordering::Relaxed);
         self.maybe_sync_admin_snapshot(force);
     }
 
+    /// Sync the admin snapshot when the snapshot interval elapses or a caller forces it.
+    ///
+    /// Even forced snapshots are still point-in-time copies of the sink's current
+    /// in-memory state, not linearizable reads of concurrent RPC activity.
     fn maybe_sync_admin_snapshot(&self, force: bool) {
         #[cfg(feature = "bench-no-snapshot")]
         {

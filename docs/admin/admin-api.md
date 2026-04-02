@@ -419,6 +419,7 @@ POST /admin/queue/leases/{lease_id}/expire
 **Response**: 200 OK or 404 Not Found
 ### RPC Domain
 All RPC admin endpoints expose live in-memory state for the current broker instance only. Worker registrations and pending requests disappear on disconnect or broker restart and are not durable recovery queues.
+The broker updates this read model as a coalesced operational snapshot, so very recent subscribe, unsubscribe, timeout, and cleanup events can lag briefly in admin responses. Treat these endpoints as near-live diagnostics, not strongly consistent reads of the hot path.
 
 #### List Registered Workers
 ```
@@ -464,6 +465,7 @@ Pending requests shown here are only those still tracked in memory by the runnin
 GET /admin/rpc/stats?realm={realm}
 ```
 `workers_registered` and `requests_pending` are point-in-time in-memory counts for the running broker process. They reset on restart and should not be interpreted as durable backlog or recovery state.
+Like the worker and pending endpoints, these counters are served from the current broker's coalesced admin snapshot and can lag the latest in-flight mutations briefly.
 
 **Response**:
 ```json
