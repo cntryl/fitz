@@ -158,6 +158,28 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     ctx.set_elements(iterations as u64);
 }
 
+fn single_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
+    NoticeFanoutCase {
+        scenario: "fanout_subscriber_scaling",
+        subscriber_count,
+        pattern: "notice://realm/area/orders/*",
+        publish_route: "notice://realm/area/orders/create",
+        payload: b"subscriber scaling fanout",
+        match_kind: "single_star",
+    }
+}
+
+fn double_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
+    NoticeFanoutCase {
+        scenario: "fanout_subscriber_scaling",
+        subscriber_count,
+        pattern: "notice://realm/area/orders/**",
+        publish_route: "notice://realm/area/orders/create",
+        payload: b"subscriber scaling fanout",
+        match_kind: "double_star",
+    }
+}
+
 #[stress_test]
 fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     measure_notice_fanout(
@@ -205,77 +227,52 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
-    measure_notice_fanout(
-        ctx,
-        NoticeFanoutCase {
-            scenario: "fanout_subscriber_scaling",
-            subscriber_count: 1,
-            pattern: "notice://realm/area/orders/*",
-            publish_route: "notice://realm/area/orders/create",
-            payload: b"subscriber scaling fanout",
-            match_kind: "single_star",
-        },
-    );
+    measure_notice_fanout(ctx, single_star_scaling_case(1));
 }
 
 #[stress_test]
 fn should_complete_fanout_subscriber_scaling_16(ctx: &mut StressContext) {
-    measure_notice_fanout(
-        ctx,
-        NoticeFanoutCase {
-            scenario: "fanout_subscriber_scaling",
-            subscriber_count: 16,
-            pattern: "notice://realm/area/orders/*",
-            publish_route: "notice://realm/area/orders/create",
-            payload: b"subscriber scaling fanout",
-            match_kind: "single_star",
-        },
-    );
+    measure_notice_fanout(ctx, single_star_scaling_case(16));
 }
 
 #[stress_test]
 fn should_complete_fanout_subscriber_scaling_64(ctx: &mut StressContext) {
-    measure_notice_fanout(
-        ctx,
-        NoticeFanoutCase {
-            scenario: "fanout_subscriber_scaling",
-            subscriber_count: 64,
-            pattern: "notice://realm/area/orders/*",
-            publish_route: "notice://realm/area/orders/create",
-            payload: b"subscriber scaling fanout",
-            match_kind: "single_star",
-        },
-    );
+    measure_notice_fanout(ctx, single_star_scaling_case(64));
 }
 
 #[stress_test]
 fn should_complete_fanout_subscriber_scaling_256(ctx: &mut StressContext) {
-    measure_notice_fanout(
-        ctx,
-        NoticeFanoutCase {
-            scenario: "fanout_subscriber_scaling",
-            subscriber_count: 256,
-            pattern: "notice://realm/area/orders/*",
-            publish_route: "notice://realm/area/orders/create",
-            payload: b"subscriber scaling fanout",
-            match_kind: "single_star",
-        },
-    );
+    measure_notice_fanout(ctx, single_star_scaling_case(256));
 }
 
 #[stress_test]
 fn should_complete_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
-    measure_notice_fanout(
-        ctx,
-        NoticeFanoutCase {
-            scenario: "fanout_subscriber_scaling",
-            subscriber_count: 1000,
-            pattern: "notice://realm/area/orders/*",
-            publish_route: "notice://realm/area/orders/create",
-            payload: b"subscriber scaling fanout",
-            match_kind: "single_star",
-        },
-    );
+    measure_notice_fanout(ctx, single_star_scaling_case(1000));
+}
+
+#[stress_test]
+fn should_complete_double_star_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
+    measure_notice_fanout(ctx, double_star_scaling_case(1));
+}
+
+#[stress_test]
+fn should_complete_double_star_fanout_subscriber_scaling_16(ctx: &mut StressContext) {
+    measure_notice_fanout(ctx, double_star_scaling_case(16));
+}
+
+#[stress_test]
+fn should_complete_double_star_fanout_subscriber_scaling_64(ctx: &mut StressContext) {
+    measure_notice_fanout(ctx, double_star_scaling_case(64));
+}
+
+#[stress_test]
+fn should_complete_double_star_fanout_subscriber_scaling_256(ctx: &mut StressContext) {
+    measure_notice_fanout(ctx, double_star_scaling_case(256));
+}
+
+#[stress_test]
+fn should_complete_double_star_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
+    measure_notice_fanout(ctx, double_star_scaling_case(1000));
 }
 
 #[stress_test]

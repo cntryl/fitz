@@ -624,7 +624,7 @@ fn should_reject_complete_without_write_scope() {
 // ============================================================================
 
 #[test]
-fn should_deduplicate_complete_by_message_id_and_lease_token() {
+fn should_deduplicate_complete_for_same_lease_token() {
     // Arrange
     // COMPLETE is safe to retry only while using the same live lease token
     //

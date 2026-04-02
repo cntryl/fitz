@@ -816,6 +816,7 @@ mod tests {
 
     #[test]
     fn should_normalize_overdue_persisted_schedule_forward_on_preload() {
+        // Arrange
         let db = create_test_engine_with_cfs(vec![1]);
         let store = ScheduleStore::new(db.clone());
         let route = "schedule://acme/jobs/normalize/run";
@@ -836,6 +837,7 @@ mod tests {
             )
             .expect("insert overdue schedule");
 
+        // Act
         let actor = ScheduleActor::try_new(
             RouteFamily::new(1),
             db,
@@ -843,6 +845,7 @@ mod tests {
         )
         .expect("load actor");
 
+        // Assert
         let schedule = actor
             .schedules
             .get(route)
@@ -852,6 +855,7 @@ mod tests {
 
     #[test]
     fn should_not_advance_in_memory_or_fire_when_reschedule_persist_fails() {
+        // Arrange
         let mut actor = make_actor();
         let route = "schedule://acme/jobs/failure/run";
         actor
@@ -865,9 +869,11 @@ mod tests {
 
         let before = actor.schedules.get(route).expect("schedule").next_fire_ms;
 
+        // Act
         actor.store.fail_next_commit_for_tests();
         let fired = actor.scan_and_fire();
 
+        // Assert
         assert!(fired.is_empty(), "scan should not emit on persist failure");
         assert_eq!(
             actor.schedules.get(route).expect("schedule").next_fire_ms,
@@ -878,6 +884,7 @@ mod tests {
 
     #[test]
     fn should_ignore_stale_heap_entries_left_by_upsert() {
+        // Arrange
         let mut actor = make_actor();
         let route = "schedule://acme/jobs/stale/run";
         actor
@@ -906,8 +913,10 @@ mod tests {
             .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
             .unwrap();
 
+        // Act
         let fired = actor.scan_and_fire_at(now);
 
+        // Assert
         assert!(
             fired.is_empty(),
             "stale heap entry should not fire when definition has moved forward"

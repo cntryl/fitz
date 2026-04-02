@@ -58,3 +58,4 @@
 
 # Optional: mark vendored/generated directories so GitHub's language stats ignore them
 /target/** linguist-vendored
+

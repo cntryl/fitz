@@ -455,7 +455,11 @@ mod tests {
 
     #[test]
     fn should_create_actor_with_default_capacity() {
+        // Arrange
+        // Act
         let actor = RpcRouteActor::new(RouteFamily::new(1));
+
+        // Assert
         assert_eq!(
             (actor.capacity, actor.pending_count(), actor.worker_count()),
             (DEFAULT_QUEUE_CAPACITY, 0, 0)

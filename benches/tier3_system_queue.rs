@@ -221,6 +221,40 @@ fn ack_reserved_messages(actor: &mut QueueActor, messages: Vec<ReservedMessage>)
     }
 }
 
+fn measure_backlog_depth_steady_state(
+    ctx: &mut StressContext,
+    backlog_depth: usize,
+    per_iteration_cycles: u64,
+) {
+    assert!(backlog_depth > 0, "backlog_depth must be at least one");
+
+    ctx.tag("scenario", "backlog_depth_steady_state");
+    ctx.tag("measurement_scope", "direct_actor");
+    ctx.tag("operation", "dequeue_ack_replenish");
+    ctx.tag("batch_size", format!("{per_iteration_cycles}_cycles"));
+    ctx.tag("backlog_depth", backlog_depth.to_string());
+
+    let mut actor = create_bench_queue_actor("bench", "depth", "queue", None);
+    let payload = Bytes::from_static(b"backlog depth message");
+
+    for _ in 0..backlog_depth {
+        let response = actor.handle_send(payload.clone(), None);
+        assert!(matches!(response, QueueResponse::Sent { .. }));
+    }
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..per_iteration_cycles {
+            let message = receive_single_message(&mut actor);
+            let response = actor.handle_ack(message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+
+            let response = actor.handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+        }
+    });
+    ctx.set_elements((per_iteration_cycles * 3) * iterations as u64);
+}
+
 #[stress_test]
 fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
     ctx.tag("scenario", "enqueue_isolated");
@@ -406,6 +440,26 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         }
     });
     ctx.set_elements(300 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_backlog_depth_steady_state_1(ctx: &mut StressContext) {
+    measure_backlog_depth_steady_state(ctx, 1, 100);
+}
+
+#[stress_test]
+fn should_complete_backlog_depth_steady_state_64(ctx: &mut StressContext) {
+    measure_backlog_depth_steady_state(ctx, 64, 100);
+}
+
+#[stress_test]
+fn should_complete_backlog_depth_steady_state_256(ctx: &mut StressContext) {
+    measure_backlog_depth_steady_state(ctx, 256, 100);
+}
+
+#[stress_test]
+fn should_complete_backlog_depth_steady_state_1024(ctx: &mut StressContext) {
+    measure_backlog_depth_steady_state(ctx, 1024, 100);
 }
 
 #[stress_test]

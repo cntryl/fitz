@@ -502,13 +502,15 @@ mod tests {
     }
 
     #[test]
-    fn should_write_durable_definition_and_due_index_when_inserting_schedule() {
+    fn should_persist_definition_with_due_index_for_inserted_schedule() {
+        // Arrange
         let (store, db) = make_store();
         let route = "schedule://acme/jobs/backup/run";
         let payload = Bytes::from_static(b"payload");
         let next_fire_ms = 1_700_000_001_000_u64;
         let expected_due_key = ScheduleStore::encode_due_key(next_fire_ms, route);
 
+        // Act
         let stored_due_key = store
             .insert(
                 1,
@@ -526,6 +528,7 @@ mod tests {
         let definition_key = ScheduleStore::encode_definition_key(route);
         let definition_value = read_raw_value(&db, 1, &definition_key).expect("definition row");
 
+        // Assert
         assert_eq!(stored_due_key, expected_due_key);
         assert_eq!(
             ScheduleStore::decode_definition_value(&definition_value).unwrap(),
@@ -542,7 +545,8 @@ mod tests {
     }
 
     #[test]
-    fn should_import_legacy_rows_and_rebuild_due_index_from_definitions() {
+    fn should_rebuild_due_index_from_definitions_after_legacy_import() {
+        // Arrange
         let (store, db) = make_store();
         let route = "schedule://acme/jobs/legacy/run";
         let legacy_due_key = {
@@ -566,10 +570,12 @@ mod tests {
         )
         .expect("write stale due row");
 
+        // Act
         let loaded = store
             .load_all(1, WriteOptions::buffered())
             .expect("load schedules");
 
+        // Assert
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].route, route);
         assert_eq!(loaded[0].cron, "*/5 * * * *");
@@ -604,7 +610,8 @@ mod tests {
     }
 
     #[test]
-    fn should_delete_definition_and_due_index_when_canceling_schedule() {
+    fn should_remove_definition_with_due_index_when_canceling_schedule() {
+        // Arrange
         let (store, db) = make_store();
         let route = "schedule://acme/jobs/delete/run";
         let payload = Bytes::from_static(b"payload");
@@ -623,10 +630,12 @@ mod tests {
             )
             .expect("insert schedule");
 
+        // Act
         store
             .delete_current(1, route, next_fire_ms, WriteOptions::buffered())
             .expect("delete schedule");
 
+        // Assert
         assert!(
             read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_none(),
             "definition row should be deleted"

@@ -395,12 +395,22 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
+    measure_multiclient_fanout_publish(ctx, "fanout_publish", 10);
+}
+
+fn measure_multiclient_fanout_publish(
+    ctx: &mut StressContext,
+    scenario: &'static str,
+    subscriber_count: usize,
+) {
     ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", "fanout_publish");
+    ctx.tag("scenario", scenario);
     ctx.tag("measurement_scope", "ws_multiclient_e2e");
-    ctx.tag("batch_size", "1_publish_10_notifications");
     ctx.tag("publisher_count", "1");
-    ctx.tag("subscriber_count", "10");
+    let batch_size = format!("1_publish_{subscriber_count}_notifications");
+    ctx.tag("batch_size", batch_size.as_str());
+    let subscriber_count_tag = subscriber_count.to_string();
+    ctx.tag("subscriber_count", subscriber_count_tag.as_str());
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
@@ -417,7 +427,7 @@ fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     let delivered = Arc::new(AtomicU64::new(0));
     let mut subscriber_stops = Vec::new();
     let mut subscriber_handles = Vec::new();
-    for _ in 0..10 {
+    for _ in 0..subscriber_count {
         let mut subscriber = runtime
             .block_on(TestWebSocketClient::connect(&format!(
                 "ws://{}",
@@ -443,7 +453,7 @@ fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     wait_for_delivery_count(
         runtime,
         &delivered,
-        10 * iterations as u64,
+        subscriber_count as u64 * iterations as u64,
         "multiclient notice deliveries",
     );
     for stop_tx in subscriber_stops {
@@ -455,7 +465,22 @@ fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
             handle.await.expect("subscriber task");
         }
     });
-    ctx.set_elements(10 * iterations as u64);
+    ctx.set_elements(subscriber_count as u64 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_multiclient_fanout_publish_subscriber_scaling_1(ctx: &mut StressContext) {
+    measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 1);
+}
+
+#[stress_test]
+fn should_complete_multiclient_fanout_publish_subscriber_scaling_16(ctx: &mut StressContext) {
+    measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 16);
+}
+
+#[stress_test]
+fn should_complete_multiclient_fanout_publish_subscriber_scaling_64(ctx: &mut StressContext) {
+    measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 64);
 }
 
 stress_main!();

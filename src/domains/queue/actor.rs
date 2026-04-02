@@ -3578,7 +3578,7 @@ pub mod tests {
     }
 
     #[test]
-    fn should_enqueue_and_reserve_message() {
+    fn should_reserve_enqueued_message() {
         // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
@@ -3595,21 +3595,17 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
-        // Act - Enqueue
+        // Act
         let body = Bytes::from("test message");
         let enqueue_response = actor.handle_send(body.clone(), None);
-
-        // Assert - Enqueue
         let msg_id = match enqueue_response {
             QueueResponse::Sent { id } => id,
             _ => panic!("Expected Enqueued response"),
         };
-        assert_eq!(actor.ready_len(), 1);
-
-        // Act - Reserve
         let reserve_response = actor.handle_receive(30, Some(1));
 
-        // Assert - Reserve
+        // Assert
+        assert_eq!(actor.ready_len(), 1);
         match reserve_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
@@ -3626,6 +3622,7 @@ pub mod tests {
 
     #[test]
     fn should_bound_hot_body_cache_size() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3639,12 +3636,14 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Act
         for i in 0..(QueueActor::BODY_CACHE_LIMIT + 32) {
             let body = Bytes::from(format!("message-{}", i));
             let response = actor.handle_send(body, None);
             assert!(matches!(response, QueueResponse::Sent { .. }));
         }
 
+        // Assert
         assert!(actor.records.len() <= QueueActor::RECORD_CACHE_LIMIT);
         assert_eq!(actor.body_cache.len(), QueueActor::BODY_CACHE_LIMIT);
         assert!(actor.body_cache_bytes <= QueueActor::BODY_CACHE_LIMIT_BYTES);
@@ -3652,6 +3651,7 @@ pub mod tests {
 
     #[test]
     fn should_bound_metadata_cache_size() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3665,12 +3665,14 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Act
         for i in 0..(QueueActor::RECORD_CACHE_LIMIT + 32) {
             let body = Bytes::from(format!("message-{}", i));
             let response = actor.handle_send(body, None);
             assert!(matches!(response, QueueResponse::Sent { .. }));
         }
 
+        // Assert
         assert_eq!(actor.records.len(), QueueActor::RECORD_CACHE_LIMIT);
         let max_fifo_len = QueueActor::RECORD_CACHE_LIMIT
             * QueueActor::RECORD_CACHE_FIFO_SLACK_MULTIPLIER
@@ -3680,6 +3682,7 @@ pub mod tests {
 
     #[test]
     fn should_bound_hot_body_cache_total_bytes() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3693,6 +3696,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Act
         let body_size = QueueActor::BODY_CACHE_LIMIT_BYTES / 4 + 1;
         for i in 0..5 {
             let body = Bytes::from(vec![i as u8; body_size]);
@@ -3700,6 +3704,7 @@ pub mod tests {
             assert!(matches!(response, QueueResponse::Sent { .. }));
         }
 
+        // Assert
         assert_eq!(actor.records.len(), 5);
         assert!(actor.body_cache.len() < 5);
         assert!(actor.body_cache_bytes <= QueueActor::BODY_CACHE_LIMIT_BYTES);
@@ -3707,6 +3712,7 @@ pub mod tests {
 
     #[test]
     fn should_not_hydrate_metadata_cache_during_recovery() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3729,6 +3735,7 @@ pub mod tests {
             }
         }
 
+        // Act
         let actor = QueueActor::new(
             RouteFamily::new(0),
             queue_key.clone(),
@@ -3737,6 +3744,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Assert
         assert_eq!(actor.ready_len(), 64);
         assert!(actor.records.is_empty());
         assert!(actor.record_cache_fifo.is_empty());
@@ -3749,7 +3757,8 @@ pub mod tests {
     }
 
     #[test]
-    fn should_fallback_and_rewrite_missing_queue_index() {
+    fn should_rewrite_missing_queue_index_via_fallback() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3773,6 +3782,7 @@ pub mod tests {
 
         clear_queue_index(&store, &queue_key, None);
 
+        // Act
         let actor = QueueActor::new(
             RouteFamily::new(0),
             queue_key.clone(),
@@ -3781,6 +3791,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Assert
         assert_eq!(actor.ready_len(), 12);
         assert_eq!(actor.recovery_path, RecoveryPath::IndexMissingFallback);
         assert!(QueueActor::index_meta_is_valid(
@@ -3790,7 +3801,8 @@ pub mod tests {
     }
 
     #[test]
-    fn should_fallback_and_rewrite_corrupted_queue_index_meta() {
+    fn should_rewrite_corrupted_queue_index_meta_via_fallback() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3814,6 +3826,7 @@ pub mod tests {
 
         clear_queue_index(&store, &queue_key, Some(vec![0, 0]));
 
+        // Act
         let actor = QueueActor::new(
             RouteFamily::new(0),
             queue_key.clone(),
@@ -3822,6 +3835,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Assert
         assert_eq!(actor.ready_len(), 8);
         assert_eq!(actor.recovery_path, RecoveryPath::IndexInvalidFallback);
         assert!(QueueActor::index_meta_is_valid(
@@ -3830,7 +3844,8 @@ pub mod tests {
     }
 
     #[test]
-    fn should_remove_head_tail_and_middle_from_persisted_ready_ranges() {
+    fn should_plan_ready_index_mutations_for_persisted_ready_ranges() {
+        // Arrange
         let mut shards: Vec<VecDeque<ReadyRange>> = (0..QueueActor::READY_SHARDS)
             .map(|_| VecDeque::new())
             .collect();
@@ -3838,8 +3853,10 @@ pub mod tests {
             QueueActor::stage_persisted_ready_append(&mut shards, MessageId::new(id));
         }
 
+        // Act
         let (shard, mutation) = QueueActor::plan_ready_index_mutation(&shards, MessageId::new(1))
             .expect("head mutation");
+        // Assert
         assert_eq!(shard, 1);
         assert_eq!(
             mutation,
@@ -3879,6 +3896,7 @@ pub mod tests {
 
     #[test]
     fn should_remove_delayed_index_entry_after_ack_even_when_visibility_passed() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3911,6 +3929,7 @@ pub mod tests {
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(read_delayed_index_entries(&store, &queue_key).len(), 1);
 
+        // Act
         clock.advance(Duration::from_secs(2));
         actor.process_delayed_messages();
 
@@ -3925,11 +3944,13 @@ pub mod tests {
             actor.handle_ack(message.id, message.token),
             QueueResponse::Acked
         ));
+        // Assert
         assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
     }
 
     #[test]
     fn should_recover_legacy_combined_records_after_storage_split() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3960,6 +3981,7 @@ pub mod tests {
         txn.commit(cntryl_midge::WriteOptions::buffered())
             .expect("commit legacy queue record");
 
+        // Act
         let mut actor = QueueActor::new(
             RouteFamily::new(0),
             queue_key,
@@ -3968,6 +3990,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Assert
         assert_eq!(actor.ready_len(), 1);
 
         match actor.handle_receive(30, Some(1)) {
@@ -3981,7 +4004,8 @@ pub mod tests {
     }
 
     #[test]
-    fn should_skip_caching_oversized_body_and_hydrate_from_store() {
+    fn should_hydrate_oversized_body_from_store_without_caching() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -3995,11 +4019,10 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Act
         let oversized = Bytes::from(vec![b'x'; QueueActor::BODY_CACHE_LIMIT_BYTES + 1]);
         let response = actor.handle_send(oversized.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
-        assert_eq!(actor.body_cache.len(), 0);
-        assert_eq!(actor.body_cache_bytes, 0);
 
         match actor.handle_receive(30, Some(1)) {
             QueueResponse::Received { messages } => {
@@ -4008,10 +4031,15 @@ pub mod tests {
             }
             _ => panic!("Expected Received response"),
         }
+
+        // Assert
+        assert_eq!(actor.body_cache.len(), 0);
+        assert_eq!(actor.body_cache_bytes, 0);
     }
 
     #[test]
     fn should_compact_hot_body_fifo_under_cache_churn() {
+        // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
@@ -4025,6 +4053,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
+        // Act
         for i in 0..(QueueActor::BODY_CACHE_LIMIT * 3) {
             let body = Bytes::from(format!("message-{}", i));
             let response = actor.handle_send(body, None);
@@ -4043,6 +4072,7 @@ pub mod tests {
             assert_eq!(actor.handle_ack(id, token), QueueResponse::Acked);
         }
 
+        // Assert
         let max_fifo_len = QueueActor::BODY_CACHE_LIMIT
             * QueueActor::BODY_CACHE_FIFO_SLACK_MULTIPLIER
             + actor.body_cache.len();
@@ -4251,7 +4281,7 @@ pub mod tests {
     }
 
     #[test]
-    fn should_redelivery_message_when_lease_expires() {
+    fn should_redeliver_message_when_lease_expires() {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
@@ -4280,19 +4310,19 @@ pub mod tests {
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
 
-        // Act - Advance time past lease expiration
+        // Act
         clock.advance(Duration::from_secs(31));
         actor.process_expired_timers();
 
-        // Assert - Message back in ready queue
+        // Message should return to the ready queue before redelivery.
         assert_eq!(actor.ready_len(), 1);
         assert_eq!(actor.inflight.len(), 0);
         assert!(actor.ready_contains(msg_id));
 
-        // Act - Reserve again
+        // Reserve again after expiration.
         let redelivery_response = actor.handle_receive(30, Some(1));
 
-        // Assert - Attempts incremented
+        // Assert
         match redelivery_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
@@ -4340,7 +4370,7 @@ pub mod tests {
     }
 
     #[test]
-    fn should_enqueue_and_dequeue_all_messages() {
+    fn should_dequeue_all_enqueued_messages() {
         // Arrange
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
@@ -4355,13 +4385,13 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
-        // Enqueue messages in known order
+        // Seed the queue in a known order.
         for i in 0..5 {
             let body = Bytes::from(format!("msg-{}", i));
             let _ = actor.handle_send(body, None);
         }
 
-        // Act & Assert - Reserve and ensure all messages are returned
+        // Act
         let mut reserved_all = Vec::new();
         loop {
             match actor.handle_receive(30, Some(2)) {
@@ -4384,6 +4414,7 @@ pub mod tests {
             }
         }
 
+        // Assert
         let mut expected: Vec<Bytes> = (0..5).map(|i| Bytes::from(format!("msg-{}", i))).collect();
         reserved_all.sort();
         expected.sort();
@@ -4521,7 +4552,7 @@ pub mod tests {
             crate::utils::idempotency::global_dedup_store(),
         );
 
-        // Act - Enqueue with 30 second delay
+        // Act
         let body = Bytes::from("delayed message");
         let response = actor.handle_send(body.clone(), Some(30));
 
@@ -4530,11 +4561,11 @@ pub mod tests {
             _ => panic!("Expected Enqueued response"),
         };
 
-        // Assert - Message not in ready queue
+        // Message should stay delayed until visibility expires.
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.delayed.len(), 1);
 
-        // Act - Try to reserve immediately (should be empty)
+        // Immediate reserve should still be empty.
         let reserve_response = actor.handle_receive(30, Some(1));
         match reserve_response {
             QueueResponse::NotFound => {}
@@ -4542,16 +4573,17 @@ pub mod tests {
             _ => panic!("Expected NotFound or empty Received response for delayed messages"),
         }
 
-        // Act - Advance time past delay
+        // Advance time past the visibility delay.
         clock.advance(Duration::from_secs(31));
         actor.process_delayed_messages();
 
-        // Assert - Message now in ready queue
+        // The message should now be ready.
         assert_eq!(actor.ready_len(), 1);
         assert_eq!(actor.delayed.len(), 0);
 
-        // Act - Reserve now succeeds
+        // Final reserve should succeed.
         let reserve_response = actor.handle_receive(30, Some(1));
+        // Assert
         match reserve_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);

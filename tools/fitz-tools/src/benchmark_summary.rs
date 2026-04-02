@@ -1293,8 +1293,8 @@ fn detect_sweep_groups(entries: &[StressEntry]) -> Result<Vec<SweepGroup>> {
             entry.name.as_str()
         };
         let lowered = source.to_lowercase();
-        let Some((parameter, prefix, value_label, matched)) = scenario_patterns.iter().find_map(
-            |(parameter, regex)| {
+        let Some((parameter, prefix, value_label, matched)) =
+            scenario_patterns.iter().find_map(|(parameter, regex)| {
                 let captures = regex.captures(&lowered)?;
                 Some((
                     *parameter,
@@ -1311,8 +1311,8 @@ fn detect_sweep_groups(entries: &[StressEntry]) -> Result<Vec<SweepGroup>> {
                         .map(|value| value.as_str().to_string())
                         .unwrap_or_default(),
                 ))
-            },
-        ) else {
+            })
+        else {
             continue;
         };
 
@@ -1387,6 +1387,7 @@ fn is_sweep_tag_key(key: &str) -> bool {
             | "subscriber_count"
             | "publisher_count"
             | "worker_count"
+            | "pending_count"
             | "route_count"
             | "queue_count"
             | "area_count"
@@ -1403,7 +1404,12 @@ fn is_sweep_tag_key(key: &str) -> bool {
 
 fn tag_sweep_context(entry: &StressEntry) -> String {
     let mut qualifiers = Vec::new();
-    for key in ["measurement_scope", "match_kind", "ready_state", "operation"] {
+    for key in [
+        "measurement_scope",
+        "match_kind",
+        "ready_state",
+        "operation",
+    ] {
         if let Some(value) = entry.tags.get(key) {
             qualifiers.push(format!("{key}={value}"));
         }
@@ -1902,8 +1908,42 @@ mod tests {
 
         // Assert
         assert_eq!(groups.len(), 2);
-        assert!(groups.iter().any(|group| group.title.contains("dispatch_only")));
-        assert!(groups.iter().any(|group| group.title.contains("full_roundtrip")));
+        assert!(groups
+            .iter()
+            .any(|group| group.title.contains("dispatch_only")));
+        assert!(groups
+            .iter()
+            .any(|group| group.title.contains("full_roundtrip")));
         assert!(groups.iter().all(|group| group.points.len() == 2));
+    }
+
+    #[test]
+    fn should_detect_sweep_groups_from_pending_count_tags() {
+        // Arrange
+        let entries = vec![
+            stress_entry_for_test(
+                "tier3-system-rpc",
+                "rpc::pending_64",
+                "pending_cardinality_steady_state",
+                1200.0,
+                &[("pending_count", "64"), ("measurement_scope", "routed_pending")],
+            ),
+            stress_entry_for_test(
+                "tier3-system-rpc",
+                "rpc::pending_256",
+                "pending_cardinality_steady_state",
+                900.0,
+                &[("pending_count", "256"), ("measurement_scope", "routed_pending")],
+            ),
+        ];
+
+        // Act
+        let groups = detect_sweep_groups(&entries).expect("detect sweep groups");
+
+        // Assert
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].title.contains("pending_count"));
+        assert_eq!(groups[0].points[0].parameter_label, "64");
+        assert_eq!(groups[0].points[1].parameter_label, "256");
     }
 }

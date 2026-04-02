@@ -311,6 +311,24 @@ fn cleanup_worker_request_on_route(
     );
 }
 
+fn drain_request_correlation(
+    worker_inbox: &Arc<FrameQueueSink>,
+    family: RouteFamily,
+) -> uuid::Uuid {
+    worker_inbox
+        .drain()
+        .into_iter()
+        .find_map(|frame| match frame.msg_type.as_u16() {
+            302 => match parse_request(&frame, &frame.payload, family) {
+                Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
+                _ => None,
+            },
+            304 => None,
+            _ => None,
+        })
+        .expect("rpc dispatched request")
+}
+
 fn measure_full_roundtrip_scaling(
     ctx: &mut StressContext,
     worker_count: usize,
@@ -509,6 +527,70 @@ fn measure_multi_route_dispatch_only_scaling(
     ctx.set_elements(per_iteration_requests * iterations as u64);
 }
 
+fn measure_pending_cardinality_steady_state(
+    ctx: &mut StressContext,
+    pending_count: usize,
+    per_iteration_cycles: u64,
+) {
+    assert!(pending_count > 0, "pending_count must be at least one");
+
+    ctx.tag("scenario", "pending_cardinality_steady_state");
+    ctx.tag("measurement_scope", "routed_pending");
+    ctx.tag("operation", "response_replenish_cycle");
+    ctx.tag("batch_size", format!("{per_iteration_cycles}_cycles"));
+    ctx.tag("worker_count", "1");
+    ctx.tag("pending_count", pending_count.to_string());
+
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let workers = vec![register_worker(&router, family, 4_000)];
+    let (worker_session_id, worker_source, worker_inbox) = &workers[0];
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"pending cardinality payload", pending_count + 1);
+
+    for _ in 0..pending_count {
+        let (request_msg_type, request_payload) = request_ring.next_frame();
+        dispatch_request(
+            &router,
+            family,
+            &requester_source,
+            request_msg_type,
+            request_payload,
+        );
+    }
+
+    let mut current_correlation_id = drain_request_correlation(worker_inbox, family);
+    let _ = requester_inbox.drain();
+
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+        for _ in 0..per_iteration_cycles {
+            route_worker_frame_to_route(
+                &router,
+                family,
+                *worker_session_id,
+                worker_source,
+                ROUTE_STR,
+                build_rpc_response_frame(
+                    current_correlation_id,
+                    b"pending cardinality payload",
+                ),
+            );
+            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+
+            let (request_msg_type, request_payload) = request_ring.next_frame();
+            dispatch_request(
+                &router,
+                family,
+                &requester_source,
+                request_msg_type,
+                request_payload,
+            );
+            current_correlation_id = drain_request_correlation(worker_inbox, family);
+        }
+        black_box(&workers);
+    });
+    ctx.set_elements(per_iteration_cycles * iterations as u64);
+}
+
 #[stress_test]
 fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
@@ -615,6 +697,26 @@ fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
         512,
         "scaling_64_routes_dispatch_only",
     );
+}
+
+#[stress_test]
+fn should_complete_pending_cardinality_steady_state_1(ctx: &mut StressContext) {
+    measure_pending_cardinality_steady_state(ctx, 1, 100);
+}
+
+#[stress_test]
+fn should_complete_pending_cardinality_steady_state_64(ctx: &mut StressContext) {
+    measure_pending_cardinality_steady_state(ctx, 64, 100);
+}
+
+#[stress_test]
+fn should_complete_pending_cardinality_steady_state_256(ctx: &mut StressContext) {
+    measure_pending_cardinality_steady_state(ctx, 256, 100);
+}
+
+#[stress_test]
+fn should_complete_pending_cardinality_steady_state_1000(ctx: &mut StressContext) {
+    measure_pending_cardinality_steady_state(ctx, 1000, 100);
 }
 
 #[stress_test]

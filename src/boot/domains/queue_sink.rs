@@ -1188,7 +1188,8 @@ mod tests {
     }
 
     #[test]
-    fn should_refresh_queue_admin_snapshot_with_live_counts_and_leases() {
+    fn should_refresh_queue_admin_snapshot_with_live_queue_state() {
+        // Arrange
         let family = RouteFamily::new(1);
         let sender_session_id = 7;
         let worker_session_id = 8;
@@ -1210,6 +1211,7 @@ mod tests {
             cntryl_midge::WriteOptions::buffered(),
         );
 
+        // Act
         sink.deliver(Envelope::from_route(
             sender_address,
             queue_address.clone(),
@@ -1251,6 +1253,7 @@ mod tests {
 
         sink.refresh_admin_snapshot_if_dirty();
 
+        // Assert
         let queues = admin_read_model.queues(None);
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].realm, "acme");
@@ -1273,6 +1276,7 @@ mod tests {
 
     #[test]
     fn should_cleanup_queue_leases_for_disconnected_session() {
+        // Arrange
         let family = RouteFamily::new(1);
         let sender_session_id = 7;
         let worker_session_id = 8;
@@ -1294,6 +1298,7 @@ mod tests {
             cntryl_midge::WriteOptions::buffered(),
         );
 
+        // Act
         sink.deliver(Envelope::from_route(
             sender_address,
             queue_address.clone(),
@@ -1341,6 +1346,7 @@ mod tests {
 
         sink.refresh_admin_snapshot_if_dirty();
 
+        // Assert
         let queues = admin_read_model.queues(None);
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].messages_ready, 1);
@@ -1351,6 +1357,7 @@ mod tests {
 
     #[test]
     fn should_evict_idle_queue_actor_without_losing_committed_state() {
+        // Arrange
         let family = RouteFamily::new(1);
         let sender_session_id = 7;
         let worker_session_id = 8;
@@ -1390,6 +1397,7 @@ mod tests {
             .expect("enqueue response");
         assert_eq!(sink.actors.lock().len(), 1);
 
+        // Act
         force_actor_idle(&sink, queue_route, family);
         sink.refresh_admin_snapshot_if_dirty();
         assert!(
@@ -1423,12 +1431,15 @@ mod tests {
         assert_eq!(receive_response_message_count(&reserve_frame), 1);
 
         sink.refresh_admin_snapshot_if_dirty();
+
+        // Assert
         assert_eq!(sink.actors.lock().len(), 1);
         assert_eq!(admin_read_model.queues(None)[0].messages_leased, 1);
     }
 
     #[test]
     fn should_not_evict_idle_queue_actor_with_live_leases() {
+        // Arrange
         let family = RouteFamily::new(1);
         let sender_session_id = 7;
         let worker_session_id = 8;
@@ -1484,9 +1495,11 @@ mod tests {
             .try_recv()
             .expect("reserve response");
 
+        // Act
         force_actor_idle(&sink, queue_route, family);
         sink.refresh_admin_snapshot_if_dirty();
 
+        // Assert
         assert_eq!(
             sink.actors.lock().len(),
             1,

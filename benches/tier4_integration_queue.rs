@@ -140,18 +140,28 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
 
 #[stress_test]
 fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
+    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues", 10);
+}
+
+fn measure_multiclient_concurrent_enqueues(
+    ctx: &mut StressContext,
+    scenario: &'static str,
+    client_count: usize,
+) {
     ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", "concurrent_enqueues");
+    ctx.tag("scenario", scenario);
     ctx.tag("measurement_scope", "ws_multiclient_e2e");
-    ctx.tag("batch_size", "10_clients_1_enqueue_each");
-    ctx.tag("client_count", "10");
+    let batch_size = format!("{client_count}_clients_1_enqueue_each");
+    ctx.tag("batch_size", batch_size.as_str());
+    let client_count_tag = client_count.to_string();
+    ctx.tag("client_count", client_count_tag.as_str());
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let clients: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
+    let clients: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..client_count)
         .map(|_| {
             let c = runtime
                 .block_on(TestWebSocketClient::connect(&format!(
@@ -175,7 +185,27 @@ fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
                 }
             })));
     });
-    ctx.set_elements(10 * iterations as u64);
+    ctx.set_elements(client_count as u64 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_multiclient_concurrent_enqueues_client_scaling_1(ctx: &mut StressContext) {
+    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 1);
+}
+
+#[stress_test]
+fn should_complete_multiclient_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
+    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 4);
+}
+
+#[stress_test]
+fn should_complete_multiclient_concurrent_enqueues_client_scaling_16(ctx: &mut StressContext) {
+    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 16);
+}
+
+#[stress_test]
+fn should_complete_multiclient_concurrent_enqueues_client_scaling_64(ctx: &mut StressContext) {
+    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 64);
 }
 
 stress_main!();
