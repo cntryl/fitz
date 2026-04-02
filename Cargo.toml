@@ -8,6 +8,10 @@ repository = "https://github.com/cntryl/fitz"
 keywords = ["database", "kv", "lsm", "embedded", "storage"]
 categories = ["message-broker"]
 
+[workspace]
+members = ["tools/fitz-tools"]
+resolver = "2"
+
 [profile.release]
 lto = true
 codegen-units = 1

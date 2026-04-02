@@ -102,7 +102,7 @@ cargo test test_guidelines_compliance
 Or validate all tests at once:
 
 ```powershell
-python ./scripts/validate_tests.py --summary
+cargo fitz-tools validate-tests --summary
 ```
 
 ---

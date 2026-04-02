@@ -1,7 +1,7 @@
 # GitHub Copilot Instructions for Fitz Project
 
-- did you validate tests? `python ./scripts/validate_tests.py --summary`
-- did you fix all clippy warnings? `cargo clippy --all-targets`
+- did you validate tests? `cargo fitz-tools validate-tests --summary`
+- did you fix all clippy warnings? `cargo clippy --workspace --all-targets`
 
 ## Test Writing Guidelines - STRICTLY ENFORCE
 
@@ -841,13 +841,13 @@ See these files for excellent benchmark patterns:
 **Local development:**
 
 ```bash
-cargo test                          # Run all tests
+cargo test --workspace              # Run all tests across workspace members
 cargo test --lib                    # Unit tests only
 cargo test --test '*'               # Integration tests only
 cargo test test_guidelines_compliance  # Meta-test for test naming/structure
 cargo fmt --all -- --check          # Check formatting
-cargo clippy -D warnings            # Lint with warnings as errors
-cargo build --release               # Optimized build
+cargo clippy --workspace --all-targets -- -D warnings  # Lint with warnings as errors
+cargo build --workspace --release   # Optimized build
 ```
 
 **Common patterns:**
@@ -861,8 +861,8 @@ cargo build --release               # Optimized build
 
 ```bash
 cargo fmt --all
-cargo clippy -D warnings
-cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
 ---

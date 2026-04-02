@@ -24,6 +24,16 @@ use std::time::Duration;
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const LIFECYCLE_SESSION_ID: u64 = 20_000;
 
+#[derive(Clone, Copy)]
+struct NoticeFanoutCase {
+    scenario: &'static str,
+    subscriber_count: usize,
+    pattern: &'static str,
+    publish_route: &'static str,
+    payload: &'static [u8],
+    match_kind: &'static str,
+}
+
 struct NoticeRequestHarness {
     router: Arc<Router>,
     family: RouteFamily,
@@ -120,25 +130,23 @@ impl NoticeRequestHarness {
     }
 }
 
-#[stress_test]
-fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
-    ctx.tag("scenario", "sustained_fanout");
+fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
+    ctx.tag("scenario", case.scenario);
     ctx.tag("measurement_scope", "routed_fanout");
     ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "1");
+    let subscriber_count = case.subscriber_count.to_string();
+    ctx.tag("subscriber_count", subscriber_count.as_str());
+    ctx.tag("match_kind", case.match_kind);
 
-    let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/orders/*");
-    let publish_frame = build_notice_publish(
-        "notice://realm/area/orders/create",
-        Bytes::from_static(b"sustained fanout message").as_ref(),
-    );
+    let (router, family, publisher_source) = setup_notice_sink(case.subscriber_count, case.pattern);
+    let publish_frame = build_notice_publish(case.publish_route, case.payload);
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(Duration::from_secs(5), || {
         route_frame(
             router.as_ref(),
             &publisher_source,
-            "notice://realm/area/orders/create",
+            case.publish_route,
             PUBLISHER_SESSION_ID,
             ChannelId::Pub,
             msg_type,
@@ -148,66 +156,126 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
         .expect("notice publish");
     });
     ctx.set_elements(iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "sustained_fanout",
+            subscriber_count: 1,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"sustained fanout message",
+            match_kind: "single_star",
+        },
+    );
 }
 
 #[stress_test]
 fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
-    ctx.tag("scenario", "pattern_matching");
-    ctx.tag("measurement_scope", "routed_fanout");
-    ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "1");
-
-    let (router, family, publisher_source) = setup_notice_sink(1, "notice://realm/area/**");
-    let publish_frame = build_notice_publish(
-        "notice://realm/area/orders/created",
-        Bytes::from_static(b"pattern match message").as_ref(),
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "pattern_matching",
+            subscriber_count: 1,
+            pattern: "notice://realm/area/**",
+            publish_route: "notice://realm/area/orders/created",
+            payload: b"pattern match message",
+            match_kind: "double_star",
+        },
     );
-    let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
-
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        route_frame(
-            router.as_ref(),
-            &publisher_source,
-            "notice://realm/area/orders/created",
-            PUBLISHER_SESSION_ID,
-            ChannelId::Pub,
-            msg_type,
-            payload.clone(),
-            family,
-        )
-        .expect("notice publish");
-    });
-    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
-    ctx.tag("scenario", "high_subscriber_count");
-    ctx.tag("measurement_scope", "routed_fanout");
-    ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "100");
-
-    let (router, family, publisher_source) = setup_notice_sink(100, "notice://realm/area/orders/*");
-    let publish_frame = build_notice_publish(
-        "notice://realm/area/orders/create",
-        Bytes::from_static(b"high subscriber fanout").as_ref(),
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "high_subscriber_count",
+            subscriber_count: 100,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"high subscriber fanout",
+            match_kind: "single_star",
+        },
     );
-    let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
+}
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        route_frame(
-            router.as_ref(),
-            &publisher_source,
-            "notice://realm/area/orders/create",
-            PUBLISHER_SESSION_ID,
-            ChannelId::Pub,
-            msg_type,
-            payload.clone(),
-            family,
-        )
-        .expect("notice publish");
-    });
-    ctx.set_elements(iterations as u64);
+#[stress_test]
+fn should_complete_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "fanout_subscriber_scaling",
+            subscriber_count: 1,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"subscriber scaling fanout",
+            match_kind: "single_star",
+        },
+    );
+}
+
+#[stress_test]
+fn should_complete_fanout_subscriber_scaling_16(ctx: &mut StressContext) {
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "fanout_subscriber_scaling",
+            subscriber_count: 16,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"subscriber scaling fanout",
+            match_kind: "single_star",
+        },
+    );
+}
+
+#[stress_test]
+fn should_complete_fanout_subscriber_scaling_64(ctx: &mut StressContext) {
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "fanout_subscriber_scaling",
+            subscriber_count: 64,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"subscriber scaling fanout",
+            match_kind: "single_star",
+        },
+    );
+}
+
+#[stress_test]
+fn should_complete_fanout_subscriber_scaling_256(ctx: &mut StressContext) {
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "fanout_subscriber_scaling",
+            subscriber_count: 256,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"subscriber scaling fanout",
+            match_kind: "single_star",
+        },
+    );
+}
+
+#[stress_test]
+fn should_complete_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
+    measure_notice_fanout(
+        ctx,
+        NoticeFanoutCase {
+            scenario: "fanout_subscriber_scaling",
+            subscriber_count: 1000,
+            pattern: "notice://realm/area/orders/*",
+            publish_route: "notice://realm/area/orders/create",
+            payload: b"subscriber scaling fanout",
+            match_kind: "single_star",
+        },
+    );
 }
 
 #[stress_test]

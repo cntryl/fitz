@@ -9,6 +9,7 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "tools/**"
       - "*.toml"
       - ".cargo/**"
   pull_request:
@@ -16,6 +17,7 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "tools/**"
       - "*.toml"
       - ".cargo/**"
 
@@ -37,13 +39,13 @@ jobs:
           shared-key: "ci"
 
       - name: Validate Test Structure
-        run: python ./scripts/validate_tests.py --summary
+        run: cargo fitz-tools validate-tests --summary
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build
-        run: cargo build
+        run: cargo build --workspace
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace

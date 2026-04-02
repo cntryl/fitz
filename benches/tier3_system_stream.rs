@@ -11,11 +11,13 @@ use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
     build_stream_read, build_stream_subscribe, create_bench_stream_sink, extract_single_tlv_field,
-    parse_stream_session_id, register_session_queue_sink, route_frame, FrameQueueSink,
+    parse_stream_session_id, register_session_counting_sink, register_session_queue_sink,
+    route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
+use std::cell::Cell;
 use std::sync::Arc;
 
 const CLIENT_SESSION_ID: u64 = 1;
@@ -65,31 +67,6 @@ fn request(
         .expect("stream response")
 }
 
-fn request_with_session(
-    context: &StreamBenchContext,
-    destination: &str,
-    session_id: u64,
-    msg_type: u16,
-    payload: Bytes,
-) -> Bytes {
-    route_frame(
-        context.router.as_ref(),
-        &context.source,
-        destination,
-        session_id,
-        ChannelId::Pub,
-        msg_type,
-        payload,
-        context.family,
-    )
-    .expect("stream route");
-    let responses = context.inbox.drain();
-    responses
-        .last()
-        .map(|frame| frame.payload.clone())
-        .expect("stream response")
-}
-
 fn begin_stream(context: &StreamBenchContext, route: &str, expected_offset: u64) -> u64 {
     let begin_frame = build_stream_begin(route, expected_offset);
     let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
@@ -97,10 +74,26 @@ fn begin_stream(context: &StreamBenchContext, route: &str, expected_offset: u64)
     parse_stream_session_id(response.as_ref()).expect("stream session id")
 }
 
-fn subscribe_stream(context: &StreamBenchContext, route: &str, session_id: u64, pattern: &str) {
+fn subscribe_stream(
+    context: &StreamBenchContext,
+    source: &RouteAddress,
+    destination: &str,
+    session_id: u64,
+    pattern: &str,
+) {
     let subscribe_frame = build_stream_subscribe(pattern);
     let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
-    let _ = request_with_session(context, route, session_id, msg_type, payload);
+    route_frame(
+        context.router.as_ref(),
+        source,
+        destination,
+        session_id,
+        ChannelId::Pub,
+        msg_type,
+        payload,
+        context.family,
+    )
+    .expect("stream subscribe");
 }
 
 #[stress_test]
@@ -201,33 +194,49 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     ctx.tag("scenario", "publish_fanout");
     ctx.tag("measurement_scope", "routed_fanout");
-    ctx.tag("batch_size", "10_commits");
+    ctx.tag("batch_size", "10_publishes");
     ctx.tag("subscriber_count", "16");
 
     let context = setup_stream_sink();
-    let route = "stream://bench/system/fanout/append";
+    let subscribe_destination = "stream://bench/system/fanout-control/append";
+    // Stream commit notifications are published on the committed resource route, not the append route.
+    let notify_pattern = "stream://bench/system/*";
+    let publish_routes: Vec<String> = (0..10)
+        .map(|index| format!("stream://bench/system/fanout-{index}/append"))
+        .collect();
+    let expected_offsets: Vec<Cell<u64>> = publish_routes.iter().map(|_| Cell::new(0)).collect();
 
-    for session_id in 2..18 {
-        subscribe_stream(&context, route, session_id, route);
-    }
-
-    let mut commits = Vec::with_capacity(10);
-    for _ in 0..10 {
-        let stream_session = begin_stream(&context, route, 0);
-        let append_frame = build_stream_append(stream_session, b"fanout event");
-        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-        let _ = request(&context, route, append_msg_type, append_payload);
-        let commit_frame = build_stream_commit(stream_session, 0);
-        let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-        commits.push((stream_session, commit_msg_type, commit_payload));
-    }
+    let _subscriber_sinks: Vec<_> = (2..18)
+        .map(|session_id| {
+            let (source, sink) =
+                register_session_counting_sink(&context.router, context.family, session_id);
+            subscribe_stream(
+                &context,
+                &source,
+                subscribe_destination,
+                session_id,
+                notify_pattern,
+            );
+            sink
+        })
+        .collect();
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        for (session_id, msg_type, payload) in &commits {
-            let _ = request_with_session(&context, route, *session_id, *msg_type, payload.clone());
+        for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
+            let stream_session = begin_stream(&context, route, expected_offset.get());
+
+            let append_frame = build_stream_append(stream_session, b"fanout event");
+            let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+            let _ = request(&context, route, append_msg_type, append_payload);
+
+            let commit_frame = build_stream_commit(stream_session, 0);
+            let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+            let _ = request(&context, route, commit_msg_type, commit_payload);
+
+            expected_offset.set(expected_offset.get().saturating_add(1));
         }
     });
-    ctx.set_elements(10 * iterations as u64);
+    ctx.set_elements(publish_routes.len() as u64 * iterations as u64);
 }
 
 #[stress_test]
