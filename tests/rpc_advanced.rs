@@ -29,6 +29,7 @@ use fixtures::transport::{
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -115,8 +116,39 @@ impl MailboxSink for CaptureFrameSink {
     }
 }
 
+#[derive(Default)]
+struct CountingFrameSink {
+    deliveries: AtomicUsize,
+}
+
+impl CountingFrameSink {
+    fn delivery_count(&self) -> usize {
+        self.deliveries.load(Ordering::Relaxed)
+    }
+}
+
+impl MailboxSink for CountingFrameSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        envelope
+            .payload::<FrameContext>()
+            .expect("frame context payload");
+        self.deliveries.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 fn register_capture_sink(router: &Arc<Router>, address: RouteAddress) -> Arc<CaptureFrameSink> {
     let sink = Arc::new(CaptureFrameSink::default());
+    router.register(address, sink.clone() as Arc<dyn MailboxSink>);
+    sink
+}
+
+fn register_counting_sink(router: &Arc<Router>, address: RouteAddress) -> Arc<CountingFrameSink> {
+    let sink = Arc::new(CountingFrameSink::default());
     router.register(address, sink.clone() as Arc<dyn MailboxSink>);
     sink
 }
@@ -392,6 +424,65 @@ fn should_create_timeout_error_with_correlation_id() {
     assert_eq!(error.correlation_id, correlation_id);
     assert_eq!(error.code, RpcErrorCode::Timeout);
     assert!(error.message.contains("timeout"));
+}
+
+#[test]
+fn should_reject_rpc_request_when_pending_capacity_reached_given_rpc_sink() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let sink = create_bench_rpc_sink(router.clone());
+    let family = RouteFamily::new(1);
+    let route = "rpc://test/services/backpressure";
+    let request_addr = RouteAddress::new(family, Route::new(route));
+    let worker_addr = session_inbox_address(family, 42);
+    let rejected_caller_addr = session_inbox_address(family, 2);
+    let worker_sink = register_counting_sink(&router, worker_addr.clone());
+    let rejected_caller_sink = register_capture_sink(&router, rejected_caller_addr.clone());
+
+    deliver_rpc_frame(
+        sink.as_ref(),
+        worker_addr,
+        request_addr.clone(),
+        42,
+        family,
+        &build_rpc_subscribe(route),
+    );
+
+    for _request_index in 0..4096 {
+        deliver_rpc_frame(
+            sink.as_ref(),
+            session_inbox_address(family, 7),
+            request_addr.clone(),
+            7,
+            family,
+            &build_rpc_request(route, "getUser", b"fill"),
+        );
+    }
+
+    // Act
+    deliver_rpc_frame(
+        sink.as_ref(),
+        rejected_caller_addr,
+        request_addr,
+        2,
+        family,
+        &build_rpc_request(route, "getUser", b"reject"),
+    );
+
+    // Assert
+    assert_eq!(sink.pending_request_count(), 4096);
+    assert_eq!(sink.worker_count(), 1);
+    assert_eq!(worker_sink.delivery_count(), 4097);
+
+    let rejected_frames = rejected_caller_sink.snapshot();
+    assert_eq!(rejected_frames.len(), 1);
+    let (_msg_type, status, data) = parse_rpc_response(&encode_captured_frame(&rejected_frames[0]));
+    assert_ne!(status, 0, "Expected backpressure rejection");
+
+    let (code, message) =
+        fitz::protocol::rpc_codec::decode_error_body(&data).expect("decode backpressure error");
+    assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE);
+    assert_eq!(message, "RPC backpressure: too many pending requests");
 }
 
 #[test]
