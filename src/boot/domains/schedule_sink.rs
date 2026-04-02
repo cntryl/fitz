@@ -2,6 +2,7 @@ use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -83,6 +84,36 @@ impl ScheduleDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    pub fn preload_persisted_families(&self) -> Result<(), String> {
+        let column_families = self
+            .store
+            .list_column_families()
+            .map_err(|e| format!("list schedule column families failed: {}", e))?;
+
+        let mut actors = self.actors.lock();
+        for column_family in column_families {
+            if column_family.id() == 0 {
+                continue;
+            }
+
+            let family = crate::runtime::routing::RouteFamily::new(column_family.id().into());
+            if actors.contains_key(&family) {
+                continue;
+            }
+
+            let actor = crate::domains::schedule::ScheduleActor::try_new(
+                family,
+                self.store.clone(),
+                cntryl_midge::WriteOptions::buffered(),
+            )?;
+            actors.insert(family, actor);
+        }
+        drop(actors);
+
+        self.schedule_admin_snapshot(true);
+        Ok(())
+    }
+
     pub fn start_tick_loop(self: &Arc<Self>) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
@@ -149,6 +180,27 @@ impl ScheduleDomainSink {
 
         self.scan_due_schedules();
         self.schedule_admin_snapshot(true);
+    }
+
+    fn get_or_create_actor<'a>(
+        &'a self,
+        actors: &'a mut HashMap<
+            crate::runtime::routing::RouteFamily,
+            crate::domains::schedule::ScheduleActor,
+        >,
+        route_family: crate::runtime::routing::RouteFamily,
+    ) -> Result<&'a mut crate::domains::schedule::ScheduleActor, String> {
+        match actors.entry(route_family) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let actor = crate::domains::schedule::ScheduleActor::try_new(
+                    route_family,
+                    self.store.clone(),
+                    cntryl_midge::WriteOptions::buffered(),
+                )?;
+                Ok(entry.insert(actor))
+            }
+        }
     }
 
     fn route_schedule_notify(
@@ -278,6 +330,10 @@ impl ScheduleDomainSink {
             self.snapshot_syncing.store(false, Ordering::Release);
         }
     }
+
+    pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {
+        self.maybe_sync_admin_snapshot(true);
+    }
 }
 
 impl MailboxSink for ScheduleDomainSink {
@@ -347,15 +403,28 @@ impl MailboxSink for ScheduleDomainSink {
         let mut schedule_snapshot_dirty = false;
 
         let response = {
-            let store = self.store.clone();
             let mut actors = self.actors.lock();
-            let actor = actors.entry(route_family).or_insert_with(|| {
-                crate::domains::schedule::ScheduleActor::new(
-                    route_family,
-                    store,
-                    cntryl_midge::WriteOptions::buffered(),
-                )
-            });
+            let actor = match self.get_or_create_actor(&mut actors, route_family) {
+                Ok(actor) => actor,
+                Err(error) => {
+                    let response = ScheduleResponse::Error(error);
+                    let response_bytes = crate::protocol::schedule_codec::encode_response_into(
+                        &mut payload_encoder,
+                        &response,
+                    );
+                    let response_ctx = FrameContext::new(
+                        frame_ctx.session_id,
+                        frame_ctx.channel_id,
+                        crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                        bytes::Bytes::from(response_bytes),
+                        frame_ctx.route_family,
+                    );
+                    if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                        let _ = self.router.route(response_envelope);
+                    }
+                    return Ok(());
+                }
+            };
 
             match schedule_msg {
                 ScheduleMessage::Create {

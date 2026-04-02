@@ -43,23 +43,52 @@ pub struct TestServer {
 impl TestServer {
     /// Start a test server with auth disabled (backward compatible)
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_options(false, None).await
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+        )
+        .await
     }
 
     pub async fn start_with_rpc_timeout(
         rpc_request_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_options(false, Some(rpc_request_timeout)).await
+        Self::start_with_options(
+            false,
+            Some(rpc_request_timeout),
+            crate::boot::runtime::StorageMode::Memory,
+        )
+        .await
     }
 
     /// Start a test server with configurable auth mode
     pub async fn start_with_auth(auth_required: bool) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_options(auth_required, None).await
+        Self::start_with_options(
+            auth_required,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+        )
+        .await
+    }
+
+    pub async fn start_with_local_storage(
+        db_path: impl Into<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::LocalDisk {
+                db_path: db_path.into(),
+            },
+        )
+        .await
     }
 
     async fn start_with_options(
         auth_required: bool,
         rpc_request_timeout: Option<Duration>,
+        storage_mode: crate::boot::runtime::StorageMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
@@ -91,7 +120,7 @@ impl TestServer {
             bind_addr: "127.0.0.1".to_string(),
             tcp_port: tcp_addr.port(),
             http_port: ws_addr.port(), // Use discovered WS port
-            storage_mode: crate::boot::runtime::StorageMode::Memory,
+            storage_mode,
             auth_required,
             auth_config: if auth_required {
                 crate::auth::AuthConfig::hmac("test-secret-key", "fitz")
@@ -270,6 +299,22 @@ impl TestServer {
 
         domains.schedule.force_due_scan_for_tests(ready_count);
         Ok(())
+    }
+
+    pub async fn shutdown(self) {
+        let TestServer {
+            _tcp_shutdown: tcp_shutdown,
+            _ws_shutdown: ws_shutdown,
+            runtime,
+            _permit: permit,
+            ..
+        } = self;
+
+        let _ = tcp_shutdown.send(());
+        let _ = ws_shutdown.send(());
+        drop(runtime);
+        drop(permit);
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 

@@ -34,13 +34,13 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Concrete Tasks
 
-- [ ] Split durable schedule definition storage from the next-fire index.
-- [ ] Make the next-fire index rebuildable instead of authoritative.
-- [ ] Remove TTL from the durable schedule definition row.
-- [ ] Fail or roll back fire/reschedule when persistence fails instead of silently advancing in memory.
-- [ ] Preload persisted schedules during boot instead of waiting for the first request in a family.
-- [ ] Keep admin schedule snapshots aligned with the preloaded actor state.
-- [ ] Add restart and downtime regressions proving schedules do not disappear.
+- [x] Split durable schedule definition storage from the next-fire index.
+- [x] Make the next-fire index rebuildable instead of authoritative.
+- [x] Remove TTL from the durable schedule definition row.
+- [x] Fail or roll back fire/reschedule when persistence fails instead of silently advancing in memory.
+- [x] Preload persisted schedules during boot instead of waiting for the first request in a family.
+- [x] Keep admin schedule snapshots aligned with the preloaded actor state.
+- [x] Add restart and downtime regressions proving schedules do not disappear.
 
 ## Non-Goals
 
@@ -50,10 +50,10 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Verification
 
-- [ ] Restart the broker without sending any schedule-domain traffic and prove persisted schedules still exist and fire.
-- [ ] Keep the broker down longer than the old grace period and prove recurring schedules survive.
-- [ ] Force a persistence failure on reschedule and prove the in-memory actor does not silently advance.
-- [ ] Run `cargo test` for schedule-focused tests after the redesign lands.
+- [x] Restart the broker without sending any schedule-domain traffic and prove persisted schedules still exist and fire.
+- [x] Keep the broker down longer than the old grace period and prove recurring schedules survive.
+- [x] Force a persistence failure on reschedule and prove the in-memory actor does not silently advance.
+- [x] Run `cargo test` for schedule-focused tests after the redesign lands.
 
 ## Files To Touch First
 

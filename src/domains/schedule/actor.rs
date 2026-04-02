@@ -2,7 +2,7 @@ use crate::domains::schedule::protocol::{
     parse_concrete_schedule_route, validate_concrete_schedule_route, CronSchedule,
     ScheduleCreateEntry, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
-use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
+use crate::domains::schedule::store::{PersistedSchedule, ScheduleInsert, ScheduleStore};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
@@ -28,42 +28,70 @@ struct PendingScheduleCreate {
     previous_list_index: Option<usize>,
 }
 
-/// Schedule actor: manages time-based triggers with route-based identity
+struct PendingScheduleFire {
+    route: String,
+    cron: String,
+    payload: Bytes,
+    next_fire_time: Instant,
+    next_fire_ms: u64,
+    previous_fire_ms: u64,
+}
+
+/// Durable schedule coordinator for one route family.
 ///
-/// Stores schedules by route string as the unique key.
-/// When a schedule fires, it publishes to matching subscribers (fanout pattern).
+/// Persisted schedule definitions survive broker restart and downtime through
+/// Midge. Live subscriptions and fanout delivery remain session-scoped and
+/// ephemeral. The in-memory heap is only a derived accelerator: authoritative
+/// state lives in the persisted definition row, and the due index can always be
+/// rebuilt from those durable definitions.
 pub struct ScheduleActor {
-    /// RouteFamily for storage column family mapping
+    /// RouteFamily for storage column family mapping.
     family: RouteFamily,
-    /// Persistent storage
+    /// Durable schedule storage plus legacy migration helpers.
     store: ScheduleStore,
-    /// In-memory schedule cache: route -> ScheduleDef
+    /// In-memory schedule cache: route -> ScheduleDef.
     schedules: FastMap<String, ScheduleDef>,
     /// Parsed cron expressions reused across repeated creates/upserts.
     cron_cache: FastMap<String, CronSchedule>,
     /// Canonical mutable LIST backing store.
     list_entries: Vec<Arc<ScheduleListEntry>>,
     /// Cached full LIST snapshot reused by the common `offset=0, limit=0` path.
-    /// Mutations invalidate this cache instead of cloning it via `Arc::make_mut`.
     list_cache: Option<Arc<Vec<Arc<ScheduleListEntry>>>>,
-    /// Write options for persistence
+    /// Write options for persistence.
     write_options: cntryl_midge::WriteOptions,
-    /// Last scan time to deduplicate rapid scans
+    /// Last scan time to deduplicate rapid scans.
     last_scan_time: Instant,
-    /// Minimum interval between scans (deduplication window)
+    /// Minimum interval between scans (deduplication window).
     scan_dedup_window: std::time::Duration,
-    /// Priority queue of schedules ordered by next fire time (min-heap with Reverse)
-    /// Stores (next_fire_ms, route_clone) for efficient ready detection
+    /// Derived min-heap of due timestamps keyed by route. Stale entries are
+    /// tolerated and ignored by comparing each popped timestamp against the
+    /// current definition's `next_fire_ms`.
     ready_heap: BinaryHeap<(Reverse<u64>, String)>,
 }
 
 impl ScheduleActor {
-    /// Create a new schedule actor for a specific route family
+    pub fn try_new(
+        family: RouteFamily,
+        db: Arc<cntryl_midge::Engine>,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Result<Self, String> {
+        Self::try_new_at(family, db, write_options, Instant::now())
+    }
+
     pub fn new(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
         write_options: cntryl_midge::WriteOptions,
     ) -> Self {
+        Self::try_new(family, db, write_options).expect("schedule actor startup should succeed")
+    }
+
+    fn try_new_at(
+        family: RouteFamily,
+        db: Arc<cntryl_midge::Engine>,
+        write_options: cntryl_midge::WriteOptions,
+        now: Instant,
+    ) -> Result<Self, String> {
         let store = ScheduleStore::new(db);
         let mut actor = Self {
             family,
@@ -73,46 +101,87 @@ impl ScheduleActor {
             list_entries: Vec::new(),
             list_cache: None,
             write_options,
-            last_scan_time: Instant::now(),
+            last_scan_time: now,
             scan_dedup_window: std::time::Duration::from_millis(10),
             ready_heap: BinaryHeap::new(),
         };
 
-        // Load persisted schedules on startup
-        if let Ok(entries) = actor.store.load_all(family.as_u64()) {
-            for (route, cron_str, payload, next_fire_ms) in entries {
-                match CronSchedule::parse(&cron_str) {
-                    Ok(cron) => {
-                        actor.cron_cache.insert(cron_str.clone(), cron.clone());
-                        let next_fire = Self::ms_to_instant(next_fire_ms);
-                        let list_index =
-                            actor.push_list_entry(route.as_str(), cron_str.as_str(), &payload);
-                        let def = ScheduleDef {
-                            route: route.clone(),
-                            cron: cron_str,
-                            parsed_cron: cron,
-                            payload,
-                            next_fire_time: next_fire,
-                            next_fire_ms,
-                            storage_key: ScheduleStore::encode_key(next_fire_ms, &route),
-                            index_key: ScheduleStore::encode_index_key(&route),
-                            list_index,
+        actor.preload_from_store_at(now)?;
+        Ok(actor)
+    }
+
+    fn preload_from_store_at(&mut self, now: Instant) -> Result<(), String> {
+        let now_ms = Self::instant_to_ms_at(now, now);
+        let entries = self.store.load_all(self.family.as_u64(), self.write_options)?;
+        let mut normalization_batch = Vec::new();
+
+        for PersistedSchedule {
+            route,
+            cron,
+            payload,
+            next_fire_ms,
+        } in entries
+        {
+            match CronSchedule::parse(&cron) {
+                Ok(parsed_cron) => {
+                    self.cron_cache.insert(cron.clone(), parsed_cron.clone());
+
+                    let (effective_next_fire_time, effective_next_fire_ms, previous_fire_ms) =
+                        if next_fire_ms <= now_ms {
+                            let normalized_next_fire_time = parsed_cron.next_fire_time(now);
+                            let normalized_next_fire_ms =
+                                Self::instant_to_ms_at(normalized_next_fire_time, now);
+                            normalization_batch.push((
+                                route.clone(),
+                                cron.clone(),
+                                payload.clone(),
+                                normalized_next_fire_ms,
+                                Some(next_fire_ms),
+                            ));
+                            (
+                                normalized_next_fire_time,
+                                normalized_next_fire_ms,
+                                Some(next_fire_ms),
+                            )
+                        } else {
+                            (Self::ms_to_instant_at(next_fire_ms, now), next_fire_ms, None)
                         };
-                        actor.schedules.insert(route.clone(), def);
-                        // Add to ready heap for efficient scanning
-                        actor.ready_heap.push((Reverse(next_fire_ms), route));
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to parse cron for persisted schedule {}: {}",
-                            route, e
-                        );
-                    }
+
+                    let _ = previous_fire_ms;
+                    let list_index =
+                        self.push_list_entry(route.as_str(), cron.as_str(), &payload);
+                    let def = ScheduleDef {
+                        route: route.clone(),
+                        cron,
+                        parsed_cron,
+                        payload,
+                        next_fire_time: effective_next_fire_time,
+                        next_fire_ms: effective_next_fire_ms,
+                        list_index,
+                    };
+
+                    self.schedules.insert(route.clone(), def);
+                    self.ready_heap
+                        .push((Reverse(effective_next_fire_ms), route.clone()));
+                }
+                Err(error) => {
+                    warn!(
+                        "Failed to parse cron for persisted schedule {}: {}",
+                        route, error
+                    );
                 }
             }
         }
 
-        actor
+        if !normalization_batch.is_empty() {
+            self.store.insert_batch(
+                self.family.as_u64(),
+                &normalization_batch,
+                self.write_options,
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn admin_snapshot(&self) -> Vec<crate::api::admin::ScheduleInfo> {
@@ -162,19 +231,15 @@ impl ScheduleActor {
         Ok(parsed)
     }
 
-    /// Create or update a schedule (upsert by route)
-    ///
-    /// Returns Ok(true) if the schedule was created or updated.
-    /// Returns Ok(false) for an idempotent no-op upsert.
-    pub fn create_schedule(
+    fn create_schedule_at(
         &mut self,
         route: String,
         cron: String,
         payload: Bytes,
+        now: Instant,
     ) -> Result<bool, String> {
         validate_concrete_schedule_route(&route)?;
 
-        let now = Instant::now();
         let (previous_next_fire_ms, previous_list_index) = self
             .schedules
             .get(&route)
@@ -188,67 +253,56 @@ impl ScheduleActor {
             }
         }
 
-        // Reuse parsed schedules for repeated cron strings on the hot create path.
         let cron_obj = self.parsed_cron_for(&cron)?;
+        let next_fire_time = cron_obj.next_fire_time(now);
+        let next_fire_ms = Self::instant_to_ms_at(next_fire_time, now);
 
-        // Calculate next fire time
-        let next_fire = cron_obj.next_fire_time(now);
-        let next_fire_ms = Self::instant_to_ms(next_fire);
-
-        // Persist first, then move payload into the in-memory definition.
-        let storage_key = self.store.insert(
+        self.store.insert(
             self.family.as_u64(),
             ScheduleInsert {
                 route: &route,
                 cron: &cron,
                 payload: &payload,
-                next_fire_time: next_fire,
                 next_fire_ms,
                 previous_fire_ms: previous_next_fire_ms,
-                previous_storage_key: self
-                    .schedules
-                    .get(&route)
-                    .map(|existing| existing.storage_key.clone()),
-                index_key: self
-                    .schedules
-                    .get(&route)
-                    .map(|existing| existing.index_key.clone()),
             },
             self.write_options,
         )?;
 
         let list_index = self.upsert_list_entry(previous_list_index, &route, &cron, &payload);
-
-        // Create in-memory definition with cached parsed cron
         let def = ScheduleDef {
             route: route.clone(),
             cron,
             parsed_cron: cron_obj,
             payload,
-            next_fire_time: next_fire,
+            next_fire_time,
             next_fire_ms,
-            storage_key,
-            index_key: ScheduleStore::encode_index_key(&route),
             list_index,
         };
 
         self.schedules.insert(route.clone(), def);
-
-        // Add to ready heap for efficient scanning
-        self.ready_heap.push((Reverse(next_fire_ms), route.clone()));
-
+        self.ready_heap.push((Reverse(next_fire_ms), route));
         Ok(true)
     }
 
-    /// Create or update multiple schedules in one persisted batch.
-    ///
-    /// Returns the number of schedules that changed in storage and memory.
-    pub fn create_schedules(&mut self, entries: Vec<ScheduleCreateEntry>) -> Result<usize, String> {
+    pub fn create_schedule(
+        &mut self,
+        route: String,
+        cron: String,
+        payload: Bytes,
+    ) -> Result<bool, String> {
+        self.create_schedule_at(route, cron, payload, Instant::now())
+    }
+
+    fn create_schedules_at(
+        &mut self,
+        entries: Vec<ScheduleCreateEntry>,
+        now: Instant,
+    ) -> Result<usize, String> {
         if entries.is_empty() {
             return Err("schedule batch must not be empty".to_string());
         }
 
-        let now = Instant::now();
         let mut seen_routes =
             FastSet::with_capacity_and_hasher(entries.len(), FxBuildHasher::default());
         let mut pending = Vec::with_capacity(entries.len());
@@ -286,7 +340,7 @@ impl ScheduleActor {
 
             let parsed_cron = self.parsed_cron_for(&entry.cron)?;
             let next_fire_time = parsed_cron.next_fire_time(now);
-            let next_fire_ms = Self::instant_to_ms(next_fire_time);
+            let next_fire_ms = Self::instant_to_ms_at(next_fire_time, now);
 
             pending.push(PendingScheduleCreate {
                 route: entry.route,
@@ -311,7 +365,6 @@ impl ScheduleActor {
                     entry.route.clone(),
                     entry.cron.clone(),
                     entry.payload.clone(),
-                    entry.next_fire_time,
                     entry.next_fire_ms,
                     entry.previous_fire_ms,
                 )
@@ -329,7 +382,6 @@ impl ScheduleActor {
                 &entry.cron,
                 &entry.payload,
             );
-
             let def = ScheduleDef {
                 route: entry.route.clone(),
                 cron: entry.cron,
@@ -337,8 +389,6 @@ impl ScheduleActor {
                 payload: entry.payload,
                 next_fire_time: entry.next_fire_time,
                 next_fire_ms: entry.next_fire_ms,
-                storage_key: ScheduleStore::encode_key(entry.next_fire_ms, &entry.route),
-                index_key: ScheduleStore::encode_index_key(&entry.route),
                 list_index,
             };
 
@@ -350,30 +400,36 @@ impl ScheduleActor {
         Ok(changed)
     }
 
-    /// Delete a schedule by route
+    pub fn create_schedules(&mut self, entries: Vec<ScheduleCreateEntry>) -> Result<usize, String> {
+        self.create_schedules_at(entries, Instant::now())
+    }
+
     pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
         validate_concrete_schedule_route(&route)?;
 
-        let Some(removed_def) = self.schedules.remove(&route) else {
+        let Some(existing) = self.schedules.get(&route) else {
             return Ok(false);
         };
-        self.remove_list_entry(removed_def.list_index);
 
-        self.store
-            .delete_prepared(
-                self.family.as_u64(),
-                removed_def.index_key,
-                removed_def.storage_key,
-                self.write_options,
-            )
-            .map(|()| true)
+        self.store.delete_current(
+            self.family.as_u64(),
+            &route,
+            existing.next_fire_ms,
+            self.write_options,
+        )?;
+
+        if let Some(removed_def) = self.schedules.remove(&route) {
+            self.remove_list_entry(removed_def.list_index);
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     pub fn schedule_count(&self) -> usize {
         self.schedules.len()
     }
 
-    /// List all schedules as (route, cron, payload) tuples
     pub fn list_defs(&self) -> Vec<(String, String, Bytes)> {
         self.list_entries
             .iter()
@@ -509,76 +565,100 @@ impl ScheduleActor {
         )
     }
 
-    /// Scan for schedules ready to fire and trigger them
-    ///
-    /// Called periodically by the tick handler.
-    /// Includes scan deduplication: avoids redundant scans within scan_dedup_window.
-    /// Uses a min-heap (ready_heap) to efficiently find schedules ready to fire O(k log n)
-    /// instead of scanning all schedules O(n).
-    /// Returns Vec<(route, payload)> for schedules that fired.
-    pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
-        let now = Instant::now();
-
-        // Deduplication: skip scan if last scan was too recent
+    fn scan_and_fire_at(&mut self, now: Instant) -> Vec<(String, Bytes)> {
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
         }
-
         self.last_scan_time = now;
-        let now_ms = Self::instant_to_ms(now);
-        let mut fired = Vec::new();
-        // Reuse single vec for persistence: (route, cron, payload, next_fire, next_fire_ms, previous_fire_ms)
-        let mut to_reschedule: Vec<(String, String, Bytes, Instant, u64, Option<u64>)> = Vec::new();
+
+        let now_ms = Self::instant_to_ms_at(now, now);
         let mut heap_popped = Vec::new();
-
-        // Peek the heap for schedules ready to fire (fire_ms <= now_ms)
-        // Pop all ready items and temporarily store them
         while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
-            if fire_ms <= now_ms {
-                if let Some((Reverse(fire_ms), route)) = self.ready_heap.pop() {
-                    heap_popped.push((fire_ms, route));
-                }
-            } else {
-                break; // Remaining items in heap are not ready yet
+            if fire_ms > now_ms {
+                break;
+            }
+            if let Some((Reverse(fire_ms), route)) = self.ready_heap.pop() {
+                heap_popped.push((fire_ms, route));
             }
         }
 
-        // Process fired schedules: build to_reschedule in store API shape (no extra batch clone)
+        let mut to_reschedule = Vec::new();
         for (fire_ms, route) in heap_popped {
-            if let Some(def) = self.schedules.get_mut(&route) {
-                // Use cached parsed cron instead of reparsing
-                let next_fire = def.parsed_cron.next_fire_time(now);
-                let next_fire_ms = Self::instant_to_ms(next_fire);
-                def.next_fire_time = next_fire;
-                def.next_fire_ms = next_fire_ms;
-                def.storage_key = ScheduleStore::encode_key(next_fire_ms, &route);
-                def.index_key = ScheduleStore::encode_index_key(&route);
-
-                to_reschedule.push((
-                    route.clone(),
-                    def.cron.clone(),
-                    def.payload.clone(),
-                    next_fire,
-                    next_fire_ms,
-                    Some(fire_ms),
-                ));
-                fired.push((route.clone(), def.payload.clone()));
-                info!("Schedule fired: {} (next fire: ~{:?})", route, next_fire);
+            let Some(def) = self.schedules.get(&route) else {
+                continue;
+            };
+            if def.next_fire_ms != fire_ms {
+                continue;
             }
+
+            let next_fire_time = def.parsed_cron.next_fire_time(now);
+            let next_fire_ms = Self::instant_to_ms_at(next_fire_time, now);
+            to_reschedule.push(PendingScheduleFire {
+                route: route.clone(),
+                cron: def.cron.clone(),
+                payload: def.payload.clone(),
+                next_fire_time,
+                next_fire_ms,
+                previous_fire_ms: fire_ms,
+            });
         }
 
-        // Batch reschedule: one transaction, pass to_reschedule directly (no extra clone)
-        let _ = self
+        if to_reschedule.is_empty() {
+            return Vec::new();
+        }
+
+        let store_items: Vec<_> = to_reschedule
+            .iter()
+            .map(|item| {
+                (
+                    item.route.clone(),
+                    item.cron.clone(),
+                    item.payload.clone(),
+                    item.next_fire_ms,
+                    Some(item.previous_fire_ms),
+                )
+            })
+            .collect();
+
+        if let Err(error) = self
             .store
-            .insert_batch(self.family.as_u64(), &to_reschedule, self.write_options);
-        for (route, _cron, _payload, _next_fire, next_fire_ms, _previous_fire_ms) in to_reschedule {
-            self.ready_heap.push((Reverse(next_fire_ms), route));
+            .insert_batch(self.family.as_u64(), &store_items, self.write_options)
+        {
+            warn!("Failed to persist schedule reschedule batch: {}", error);
+            for item in to_reschedule {
+                self.ready_heap
+                    .push((Reverse(item.previous_fire_ms), item.route.clone()));
+            }
+            return Vec::new();
+        }
+
+        let mut fired = Vec::with_capacity(store_items.len());
+        for item in to_reschedule {
+            let Some(def) = self.schedules.get_mut(&item.route) else {
+                continue;
+            };
+            if def.next_fire_ms != item.previous_fire_ms {
+                continue;
+            }
+
+            def.next_fire_time = item.next_fire_time;
+            def.next_fire_ms = item.next_fire_ms;
+            self.ready_heap
+                .push((Reverse(item.next_fire_ms), item.route.clone()));
+            fired.push((item.route.clone(), item.payload.clone()));
+            info!(
+                "Schedule fired: {} (next fire: ~{:?})",
+                item.route, item.next_fire_time
+            );
         }
 
         fired
     }
 
-    /// Scan and fire without persisting or re-adding to heap (for benchmarking CPU cost only).
+    pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
+        self.scan_and_fire_at(Instant::now())
+    }
+
     #[doc(hidden)]
     pub fn scan_and_fire_cpu_only(&mut self) -> Vec<(String, Bytes)> {
         let now = Instant::now();
@@ -586,38 +666,38 @@ impl ScheduleActor {
             return Vec::new();
         }
         self.last_scan_time = now;
-        let now_ms = Self::instant_to_ms(now);
-        let mut fired = Vec::new();
+
+        let now_ms = Self::instant_to_ms_at(now, now);
         let mut heap_popped = Vec::new();
 
         while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
-            if fire_ms <= now_ms {
-                if let Some((Reverse(_fire_ms), route)) = self.ready_heap.pop() {
-                    heap_popped.push(route);
-                }
-            } else {
+            if fire_ms > now_ms {
                 break;
+            }
+            if let Some((Reverse(fire_ms), route)) = self.ready_heap.pop() {
+                heap_popped.push((fire_ms, route));
             }
         }
 
-        for route in heap_popped {
-            if let Some(def) = self.schedules.get_mut(&route) {
-                let _next_fire = def.parsed_cron.next_fire_time(now);
-                fired.push((route.clone(), def.payload.clone()));
+        let mut fired = Vec::new();
+        for (fire_ms, route) in heap_popped {
+            if let Some(def) = self.schedules.get(&route) {
+                if def.next_fire_ms == fire_ms {
+                    fired.push((route.clone(), def.payload.clone()));
+                }
             }
         }
 
         fired
     }
 
-    /// Configure benchmark-ready schedule state without touching persistence.
     #[doc(hidden)]
     pub fn bench_prepare_scan(&mut self, ready_count: usize) {
         let now = Instant::now();
         let ready_limit = ready_count.min(self.list_entries.len());
-        let ready_ms = Self::instant_to_ms(now).saturating_sub(1);
+        let ready_ms = Self::instant_to_ms_at(now, now).saturating_sub(1);
         let not_ready_time = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
-        let not_ready_ms = Self::instant_to_ms(not_ready_time);
+        let not_ready_ms = Self::instant_to_ms_at(not_ready_time, now);
         let routes: Vec<_> = self
             .list_entries
             .iter()
@@ -636,8 +716,6 @@ impl ScheduleActor {
 
                 def.next_fire_time = next_fire_time;
                 def.next_fire_ms = next_fire_ms;
-                def.storage_key = ScheduleStore::encode_key(next_fire_ms, &route);
-                def.index_key = ScheduleStore::encode_index_key(&route);
                 self.ready_heap.push((Reverse(next_fire_ms), route));
             }
         }
@@ -647,47 +725,35 @@ impl ScheduleActor {
             .unwrap_or(now);
     }
 
-    /// Convert a target `Instant` into an approximate UNIX epoch timestamp (ms).
-    ///
-    /// `Instant` is monotonic and not directly epoch-based, so we anchor to "now"
-    /// and add/subtract the monotonic delta.
-    fn instant_to_ms(instant: Instant) -> u64 {
-        let now_instant = Instant::now();
-        let now_sys = std::time::SystemTime::now();
+    fn current_epoch_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_millis() as u64
+    }
 
-        let now_ms = if let Ok(elapsed) = now_sys.duration_since(std::time::UNIX_EPOCH) {
-            (elapsed.as_secs() * 1000) + (elapsed.subsec_millis() as u64)
+    fn instant_to_ms_at(instant: Instant, anchor: Instant) -> u64 {
+        let anchor_ms = Self::current_epoch_ms();
+        if instant >= anchor {
+            anchor_ms.saturating_add(instant.duration_since(anchor).as_millis() as u64)
         } else {
-            return 0;
-        };
-
-        if instant >= now_instant {
-            now_ms.saturating_add(instant.duration_since(now_instant).as_millis() as u64)
-        } else {
-            now_ms.saturating_sub(now_instant.duration_since(instant).as_millis() as u64)
+            anchor_ms.saturating_sub(anchor.duration_since(instant).as_millis() as u64)
         }
     }
 
-    fn ms_to_instant(timestamp_ms: u64) -> Instant {
-        let now_instant = Instant::now();
-        let now_ms = if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
-            (elapsed.as_secs() * 1000) + (elapsed.subsec_millis() as u64)
+    fn ms_to_instant_at(timestamp_ms: u64, anchor: Instant) -> Instant {
+        let anchor_ms = Self::current_epoch_ms();
+        if timestamp_ms >= anchor_ms {
+            anchor
+                .checked_add(Duration::from_millis(timestamp_ms - anchor_ms))
+                .unwrap_or(anchor)
         } else {
-            return now_instant;
-        };
-
-        if timestamp_ms >= now_ms {
-            now_instant
-                .checked_add(Duration::from_millis(timestamp_ms - now_ms))
-                .unwrap_or(now_instant)
-        } else {
-            now_instant
-                .checked_sub(Duration::from_millis(now_ms - timestamp_ms))
-                .unwrap_or(now_instant)
+            anchor
+                .checked_sub(Duration::from_millis(anchor_ms - timestamp_ms))
+                .unwrap_or(anchor)
         }
     }
 
-    /// Handle schedule message (synchronous)
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
         match msg {
             ScheduleMessage::Create {
@@ -713,18 +779,9 @@ impl ScheduleActor {
                     total_count,
                 }
             }
-            ScheduleMessage::Subscribe { .. } => {
-                // Subscription handled by router, not actor
-                ScheduleResponse::Ok
-            }
-            ScheduleMessage::Unsubscribe { .. } => {
-                // Unsubscription handled by router, not actor
-                ScheduleResponse::Ok
-            }
-            ScheduleMessage::UnsubscribeAll { .. } => {
-                // Unsubscription handled by router, not actor
-                ScheduleResponse::Ok
-            }
+            ScheduleMessage::Subscribe { .. } => ScheduleResponse::Ok,
+            ScheduleMessage::Unsubscribe { .. } => ScheduleResponse::Ok,
+            ScheduleMessage::UnsubscribeAll { .. } => ScheduleResponse::Ok,
         }
     }
 }
@@ -740,10 +797,125 @@ impl Actor for ScheduleActor {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::testkit::create_test_engine_with_cfs;
+
+    fn make_actor() -> ScheduleActor {
+        let store = create_test_engine_with_cfs(vec![1]);
+        ScheduleActor::new(
+            RouteFamily::new(1),
+            store,
+            cntryl_midge::WriteOptions::buffered(),
+        )
+    }
 
     #[test]
-    fn should_create_schedule() {
-        // This test would require mocking the store, which we'll skip for now
-        // Actual tests will use the integration test suite
+    fn should_normalize_overdue_persisted_schedule_forward_on_preload() {
+        let db = create_test_engine_with_cfs(vec![1]);
+        let store = ScheduleStore::new(db.clone());
+        let route = "schedule://acme/jobs/normalize/run";
+        let payload = Bytes::from_static(b"payload");
+        let overdue_ms = ScheduleActor::current_epoch_ms().saturating_sub(4 * 60 * 60 * 1000);
+
+        store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms: overdue_ms,
+                    previous_fire_ms: None,
+                },
+                cntryl_midge::WriteOptions::buffered(),
+            )
+            .expect("insert overdue schedule");
+
+        let actor = ScheduleActor::try_new(
+            RouteFamily::new(1),
+            db,
+            cntryl_midge::WriteOptions::buffered(),
+        )
+        .expect("load actor");
+
+        let schedule = actor
+            .schedules
+            .get(route)
+            .expect("persisted schedule should be loaded");
+        assert!(schedule.next_fire_ms > overdue_ms);
+    }
+
+    #[test]
+    fn should_not_advance_in_memory_or_fire_when_reschedule_persist_fails() {
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/failure/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+        actor.bench_prepare_scan(1);
+
+        let before = actor
+            .schedules
+            .get(route)
+            .expect("schedule")
+            .next_fire_ms;
+
+        actor.store.fail_next_commit_for_tests();
+        let fired = actor.scan_and_fire();
+
+        assert!(fired.is_empty(), "scan should not emit on persist failure");
+        assert_eq!(
+            actor.schedules.get(route).expect("schedule").next_fire_ms,
+            before,
+            "in-memory schedule should not advance when persistence fails"
+        );
+    }
+
+    #[test]
+    fn should_ignore_stale_heap_entries_left_by_upsert() {
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/stale/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "0 2 * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+
+        let now = Instant::now();
+        let stale_fire_ms = ScheduleActor::instant_to_ms_at(now, now).saturating_sub(1);
+        let current_fire_ms = ScheduleActor::instant_to_ms_at(
+            now.checked_add(Duration::from_secs(60)).unwrap(),
+            now,
+        );
+
+        {
+            let schedule = actor.schedules.get_mut(route).expect("schedule");
+            schedule.next_fire_time = now.checked_add(Duration::from_secs(60)).unwrap();
+            schedule.next_fire_ms = current_fire_ms;
+        }
+        actor.ready_heap.clear();
+        actor
+            .ready_heap
+            .push((Reverse(stale_fire_ms), route.to_string()));
+        actor.last_scan_time = now
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        let fired = actor.scan_and_fire_at(now);
+
+        assert!(
+            fired.is_empty(),
+            "stale heap entry should not fire when definition has moved forward"
+        );
+        assert_eq!(
+            actor.schedules.get(route).expect("schedule").next_fire_ms,
+            current_fire_ms
+        );
     }
 }

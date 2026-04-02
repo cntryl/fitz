@@ -138,12 +138,8 @@ pub struct ScheduleDef {
     pub payload: Bytes,
     /// Next fire time calculated from cron + current time
     pub next_fire_time: Instant,
-    /// Exact next-fire timestamp used in the persisted storage key
+    /// Exact next-fire timestamp stored in the durable definition row
     pub next_fire_ms: u64,
-    /// Cached main storage key for the current next-fire timestamp.
-    pub storage_key: Vec<u8>,
-    /// Cached route index key for O(1) schedule lookups.
-    pub index_key: Vec<u8>,
     /// Current index in the actor's mutable LIST backing store.
     pub list_index: usize,
 }
@@ -637,8 +633,6 @@ mod tests {
             payload,
             next_fire_time: Instant::now(),
             next_fire_ms: 0,
-            storage_key: Vec::new(),
-            index_key: Vec::new(),
             list_index: 0,
         };
 

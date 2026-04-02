@@ -516,47 +516,26 @@ Force-releases an active in-memory lease on the current broker instance only. Th
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Schedule Domain
-#### List Schedules
+Schedule definitions are durable and are preloaded into per-family Schedule actors during broker boot. Admin schedule views therefore reflect persisted definitions before any schedule-domain traffic reaches that family. Schedule notifications and subscriptions remain live session-scoped delivery only, and `last_run` / `executions_total` are still non-authoritative placeholders in this round.
+
+#### Get Schedule Resource
 ```
-GET /admin/schedule/schedules?realm={realm}
-```
-**Response**:
-```json
-{
-  "schedules": [
-    {
-      "realm": "prod",
-      "area": "jobs",
-      "resource": "cleanup",
-      "cron": "0 2 * * *",
-      "next_run": "2026-02-01T02:00:00Z",
-      "last_run": "2026-01-31T02:00:00Z",
-      "executions_total": 365,
-      "enabled": true
-    }
-  ]
-}
-```
-#### Schedule Statistics
-```
-GET /admin/schedule/stats?realm={realm}
+GET /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}
 ```
 **Response**:
 ```json
 {
-  "schedules_active": 56,
-  "schedules_enabled": 54,
-  "schedules_disabled": 2,
-  "executions_per_minute": 23,
-  "executions_total": 1847392
+  "realm": "prod",
+  "area": "jobs",
+  "resource": "cleanup",
+  "enabled": true,
+  "cron": "0 2 * * *",
+  "next_run": "2026-02-01T02:00:00Z",
+  "executions_total": 0
 }
 ```
-#### Trigger Schedule Manually (Admin)
-```
-POST /admin/schedule/schedules/{schedule_id}/trigger
-```
-**Headers**: `X-Confirm: true`
-**Response**: 200 OK or 404 Not Found
+
+If multiple operations exist under the same resource, `cron` is omitted and `next_run` is the earliest next durable fire among that resource's persisted schedules.
 ## Sessions & Connections
 ### List Active Sessions
 ```
@@ -618,7 +597,8 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/rpc/pending?realm={realm}` - List pending RPC requests
 - `GET /api/v1/admin/lease/leases?realm={realm}` - List active in-memory leases
   - Lease snapshots are live only. They disappear on disconnect cleanup and are not restored after broker restart.
-- `GET /api/v1/admin/schedule/schedules?realm={realm}` - List schedules
+- `GET /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}` - Get durable Schedule resource detail
+  - Schedule definitions are durable and boot-loaded. Notification delivery remains live only, and `last_run` / `executions_total` are placeholders rather than durable execution history.
 - `GET /api/v1/admin/sessions?realm={realm}` - List active sessions
 ### 🚧 To Be Implemented
 **Admin Commands (Admin Auth + X-Confirm Header)**:
@@ -638,7 +618,6 @@ POST /admin/sessions/{session_id}/close
 - Queue: Track queue depths and leases, expose via admin query
 - RPC: Track workers and pending requests, expose via admin query
 - Lease: Track active leases, expose via admin query
-- Schedule: Track schedules, expose via admin query
 - Sessions: Track active sessions, expose via admin query
 ## Implementation Notes
 ### Metrics Collection

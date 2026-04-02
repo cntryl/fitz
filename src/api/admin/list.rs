@@ -113,6 +113,12 @@ pub struct LeaseResourceDetail {
     pub active_leases: usize,
 }
 
+/// Schedule resource detail derived from the current broker's durable,
+/// boot-loaded schedule definitions.
+///
+/// `enabled`, `cron`, and `next_run` reflect persisted schedule definitions for
+/// this resource. `executions_total` remains a non-authoritative placeholder
+/// until a separate durable execution-history pass lands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleResourceDetail {
     pub realm: String,
@@ -497,6 +503,12 @@ pub struct SchedulesList {
     pub schedules: Vec<ScheduleInfo>,
 }
 
+/// Schedule snapshot built from durable definitions preloaded into the current
+/// broker process at boot.
+///
+/// Schedule definitions survive restart and downtime. `last_run` and
+/// `executions_total` are still placeholders in this round; they do not provide
+/// durable execution history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleInfo {
     pub realm: String,

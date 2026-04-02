@@ -555,6 +555,7 @@ paths:
     get:
       tags: [Schedule]
       summary: List schedule realms
+      description: Lists realms with durable schedule definitions preloaded into the current broker process.
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -625,6 +626,7 @@ paths:
     get:
       tags: [Schedule]
       summary: Get schedule resource
+      description: Returns durable schedule definitions for this resource as seen by the current broker after boot preload. Schedule notifications remain live, session-scoped delivery only.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -1093,6 +1095,7 @@ components:
 
     ScheduleResourceDetail:
       type: object
+      description: Durable, boot-loaded schedule detail for the current broker. executions_total is a non-authoritative placeholder until durable execution history exists.
       required: [realm, area, resource, enabled, executions_total]
       properties:
         realm: { type: string }

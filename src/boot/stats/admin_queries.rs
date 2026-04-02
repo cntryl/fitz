@@ -22,6 +22,13 @@ impl Runtime {
         }
     }
 
+    fn refresh_schedule_admin_snapshot(&self) {
+        let domains = self.domains.read().clone();
+        if let Some(domains) = domains {
+            domains.schedule.refresh_admin_snapshot_if_dirty();
+        }
+    }
+
     pub fn kv_list_transactions(
         &self,
         realm: Option<&str>,
@@ -82,6 +89,7 @@ impl Runtime {
         &self,
         realm: Option<&str>,
     ) -> Vec<crate::api::admin::ScheduleInfo> {
+        self.refresh_schedule_admin_snapshot();
         self.admin_read_model.schedules(realm)
     }
 

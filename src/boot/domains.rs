@@ -141,6 +141,9 @@ pub fn setup(
         admin_read_model.clone(),
     ));
     router.register_domain_pattern("schedule", schedule_sink.clone() as Arc<dyn MailboxSink>);
+    schedule_sink
+        .preload_persisted_families()
+        .map_err(|error| format!("schedule preload failed: {}", error))?;
     schedule_sink.start_tick_loop();
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 

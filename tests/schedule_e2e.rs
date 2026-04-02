@@ -2,10 +2,12 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
+use bytes::Bytes;
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestServer;
 use fixtures::define_transport_tests;
 use fixtures::transport::*;
+use std::time::Duration;
 
 // Generic test helper for creating schedule
 async fn should_create_cron_schedule<C>(server: &TestServer)
@@ -358,6 +360,84 @@ where
     assert_eq!(retained_delivery.msg_type, 705);
     assert!(retained_delivery.subscription_id > 0);
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
+}
+
+#[tokio::test]
+async fn should_preload_persisted_schedules_before_schedule_traffic_after_restart() {
+    let tempdir = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-schedule-restart");
+    let db_path = db_path.to_string_lossy().to_string();
+    let route = "schedule://test/jobs/restart/run";
+
+    let boot_config = fitz::boot::runtime::BootConfig::with_local_storage(db_path.clone());
+    let store = fitz::boot::storage::init(&boot_config)
+        .await
+        .expect("init local storage");
+    let mut actor = fitz::domains::schedule::ScheduleActor::new(
+        fitz::runtime::routing::RouteFamily::new(1),
+        store.clone(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"persisted"),
+        )
+        .expect("persist schedule through actor");
+    drop(actor);
+    drop(store);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let server = TestServer::start_with_local_storage(db_path)
+        .await
+        .expect("start server from persisted schedule state");
+
+    let schedules = server.runtime.schedule_list_schedules(None);
+    let schedule = schedules
+        .iter()
+        .find(|item| {
+            item.realm == "test"
+                && item.area == "jobs"
+                && item.resource == "restart"
+                && item.operation == "run"
+        })
+        .expect("schedule should be visible before any schedule-domain traffic");
+    assert_eq!(schedule.cron, "* * * * *");
+    assert!(schedule.enabled);
+
+    let mut subscriber = TcpScheduleConnector::connect(&server)
+        .await
+        .expect("connect subscriber");
+    let subscribe_response = subscriber
+        .send_and_receive(&build_schedule_subscribe(route), 2000)
+        .await
+        .expect("subscribe schedule");
+    let (_msg_type, status, _data) = parse_schedule_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected success for subscribe after restart");
+
+    server
+        .force_schedule_scan_for_tests(1)
+        .expect("force schedule scan after restart");
+
+    let delivery = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("receive restarted schedule delivery");
+    let delivery = parse_schedule_delivery(&delivery).expect("parse schedule delivery");
+    assert_eq!(delivery.msg_type, 705);
+    assert_eq!(delivery.body.as_slice(), b"persisted");
+
+    let refreshed = server.runtime.schedule_list_schedules(None);
+    assert!(
+        refreshed.iter().any(|item| {
+            item.realm == "test"
+                && item.area == "jobs"
+                && item.resource == "restart"
+                && item.operation == "run"
+        }),
+        "schedule should remain present in admin after post-restart fire"
+    );
 }
 
 define_transport_tests!(

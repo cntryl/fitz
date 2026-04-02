@@ -1286,20 +1286,16 @@ A request is valid **only if**:
 **Valid Route Shapes:**
 
 - concrete route: `schedule://{realm}/{area}/{resource}/{operation}`
-- list selector: `schedule://{realm}/{area}/{resource}/{operation}`
-- list selector: `schedule://{realm}/{area}/{resource}/*`
-- list selector: `schedule://{realm}/{area}/*`
-- list selector: `schedule://{realm}/**`
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
   | -------- | ----------------------------------------------- |
   | `CREATE` | `{realm}/{area}/{resource}/{operation}` |
   | `CANCEL` | `{realm}/{area}/{resource}/{operation}` |
-  | `LIST` | exact 4-part route, `{realm}/{area}/{resource}/*`, `{realm}/{area}/*`, `{realm}/**` |
+  | `LIST` | no route payload; optional `[offset][limit]` pagination fields only |
   | `SUBSCRIBE` | `{realm}/{area}/{resource}/{operation}` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
-  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST, SUBSCRIBE, UNSUBSCRIBE as documented in the wire format section. LIST is fully documented with streaming protocol.
+  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST, SUBSCRIBE, UNSUBSCRIBE as documented in the wire format section. LIST returns a single response payload containing `total_count` plus zero or more schedule entries.
 
 ### Lease Domain
 
@@ -1579,7 +1575,7 @@ domains may still keep live server-side state where their contract requires it.
 
 ### Schedule Domain (Cron Scheduler)
 
-**Purpose:** Distributed one-time or recurring scheduled tasks.
+**Purpose:** Durable one-time or recurring schedule definitions with best-effort live fire notifications.
 
 **Canonical Operations:**
 
@@ -4013,7 +4009,7 @@ elif response.type == "Fenced":
 **Wire Format:**
 ```
 [u32 BE]  route_len
-[bytes]   route (e.g., "schedule://realm/area/resource")
+[bytes]   route (e.g., "schedule://realm/area/resource/operation")
 [u32 BE]  cron_len
 [bytes]   cron (UTF-8 cron expression, 5-field format)
 [u32 BE]  payload_len
@@ -4059,21 +4055,24 @@ Response (error=1):
 
 **Wire Format:**
 ```
-(no parameters - lists all schedules in current realm)
+optional:
+  [u8]     1 (offset present)
+  [u64 BE] offset
+  [u8]     1 (limit present)
+  [u64 BE] limit
 
-Response 1..N (streaming, one schedule per response):
+Response (success):
   [u8]     0 (status=success)
-  [u8]     1 (has_entry=true)
-  [u32 BE] route_len
-  [bytes]   route
-  [u32 BE] cron_len
-  [bytes]   cron
-  [u32 BE] payload_len
-  [bytes]  payload
-
-Response N+1 (final, end-of-stream):
-  [u8]     0 (status=success)
-  [u8]     0 (has_entry=false, no more schedules)
+  [u64 BE] total_count
+  repeat 0..N:
+    [u8]     1 (has_entry=true)
+    [u32 BE] route_len
+    [bytes]  route
+    [u32 BE] cron_len
+    [bytes]  cron
+    [u32 BE] payload_len
+    [bytes]  payload
+  [u8]     0 (has_entry=false, end sentinel)
 
 Response (error):
   [u8]     1 (status=error)
@@ -4081,11 +4080,10 @@ Response (error):
   [bytes]  error_msg
 ```
 
-**Streaming Protocol:**
-- Client continues reading until response with `has_entry=0`
-- Empty result set: Single response with `status=0, has_entry=0`
-- Non-empty result: N responses with schedules, then final response with `has_entry=0`
-- Client MUST NOT assume stream ends after fixed count
+**Semantics:**
+- Omitting the payload defaults to `offset=0, limit=100`
+- `limit=0` means "all remaining entries from offset"
+- LIST is scoped to the current route family and returns a single response payload, not a multi-frame stream
 
 #### Cron Syntax (Broker-Enforced)
 
@@ -4121,36 +4119,11 @@ Brokers MUST support standard 5-field cron format:
 Schedules are durable (persisted to storage):
 
 - Survive broker restart
-- Execution resumes at next scheduled time
+- Boot-load into Schedule actors before schedule-domain traffic reaches that family
+- Execution resumes at the next scheduled time
 - Missed schedules (broker down at scheduled time) are skipped
 - No catch-up or backfill for missed executions
-
-#### LIST Streaming
-
-LIST returns multiple responses (one schedule per response):
-
-```
-Response 1:
-  [u8]     0 (status)
-  [u8]     1 (has_entry)
-  [u32 BE] route_len
-  [bytes]  route
-  [u32 BE] cron_len
-  [bytes]  cron
-  [u32 BE] payload_len
-  [bytes]  payload
-Response 2:
-  [u8]     0 (status)
-  [u8]     1 (has_entry)
-  [u32 BE] route_len
-  [bytes]  route
-  ...
-Response N (final):
-  [u8]     0 (status)
-  [u8]     0 (has_entry=0, no more schedules)
-```
-
-Client MUST continue reading until `has_entry=0`.
+- Schedule subscriptions and notifications remain session-scoped live delivery only
 
 #### Usage Example
 
@@ -4179,7 +4152,7 @@ client.schedule_cancel(
 ```uses route as identity:
 
 - `CREATE`: `[route_len][route][cron_len][cron][payload_len][payload]`
-- `LIST`: (no parameters, lists all schedules)
+- `LIST`: optional `[offset][limit]`, returning one response with `total_count` plus entry sentinels
 - `CANCEL`: `[route_len][route]`
 
 #### Semantics
@@ -4254,7 +4227,7 @@ Response (status=1):
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
 - Idempotent: re-subscribing to the same route returns the same `subscription_id`
 - Client is responsible for local multiplexing when multiple handlers share the same route
-- Wildcard schedule subscribe is invalid; use `LIST` selectors for discovery instead
+- Wildcard schedule subscribe is invalid; subscriptions require the exact schedule route
 - When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with subscription_id and payload; the client matches notifications to the route they subscribed with
 
 #### Schedule UNSUBSCRIBE (704)
@@ -4565,7 +4538,7 @@ These items are **not standardized** and may require broker-specific implementat
 - Notice: PUBLISH/SUBSCRIBE include full route/pattern
 - RPC: REQUEST includes full route
 - Lease: ACQUIRE/RENEW/RELEASE include full route
-- Schedule: CREATE/CANCEL/LIST include full route
+- Schedule: CREATE/CANCEL include full route; LIST uses only optional offset/limit pagination fields
 
 **Why this design:**
 - Explicit routing: Each message is self-contained and fully addressable
