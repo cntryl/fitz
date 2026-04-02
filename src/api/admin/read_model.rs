@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 type ScheduleIdentity = (String, String, String, String);
+type LeaseIdentity = (String, String, String);
 
 fn schedule_identity_key(
     realm: &str,
@@ -24,8 +25,16 @@ fn schedule_identity_key(
     )
 }
 
+fn lease_identity_key(realm: &str, area: &str, resource: &str) -> LeaseIdentity {
+    (realm.to_string(), area.to_string(), resource.to_string())
+}
+
 fn schedule_identity_for(info: &ScheduleInfo) -> ScheduleIdentity {
     schedule_identity_key(&info.realm, &info.area, &info.resource, &info.operation)
+}
+
+fn lease_identity_for(info: &LeaseInfo) -> LeaseIdentity {
+    lease_identity_key(&info.realm, &info.area, &info.resource)
 }
 
 fn matches_realm(realm: Option<&str>, value: &str) -> bool {
@@ -67,7 +76,7 @@ pub struct AdminReadModel {
     queue_leases: RwLock<Vec<QueueLease>>,
     rpc_workers: RwLock<Vec<RpcWorker>>,
     rpc_pending: RwLock<Vec<RpcPendingRequest>>,
-    leases: RwLock<Vec<LeaseInfo>>,
+    leases: RwLock<BTreeMap<LeaseIdentity, LeaseInfo>>,
     schedules: RwLock<BTreeMap<ScheduleIdentity, ScheduleInfo>>,
     sessions: RwLock<HashMap<u64, SessionInfo>>,
 }
@@ -156,12 +165,29 @@ impl AdminReadModel {
     }
 
     pub fn replace_leases(&self, leases: Vec<LeaseInfo>) {
-        *self.leases.write() = leases;
+        *self.leases.write() = leases
+            .into_iter()
+            .map(|lease| (lease_identity_for(&lease), lease))
+            .collect();
+    }
+
+    pub fn upsert_lease(&self, lease: LeaseInfo) {
+        self.leases.write().insert(lease_identity_for(&lease), lease);
+    }
+
+    pub fn remove_lease(&self, realm: &str, area: &str, resource: &str) {
+        self.leases
+            .write()
+            .remove(&lease_identity_key(realm, area, resource));
     }
 
     pub fn leases(&self, realm: Option<&str>) -> Vec<LeaseInfo> {
         let leases = self.leases.read();
-        collect_slice_matches(&leases, |item| matches_realm(realm, &item.realm))
+        leases
+            .values()
+            .filter(|item| matches_realm(realm, &item.realm))
+            .cloned()
+            .collect()
     }
 
     pub fn replace_schedules(&self, schedules: Vec<ScheduleInfo>) {
@@ -382,5 +408,82 @@ mod tests {
         // Assert
         assert_eq!(subscriptions.len(), 1);
         assert_eq!(subscriptions[0].pattern, "notice://acme/app/orders");
+    }
+
+    #[test]
+    fn should_upsert_lease_given_incremental_update() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+
+        // Act
+        read_model.upsert_lease(LeaseInfo::snapshot(
+            "acme",
+            "locks",
+            "billing",
+            "session:10",
+            "2026-03-31T00:00:00Z",
+            "2026-03-31T00:00:30Z".to_string(),
+            7,
+        ));
+        let leases = read_model.leases(Some("acme"));
+
+        // Assert
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].resource, "billing");
+        assert_eq!(leases[0].fencing_token, 7);
+    }
+
+    #[test]
+    fn should_remove_lease_given_incremental_update() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.upsert_lease(LeaseInfo::snapshot(
+            "acme",
+            "locks",
+            "billing",
+            "session:10",
+            "2026-03-31T00:00:00Z",
+            "2026-03-31T00:00:30Z".to_string(),
+            7,
+        ));
+
+        // Act
+        read_model.remove_lease("acme", "locks", "billing");
+        let leases = read_model.leases(Some("acme"));
+
+        // Assert
+        assert!(leases.is_empty());
+    }
+
+    #[test]
+    fn should_replace_existing_lease_given_matching_identity_on_upsert() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.upsert_lease(LeaseInfo::snapshot(
+            "acme",
+            "locks",
+            "billing",
+            "session:10",
+            "2026-03-31T00:00:00Z",
+            "2026-03-31T00:00:30Z".to_string(),
+            7,
+        ));
+
+        // Act
+        read_model.upsert_lease(LeaseInfo::snapshot(
+            "acme",
+            "locks",
+            "billing",
+            "session:11",
+            "2026-03-31T00:00:05Z",
+            "2026-03-31T00:00:40Z".to_string(),
+            8,
+        ));
+        let leases = read_model.leases(Some("acme"));
+
+        // Assert
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].owner_session_id, "session:11");
+        assert_eq!(leases[0].fencing_token, 8);
     }
 }
