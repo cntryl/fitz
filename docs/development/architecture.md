@@ -41,7 +41,7 @@ Layer 4: DOMAINS (100% Sync Business Logic)
 ├─ KV (transactions, isolation, durability)
 ├─ Queue (FIFO, leasing, visibility)
 ├─ Notice (pub/sub, wildcard matching)
-├─ Stream (append-only, watermarks)
+├─ Stream (durable append-only logs, commit-time sequencing, ephemeral append sessions)
 ├─ RPC (request/response, correlation)
 ├─ Lease (in-memory coordination)
 └─ Schedule (delayed/recurring tasks)
@@ -250,7 +250,7 @@ impl Engine {
 ```
 **Key-value schema for each domain:**
 - **KV:** `{realm}/{area}/{resource}/{key}` → `{value}`
-- **Stream:** `{realm}/{area}/{resource}/offset:{offset}` → `{record}`
+- **Stream:** `{realm}/{area}/{resource}/offset:{offset}` → `{record}` plus durable resource metadata / area indexes / realm indexes for committed sequencing state
 - **Queue:** `{realm}/{area}/{resource}/msg:{message_id}` → `{body}`
 - **Lease:** `{realm}/{area}/{resource}` → `{owner, ttl, token}`
 ## Wire Protocol Implementation

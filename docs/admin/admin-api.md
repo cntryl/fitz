@@ -242,46 +242,51 @@ survive disconnect or restart.
 }
 ```
 ### Stream Domain
-#### List Active Streams
+Stream admin responses combine durable committed stream metadata with live
+current-process append-session counts. Committed streams remain visible after
+restart because `offset`, `watermark`, and `size_bytes` come from durable
+metadata. `sessions_active` counts only live append sessions on the current
+broker process and resets on disconnect cleanup or broker restart. Consumer
+cursors remain client-managed; there are no durable broker-side cursor groups.
+
+#### List Stream Resources In An Area
 ```
-GET /admin/stream/streams?realm={realm}
+GET /api/v1/stream/realms/{realm}/areas/{area}/resources
 ```
 **Response**:
 ```json
 {
-  "streams": [
-    {
-      "realm": "prod",
-      "area": "events",
-      "resource": "orders",
-      "offset": 384921,
-      "watermark": 384921,
-      "size_bytes": 52847392,
-      "sessions_active": 3
-    }
+  "realm": "prod",
+  "area": "events",
+  "resources": [
+    { "resource": "orders" },
+    { "resource": "payments" }
   ]
 }
 ```
-#### Stream Statistics
+
+#### Get Stream Resource Detail
 ```
-GET /admin/stream/stats?realm={realm}
+GET /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}
 ```
 **Response**:
 ```json
 {
-  "streams_active": 45,
-  "events_total": 384921,
-  "events_by_realm": {
-    "prod": 284921,
-    "staging": 80000,
-    "dev": 20000
-  },
-  "operations_per_second": {
-    "append": 65,
-    "read": 20
-  }
+  "realm": "prod",
+  "area": "events",
+  "resource": "orders",
+  "offset": 384921,
+  "watermark": 384921,
+  "size_bytes": 52847392,
+  "sessions_active": 3
 }
 ```
+#### Notes
+- `offset` is the last committed resource offset.
+- `watermark` is the highest committed visible offset for that resource.
+- `size_bytes` is derived from durable committed-byte metadata.
+- `sessions_active` is a live append-session count only; it is not a durable writer inventory.
+- Stream subscriptions remain session-scoped best-effort delivery and are not represented as durable admin state.
 ### Notice Domain
 All Notice admin responses reflect live in-memory broker state only. Notice subscriptions are session-scoped, disappear on disconnect, and are not restored after broker restart.
 
@@ -587,7 +592,9 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}` - Get live KV resource detail
 - `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions` - List live session-scoped KV transactions for a resource
   - KV transaction snapshots are current-process only. They disappear on disconnect cleanup and are not restored after broker restart.
-- `GET /api/v1/admin/stream/streams?realm={realm}` - List active streams
+- `GET /api/v1/stream/realms/{realm}/areas/{area}/resources` - List stream resources in an area
+- `GET /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}` - Get stream resource detail
+  - Stream resource detail combines durable committed metadata with the current broker's live append-session count. It does not represent durable consumer cursors or broker-restored sessions.
 - `GET /api/v1/admin/notice/subscriptions?realm={realm}&route_pattern={pattern}` - List subscriptions
 - `GET /api/v1/admin/notice/routes?realm={realm}` - List routes with subscriber counts
 - `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Get warm Queue resource detail
@@ -613,7 +620,7 @@ POST /admin/sessions/{session_id}/close
 **Domain Integration**:
 - Each domain needs to implement methods to provide list data
 - KV: Live transaction snapshots are exposed per resource and reflect only active in-memory session-scoped state
-- Stream: Track active streams, expose via admin query
+- Stream: Rebuild resource detail from durable metadata and expose live append-session counts separately
 - Notice: Track subscriptions and routes, expose via admin query
 - Queue: Track queue depths and leases, expose via admin query
 - RPC: Track workers and pending requests, expose via admin query

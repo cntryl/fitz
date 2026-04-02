@@ -1129,15 +1129,15 @@ Payload: [tx_id][key][value]
 
 ### Key Principles
 
-1. **Every operation includes a route** (like HTTP URL)
-   - KV PUT: `[tx_id][route][key][value]`
-   - Queue ENQUEUE: `[route][body][delay]`
-   - Stream APPEND: `[session_id][route][body]`
+1. **Every operation is explicitly scoped**
+   - Route-scoped example: KV PUT = `[tx_id][route][key][value]`
+   - Route-scoped example: Queue ENQUEUE = `[route][body][delay]`
+   - Session-scoped example: Stream APPEND = `[session_id][body]` after a prior BEGIN bound the session to one resource
 
-2. **Operations are explicitly addressed** (like HTTP stateless routing)
-   - Server doesn't track implicit routing context beyond session and domain state
-   - Each message has full addressing information
-   - Connection loss doesn't require reconstructing hidden route context, though session-scoped domain state may still be cleaned up
+2. **Operations are explicitly addressable**
+   - Most operations carry a route on the wire
+   - Session-based operations may carry an opaque handle instead of repeating the route
+   - Connection loss does not require reconstructing hidden broker topology, though session-scoped domain state may still be cleaned up
 
 3. **Verbs determine action** (like HTTP GET/POST/PUT/DELETE)
    - MessageType selects operation
@@ -1249,13 +1249,13 @@ A request is valid **only if**:
   | `CREATE` | `{realm}/{area}` |
   | `DELETE` (admin) | `{realm}/{area}` |
   | `BEGIN` | `{realm}/{area}/{resource}` |
-  | `APPEND` | `{realm}/{area}/{resource}` |
+  | `APPEND` | session_id established by `BEGIN({realm}/{area}/{resource})` |
   | `READ` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
   | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
-  | `COMMIT` | `{realm}/{area}/{resource}` |
+  | `COMMIT` | session_id established by `BEGIN({realm}/{area}/{resource})` |
+  | `ROLLBACK` | session_id established by `BEGIN({realm}/{area}/{resource})` |
   **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on stream operations: BEGIN, APPEND, READ, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
-  | `ROLLBACK` | `{realm}/{area}/{resource}` |
 
 ### Queue Domain
 
@@ -1550,7 +1550,7 @@ domains may still keep live server-side state where their contract requires it.
 
 ### Stream Domain (Log/Event Stream)
 
-**Purpose:** Durable append-only log with strict ordering and watermarking.
+**Purpose:** Durable append-only log with commit-time resource, area, and realm ordering.
 
 **Canonical Operations:**
 
@@ -1565,11 +1565,11 @@ domains may still keep live server-side state where their contract requires it.
 **Additional ops:** Begin, Commit, Rollback (session control; see stream spec)
 
 **Constraints:**
-- Records strictly ordered by offset within resource
-- Read cannot advance beyond watermark (uncommitted protection)
+- Records are strictly ordered by offset within each resource
 - BEGIN uses optimistic concurrency (`expected_offset`)
-- Offset-based reads (no consumer groups)
-- Watermark tracks committed data
+- COMMIT order defines the durable area and realm order across resources
+- Offset-based reads only; consumer cursors remain client-managed
+- Watermark tracks committed visible data; reads past it return an empty success
 
 ---
 
@@ -2407,7 +2407,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 ### Stream Domain (Durable Append-Only Logs)
 
-**Purpose:** Strictly ordered append/read with watermark protection and optimistic concurrency.
+**Purpose:** Durable append-only records with optimistic concurrency at BEGIN and commit-time sequencing for resource, area, and realm order.
 
 #### Message Types
 
@@ -2452,8 +2452,6 @@ Response (status=1):
 
 ```
 [u64 BE]  session_id
-[u32 BE]  route_len
-[bytes]   route
 [u32 BE]  body_len
 [bytes]   body
 [u8]      has_metadata
@@ -2475,8 +2473,6 @@ Response (status=1):
 
 ```
 [u64 BE]  session_id
-[u32 BE]  route_len
-[bytes]   route
 [u8]      mode (0=Buffered, 1=Sync)
 Response (status=0):
   [u8]     0
@@ -2490,15 +2486,13 @@ Response (status=1):
 
 **Commit Modes:**
 
-- **Sync (mode=1)**: Appends are flushed to durable storage (fsync) before COMMIT returns. Survives broker crash/restart. Higher latency, guaranteed durability.
-- **Buffered (mode=0)**: Appends written to memory buffer, background flush to storage. Lower latency, best-effort durability. May lose recent appends on broker crash (up to flush interval). Use for non-critical events or when throughput > durability.
+- **Sync (mode=1)**: COMMIT uses the broker's sync write policy before success is returned. Higher latency, stronger crash durability.
+- **Buffered (mode=0)**: COMMIT uses the broker's buffered write policy. Lower latency, best-effort durability until the buffered write is persisted.
 
 #### ROLLBACK Request
 
 ```
 [u64 BE]  session_id
-[u32 BE]  route_len
-[bytes]   route
 Response (status=0):
   [u8]     0
 Response (status=1):
@@ -2576,65 +2570,61 @@ class StreamSession:
 
     def append(self, body, metadata=None):
         """Slim API - route/session_id hidden from user"""
-        # Wire protocol: packs session_id + route + body
+        # Wire protocol: packs session_id + body
         return self._client._send_stream_append(
             self._session_id,
-            self._route,  # ← Sent on wire every time
             body,
             metadata
         )
 
     def commit(self, mode=CommitMode.Sync):
         """Commit session"""
-        # Wire: [session_id][route_len][route][mode]
+        # Wire: [session_id][mode]
         return self._client._send_stream_commit(
             self._session_id,
-            self._route,
             mode
         )
 
     def rollback(self):
         """Rollback session"""
-        # Wire: [session_id][route_len][route]
+        # Wire: [session_id]
         return self._client._send_stream_rollback(
-            self._session_id,
-            self._route
+            self._session_id
         )
 ```
 
 **Wire Protocol (what actually happens):**
 
-Every session operation includes **both session_id AND route** on the wire:
-
 - `BEGIN`: `[route_len][route][expected_offset][...] → returns session_id`
-- `APPEND`: `[session_id][route_len][route][body_len][body][metadata]`
-- `COMMIT`: `[session_id][route_len][route][mode]`
-- `ROLLBACK`: `[session_id][route_len][route]`
+- `APPEND`: `[session_id][body_len][body][metadata]`
+- `COMMIT`: `[session_id][mode]`
+- `ROLLBACK`: `[session_id]`
 - `READ`: `[route_len][route][from_offset][limit][...]` (stateless)
 
 **Key Points:**
 
 - User calls `session.append(data)` - simple, focused on data
-- Internally, client packs `[session_id][route][data]` on wire
-- Server processes self-contained messages (no implicit state)
-- Connection loss doesn't leave orphaned server state
+- BEGIN binds `session_id` to exactly one stream resource on the broker
+- APPEND/COMMIT/ROLLBACK are session-scoped, not stateless route-scoped operations
+- Connection loss aborts the append session; clients must begin a new session after reconnect
 
 #### Semantics
 
-- **Self-Contained Operations**: Every request includes route for stateless server processing
 - **Atomicity**: Appends are atomic; partial writes never visible
 - **Ordering**: Records strictly ordered by offset within resource
-- **Watermarks**: Reads cannot advance beyond watermark (protects uncommitted data)
+- **Commit-Time Global Order**: Area and realm offsets are assigned durably at COMMIT time and remain monotonic across restart
+- **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` prevents lost updates
 - **Durability**: All committed data survives broker restart
-- **Isolation**: Stream sessions isolated per resource
+- **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
+- **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor
 
 #### Error Codes (2xxx)
 
 - 2001 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
-- 2002 = ERR_OFFSET_TOO_FAR_AHEAD
-- 2003 = ERR_INVALID_READ_BOUND
-- 2004 = ERR_READ_BEYOND_WATERMARK
+- 2002 = ERR_SESSION_ALREADY_ACTIVE
+- 2003 = ERR_SESSION_NOT_FOUND
+- 2004 = ERR_INVALID_READ_BOUND
 - 2005 = ERR_RESOURCE_NOT_FOUND
 - 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 2011 = ERR_SUBSCRIPTION_LIMIT
@@ -2643,10 +2633,11 @@ Every session operation includes **both session_id AND route** on the wire:
 
 - begin/append/commit cycle
 - read returns records in offset order
-- read beyond watermark fails
+- read beyond watermark returns an empty success
 - append with mismatched expected_offset fails
 - rollback discards uncommitted appends
-- multiple sessions can read concurrently
+- disconnect cleanup aborts abandoned append sessions
+- only one active append session per resource is allowed at a time
 
 #### Stream SUBSCRIBE (607)
 
@@ -4445,7 +4436,7 @@ Client implementations MUST pass the following test suite against a reference br
   **Stream:**
 - Begin/append/commit cycle succeeds
 - Read returns records in offset order
-- Read beyond watermark fails appropriately
+- Read beyond watermark returns an empty success
 - Append with mismatched expected_offset fails
 - Rollback discards uncommitted appends
   **Queue:**
@@ -4531,9 +4522,9 @@ These items are **not standardized** and may require broker-specific implementat
 
 #### Wire Protocol Philosophy (Explicit Routing)
 
-**All Fitz operations include full routing context in every message:**
+**Fitz operations are always explicitly scoped, but not always by repeating the route:**
 - KV: Every operation includes `[tx_id][route_len][route]` (not just BEGIN)
-- Stream: Every operation includes `[session_id][route_len][route]` (not just BEGIN)
+- Stream: `BEGIN` carries the route; `APPEND` / `COMMIT` / `ROLLBACK` carry the `session_id` bound by BEGIN
 - Queue: Every operation includes `[route_len][route]`
 - Notice: PUBLISH/SUBSCRIBE include full route/pattern
 - RPC: REQUEST includes full route
@@ -4541,7 +4532,7 @@ These items are **not standardized** and may require broker-specific implementat
 - Schedule: CREATE/CANCEL include full route; LIST uses only optional offset/limit pagination fields
 
 **Why this design:**
-- Explicit routing: Each message is self-contained and fully addressable
+- Explicit scoping: Each message is addressable either by route or by a previously issued opaque handle
 - No hidden route defaults: Clients and brokers do not rely on per-connection realm/area/resource state
 - Domain state still exists where required: KV and Stream keep live transaction/session state, and reconnect requires re-establishing that state
 - Debuggable: Every message can be inspected without hidden addressing context

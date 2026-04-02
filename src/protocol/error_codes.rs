@@ -29,9 +29,9 @@ pub mod kv {
 /// Stream domain error codes (per CLIENT_SPEC Stream Domain section)
 pub mod stream {
     pub const ERR_CONCURRENCY_CONFLICT: u16 = 2001;
-    pub const ERR_OFFSET_TOO_FAR_AHEAD: u16 = 2002;
-    pub const ERR_INVALID_READ_BOUND: u16 = 2003;
-    pub const ERR_READ_BEYOND_WATERMARK: u16 = 2004;
+    pub const ERR_SESSION_ALREADY_ACTIVE: u16 = 2002;
+    pub const ERR_SESSION_NOT_FOUND: u16 = 2003;
+    pub const ERR_INVALID_READ_BOUND: u16 = 2004;
     pub const ERR_RESOURCE_NOT_FOUND: u16 = 2005;
     pub const ERR_UNAUTHORIZED: u16 = 2009; // AC-STREAM-005: Permission denied for stream operation
     pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2010;

@@ -92,7 +92,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 - Subscription state is **NOT** preserved by broker across disconnects
 - SUBSCRIBE is idempotent - duplicate subscription to same pattern returns same subscription_id
 - Client resumes receiving notifications/requests only after re-subscription confirmed
-- In-flight operations (KV transactions, Queue leases) are lost on disconnect
+- In-flight operations (KV transactions, Stream append sessions, Queue leases) are lost on disconnect
 
 ## KV Domain
 
@@ -229,14 +229,19 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 
 ### AC-STREAM-001: Append to Stream
 
-**MUST** append message to stream
+**MUST** append message to stream through a session
 **Given:** Session with `stream://realm/area/resource#write` permission  
-**When:** Client sends `Append(realm="prod", area="logs", resource="events", payload="event1")`  
+**When:**
+
+1. Client sends `Begin(route="stream://prod/logs/events", expected_offset=0)`
+2. Server returns `session_id`
+3. Client sends `Append(session_id, payload="event1")`
+4. Client sends `Commit(session_id, mode=Sync)`
 **Then:**
 
-- Server returns `AppendOk(offset=N)`
+- Server returns success for BEGIN, APPEND, and COMMIT
 - Offset is monotonically increasing
-- Message is durable after acknowledgment
+- Message is durable after COMMIT acknowledgment
 
 ### AC-STREAM-002: Read from Offset
 
@@ -1038,9 +1043,9 @@ Error codes follow the format `XXYY` where:
 | Code | Name | Description | Retryable |
 |------|------|-------------|-----------|
 | 2001 | ERR_CONCURRENCY_CONFLICT | Expected offset does not match (AC-STREAM-013) | No |
-| 2002 | ERR_OFFSET_TOO_FAR_AHEAD | Offset gap detected in append | No |
-| 2003 | ERR_INVALID_READ_BOUND | Read range bounds invalid | No |
-| 2004 | ERR_READ_BEYOND_WATERMARK | Read offset exceeds committed watermark | Yes |
+| 2002 | ERR_SESSION_ALREADY_ACTIVE | Another append session is already active for that resource | No |
+| 2003 | ERR_SESSION_NOT_FOUND | Session ID is missing, stale, or already cleaned up | No |
+| 2004 | ERR_INVALID_READ_BOUND | Read range bounds invalid | No |
 | 2005 | ERR_RESOURCE_NOT_FOUND | Stream resource does not exist | No |
 | 2009 | ERR_UNAUTHORIZED | Permission denied for stream operation | No |
 | 2010 | ERR_INVALID_SUBSCRIPTION_PATTERN | Subscription pattern syntax invalid | No |

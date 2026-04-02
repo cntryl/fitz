@@ -2,9 +2,71 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
+use bytes::Bytes;
+use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::StreamActor;
+use fitz::domains::stream::store::StreamStore;
+use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::testkit::TestServer;
+use fitz::runtime::routing::RouteFamily;
 use fixtures::define_transport_tests;
 use fixtures::transport::*;
+use std::sync::Arc;
+use tempfile::TempDir;
+use tokio::time::Duration;
+
+fn decode_stream_ok_data(payload: &[u8]) -> Vec<u8> {
+    let mut dec = PayloadDecoder::new(payload);
+    let status = dec.get_u8().expect("stream response status");
+    assert_eq!(status, 0, "expected stream success payload");
+    let _session_id = dec.get_optional_u64().expect("stream response session id");
+    let data = dec.get_bytes().expect("stream response data");
+    assert!(dec.is_complete(), "expected complete stream response payload");
+    data.to_vec()
+}
+
+fn parse_stream_read_records(frame: &[u8]) -> Vec<(u64, Vec<u8>)> {
+    let (_msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, 0, "expected successful stream read");
+
+    let data = decode_stream_ok_data(&payload);
+    let mut dec = PayloadDecoder::new(&data);
+    let count = dec.get_u32().expect("stream read record count");
+    let mut records = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let offset = dec.get_u64().expect("stream read record offset");
+        let body = dec.get_bytes().expect("stream read record body").to_vec();
+        records.push((offset, body));
+    }
+    assert!(dec.is_complete(), "expected complete stream read payload");
+    records
+}
+
+async fn wait_for_stream_storage_release() {
+    tokio::time::sleep(Duration::from_millis(750)).await;
+}
+
+async fn open_local_stream_engine(
+    db_path: String,
+) -> Result<Arc<cntryl_midge::Engine>, Box<dyn std::error::Error>> {
+    let boot_config = fitz::boot::runtime::BootConfig::with_local_storage(db_path);
+    fitz::boot::storage::init(&boot_config).await
+}
+
+fn make_stream_actor(
+    store: Arc<StreamStore>,
+    realm: &str,
+    area: &str,
+    resource: &str,
+) -> StreamActor {
+    StreamActor::new(
+        RouteFamily::new(1),
+        realm.to_string(),
+        area.to_string(),
+        resource.to_string(),
+        store,
+    )
+}
 
 async fn commit_stream_record_with_offset<C>(
     client: &mut C,
@@ -294,6 +356,267 @@ where
     assert_eq!(retained_payload["batch_size"], 1);
 }
 
+async fn should_abort_uncommitted_stream_session_on_disconnect<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    let route = "stream://test/events/disconnect";
+
+    let session_id = {
+        let mut client = C::connect(server).await.expect("connect staging client");
+        let begin_response = client
+            .send_and_receive(&build_stream_begin(route, 0), 2000)
+            .await
+            .expect("begin staging stream session");
+        let (_msg_type, status, data) = parse_stream_response(&begin_response);
+        assert_eq!(status, 0, "expected success for stream begin");
+        let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+        let append_response = client
+            .send_and_receive(&build_stream_append(session_id, b"staged"), 2000)
+            .await
+            .expect("append staged stream event");
+        let (_msg_type, status, _data) = parse_stream_response(&append_response);
+        assert_eq!(status, 0, "expected success for staged append");
+        session_id
+    };
+
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("wait for disconnect cleanup");
+
+    let mut client = C::connect(server).await.expect("connect replacement client");
+
+    let stale_commit_response = client
+        .send_and_receive(&build_stream_commit(session_id), 2000)
+        .await
+        .expect("send stale commit");
+    let (_msg_type, status, _data) = parse_stream_response(&stale_commit_response);
+    assert_ne!(status, 0, "stale stream session should be gone after disconnect");
+
+    commit_stream_record(&mut client, route, b"committed").await;
+
+    let read_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read committed stream");
+    let records = parse_stream_read_records(&read_response);
+    assert_eq!(records, vec![(0, b"committed".to_vec())]);
+}
+
+#[tokio::test]
+async fn should_rebuild_stream_admin_from_durable_metadata_after_restart() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-admin");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut actor = make_stream_actor(store.clone(), "test", "events", "admin");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"persisted"), None)
+        .unwrap();
+    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
+    drop(actor);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    let server = TestServer::start_with_local_storage(db_path)
+        .await
+        .expect("restart stream server");
+
+    let streams = server.runtime.stream_list_streams(None);
+    let stream = streams
+        .iter()
+        .find(|item| item.realm == "test" && item.area == "events" && item.resource == "admin")
+        .expect("stream should be visible from durable admin rebuild");
+    assert_eq!(stream.offset, 0);
+    assert_eq!(stream.watermark, 0);
+    assert_eq!(stream.size_bytes, b"persisted".len() as u64);
+    assert_eq!(stream.sessions_active, 0);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-resource");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut actor = make_stream_actor(store.clone(), "test", "events", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .unwrap();
+    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
+    drop(actor);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    let engine = open_local_stream_engine(db_path).await.expect("reopen local stream engine");
+    let store = Arc::new(StreamStore::new(engine));
+    let mut actor = make_stream_actor(store, "test", "events", "orders");
+    actor.begin_append_session(10, 101, 1, None).unwrap();
+    actor
+        .append_to_session(101, Bytes::from_static(b"two"), None)
+        .unwrap();
+    actor.commit_session(101, StreamWriteMode::Sync).unwrap();
+
+    let records = actor.read(0, 10, None).expect("read restarted stream").records;
+    let resource_offsets: Vec<u64> = records.iter().map(|record| record.resource_offset).collect();
+    let bodies: Vec<Vec<u8>> = records.iter().map(|record| record.body.to_vec()).collect();
+    assert_eq!(resource_offsets, vec![0, 1]);
+    assert_eq!(bodies, vec![b"one".to_vec(), b"two".to_vec()]);
+}
+
+#[tokio::test]
+async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-area");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut orders = make_stream_actor(store.clone(), "test", "events", "orders");
+    let mut audits = make_stream_actor(store.clone(), "test", "events", "audits");
+    orders.begin_append_session(10, 100, 0, None).unwrap();
+    orders
+        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .unwrap();
+    orders.commit_session(100, StreamWriteMode::Sync).unwrap();
+    audits.begin_append_session(20, 200, 0, None).unwrap();
+    audits
+        .append_to_session(200, Bytes::from_static(b"two"), None)
+        .unwrap();
+    audits.commit_session(200, StreamWriteMode::Sync).unwrap();
+    drop(orders);
+    drop(audits);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    let engine = open_local_stream_engine(db_path)
+        .await
+        .expect("reopen local stream engine");
+    let store = Arc::new(StreamStore::new(engine));
+    let mut orders = make_stream_actor(store.clone(), "test", "events", "orders");
+    orders.begin_append_session(10, 101, 1, None).unwrap();
+    orders
+        .append_to_session(101, Bytes::from_static(b"three"), None)
+        .unwrap();
+    orders.commit_session(101, StreamWriteMode::Sync).unwrap();
+
+    let records = store
+        .read_area(1, "test", "events", 0, 10, None)
+        .expect("read area stream")
+        .0;
+    let area_offsets: Vec<u64> = records
+        .iter()
+        .map(|record| record.area_offset.expect("area offset"))
+        .collect();
+    assert_eq!(area_offsets, vec![0, 1, 2]);
+}
+
+#[tokio::test]
+async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-realm");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut area_a = make_stream_actor(store.clone(), "test", "area-a", "orders");
+    let mut area_b = make_stream_actor(store.clone(), "test", "area-b", "orders");
+    area_a.begin_append_session(10, 100, 0, None).unwrap();
+    area_a
+        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .unwrap();
+    area_a.commit_session(100, StreamWriteMode::Sync).unwrap();
+    area_b.begin_append_session(20, 200, 0, None).unwrap();
+    area_b
+        .append_to_session(200, Bytes::from_static(b"two"), None)
+        .unwrap();
+    area_b.commit_session(200, StreamWriteMode::Sync).unwrap();
+    drop(area_a);
+    drop(area_b);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    let engine = open_local_stream_engine(db_path)
+        .await
+        .expect("reopen local stream engine");
+    let store = Arc::new(StreamStore::new(engine));
+    let mut area_a = make_stream_actor(store.clone(), "test", "area-a", "orders");
+    area_a.begin_append_session(10, 101, 1, None).unwrap();
+    area_a
+        .append_to_session(101, Bytes::from_static(b"three"), None)
+        .unwrap();
+    area_a.commit_session(101, StreamWriteMode::Sync).unwrap();
+
+    let records = store
+        .read_realm(1, "test", 0, 10, None)
+        .expect("read realm stream")
+        .0;
+    let realm_offsets: Vec<u64> = records
+        .iter()
+        .map(|record| record.realm_offset.expect("realm offset"))
+        .collect();
+    assert_eq!(realm_offsets, vec![0, 1, 2]);
+}
+
+#[tokio::test]
+async fn should_drop_uncommitted_stream_batch_on_restart() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-uncommitted");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut actor = make_stream_actor(store.clone(), "test", "events", "restart-loss");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"staged"), None)
+        .unwrap();
+    drop(actor);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    let engine = open_local_stream_engine(db_path)
+        .await
+        .expect("reopen local stream engine");
+    let store = Arc::new(StreamStore::new(engine));
+    let mut actor = make_stream_actor(store, "test", "events", "restart-loss");
+    actor.begin_append_session(10, 101, 0, None).unwrap();
+    actor
+        .append_to_session(101, Bytes::from_static(b"committed"), None)
+        .unwrap();
+    actor.commit_session(101, StreamWriteMode::Sync).unwrap();
+
+    let records = actor
+        .read(0, 10, None)
+        .expect("read restarted stream")
+        .records;
+    let parsed: Vec<(u64, Vec<u8>)> = records
+        .iter()
+        .map(|record| (record.resource_offset, record.body.to_vec()))
+        .collect();
+    assert_eq!(parsed, vec![(0, b"committed".to_vec())]);
+}
+
 define_transport_tests!(
     TcpStreamConnector,
     WsStreamConnector;
@@ -306,5 +629,6 @@ define_transport_tests!(
     should_handle_concurrent_appends_from_multiple_clients_tcp / should_handle_concurrent_appends_from_multiple_clients_ws => should_handle_concurrent_appends_from_multiple_clients,
     should_handle_sequential_read_operations_tcp / should_handle_sequential_read_operations_ws => should_handle_sequential_read_operations,
     should_isolate_streams_by_route_tcp / should_isolate_streams_by_route_ws => should_isolate_streams_by_route,
+    should_abort_uncommitted_stream_session_on_disconnect_tcp / should_abort_uncommitted_stream_session_on_disconnect_ws => should_abort_uncommitted_stream_session_on_disconnect,
     should_retain_other_stream_subscription_after_unsubscribe_tcp / should_retain_other_stream_subscription_after_unsubscribe_ws => should_retain_other_stream_subscription_after_unsubscribe,
 );

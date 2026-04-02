@@ -1,25 +1,31 @@
-//! Stream domain: durable append-only event logs with multi-level ordering
+//! Stream domain: durable append-only event logs with store-authoritative
+//! commit-time sequencing.
 //!
 //! # Architecture
 //!
-//! - **StreamActor** ([actor]): Manages single resource stream with sequential offsets
-//! - **AreaActor** ([area_actor]): Coordinates ordering across resources within an area
-//! - **RealmActor** ([realm_actor]): Coordinates ordering across areas within a realm
-//! - **SessionActor**: Enforces authentication/authorization before forwarding to actors
+//! - **StreamActor** ([actor]): warm per-resource append-session owner for the
+//!   current broker process
+//! - **StreamStore** ([store]): durable authority for committed resource,
+//!   area, and realm ordering
+//! - **SessionActor**: enforces authentication and authorization before
+//!   forwarding to the stream runtime
 //!
-//! # Three-Level Ordering
+//! # Ordering
 //!
-//! 1. **Resource ordering**: Strict sequential offsets within a single resource stream (server-assigned by StreamActor)
-//! 2. **Area ordering**: Global ordering across all resources in an area (server-assigned by AreaActor via leases)
-//! 3. **Realm ordering**: Global ordering across all areas in a realm (server-assigned by RealmActor via leases)
+//! 1. **Resource ordering**: strict sequential offsets within one resource stream
+//! 2. **Area ordering**: global ordering across resources in an area
+//! 3. **Realm ordering**: global ordering across areas in a realm
+//!
+//! Area and realm ordering follow commit order, not begin order.
 //!
 //! # Semantics
 //!
-//! - **Strictly ordered**: Events are totally ordered at each level
-//! - **Gap-free**: No gaps in offset sequences (enforced by watermarks)
-//! - **Durable**: All events persisted to Midge LSM storage
-//! - **Optimistic concurrency**: Caller provides expected_offset for conflict detection
-//! - **Watermark-gated reads**: Area/realm reads only see gap-free committed events (resource reads are not gated)
+//! - **Durable committed events**: committed events and offsets survive restart
+//! - **Ephemeral append sessions**: one active append session per resource,
+//!   lost on disconnect cleanup or broker restart
+//! - **Optimistic concurrency**: caller provides `expected_offset` for conflict detection
+//! - **Client-managed resume**: `ReadCursor` is response metadata only, not a durable broker cursor
+//! - **Watermark-gated reads**: area and realm reads stop at committed watermarks
 //!
 //! # Route Format
 //!
@@ -28,40 +34,24 @@
 //! Examples:
 //! - `stream://acme/orders/checkout/append`
 //! - `stream://acme/orders/checkout/read`
-//! - `stream://acme/orders/*/read` (area-level read)
-//! - `stream://acme/*/*/read` (realm-level read)
-//!
-//! # Offset Assignment
-//!
-//! - **resource_offset**: Server-assigned by StreamActor (sequencer for resource stream)
-//! - **area_offset**: Server-assigned by AreaActor via leased ranges (for area-wide ordering)
-//! - **realm_offset**: Server-assigned by RealmActor via leased ranges (for realm-wide ordering)
-//!
-//! **Optimistic concurrency**: Caller provides `expected_offset` at session begin; if mismatch, session fails.
-//!
-//! # Watermarks
-//!
-//! - **Area watermark**: Highest contiguous area_offset with no gaps
-//! - **Realm watermark**: min(all area watermarks)
-//! - Reads are blocked beyond watermarks to ensure gap-free ordering
+//! - `stream://acme/orders/*/read`
+//! - `stream://acme/*/*/read`
 
 pub mod actor;
-pub mod area_actor;
 pub mod constants;
 pub mod protocol;
-pub mod realm_actor;
 pub mod session;
 pub mod storage;
 pub mod store;
 
-// Re-exports
+mod area_actor;
+mod realm_actor;
+
 pub use actor::StreamActor;
-pub use area_actor::AreaActor;
 pub use constants::{DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, NOTICE_DEBOUNCE_MS};
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamError, StreamMessage, StreamMetadata,
     StreamRecord,
 };
-pub use realm_actor::RealmActor;
 pub use session::SessionActor;
 pub use store::StreamStore;

@@ -29,6 +29,13 @@ impl Runtime {
         }
     }
 
+    fn refresh_stream_admin_snapshot(&self) {
+        let domains = self.domains.read().clone();
+        if let Some(domains) = domains {
+            domains.stream.refresh_admin_snapshot_if_dirty();
+        }
+    }
+
     pub fn kv_list_transactions(
         &self,
         realm: Option<&str>,
@@ -37,6 +44,7 @@ impl Runtime {
     }
 
     pub fn stream_list_streams(&self, realm: Option<&str>) -> Vec<crate::api::admin::StreamInfo> {
+        self.refresh_stream_admin_snapshot();
         self.admin_read_model.streams(realm)
     }
 

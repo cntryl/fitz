@@ -435,6 +435,7 @@ paths:
     get:
       tags: [Stream]
       summary: List streams in an area
+      description: Lists committed stream resources known from durable stream metadata for the selected area. Resources remain visible after broker restart even when no append session is currently active.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -450,6 +451,7 @@ paths:
     get:
       tags: [Stream]
       summary: Get stream resource
+      description: Returns durable committed stream metadata for this resource plus the current broker process's live append-session count. `sessions_active` resets on disconnect cleanup or broker restart; consumer cursors are client-managed and not stored here.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -1073,6 +1075,7 @@ components:
 
     StreamResourceDetail:
       type: object
+      description: Durable committed stream metadata for one resource plus the current broker process's live append-session count. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` is ephemeral and resets on disconnect cleanup or broker restart.
       required: [realm, area, resource, offset, watermark, size_bytes, sessions_active]
       properties:
         realm: { type: string }

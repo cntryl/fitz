@@ -1,70 +1,52 @@
-//! Stream actor: manages append-only event log for a single resource
+//! Stream actor: live append-session owner for a single resource stream.
 
 use bytes::Bytes;
 use std::sync::Arc;
 
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
-use crate::runtime::domain_event::DomainPublishEvent;
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{
-    AppendResponse, BatchCommitted, BeginSessionResponse, CommitSessionResponse, LeaseGrant,
-    OffsetLease, PeekResponse, ReadResponse, StreamError, StreamMessage, StreamResponse,
-    StreamWriteMode, DEFAULT_LEASE_SIZE, MAX_EVENT_SIZE,
+    AppendResponse, BeginSessionResponse, CommitSessionResponse, GetMetadataResponse,
+    IngestMetadata, PeekResponse, ReadResponse, StreamError, StreamMessage, StreamResponse,
+    StreamWriteMode, MAX_EVENT_SIZE,
 };
-use super::store::{EventPayload, SessionId, StreamStore};
-use std::collections::VecDeque;
+use super::store::{EventPayload, StreamStore};
 
-/// StreamActor manages a single resource stream
+#[derive(Debug, Clone)]
+struct ActiveAppendSession {
+    stream_session_id: u64,
+    owner_session_id: u64,
+    expected_offset: u64,
+    staged_events: Vec<EventPayload>,
+    total_bytes: usize,
+    ingest_metadata: Option<IngestMetadata>,
+}
+
+impl ActiveAppendSession {
+    fn next_assigned_offset(&self) -> u64 {
+        self.expected_offset + self.staged_events.len() as u64
+    }
+}
+
+/// Warm in-memory append-session state for a single resource stream.
 ///
-/// **CRITICAL: Does NOT hold events in memory.**
-/// All events are persisted to Midge via StreamStore. Actor only tracks:
-/// - next_resource_offset (sequencing)
-/// - area_lease (pre-allocated area offsets)
-/// - realm_lease (pre-allocated realm offsets)
-/// - realm/area/resource identity for this stream
+/// The actor holds only live session state for the current broker process.
+/// Committed events, offsets, and metadata stay in [`StreamStore`].
 pub struct StreamActor {
     #[allow(dead_code)]
     family_id: RouteFamily,
-
-    /// Stream identity
     realm: String,
     area: String,
     resource: String,
-
-    /// Storage layer (shared, durable)
     store: Arc<StreamStore>,
-
-    /// Next expected resource offset (sequence validation)
     next_resource_offset: u64,
-
-    /// Pre-allocated area offset lease
-    area_lease: OffsetLease,
-
-    /// Pre-allocated realm offset lease
-    realm_lease: OffsetLease,
-
-    /// Active session (at most one per resource)
-    active_session: Option<SessionId>,
-
-    /// Pending commits awaiting lease grants
-    pending_commits: VecDeque<(SessionId, StreamWriteMode)>,
-
-    /// Cached routes (hot path optimization)
-    area_actor_route: Route,
-    commit_notification_route: Route,
-
-    /// Debounce timer id for commit notification
-    commit_timer: Option<crate::runtime::context::TimerId>,
-
-    /// Pending commit publish event (debounced)
-    pending_publish: Option<DomainPublishEvent>,
+    active_session: Option<ActiveAppendSession>,
+    next_local_session_id: u64,
 }
 
 impl StreamActor {
-    const NOTICE_DEBOUNCE_MS: u64 = 25;
-
     pub fn new(
         family_id: RouteFamily,
         realm: String,
@@ -72,23 +54,9 @@ impl StreamActor {
         resource: String,
         store: Arc<StreamStore>,
     ) -> Self {
-        // **CRITICAL: Recover next_resource_offset from metadata counter**
-        // This prevents offset reuse after TTL expiry and process restart
-        let next_resource_offset =
-            match store.get_next_resource_offset(family_id.as_u64(), &realm, &area, &resource) {
-                Ok(offset) => offset,
-                Err(e) => {
-                    eprintln!(
-                        "FATAL: Failed to recover resource offset for {}/{}/{}: {}",
-                        realm, area, resource, e
-                    );
-                    0 // Fallback to 0, may cause conflict if stream has data
-                }
-            };
-
-        let area_actor_route = Route::new(format!("stream://{}/{}/__area__", realm, area));
-        let commit_notification_route =
-            Route::new(format!("stream://{}/{}/{}", realm, area, resource));
+        let next_resource_offset = store
+            .get_next_resource_offset(family_id.as_u64(), &realm, &area, &resource)
+            .unwrap_or(0);
 
         Self {
             family_id,
@@ -97,179 +65,127 @@ impl StreamActor {
             resource,
             store,
             next_resource_offset,
-            area_lease: OffsetLease::new(),
-            realm_lease: OffsetLease::new(),
             active_session: None,
-            pending_commits: VecDeque::new(),
-            area_actor_route,
-            commit_notification_route,
-            commit_timer: None,
-            pending_publish: None,
+            next_local_session_id: 1,
         }
     }
 
-    fn handle_begin_session(
+    fn map_error(error: &str) -> StreamError {
+        match error {
+            "session already active" => StreamError::SessionAlreadyActive,
+            "session not found" => StreamError::SessionNotFound,
+            "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => StreamError::ConcurrencyConflict,
+            "event too large" => StreamError::EventTooLarge,
+            "batch too large" => StreamError::BatchTooLarge,
+            _ => StreamError::InvalidReadBound,
+        }
+    }
+
+    pub fn resource_identity(&self) -> (&str, &str, &str) {
+        (&self.realm, &self.area, &self.resource)
+    }
+
+    pub fn has_active_session(&self) -> bool {
+        self.active_session.is_some()
+    }
+
+    pub fn active_session_owner(&self) -> Option<u64> {
+        self.active_session.as_ref().map(|session| session.owner_session_id)
+    }
+
+    pub fn begin_append_session(
         &mut self,
+        owner_session_id: u64,
+        stream_session_id: u64,
         expected_offset: u64,
-        ingest_metadata: Option<super::protocol::IngestMetadata>,
-        _ctx: &mut Context<Self>,
-    ) -> Result<BeginSessionResponse, StreamError> {
-        // Enforce single active session per resource
+        ingest_metadata: Option<IngestMetadata>,
+    ) -> Result<u64, String> {
         if self.active_session.is_some() {
-            return Err(StreamError::SessionAlreadyActive);
+            return Err("session already active".to_string());
         }
-
-        // Validate expected offset
         if expected_offset != self.next_resource_offset {
-            return Err(StreamError::ConcurrencyConflict);
+            return Err("concurrency conflict".to_string());
         }
 
-        // Begin session in store (no offsets allocated yet)
-        let session_id = self
-            .store
-            .begin_session(
-                self.family_id.as_u64(),
-                &self.realm,
-                &self.area,
-                &self.resource,
-                ingest_metadata,
-            )
-            .map_err(|_| StreamError::SessionAlreadyActive)?;
-
-        self.active_session = Some(session_id);
-
-        Ok(BeginSessionResponse { session_id })
+        self.active_session = Some(ActiveAppendSession {
+            stream_session_id,
+            owner_session_id,
+            expected_offset,
+            staged_events: Vec::new(),
+            total_bytes: 0,
+            ingest_metadata,
+        });
+        Ok(stream_session_id)
     }
 
-    fn handle_append_to_session(
-        &self,
-        session_id: &SessionId,
+    pub fn append_to_session(
+        &mut self,
+        stream_session_id: u64,
         body: Bytes,
         metadata: Option<Bytes>,
-    ) -> Result<AppendResponse, StreamError> {
-        // Validate event size
-        if body.len() + metadata.as_ref().map(|m| m.len()).unwrap_or(0) > MAX_EVENT_SIZE {
-            return Err(StreamError::EventTooLarge);
+    ) -> Result<u64, String> {
+        let session = self
+            .active_session
+            .as_mut()
+            .filter(|session| session.stream_session_id == stream_session_id)
+            .ok_or_else(|| "session not found".to_string())?;
+
+        let event_size = body.len() + metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        if event_size > MAX_EVENT_SIZE {
+            return Err("event too large".to_string());
         }
 
-        let event = EventPayload { body, metadata };
+        let limits = self.store.batch_limits();
+        if session.staged_events.len() + 1 > limits.max_batch_events
+            || session.total_bytes + event_size > limits.max_batch_bytes
+        {
+            return Err("batch too large".to_string());
+        }
 
-        self.store
-            .append_to_session(self.family_id.as_u64(), session_id, event)
-            .map_err(|_| StreamError::EventTooLarge)?;
-
-        Ok(AppendResponse { success: true })
+        let assigned_offset = session.next_assigned_offset();
+        session.total_bytes += event_size;
+        session.staged_events.push(EventPayload { body, metadata });
+        Ok(assigned_offset)
     }
 
-    fn handle_commit_session(
+    pub fn commit_session(
         &mut self,
-        session_id: &SessionId,
+        stream_session_id: u64,
         mode: StreamWriteMode,
-        ctx: &mut Context<Self>,
-    ) -> Result<CommitSessionResponse, StreamError> {
-        // Verify this is the active session
-        if self.active_session.as_ref() != Some(session_id) {
-            return Err(StreamError::SessionNotFound);
+    ) -> Result<CommitSessionResponse, String> {
+        let session = self
+            .active_session
+            .take()
+            .ok_or_else(|| "session not found".to_string())?;
+
+        if session.stream_session_id != stream_session_id {
+            self.active_session = Some(session);
+            return Err("session not found".to_string());
         }
 
-        // Get event count (for offset allocation)
-        let event_count = self
-            .store
-            .session_event_count(session_id)
-            .ok_or(StreamError::SessionNotFound)?;
-
-        if event_count == 0 {
-            self.active_session = None;
-            return Err(StreamError::ConcurrencyConflict);
+        if session.staged_events.is_empty() {
+            self.active_session = Some(session);
+            return Err("empty batch".to_string());
         }
 
-        let count = event_count as u64;
+        let response = match self.store.commit_records(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+            session.expected_offset,
+            &session.staged_events,
+            session.ingest_metadata.clone(),
+            mode,
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                self.active_session = Some(session);
+                return Err(error);
+            }
+        };
 
-        // Ensure sufficient leases BEFORE allocating
-        if self.area_lease.remaining() < count || self.realm_lease.remaining() < count {
-            // Request leases from AreaActor
-            let lease_size = DEFAULT_LEASE_SIZE.max(count);
-            let lease_req = StreamMessage::RequestLease {
-                realm: self.realm.clone(),
-                area: self.area.clone(),
-                count: lease_size,
-                reply_to: format!(
-                    "stream_actor_{}_{}_{}",
-                    self.realm, self.area, self.resource
-                ),
-            };
-            let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
-            let _ = ctx.send(area_addr, lease_req);
-
-            // Queue this commit (and its mode) to be processed when lease arrives
-            self.pending_commits.push_back((*session_id, mode));
-            return Err(StreamError::LeaseRequested);
-        }
-
-        // Allocate offsets contiguously
-        let first_resource_offset = self.next_resource_offset;
-        let first_area_offset = self.area_lease.next;
-        let first_realm_offset = self.realm_lease.next;
-
-        // Advance lease cursors
-        self.area_lease.next += count;
-        self.realm_lease.next += count;
-
-        // Commit to storage with pre-assigned first offsets (atomic write)
-        let response = self
-            .store
-            .commit_session(
-                self.family_id.as_u64(),
-                session_id,
-                first_resource_offset,
-                first_area_offset,
-                first_realm_offset,
-                mode,
-            )
-            .map_err(|_| StreamError::ConcurrencyConflict)?;
-
-        // Update local offset tracking ONLY on success
-        self.next_resource_offset += count;
-
-        // Clear active session
-        self.active_session = None;
-
-        // Send BatchCommitted notification to AreaActor for watermark tracking
-        let notification = StreamMessage::BatchCommitted(BatchCommitted {
-            first_area_offset: response.first_area_offset,
-            last_area_offset: response.last_area_offset,
-            first_realm_offset: response.first_realm_offset,
-            last_realm_offset: response.last_realm_offset,
-        });
-        let area_addr = RouteAddress::new(self.family_id, self.area_actor_route.clone());
-        let _ = ctx.send(area_addr, notification);
-
-        // Publish notification: stream://realm/area/resource/committed
-        let route = self.commit_notification_route.clone();
-
-        let payload_json = serde_json::json!({
-            "event": "committed",
-            "first_resource_offset": response.first_resource_offset,
-            "last_resource_offset": response.last_resource_offset,
-            "first_area_offset": response.first_area_offset,
-            "last_area_offset": response.last_area_offset,
-            "first_realm_offset": response.first_realm_offset,
-            "last_realm_offset": response.last_realm_offset,
-            "batch_size": response.batch_size,
-        });
-        let payload = Bytes::from(payload_json.to_string());
-
-        let publish_event = DomainPublishEvent::new(self.family_id, route, payload);
-
-        // Debounce commit notifications (do not send immediately)
-        self.pending_publish = Some(publish_event);
-        if self.commit_timer.is_none() {
-            let timer_id = ctx
-                .timer_manager()
-                .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
-            self.commit_timer = Some(timer_id);
-        }
-
+        self.next_resource_offset = response.last_resource_offset.saturating_add(1);
         Ok(CommitSessionResponse {
             first_resource_offset: response.first_resource_offset,
             last_resource_offset: response.last_resource_offset,
@@ -282,25 +198,35 @@ impl StreamActor {
         })
     }
 
-    fn handle_abort_session(&mut self, session_id: &SessionId) -> Result<(), StreamError> {
-        if self.active_session.as_ref() != Some(session_id) {
-            return Err(StreamError::SessionNotFound);
+    pub fn rollback_session(&mut self, stream_session_id: u64) -> Result<(), String> {
+        let session = self
+            .active_session
+            .take()
+            .ok_or_else(|| "session not found".to_string())?;
+
+        if session.stream_session_id != stream_session_id {
+            self.active_session = Some(session);
+            return Err("session not found".to_string());
         }
 
-        self.store
-            .abort_session(session_id)
-            .map_err(|_| StreamError::SessionNotFound)?;
-
-        self.active_session = None;
         Ok(())
     }
 
-    fn handle_read(
+    pub fn cleanup_session(&mut self, owner_session_id: u64) -> Option<u64> {
+        match self.active_session.as_ref() {
+            Some(session) if session.owner_session_id == owner_session_id => {
+                self.active_session.take().map(|session| session.stream_session_id)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn read(
         &self,
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
-    ) -> Result<ReadResponse, StreamError> {
+    ) -> Result<ReadResponse, String> {
         if limit == 0 || from_offset >= self.next_resource_offset {
             return Ok(ReadResponse {
                 records: Vec::new(),
@@ -313,7 +239,6 @@ impl StreamActor {
             });
         }
 
-        // Read from Midge storage (NOT from memory!) with cursor
         let params = crate::domains::stream::store::ReadResourceParams {
             family: self.family_id.as_u64(),
             realm: &self.realm,
@@ -323,20 +248,15 @@ impl StreamActor {
             limit,
             max_bytes,
         };
-        let (records, cursor) = self
-            .store
-            .read_resource(&params)
-            .map_err(|_| StreamError::InvalidReadBound)?;
-
+        let (records, cursor) = self.store.read_resource(&params)?;
         Ok(ReadResponse { records, cursor })
     }
 
-    fn handle_last(&self) -> Result<PeekResponse, StreamError> {
+    pub fn last(&self) -> Result<PeekResponse, String> {
         if self.next_resource_offset == 0 {
             return Ok(PeekResponse { record: None });
         }
 
-        // Get the last visible entry in the stream (tail operation)
         let record = self
             .store
             .peek_resource(
@@ -344,48 +264,18 @@ impl StreamActor {
                 &self.realm,
                 &self.area,
                 &self.resource,
-            )
-            .map_err(|_| StreamError::InvalidReadBound)?;
-
+            )?;
         Ok(PeekResponse { record })
     }
 
-    fn handle_get_metadata(&self) -> Result<super::protocol::GetMetadataResponse, StreamError> {
-        // Get stream metadata (limits, TTL, offsets, watermarks)
-        let metadata = self
-            .store
-            .get_metadata(
-                self.family_id.as_u64(),
-                &self.realm,
-                &self.area,
-                &self.resource,
-            )
-            .map_err(|_| StreamError::InvalidReadBound)?;
-
-        Ok(super::protocol::GetMetadataResponse { metadata })
-    }
-
-    /// Update area lease from grant
-    pub fn update_area_lease(&mut self, grant: LeaseGrant) {
-        self.area_lease.update_from_area_lease(&grant);
-    }
-
-    /// Update realm lease from grant
-    pub fn update_realm_lease(&mut self, grant: LeaseGrant) {
-        self.realm_lease.update_from_realm_lease(&grant);
-    }
-
-    /// Process pending commits after lease grant arrives
-    fn process_pending_commits(&mut self, ctx: &mut Context<Self>) {
-        // Process all pending commits that now have sufficient leases
-        while let Some((session_id, mode)) = self.pending_commits.pop_front() {
-            // Try to commit (will re-queue if still insufficient)
-            if self.handle_commit_session(&session_id, mode, ctx).is_err() {
-                // If still insufficient, push back and stop
-                self.pending_commits.push_front((session_id, mode));
-                break;
-            }
-        }
+    pub fn metadata(&self) -> Result<GetMetadataResponse, String> {
+        let metadata = self.store.get_metadata(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+        )?;
+        Ok(GetMetadataResponse { metadata })
     }
 }
 
@@ -398,97 +288,69 @@ impl Actor for StreamActor {
                 expected_offset,
                 ingest_metadata,
                 ..
-            } => match self.handle_begin_session(expected_offset, ingest_metadata, ctx) {
-                Ok(resp) => StreamResponse::BeginOk(resp),
-                Err(err) => StreamResponse::Error(err),
-            },
+            } => {
+                let stream_session_id = self.next_local_session_id;
+                self.next_local_session_id = self.next_local_session_id.saturating_add(1);
+                match self.begin_append_session(0, stream_session_id, expected_offset, ingest_metadata)
+                {
+                Ok(session_id) => StreamResponse::BeginOk(BeginSessionResponse { session_id }),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
+                }
+            }
             StreamMessage::Append {
                 session_id,
                 body,
                 metadata,
-            } => match self.handle_append_to_session(&session_id, body, metadata) {
-                Ok(resp) => StreamResponse::AppendOk(resp),
-                Err(err) => StreamResponse::Error(err),
+            } => match self.append_to_session(session_id, body, metadata) {
+                Ok(_) => StreamResponse::AppendOk(AppendResponse { success: true }),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
-            StreamMessage::Commit { session_id, mode } => {
-                match self.handle_commit_session(&session_id, mode, ctx) {
-                    Ok(resp) => StreamResponse::CommitOk(resp),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
-            StreamMessage::Rollback { session_id } => {
-                match self.handle_abort_session(&session_id) {
-                    Ok(()) => StreamResponse::CommitOk(CommitSessionResponse {
-                        first_resource_offset: 0,
-                        last_resource_offset: 0,
-                        first_area_offset: 0,
-                        last_area_offset: 0,
-                        first_realm_offset: 0,
-                        last_realm_offset: 0,
-                        batch_size: 0,
-                        ingest_metadata: None,
-                    }),
-                    Err(err) => StreamResponse::Error(err),
-                }
-            }
+            StreamMessage::Commit { session_id, mode } => match self.commit_session(session_id, mode) {
+                Ok(response) => StreamResponse::CommitOk(response),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
+            },
+            StreamMessage::Rollback { session_id } => match self.rollback_session(session_id) {
+                Ok(()) => StreamResponse::CommitOk(CommitSessionResponse {
+                    first_resource_offset: 0,
+                    last_resource_offset: 0,
+                    first_area_offset: 0,
+                    last_area_offset: 0,
+                    first_realm_offset: 0,
+                    last_realm_offset: 0,
+                    batch_size: 0,
+                    ingest_metadata: None,
+                }),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
+            },
             StreamMessage::Read {
                 from_offset,
                 limit,
                 max_bytes,
                 ..
-            } => match self.handle_read(from_offset, limit, max_bytes) {
-                Ok(resp) => StreamResponse::ReadOk(resp),
-                Err(err) => StreamResponse::Error(err),
+            } => match self.read(from_offset, limit, max_bytes) {
+                Ok(response) => StreamResponse::ReadOk(response),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
-            StreamMessage::Last { .. } => match self.handle_last() {
-                Ok(resp) => StreamResponse::LastOk(resp),
-                Err(err) => StreamResponse::Error(err),
+            StreamMessage::Last { .. } => match self.last() {
+                Ok(response) => StreamResponse::LastOk(response),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
-            StreamMessage::GetMetadata { .. } => match self.handle_get_metadata() {
-                Ok(resp) => StreamResponse::MetadataOk(resp),
-                Err(err) => StreamResponse::Error(err),
+            StreamMessage::GetMetadata { .. } => match self.metadata() {
+                Ok(response) => StreamResponse::MetadataOk(response),
+                Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
-            StreamMessage::LeaseGranted { grant } => {
-                // Update leases from AreaActor grant
-                self.update_area_lease(grant.clone());
-                self.update_realm_lease(grant);
-
-                // Process any pending commits now that we have leases
-                self.process_pending_commits(ctx);
-
-                // Internal message - no response needed
-                return;
-            }
-            // Subscribe/Unsubscribe messages are handled at session level, not in actor
             StreamMessage::Subscribe { .. }
             | StreamMessage::Unsubscribe { .. }
-            | StreamMessage::UnsubscribeAll { .. } => {
-                return; // No response for pub/sub control messages
-            }
-            // Batch/watermark notifications from other actors - no response
-            StreamMessage::BatchCommitted(_) | StreamMessage::AreaWatermarkAdvanced(_) => {
-                return;
-            }
-            // Internal lease request - no response
-            StreamMessage::RequestLease { .. } => {
-                return;
-            }
-            // Internal realm lease request - no response
-            StreamMessage::RequestRealmLease { .. } => {
+            | StreamMessage::UnsubscribeAll { .. }
+            | StreamMessage::RequestLease { .. }
+            | StreamMessage::LeaseGranted { .. }
+            | StreamMessage::RequestRealmLease { .. }
+            | StreamMessage::BatchCommitted(_)
+            | StreamMessage::AreaWatermarkAdvanced(_) => {
                 return;
             }
         };
 
         let _ = ctx.reply(response).ok();
-    }
-
-    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
-        // If commit debounce timer fired, send pending publish
-        if self.commit_timer.is_some() && Some(timer_id) == self.commit_timer {
-            if let Some(event) = self.pending_publish.take() {
-                let _ = ctx.publish_event(event);
-            }
-            self.commit_timer = None;
-        }
     }
 }

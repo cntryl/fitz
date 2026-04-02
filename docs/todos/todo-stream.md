@@ -1,65 +1,28 @@
 # Stream
 
-- Hardest domain.
-- There is still split authority between live sink behavior and the intended actor or store model.
-- Restart-safe sequencing across resource, area, and realm is an architectural problem, not a small fix.
+- Classification: Durable committed events and committed sequencing, ephemeral append sessions and subscriptions.
+- Outcome: store-authoritative, commit-time sequencing across resource, area, and realm with restart-safe metadata and honest admin/docs surfaces.
 
-Define a TDD-driven implementation plan for the following server correction work.
+## Completed
 
-## Important context:
+- [x] Chose one authoritative production path: `StreamStore` now owns durable offset allocation and committed stream metadata, while the boot sink is a thin adapter over warm per-resource actors.
+- [x] Moved resource, area, and realm sequencing into durable Midge-backed state with lazy upgrade and backfill for legacy metadata.
+- [x] Kept consumer cursors client-managed only. `ReadCursor` remains response metadata, not a durable broker-side cursor feature.
+- [x] Aborted live append sessions on disconnect cleanup and broker restart. Staged appends remain in-memory only and are dropped when the session disappears.
+- [x] Removed split sink/store staged-append ownership from the production path. One active append session per resource is enforced by the warm actor.
+- [x] Rebuilt stream admin snapshots from durable committed metadata plus live append-session counts so committed streams remain visible after restart.
+- [x] Aligned client/admin/OpenAPI/architecture docs with the implemented contract: committed data survives restart, append sessions and subscriptions do not, and reads past the watermark return an empty success.
 
-- Do not repeat or reinvent domain-level requirement lists unless absolutely necessary.
-- Your job is to turn the existing concerns and checklists into an implementation strategy and test strategy.
+## Non-Goals Kept
 
-- When you are done this domain should be world-class
-
-## Classification
-
-- Durable domain.
-- RouteFamily can remain process-local for now; stream durability must come from Midge-backed state, not control-plane state.
-- Append sessions are ephemeral, but committed events and sequencing must remain correct across restart.
-
-## Current Reality
-
-- Committed event records are persisted.
-- The live boot sink still owns important sequencing state in memory.
-- Resource sequencing is closer to durable than area and realm sequencing.
-- Actor-path intent and boot-sink production behavior are still divergent.
-
-## Focus
-
-- Establish one authoritative sequencing path.
-- Make resource, area, and realm offsets restart-safe.
-- Clean up abandoned append state on disconnect and restart.
-
-## Concrete Tasks
-
-- [ ] Pick one authoritative production implementation path and thin the adapter around it.
-- [ ] Move area and realm sequencing out of process-local sink maps into durably reconstructable state.
-- [ ] Define whether consumer cursors are client-managed only or a durable server feature.
-- [ ] Abort or clean up abandoned append sessions on disconnect.
-- [ ] Add restart recovery for any staged append state that must not leak or corrupt offsets.
-- [ ] Prove monotonic offsets across multiple resources in the same area and realm.
-
-## Non-Goals
-
-- Durable consumer groups unless the cursor model is explicitly designed first.
+- Durable consumer groups or broker-side replay cursors.
 - Multi-node stream coordination.
-- Expanding the stream API surface before sequencing and recovery are correct.
+- New public Stream API surface beyond the existing wire contract.
 
 ## Verification
 
-- [ ] Restart tests prove resource offsets remain monotonic.
-- [ ] Restart tests prove area and realm offsets remain monotonic.
-- [ ] Disconnect tests prove abandoned append sessions are cleaned up.
-- [ ] Crash/restart tests prove committed events stay readable and staged writes do not corrupt future appends.
-
-## Files To Touch First
-
-- `src/boot/domains/stream_sink.rs`
-- `src/domains/stream/store.rs`
-- `src/domains/stream/actor.rs`
-- `src/domains/stream/area_actor.rs`
-- `src/domains/stream/realm_actor.rs`
-- `tests/stream_advanced.rs`
-- `tests/stream_basics.rs`
+- [x] Restart tests prove resource offsets remain monotonic.
+- [x] Restart tests prove area and realm offsets remain monotonic.
+- [x] Disconnect tests prove abandoned append sessions are cleaned up.
+- [x] Crash/restart tests prove committed events stay readable and staged writes do not corrupt future appends.
+- [x] Admin snapshot tests prove stream resources rebuild from durable metadata after restart.

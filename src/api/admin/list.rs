@@ -89,6 +89,13 @@ pub struct QueueResourceDetail {
     pub oldest_message_age_seconds: u64,
 }
 
+/// Stream resource detail derived from durable committed metadata plus live
+/// append-session counts for the current broker process.
+///
+/// `offset`, `watermark`, and `size_bytes` survive restart because they come
+/// from committed stream metadata. `sessions_active` counts only currently live
+/// append sessions on this broker process and resets on disconnect cleanup or
+/// broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamResourceDetail {
     pub realm: String,
@@ -337,6 +344,12 @@ pub struct StreamsList {
     pub streams: Vec<StreamInfo>,
 }
 
+/// Stream snapshot built from durable committed resource metadata plus the
+/// current broker's live append-session state.
+///
+/// `offset`, `watermark`, and `size_bytes` describe committed stream data that
+/// survives restart. `sessions_active` counts only current-process append
+/// sessions and resets on disconnect cleanup or broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamInfo {
     pub realm: String,
@@ -568,6 +581,7 @@ impl StreamInfo {
         resource: &str,
         offset: u64,
         watermark: u64,
+        size_bytes: u64,
         sessions_active: usize,
     ) -> Self {
         Self {
@@ -576,7 +590,7 @@ impl StreamInfo {
             resource: resource.to_string(),
             offset,
             watermark,
-            size_bytes: 0,
+            size_bytes,
             sessions_active,
         }
     }

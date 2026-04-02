@@ -2,14 +2,16 @@
 
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;
 
 use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
 use super::storage::{
-    decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_key, encode_realm_key,
-    encode_resource_key, encode_watermark_key, AreaValue, RealmValue, ResourceValue,
-    WatermarkValue,
+    decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_counter_key,
+    encode_area_key, encode_offset_counter_key, encode_realm_counter_key, encode_realm_key,
+    encode_resource_key, encode_resource_meta_key, encode_watermark_key, AreaCounterValue,
+    AreaValue, OffsetCounterValue, RealmCounterValue, RealmValue, ResourceMetaValue,
+    ResourceValue, WatermarkValue,
 };
 
 #[derive(Debug, Clone)]
@@ -87,12 +89,22 @@ pub struct CommitResponse {
     pub ingest_metadata: Option<IngestMetadata>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamAdminRecord {
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub next_offset: u64,
+    pub committed_size_bytes: u64,
+}
+
 pub struct StreamStore {
     db: Arc<cntryl_midge::Engine>,
     limits: BatchLimits,
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,
     ttl: StreamTTL,
     next_session_id: std::sync::atomic::AtomicU64,
+    sequencing_guards: Arc<Mutex<HashMap<u64, Arc<Mutex<()>>>>>,
 }
 
 impl StreamStore {
@@ -111,7 +123,462 @@ impl StreamStore {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             ttl,
             next_session_id: std::sync::atomic::AtomicU64::new(1),
+            sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn batch_limits(&self) -> BatchLimits {
+        self.limits.clone()
+    }
+
+    fn family_sequence_guard(&self, family: u64) -> Arc<Mutex<()>> {
+        let mut guards = self.sequencing_guards.lock();
+        match guards.entry(family) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let guard = Arc::new(Mutex::new(()));
+                entry.insert(guard.clone());
+                guard
+            }
+        }
+    }
+
+    fn now_epoch_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn event_size_bytes(event: &EventPayload) -> u64 {
+        (event.body.len() + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0)) as u64
+    }
+
+    fn resource_identity_from_key(
+        expected_prefix: u8,
+        key: &[u8],
+    ) -> Result<(String, String, String), String> {
+        if key.first().copied() != Some(expected_prefix) {
+            return Err("unexpected stream metadata key prefix".to_string());
+        }
+
+        let body = &key[1..];
+        let mut parts = body.splitn(3, |byte| *byte == 0);
+        let realm = parts
+            .next()
+            .ok_or_else(|| "missing stream realm in key".to_string())?;
+        let area = parts
+            .next()
+            .ok_or_else(|| "missing stream area in key".to_string())?;
+        let resource = parts
+            .next()
+            .ok_or_else(|| "missing stream resource in key".to_string())?;
+
+        Ok((
+            String::from_utf8(realm.to_vec()).map_err(|_| "invalid stream realm key".to_string())?,
+            String::from_utf8(area.to_vec()).map_err(|_| "invalid stream area key".to_string())?,
+            String::from_utf8(resource.to_vec())
+                .map_err(|_| "invalid stream resource key".to_string())?,
+        ))
+    }
+
+    fn scan_resource_stats(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<(u64, u64), String> {
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(area.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(resource.as_bytes());
+        prefix_key.push(0);
+
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix_key));
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        let mut next_offset = 0_u64;
+        let mut committed_size_bytes = 0_u64;
+        for (_, value_bytes) in results {
+            let value = ResourceValue::decode(&value_bytes);
+            next_offset = next_offset.max(value.resource_offset.saturating_add(1));
+            committed_size_bytes = committed_size_bytes
+                .saturating_add(value.body.len() as u64)
+                .saturating_add(value.metadata.as_ref().map(|m| m.len()).unwrap_or(0) as u64);
+        }
+
+        Ok((next_offset, committed_size_bytes))
+    }
+
+    fn scan_next_area_offset(&self, family: u64, realm: &str, area: &str) -> Result<u64, String> {
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Area as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(area.as_bytes());
+        prefix_key.push(0);
+
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix_key));
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        if let Some((key, _)) = results.last() {
+            Ok(decode_area_offset_from_key(key)?.saturating_add(1))
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn scan_next_realm_offset(&self, family: u64, realm: &str) -> Result<u64, String> {
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Realm as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(prefix_key));
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        if let Some((key, _)) = results.last() {
+            Ok(decode_realm_offset_from_key(key)?.saturating_add(1))
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn load_resource_meta_snapshot(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<(ResourceMetaValue, bool), String> {
+        let meta_key = encode_resource_meta_key(realm, area, resource);
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+
+        match txn
+            .get(&meta_key)
+            .map_err(|e| format!("get error: {:?}", e))?
+        {
+            Some(bytes) => Ok((ResourceMetaValue::decode(&bytes), false)),
+            None => {
+                let next_offset = match txn
+                    .get(&encode_offset_counter_key(realm, area, resource))
+                    .map_err(|e| format!("get error: {:?}", e))?
+                {
+                    Some(bytes) => OffsetCounterValue::decode(&bytes).next_offset,
+                    None => self.scan_resource_stats(family, realm, area, resource)?.0,
+                };
+                let (_, committed_size_bytes) =
+                    self.scan_resource_stats(family, realm, area, resource)?;
+                Ok((
+                    ResourceMetaValue {
+                        next_offset,
+                        committed_size_bytes,
+                    },
+                    true,
+                ))
+            }
+        }
+    }
+
+    fn load_area_next_offset_snapshot(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+    ) -> Result<(u64, bool), String> {
+        let key = encode_area_counter_key(realm, area);
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+
+        match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
+            Some(bytes) => Ok((AreaCounterValue::decode(&bytes).next_offset, false)),
+            None => Ok((self.scan_next_area_offset(family, realm, area)?, true)),
+        }
+    }
+
+    fn load_realm_next_offset_snapshot(&self, family: u64, realm: &str) -> Result<(u64, bool), String> {
+        let key = encode_realm_counter_key(realm);
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+
+        match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
+            Some(bytes) => Ok((RealmCounterValue::decode(&bytes).next_offset, false)),
+            None => Ok((self.scan_next_realm_offset(family, realm)?, true)),
+        }
+    }
+
+    pub fn commit_records(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        expected_resource_next_offset: u64,
+        events: &[EventPayload],
+        ingest_metadata: Option<IngestMetadata>,
+        mode: StreamWriteMode,
+    ) -> Result<CommitResponse, String> {
+        if events.is_empty() {
+            return Err("ERR_EMPTY_BATCH".to_string());
+        }
+
+        let sequencing_guard = self.family_sequence_guard(family);
+        let _sequencing_lock = sequencing_guard.lock();
+
+        let (resource_meta_before, upgrade_resource_meta) =
+            self.load_resource_meta_snapshot(family, realm, area, resource)?;
+        if resource_meta_before.next_offset != expected_resource_next_offset {
+            return Err("ERR_CONCURRENCY_CONFLICT".to_string());
+        }
+
+        let (area_next_offset, _persist_area_counter) =
+            self.load_area_next_offset_snapshot(family, realm, area)?;
+        let (realm_next_offset, _persist_realm_counter) =
+            self.load_realm_next_offset_snapshot(family, realm)?;
+
+        let created_at = Self::now_epoch_ms();
+        let batch_size = events.len();
+        let batch_size_u64 = batch_size as u64;
+        let first_resource_offset = resource_meta_before.next_offset;
+        let first_area_offset = area_next_offset;
+        let first_realm_offset = realm_next_offset;
+        let last_resource_offset = first_resource_offset + batch_size_u64 - 1;
+        let last_area_offset = first_area_offset + batch_size_u64 - 1;
+        let last_realm_offset = first_realm_offset + batch_size_u64 - 1;
+        let committed_size_delta = events.iter().map(Self::event_size_bytes).sum::<u64>();
+
+        let mut txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        for (index, event) in events.iter().enumerate() {
+            let resource_offset = first_resource_offset + index as u64;
+            let area_offset = first_area_offset + index as u64;
+            let realm_offset = first_realm_offset + index as u64;
+
+            let resource_key = encode_resource_key(realm, area, resource, resource_offset);
+            let resource_value = ResourceValue {
+                resource_offset,
+                area_offset: Some(area_offset),
+                realm_offset: Some(realm_offset),
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
+            };
+            let ttl_opt = self.ttl.ttl_seconds;
+            txn.put(resource_key, resource_value.encode(), ttl_opt)
+                .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+            let area_key = encode_area_key(realm, area, area_offset);
+            let area_value = AreaValue {
+                realm: realm.to_string(),
+                area: area.to_string(),
+                resource: resource.to_string(),
+                resource_offset,
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
+            };
+            txn.put(area_key, area_value.encode(), ttl_opt)
+                .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+            let realm_key = encode_realm_key(realm, realm_offset);
+            let realm_value = RealmValue {
+                resource: resource.to_string(),
+                resource_offset,
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
+                realm: realm.to_string(),
+                area: area.to_string(),
+                area_offset,
+            };
+            txn.put(realm_key, realm_value.encode(), ttl_opt)
+                .map_err(|e| format!("txn put failed: {:?}", e))?;
+        }
+
+        let resource_meta_after = ResourceMetaValue {
+            next_offset: last_resource_offset.saturating_add(1),
+            committed_size_bytes: resource_meta_before
+                .committed_size_bytes
+                .saturating_add(committed_size_delta),
+        };
+        txn.put(
+            encode_resource_meta_key(realm, area, resource),
+            resource_meta_after.encode(),
+            None,
+        )
+        .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+        txn.put(
+            encode_area_counter_key(realm, area),
+            AreaCounterValue {
+                next_offset: last_area_offset.saturating_add(1),
+            }
+            .encode(),
+            None,
+        )
+        .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+        txn.put(
+            encode_realm_counter_key(realm),
+            RealmCounterValue {
+                next_offset: last_realm_offset.saturating_add(1),
+            }
+            .encode(),
+            None,
+        )
+        .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+        txn.put(
+            encode_watermark_key(realm, area),
+            WatermarkValue {
+                watermark: last_area_offset,
+            }
+            .encode(),
+            None,
+        )
+        .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+        txn.put(
+            crate::domains::stream::storage::encode_realm_watermark_key(realm),
+            WatermarkValue {
+                watermark: last_realm_offset,
+            }
+            .encode(),
+            None,
+        )
+        .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+        if upgrade_resource_meta {
+            txn.delete(encode_offset_counter_key(realm, area, resource))
+                .map_err(|e| format!("txn delete failed: {:?}", e))?;
+        }
+
+        let write_options = match mode {
+            StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
+            StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
+        };
+        txn.commit(write_options)
+            .map_err(|e| format!("midge commit error: {:?}", e))?;
+
+        Ok(CommitResponse {
+            first_resource_offset,
+            last_resource_offset,
+            first_area_offset,
+            last_area_offset,
+            first_realm_offset,
+            last_realm_offset,
+            batch_size,
+            ingest_metadata,
+        })
+    }
+
+    pub fn list_resource_metadata(&self, family: u64) -> Result<Vec<StreamAdminRecord>, String> {
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+
+        let mut records = HashMap::<(String, String, String), StreamAdminRecord>::new();
+
+        let resource_meta_query = cntryl_midge::Query::new().prefix(Bytes::from(vec![
+            crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
+        ]));
+        let mut resource_meta_iter = txn
+            .scan(&resource_meta_query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        for (key, value) in resource_meta_iter.collect_all() {
+            let (realm, area, resource) = Self::resource_identity_from_key(
+                crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
+                &key,
+            )?;
+            let meta = ResourceMetaValue::decode(&value);
+            if meta.next_offset == 0 {
+                continue;
+            }
+            records.insert(
+                (realm.clone(), area.clone(), resource.clone()),
+                StreamAdminRecord {
+                    realm,
+                    area,
+                    resource,
+                    next_offset: meta.next_offset,
+                    committed_size_bytes: meta.committed_size_bytes,
+                },
+            );
+        }
+
+        let legacy_counter_query = cntryl_midge::Query::new().prefix(Bytes::from(vec![
+            crate::domains::stream::storage::KeyPrefix::OffsetCounter as u8,
+        ]));
+        let mut legacy_counter_iter = txn
+            .scan(&legacy_counter_query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        for (key, value) in legacy_counter_iter.collect_all() {
+            let identity = Self::resource_identity_from_key(
+                crate::domains::stream::storage::KeyPrefix::OffsetCounter as u8,
+                &key,
+            )?;
+            if records.contains_key(&identity) {
+                continue;
+            }
+
+            let next_offset = OffsetCounterValue::decode(&value).next_offset;
+            if next_offset == 0 {
+                continue;
+            }
+
+            let (realm, area, resource) = identity;
+            let (_, committed_size_bytes) =
+                self.scan_resource_stats(family, &realm, &area, &resource)?;
+            records.insert(
+                (realm.clone(), area.clone(), resource.clone()),
+                StreamAdminRecord {
+                    realm,
+                    area,
+                    resource,
+                    next_offset,
+                    committed_size_bytes,
+                },
+            );
+        }
+
+        let mut values = records.into_values().collect::<Vec<_>>();
+        values.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource).cmp(&(&right.realm, &right.area, &right.resource))
+        });
+        Ok(values)
     }
 
     pub fn begin_session(
@@ -800,7 +1267,7 @@ impl StreamStore {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
             }
-            None => Ok(0),
+            None => Ok(self.scan_next_area_offset(family, realm, area)?.saturating_sub(1)),
         }
     }
 
@@ -840,7 +1307,7 @@ impl StreamStore {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
             }
-            None => Ok(0), // No realm watermark yet
+            None => Ok(self.scan_next_realm_offset(family, realm)?.saturating_sub(1)),
         }
     }
 
@@ -943,20 +1410,20 @@ impl StreamStore {
         area: &str,
         resource: &str,
     ) -> Result<u64, String> {
-        let counter_key =
-            crate::domains::stream::storage::encode_offset_counter_key(realm, area, resource);
+        let resource_meta_key = encode_resource_meta_key(realm, area, resource);
+        let counter_key = encode_offset_counter_key(realm, area, resource);
 
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        match txn.get(&counter_key) {
-            Ok(Some(value_bytes)) => {
-                let counter =
-                    crate::domains::stream::storage::OffsetCounterValue::decode(&value_bytes);
-                Ok(counter.next_offset)
-            }
-            Ok(None) => Ok(0), // New resource starts at 0
+        match txn.get(&resource_meta_key) {
+            Ok(Some(value_bytes)) => Ok(ResourceMetaValue::decode(&value_bytes).next_offset),
+            Ok(None) => match txn.get(&counter_key) {
+                Ok(Some(value_bytes)) => Ok(OffsetCounterValue::decode(&value_bytes).next_offset),
+                Ok(None) => Ok(0),
+                Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
+            },
             Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
         }
     }

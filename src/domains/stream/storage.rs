@@ -21,6 +21,12 @@ pub enum KeyPrefix {
     OffsetCounter = 0x06,
     /// Realm watermark: [RF][realm] - stores realm-level watermark
     RealmWatermark = 0x07,
+    /// Resource metadata: [RF][realm][area][resource]
+    ResourceMeta = 0x08,
+    /// Area offset counter: [RF][realm][area]
+    AreaCounter = 0x09,
+    /// Realm offset counter: [RF][realm]
+    RealmCounter = 0x0A,
 }
 
 /// Encodes a resource stream key
@@ -110,6 +116,33 @@ pub fn encode_realm_watermark_key(realm: &str) -> Vec<u8> {
     key
 }
 
+/// Encodes a resource metadata key.
+pub fn encode_resource_meta_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::ResourceMeta as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(resource.as_bytes());
+    key
+}
+
+/// Encodes an area offset counter key.
+pub fn encode_area_counter_key(realm: &str, area: &str) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::AreaCounter as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key
+}
+
+/// Encodes a realm offset counter key.
+pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::RealmCounter as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key
+}
+
 /// Value stored in resource index (full record)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceValue {
@@ -160,6 +193,25 @@ pub struct OffsetCounterValue {
     pub next_offset: u64,
 }
 
+/// Durable metadata for a resource stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceMetaValue {
+    pub next_offset: u64,
+    pub committed_size_bytes: u64,
+}
+
+/// Durable next area offset counter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AreaCounterValue {
+    pub next_offset: u64,
+}
+
+/// Durable next realm offset counter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealmCounterValue {
+    pub next_offset: u64,
+}
+
 impl ResourceValue {
     pub fn encode(&self) -> Vec<u8> {
         serialize(self).expect("serialize resource value")
@@ -207,6 +259,36 @@ impl OffsetCounterValue {
 
     pub fn decode(bytes: &[u8]) -> Self {
         deserialize(bytes).expect("deserialize offset counter value")
+    }
+}
+
+impl ResourceMetaValue {
+    pub fn encode(&self) -> Vec<u8> {
+        serialize(self).expect("serialize resource metadata value")
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        deserialize(bytes).expect("deserialize resource metadata value")
+    }
+}
+
+impl AreaCounterValue {
+    pub fn encode(&self) -> Vec<u8> {
+        serialize(self).expect("serialize area counter value")
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        deserialize(bytes).expect("deserialize area counter value")
+    }
+}
+
+impl RealmCounterValue {
+    pub fn encode(&self) -> Vec<u8> {
+        serialize(self).expect("serialize realm counter value")
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        deserialize(bytes).expect("deserialize realm counter value")
     }
 }
 
