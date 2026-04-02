@@ -240,6 +240,7 @@ paths:
     get:
       tags: [KV]
       summary: Get KV resource
+      description: Live broker-local KV resource detail. `transactions_active` counts only the current in-memory session-scoped transactions for this resource and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -256,6 +257,7 @@ paths:
     get:
       tags: [KV]
       summary: List KV transactions for a resource
+      description: Live in-memory KV transaction snapshots for the current broker process. Transactions are session-scoped, disappear on disconnect or broker restart, and do not represent a durable recovery log.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -1040,12 +1042,15 @@ components:
 
     KvResourceDetail:
       type: object
+      description: Live in-memory KV resource detail for the current broker process. `transactions_active` counts only active session-scoped transactions and resets after disconnect cleanup or broker restart.
       required: [realm, area, resource, transactions_active]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
-        transactions_active: { type: integer }
+        transactions_active:
+          type: integer
+          description: Broker-local count of active in-memory KV transactions for this resource. Not durable and reset on disconnect cleanup or broker restart.
 
     QueueResourceDetail:
       type: object
@@ -1136,6 +1141,7 @@ components:
 
     KvTransaction:
       type: object
+      description: Session-scoped active KV transaction snapshot on the current broker process. Open transactions disappear on disconnect or broker restart and do not represent durable recovery state. Committed-data durability is handled separately by storage commit semantics.
       properties:
         tx_id: { type: integer }
         realm: { type: string }

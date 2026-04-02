@@ -60,6 +60,11 @@ pub struct ResourceRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Live in-memory KV resource detail for the current broker process.
+///
+/// `transactions_active` counts session-scoped transactions only. It resets
+/// after disconnect cleanup or broker restart and does not imply durable
+/// transaction recovery.
 pub struct KvResourceDetail {
     pub realm: String,
     pub area: String,
@@ -286,6 +291,11 @@ pub struct KvTransactionsList {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Session-scoped active KV transaction snapshot for the current broker process.
+///
+/// These entries reflect live in-memory transaction state only. They disappear
+/// on disconnect or broker restart and are separate from committed-data
+/// durability in the storage engine.
 pub struct KvTransaction {
     pub tx_id: u64,
     pub realm: String,

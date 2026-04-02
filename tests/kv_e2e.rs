@@ -5,6 +5,12 @@
 mod fixtures;
 use fixtures::transport::*;
 
+fn expect_kv_begin_ok(response: &[u8], context: &str) -> u64 {
+    let (_msg_type, status, data) = parse_kv_response(response);
+    assert_eq!(status, 0, "Expected BEGIN success for {}", context);
+    parse_kv_tx_id(&data).expect("extract tx_id")
+}
+
 // ===== TCP tests =====
 
 async fn should_reject_operations_on_invalid_transaction<C>(server: &TestServer)
@@ -434,11 +440,19 @@ async fn should_handle_connection_drop_during_transaction<C>(server: &TestServer
 where
     C: KvConnector,
 {
+    // Arrange
     let mut client = C::connect(server).await.expect("failed to connect");
     let route = "kv://test/app/disconnect";
 
     let begin_frame = build_kv_begin(route, 1, 0);
-    client.request(&begin_frame, 2000).await.expect("BEGIN");
+    let begin_response = client.request(&begin_frame, 2000).await.expect("BEGIN");
+    let (_msg_type, status, _data) = parse_kv_response(&begin_response);
+    assert_eq!(status, 0, "Expected BEGIN success before disconnect");
+    assert_eq!(
+        server.runtime.kv_list_transactions(None).len(),
+        1,
+        "Expected one live KV transaction before disconnect"
+    );
 
     drop(client);
     server
@@ -446,6 +460,12 @@ where
         .await
         .expect("disconnect cleanup");
 
+    assert!(
+        server.runtime.kv_list_transactions(None).is_empty(),
+        "Disconnect cleanup should remove live KV transaction metadata"
+    );
+
+    // Act
     let mut client2 = C::connect(server).await.expect("failed to reconnect");
     let begin_frame2 = build_kv_begin(route, 1, 0);
     let response = client2
@@ -453,8 +473,40 @@ where
         .await
         .expect("BEGIN after reconnect");
 
+    // Assert
     let (_msg_type, status, _data) = parse_kv_response(&response);
     assert_eq!(status, 0);
+}
+
+async fn should_reject_stale_transaction_id_after_client_reconnect<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let route = "kv://test/app/disconnect-stale";
+    let mut client = C::connect(server).await.expect("failed to connect");
+
+    let begin_frame = build_kv_begin(route, 1, 0);
+    let begin_response = client.request(&begin_frame, 2000).await.expect("BEGIN");
+    let tx_id = expect_kv_begin_ok(&begin_response, "stale reconnect setup");
+
+    drop(client);
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("disconnect cleanup");
+
+    let mut reconnect = C::connect(server).await.expect("failed to reconnect");
+
+    // Act
+    let response = reconnect
+        .request(&build_kv_put(tx_id, route, b"stale-key", b"stale-value"), 2000)
+        .await
+        .expect("stale put response");
+
+    // Assert
+    let (_msg_type, status, _data) = parse_kv_response(&response);
+    assert_ne!(status, 0, "Expected stale tx_id rejection after reconnect");
 }
 
 async fn should_put_and_get_same_key_in_transaction<C>(server: &TestServer)
@@ -939,6 +991,20 @@ async fn should_handle_connection_drop_during_transaction_tcp() {
 }
 
 #[tokio::test]
+async fn should_reject_stale_transaction_id_after_client_reconnect_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_reject_stale_transaction_id_after_client_reconnect::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
 async fn should_unregister_tcp_inbox_route_on_disconnect() {
     let server = TestServer::start()
         .await
@@ -1090,6 +1156,34 @@ async fn should_assign_unique_tx_ids_within_single_session_ws() {
 
     // Act
     should_assign_unique_tx_ids_within_single_session::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_handle_connection_drop_during_transaction_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_handle_connection_drop_during_transaction::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_reject_stale_transaction_id_after_client_reconnect_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_reject_stale_transaction_id_after_client_reconnect::<WsConnector>(&server).await;
 
     // Assert
     // (assertions are in the helper)

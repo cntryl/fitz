@@ -14,6 +14,9 @@
 //!
 //! This follows the same pattern as streams, where the caller declares
 //! durability intent upfront rather than having the domain choose.
+//! These options apply only to committed writes. Open transaction handles,
+//! uncommitted writes, and resource-lock ownership remain broker-local memory
+//! and are lost on session disconnect or broker restart.
 //!
 //! # Invariants
 //!
@@ -34,7 +37,11 @@ use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
 
-/// Active KV transaction state
+/// Active KV transaction state.
+///
+/// This state is broker-local and in-memory only. Dropping the owning actor or
+/// cleaning up the owning session aborts any uncommitted work and discards the
+/// transaction handle instead of attempting recovery.
 pub struct ActiveKvTx {
     /// Realm this transaction is bound to (resolved from auth)
     pub bound_realm: String,

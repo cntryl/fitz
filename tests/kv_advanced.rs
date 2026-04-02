@@ -8,6 +8,13 @@ use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 
+fn reopen_local_bench_store(temp_path: &std::path::Path) -> Arc<cntryl_midge::Engine> {
+    Arc::new(
+        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build())
+            .expect("reopen engine"),
+    )
+}
+
 fn write_committed_value_for_family(
     actor: &mut KvActor,
     family: RouteFamily,
@@ -259,6 +266,74 @@ fn should_restore_committed_kv_value_on_engine_restart() {
 }
 
 #[test]
+fn should_discard_uncommitted_kv_write_on_engine_restart() {
+    // Arrange
+    let (store, temp_dir) = create_local_bench_store();
+    let temp_path = temp_dir.path().to_path_buf();
+    let mut actor = KvActor::new(store.clone());
+
+    let begin = actor.handle(KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "dur".to_string(),
+        area: "kv".to_string(),
+        resource: "r".to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::sync(),
+    });
+    let tx_id = match begin {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Begin failed"),
+    };
+
+    let put = actor.handle(KvMessage::Put {
+        tx_id,
+        route_family: RouteFamily::new(1),
+        resource: "r".to_string(),
+        key: Bytes::from_static(b"k1"),
+        value: Bytes::from_static(b"v1"),
+    });
+    assert!(matches!(put, KvResponse::PutOk));
+
+    drop(actor);
+    drop(store);
+
+    let reopened = reopen_local_bench_store(&temp_path);
+    let mut actor2 = KvActor::new(reopened);
+    let begin2 = actor2.handle(KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "dur".to_string(),
+        area: "kv".to_string(),
+        resource: "r".to_string(),
+        mode: TxMode::ReadOnly,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    });
+    let tx2 = match begin2 {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Expected BeginOk"),
+    };
+
+    // Act
+    let got = actor2.handle(KvMessage::Get {
+        tx_id: tx2,
+        route_family: RouteFamily::new(1),
+        resource: "r".to_string(),
+        key: Bytes::from_static(b"k1"),
+    });
+
+    // Assert
+    match got {
+        KvResponse::GetResult {
+            found: false,
+            value: None,
+        } => {}
+        other => panic!("Expected uncommitted value to be lost after restart, got {:?}", other),
+    }
+
+    let rollback = actor2.handle(KvMessage::Rollback { tx_id: tx2 });
+    assert!(matches!(rollback, KvResponse::RollbackOk));
+}
+
+#[test]
 fn should_return_family_one_value_given_same_key_in_multiple_route_families() {
     // Arrange
     let store = create_test_engine_with_cfs(vec![1, 2]);
@@ -289,6 +364,60 @@ fn should_return_family_two_value_given_same_key_in_multiple_route_families() {
 
     // Act
     let value = read_committed_value_for_family(&mut actor, family_two);
+
+    // Assert
+    assert_eq!(value, Bytes::from_static(b"family-2"));
+}
+
+#[test]
+fn should_return_family_one_value_after_engine_restart_given_same_key_in_multiple_route_families() {
+    // Arrange
+    let (store, temp_dir) = create_local_bench_store();
+    let temp_path = temp_dir.path().to_path_buf();
+    let _ = store.create_column_family("cf_2");
+
+    let mut actor = KvActor::new(store.clone());
+    let family_one = RouteFamily::new(1);
+    let family_two = RouteFamily::new(2);
+
+    write_committed_value_for_family(&mut actor, family_one, b"family-1");
+    write_committed_value_for_family(&mut actor, family_two, b"family-2");
+
+    drop(actor);
+    drop(store);
+
+    let reopened = reopen_local_bench_store(&temp_path);
+    let mut actor2 = KvActor::new(reopened);
+
+    // Act
+    let value = read_committed_value_for_family(&mut actor2, family_one);
+
+    // Assert
+    assert_eq!(value, Bytes::from_static(b"family-1"));
+}
+
+#[test]
+fn should_return_family_two_value_after_engine_restart_given_same_key_in_multiple_route_families() {
+    // Arrange
+    let (store, temp_dir) = create_local_bench_store();
+    let temp_path = temp_dir.path().to_path_buf();
+    let _ = store.create_column_family("cf_2");
+
+    let mut actor = KvActor::new(store.clone());
+    let family_one = RouteFamily::new(1);
+    let family_two = RouteFamily::new(2);
+
+    write_committed_value_for_family(&mut actor, family_one, b"family-1");
+    write_committed_value_for_family(&mut actor, family_two, b"family-2");
+
+    drop(actor);
+    drop(store);
+
+    let reopened = reopen_local_bench_store(&temp_path);
+    let mut actor2 = KvActor::new(reopened);
+
+    // Act
+    let value = read_committed_value_for_family(&mut actor2, family_two);
 
     // Assert
     assert_eq!(value, Bytes::from_static(b"family-2"));

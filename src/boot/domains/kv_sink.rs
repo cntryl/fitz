@@ -1,3 +1,12 @@
+//! KV domain sink for session-scoped transaction dispatch.
+//!
+//! Committed KV writes flow straight to Midge and persist according to the
+//! `WriteOptions` selected when the transaction commits. Active transaction
+//! handles, resource locks, and admin snapshot entries are separate live
+//! in-memory state owned by the current broker process. `cleanup_session`
+//! intentionally discards that state on disconnect, and broker restart clears it
+//! wholesale.
+
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -76,6 +85,11 @@ impl KvDomainSink {
         self.admin_read_model.replace_kv_transactions(transactions);
     }
 
+    /// Remove all live KV transaction state owned by a disconnected session.
+    ///
+    /// This is the authoritative boundary for session-scoped cleanup: open
+    /// transactions are dropped, resource locks are released, and the admin read
+    /// model is refreshed so no durable recovery is implied.
     pub fn cleanup_session(&self, session_id: u64) {
         self.actors.lock().remove(&session_id);
 
