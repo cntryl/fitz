@@ -9,6 +9,27 @@ use fixtures::transport::*;
 
 // ===== GENERIC TEST IMPLEMENTATIONS =====
 
+async fn wait_for_notice_subscription_count(server: &TestServer, expected: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let live_count = server.runtime.notice_subscriptions_active();
+            let admin_count = server
+                .runtime
+                .admin_read_model()
+                .notice_subscriptions(None, None)
+                .len();
+
+            if live_count == expected && admin_count == expected {
+                return;
+            }
+
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("wait for notice subscription count");
+}
+
 async fn should_publish_to_subscribers<C>(server: &TestServer)
 where
     C: NoticeConnector,
@@ -260,6 +281,109 @@ where
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
 }
 
+async fn should_remove_notice_subscription_when_subscriber_disconnects<C>(server: &TestServer)
+where
+    C: NoticeConnector,
+{
+    let route = "notice://test/app/events";
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+
+    let subscribe_response = subscriber
+        .send_and_receive(&build_notice_subscribe(route), 2000)
+        .await
+        .expect("subscribe route");
+    let (_msg_type, status, _data) = parse_notice_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected success for route subscribe");
+
+    wait_for_notice_subscription_count(server, 1).await;
+
+    drop(subscriber);
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("subscriber disconnect cleanup");
+
+    wait_for_notice_subscription_count(server, 0).await;
+
+    let mut publisher = C::connect(server).await.expect("connect publisher");
+    let publish_response = publisher
+        .send_and_receive(&build_notice_publish(route, "test-realm", b"after-disconnect"), 2000)
+        .await
+        .expect("publish after disconnect");
+
+    let (_msg_type, status, _data) = parse_notice_response(&publish_response);
+    assert_eq!(status, 0, "Expected success for publish after disconnect");
+    assert_eq!(server.runtime.notice_subscriptions_active(), 0);
+    assert!(
+        server
+            .runtime
+            .admin_read_model()
+            .notice_subscriptions(None, None)
+            .is_empty(),
+        "Admin notice snapshot should reflect disconnect cleanup"
+    );
+}
+
+async fn should_require_resubscribe_after_broker_restart<C>()
+where
+    C: NoticeConnector,
+{
+    let route = "notice://test/app/restart";
+
+    {
+        let server = TestServer::start().await.expect("start first server");
+        let mut subscriber = C::connect(&server).await.expect("connect subscriber");
+        let mut publisher = C::connect(&server).await.expect("connect publisher");
+
+        let subscribe_response = subscriber
+            .send_and_receive(&build_notice_subscribe(route), 2000)
+            .await
+            .expect("subscribe before restart");
+        let (_msg_type, status, _data) = parse_notice_response(&subscribe_response);
+        assert_eq!(status, 0, "Expected success for pre-restart subscribe");
+
+        wait_for_notice_subscription_count(&server, 1).await;
+
+        let publish_response = publisher
+            .send_and_receive(&build_notice_publish(route, "test-realm", b"before-restart"), 2000)
+            .await
+            .expect("publish before restart");
+        let (_msg_type, status, _data) = parse_notice_response(&publish_response);
+        assert_eq!(status, 0, "Expected success for pre-restart publish");
+
+        let delivery = subscriber
+            .recv_frame(2000)
+            .await
+            .expect("delivery before restart");
+        let delivery = parse_notice_delivery(&delivery).expect("parse delivery before restart");
+        assert_eq!(delivery.msg_type, 504);
+        assert_eq!(delivery.route, route);
+        assert_eq!(delivery.body.as_slice(), b"before-restart");
+    }
+
+    let restarted_server = TestServer::start().await.expect("start restarted server");
+    let mut subscriber = C::connect(&restarted_server)
+        .await
+        .expect("connect subscriber after restart");
+    let mut publisher = C::connect(&restarted_server)
+        .await
+        .expect("connect publisher after restart");
+
+    wait_for_notice_subscription_count(&restarted_server, 0).await;
+
+    let publish_response = publisher
+        .send_and_receive(&build_notice_publish(route, "test-realm", b"after-restart"), 2000)
+        .await
+        .expect("publish after restart");
+    let (_msg_type, status, _data) = parse_notice_response(&publish_response);
+    assert_eq!(status, 0, "Expected success for post-restart publish");
+
+    assert!(
+        subscriber.recv_frame(200).await.is_err(),
+        "Client should re-subscribe after broker restart"
+    );
+}
+
 define_transport_tests!(
     TcpNoticeConnector,
     WsNoticeConnector;
@@ -271,4 +395,15 @@ define_transport_tests!(
     should_deliver_to_exact_match_before_wildcard_tcp / should_deliver_to_exact_match_before_wildcard_ws => should_deliver_to_exact_match_before_wildcard,
     should_not_match_pattern_if_publish_beneath_scope_tcp / should_not_match_pattern_if_publish_beneath_scope_ws => should_not_match_pattern_if_publish_beneath_scope,
     should_retain_other_notice_subscription_after_unsubscribe_tcp / should_retain_other_notice_subscription_after_unsubscribe_ws => should_retain_other_notice_subscription_after_unsubscribe,
+    should_remove_notice_subscription_when_subscriber_disconnects_tcp / should_remove_notice_subscription_when_subscriber_disconnects_ws => should_remove_notice_subscription_when_subscriber_disconnects,
 );
+
+#[tokio::test]
+async fn should_require_resubscribe_after_broker_restart_tcp() {
+    should_require_resubscribe_after_broker_restart::<TcpNoticeConnector>().await;
+}
+
+#[tokio::test]
+async fn should_require_resubscribe_after_broker_restart_ws() {
+    should_require_resubscribe_after_broker_restart::<WsNoticeConnector>().await;
+}

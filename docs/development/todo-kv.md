@@ -1,5 +1,13 @@
 # TODO - KV
 
+Define a TDD-driven implementation plan for the following server correction work.
+
+Important context:
+- Do not repeat or reinvent domain-level requirement lists unless absolutely necessary.
+- Your job is to turn the existing concerns and checklists into an implementation strategy and test strategy.
+
+- When you are done this domain should be world-class
+
 ## Classification
 - Durable committed data.
 - Open transactions and resource-lock coordination are session-local and process-local today.

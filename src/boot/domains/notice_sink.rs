@@ -150,6 +150,8 @@ impl NoticeDomainSink {
             session = session_id,
             "All notice subscriptions removed for session (disconnect cleanup)"
         );
+        drop(families);
+        self.sync_admin_snapshot();
     }
 
     pub fn subscription_count(&self) -> usize {
