@@ -194,7 +194,7 @@ fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
         assert_eq!(status, 0, "expected notice unsubscribe success");
     });
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(2 * iterations as u64);
 }
 
 #[stress_test]
@@ -233,7 +233,7 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
         assert_eq!(status, 0, "expected notice unsubscribe success");
     });
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(2 * iterations as u64);
 
     runtime
         .block_on(client.close())

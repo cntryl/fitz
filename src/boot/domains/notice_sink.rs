@@ -10,6 +10,13 @@ use std::sync::Arc;
 
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
 
+#[derive(Clone)]
+struct NoticeDeliveryTarget {
+    session_id: u64,
+    subscription_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+}
+
 struct NoticeSubscription {
     pattern: crate::runtime::matcher::Pattern,
     session_id: u64,
@@ -28,6 +35,16 @@ impl RoutedSubscription for NoticeSubscription {
 
     fn subscription_id(&self) -> u64 {
         self.subscription_id
+    }
+}
+
+impl From<&NoticeSubscription> for NoticeDeliveryTarget {
+    fn from(subscription: &NoticeSubscription) -> Self {
+        Self {
+            session_id: subscription.session_id,
+            subscription_id: subscription.subscription_id,
+            subscriber: subscription.subscriber.clone(),
+        }
     }
 }
 
@@ -104,50 +121,75 @@ impl NoticeDomainSink {
 
     fn fan_out_notice_event(
         &self,
-        state: &RoutedSubscriptionSet<NoticeSubscription>,
+        targets: &[NoticeDeliveryTarget],
         event: &crate::runtime::DomainPublishEvent,
         payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
     ) {
-        state.for_each_matching(event, |subscription| {
-            self.route_notice_notify(subscription, &event.route, &event.payload, payload_encoder);
-        });
+        for target in targets {
+            self.route_notice_notify(target, &event.route, &event.payload, payload_encoder);
+        }
     }
 
     fn route_notice_notify(
         &self,
-        subscription: &NoticeSubscription,
+        target: &NoticeDeliveryTarget,
         route: &crate::runtime::routing::Route,
         payload: &[u8],
         payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
     ) {
         let notify_payload = crate::protocol::notice_codec::encode_notify_into(
-            subscription.subscription_id,
+            target.subscription_id,
             route,
             payload,
             payload_encoder,
         );
         let notify_ctx = FrameContext::new(
-            subscription.session_id,
+            target.session_id,
             crate::protocol::frame::ChannelId::Sub,
             crate::protocol::tlv::MessageType::new(504),
             bytes::Bytes::from(notify_payload),
-            crate::runtime::routing::RouteFamily::from_u32(subscription.subscriber.family().id()),
+            crate::runtime::routing::RouteFamily::from_u32(target.subscriber.family().id()),
         );
-        let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
+        let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx);
         let _ = self.router.route(notify_envelope);
+    }
+
+    fn collect_matching_targets(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+    ) -> Vec<NoticeDeliveryTarget> {
+        let families = self.families.lock();
+        let Some(state) = families.get(&event.family_id.as_u64()) else {
+            return Vec::new();
+        };
+
+        let mut targets = Vec::new();
+        state.for_each_matching(event, |subscription| {
+            targets.push(NoticeDeliveryTarget::from(subscription));
+        });
+        targets
+    }
+
+    fn publish_event(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+    ) {
+        let targets = self.collect_matching_targets(event);
+        if targets.is_empty() {
+            return;
+        }
+
+        self.fan_out_notice_event(&targets, event, payload_encoder);
     }
 
     fn handle_domain_publish(
         &self,
         event: &crate::runtime::DomainPublishEvent,
     ) -> Result<(), DeliveryError> {
-        let family_id = event.family_id.as_u64();
         let mut payload_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-        let families = self.families.lock();
-        if let Some(state) = families.get(&family_id) {
-            self.fan_out_notice_event(state, event, &mut payload_encoder);
-        }
+        self.publish_event(event, &mut payload_encoder);
         Ok(())
     }
 
@@ -261,16 +303,12 @@ impl MailboxSink for NoticeDomainSink {
 
         let (response_opt, should_sync_admin_snapshot) = match notice_msg {
             NotificationMessage::Publish(pub_msg) => {
-                let family_id = pub_msg.family_id.as_u64();
-                let families = self.families.lock();
-                if let Some(state) = families.get(&family_id) {
-                    let event = crate::runtime::DomainPublishEvent::new(
-                        pub_msg.family_id,
-                        pub_msg.route.clone(),
-                        pub_msg.payload.clone(),
-                    );
-                    self.fan_out_notice_event(state, &event, &mut payload_encoder);
-                }
+                let event = crate::runtime::DomainPublishEvent::new(
+                    pub_msg.family_id,
+                    pub_msg.route.clone(),
+                    pub_msg.payload.clone(),
+                );
+                self.publish_event(&event, &mut payload_encoder);
                 (None, false)
             }
             NotificationMessage::Subscribe(sub_msg) => {
